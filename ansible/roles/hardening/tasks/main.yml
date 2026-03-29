@@ -1,0 +1,6 @@
+---
+# roles/hardening/tasks/main.yml — STUB
+# Claude Code: implement this role. See CLAUDE.md for full spec.
+- name: Placeholder — implement hardening role
+  debug:
+    msg: "hardening role not yet implemented."

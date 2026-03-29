@@ -1,0 +1,17 @@
+# Normalize line endings to LF on commit across all platforms
+* text=auto eol=lf
+
+# Force LF for these file types regardless of platform
+*.tf        text eol=lf
+*.hcl       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.sh        text eol=lf
+Makefile    text eol=lf
+
+# Binary — no line ending conversion
+*.png       binary
+*.jpg       binary
+*.zip       binary
+*.qcow2     binary
