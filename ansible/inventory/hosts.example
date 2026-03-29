@@ -1,0 +1,9 @@
+# ansible/inventory/hosts.example
+# Copy to hosts (gitignored) — populated automatically by `make infra-ovh`
+# or fill in manually for existing servers.
+
+[sandbox]
+# 203.0.113.10  ansible_user=root  ansible_ssh_private_key_file=~/.ssh/sandbox_ed25519
+
+[sandbox:vars]
+ansible_python_interpreter=/usr/bin/python3

@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# roles/cape/tasks/main.yml
+# Installs and configures CAPEv2.
+#
+# IMPORTANT: kvm-qemu.sh patches ACPI DSDT tables with host-specific values.
+# The dsdt_string variable MUST be pulled from Secrets Manager before this
+# role runs. It cannot be pre-baked — it's specific to the physical hardware.
+#
+# Execution order:
+#   1. Pull secrets from AWS Secrets Manager
+#   2. Create cape user
+#   3. Clone CAPEv2
+#   4. Run kvm-qemu.sh (DSDT patching + KVM build)
+#   5. Run cape2.sh (Cape itself)
+#   6. Configure cape.conf / api.conf
+#   7. Enable systemd services
+# =============================================================================
+
+# --- STUB --- Claude Code: implement this role.
+# Reference: https://github.com/kevoreilly/CAPEv2
+# Key scripts in repo: installer/kvm-qemu.sh, installer/cape2.sh
+# kvm-qemu.sh takes: all <username> — requires <WOOT> replaced with dsdt_string
+# cape2.sh takes: base <username>
+#
+# The dsdt_string comes from: sudo acpidump | grep -A1 "DSDT" — run on the
+# actual hardware and store result in Secrets Manager before running Ansible.
+
+- name: Placeholder — implement cape role
+  debug:
+    msg: "Cape role not yet implemented. See role README and CLAUDE.md for spec."

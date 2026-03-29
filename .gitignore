@@ -1,0 +1,29 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan
+.terraform.lock.hcl
+terraform.tfvars
+!terraform.tfvars.example
+
+# Packer
+packer/output/
+packer/packer_cache/
+
+# Ansible
+ansible/inventory/hosts
+ansible/*.retry
+*.log
+
+# Secrets / local config
+.env
+*.pem
+*.key
+!*.key.example
+wireguard/
+
+# OS
+.DS_Store
+*.swp
