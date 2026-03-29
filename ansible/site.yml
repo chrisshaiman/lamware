@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# site.yml — Main Ansible playbook
+# Runs all roles against the sandbox host in order.
+# Each role is idempotent — safe to re-run after config changes.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Configure malware sandbox host
+  hosts: sandbox
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vars/main.yml
+
+  roles:
+    # 1. OS hardening — CIS-aligned baseline (konstruktoid)
+    - role: hardening
+
+    # 2. Networking — detonation bridge + iptables air-gap
+    - role: networking
+
+    # 3. KVM/QEMU/libvirt
+    - role: kvm
+
+    # 4. WireGuard VPN
+    - role: wireguard
+
+    # 5. CAPEv2 — runs kvm-qemu.sh (DSDT patching) then cape2.sh
+    - role: cape
+
+    # 6. S3 sync — report upload cron
+    - role: s3-sync

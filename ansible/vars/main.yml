@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# vars/main.yml — All tuneable variables
+# Sensitive values (dsdt_string, cape_api_key, etc.) should be pulled
+# from AWS Secrets Manager at runtime, not stored here.
+# Use ansible-vault or pass via --extra-vars for local overrides.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Host identity
+# -----------------------------------------------------------------------------
+sandbox_hostname: malware-sandbox-01
+
+# -----------------------------------------------------------------------------
+# Networking — detonation bridge
+# This network is air-gapped. Guests detonate here, FakeNet-NG listens here.
+# No route to management plane or internet.
+# -----------------------------------------------------------------------------
+detonation_bridge: virbr-det
+detonation_network: 192.168.100.0/24
+detonation_gateway: 192.168.100.1
+detonation_dhcp_start: 192.168.100.10
+detonation_dhcp_end: 192.168.100.50
+
+# Management interface (adjust if provider uses different name)
+management_interface: eth0
+
+# -----------------------------------------------------------------------------
+# WireGuard
+# -----------------------------------------------------------------------------
+wireguard_interface: wg0
+wireguard_address: 10.200.0.1/24
+wireguard_port: 51820
+# wireguard_private_key: pulled from Secrets Manager
+# wireguard_peer_pubkey: pulled from Secrets Manager
+
+# -----------------------------------------------------------------------------
+# Cape
+# -----------------------------------------------------------------------------
+cape_user: cape
+cape_install_dir: /opt/CAPEv2
+cape_result_ip: "{{ detonation_gateway }}"
+cape_interface: "{{ detonation_bridge }}"
+
+# DSDT string — hardware-specific, pulled from Secrets Manager at runtime
+# This is what defeats VM fingerprinting. Must match the actual host hardware.
+# cape_dsdt_string: pulled from Secrets Manager
+
+# -----------------------------------------------------------------------------
+# AWS / S3 sync
+# -----------------------------------------------------------------------------
+aws_region: us-east-1
+# s3_bucket_reports: pulled from Secrets Manager
+s3_sync_interval_minutes: 15
+
+# -----------------------------------------------------------------------------
+# Secrets Manager ARNs — set these to match your AWS deployment
+# -----------------------------------------------------------------------------
+secrets_manager_region: us-east-1
+secret_arn_wireguard: ""      # fill after AWS infra is deployed
+secret_arn_cape: ""           # fill after AWS infra is deployed
+secret_arn_s3: ""             # fill after AWS infra is deployed

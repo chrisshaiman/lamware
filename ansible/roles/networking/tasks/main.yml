@@ -1,0 +1,6 @@
+---
+# roles/networking/tasks/main.yml — STUB
+# Claude Code: implement this role. See CLAUDE.md for full spec.
+- name: Placeholder — implement networking role
+  debug:
+    msg: "networking role not yet implemented."

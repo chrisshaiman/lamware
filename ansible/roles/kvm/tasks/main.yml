@@ -1,0 +1,6 @@
+---
+# roles/kvm/tasks/main.yml — STUB
+# Claude Code: implement this role. See CLAUDE.md for full spec.
+- name: Placeholder — implement kvm role
+  debug:
+    msg: "kvm role not yet implemented."
