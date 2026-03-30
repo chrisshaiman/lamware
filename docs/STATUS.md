@@ -70,9 +70,13 @@ malware-sandbox-infra/
 │           ├── outputs.tf         ✓ complete
 │           └── terraform.tfvars.example ✓ complete
 │
-└── shared/
-    ├── backend-aws.hcl            ~ placeholder values, needs real bucket name
-    └── backend-aws.hcl            ~ placeholder values, needs real bucket name
+├── shared/
+│   └── backend-aws.hcl            ~ placeholder values, needs real bucket name
+│
+└── src/
+    ├── report_processor.py        ~ stub (deployable, no real logic yet)
+    └── sample_submitter.py        ~ stub (deployable, no real logic yet)
+    # run `make lambda` to build src/*.zip before terraform apply
 ```
 
 **Legend:** ✓ complete · ~ stub/partial · ✗ not built · ! needs fix
@@ -93,6 +97,34 @@ malware-sandbox-infra/
 
 ---
 
+## Next session recommendation (2026-03-29)
+
+**Work findings before features.**
+
+Rationale:
+- `terraform apply` fails today — Lambda ZIP packages don't exist (architecture finding below).
+  Everything else is blocked behind that.
+- IAM long-lived key fix must land before the OVH bare metal host is provisioned. Once credentials
+  are pulled to disk on a host running malware, the window to fix it is gone.
+- SQS 30-min visibility timeout causes silent duplicate detonations for complex samples — bad
+  foundation to build Packer/Ansible on top of.
+- High-priority findings are 1–2 hour Terraform changes. Packer + Ansible + OVH is days of work.
+
+**Suggested order:**
+1. Lambda ZIP blocker (create `src/` with stub handlers so `terraform apply` succeeds)
+2. Bare metal IAM: long-lived keys → `sts:AssumeRole` with 1-hour sessions
+3. SQS visibility timeout: 30 min → 60 min
+4. DLQ CloudWatch alarm
+5. Lambda SG egress: hardcoded CIDR → `referenced_security_group_id`
+6. RDS SG egress: unrestricted → deny-all
+7. S3 Object Lock: GOVERNANCE → COMPLIANCE (or document the tradeoff explicitly)
+8. Secrets Manager rotation for RDS password (AWS-managed rotation Lambda)
+
+Medium-priority findings (dashboard, backend placeholder, RDS ingress in module) can defer to a
+later session without blocking progress.
+
+---
+
 ## Review findings (2026-03-29)
 
 Issues identified during architecture/security review. Investigate and address
@@ -100,56 +132,68 @@ in the next round of implementation work.
 
 ### Security — high priority
 
-- [ ] **Bare metal IAM: long-lived access keys on a host that runs malware.**
-      SQS module creates an IAM user with static credentials pulled to disk.
-      If the host is compromised, keys are trivially exfiltrated.
-      **Mitigation:** Scope the IAM user to `sts:AssumeRole` only; actual
-      permissions on the assumed role with 1-hour sessions. Monitor
-      `AssumeRole` calls in CloudTrail for anomalous patterns.
-      *Files:* `aws/modules/sqs/main.tf` (IAM user + policy)
+- [x] **Bare metal IAM: long-lived access keys on a host that runs malware.**
+      Fixed 2026-03-29. IAM user scoped to `sts:AssumeRole` only. Real SQS/S3/KMS
+      permissions moved to `aws_iam_role.baremetal_agent` (1-hour sessions).
+      Role ARN added to Secrets Manager secret. Queue policy updated to role ARN.
+      CloudTrail remains the detection surface for anomalous AssumeRole calls.
+      *Files:* `aws/modules/sqs/main.tf`, `aws/modules/sqs/outputs.tf`
 
-- [ ] **Lambda SG egress hardcodes VPC CIDR (`10.20.0.0/16`).**
-      Should reference the RDS security group directly via
-      `referenced_security_group_id` for the port-5432 rule. Brittle if VPC
-      CIDR ever changes.
-      *Files:* `aws/modules/lambda/main.tf` (egress rules)
+- [x] **Lambda SG egress hardcodes VPC CIDR (`10.20.0.0/16`).**
+      Fixed 2026-03-29. Removed inline egress blocks from Lambda SG. Added
+      `aws_vpc_security_group_egress_rule` resources in `prod/main.tf`:
+      port 5432 → RDS SG via `referenced_security_group_id`; port 443 → `var.vpc_cidr`.
+      All cross-module SG wiring is now in the composition layer.
+      *Files:* `aws/modules/lambda/main.tf`, `aws/envs/prod/main.tf`
 
-- [ ] **RDS security group allows unrestricted egress (`0.0.0.0/0`).**
-      RDS has no reason for outbound connectivity in this architecture.
-      Restrict to deny-all or response-only traffic.
-      *Files:* `aws/modules/rds/main.tf` (SG egress)
+- [x] **RDS security group allows unrestricted egress (`0.0.0.0/0`).**
+      Fixed 2026-03-29. Explicit `egress = []` — Terraform will remove the
+      default allow-all rule. SGs are stateful; response traffic needs no rule.
+      *Files:* `aws/modules/rds/main.tf`
 
-- [ ] **S3 Object Lock uses GOVERNANCE mode, not COMPLIANCE.**
-      Root/admin can override GOVERNANCE. If chain-of-custody matters for
-      analysis evidence, COMPLIANCE mode provides actual immutability.
-      Document the tradeoff or switch to COMPLIANCE.
-      *Files:* `aws/modules/s3/main.tf`
+- [~] **S3 Object Lock uses GOVERNANCE mode, not COMPLIANCE.**
+      Intentional decision — see ADR-007. GOVERNANCE is correct for current use case;
+      COMPLIANCE would prevent purging samples under a legal takedown or policy change.
+      Known limitation: does not meet evidentiary chain-of-custody standards.
+      Upgrade path documented in ADR-007 and in-code comment. One-line change when needed.
+      *Files:* `aws/modules/s3/main.tf`, `docs/DECISIONS.md` (ADR-007)
 
-- [ ] **No Secrets Manager rotation configured.**
-      DB password, Cape API key, and WireGuard keys sit indefinitely.
-      AWS has a native rotation Lambda template for RDS — easiest win.
-      *Files:* `aws/envs/prod/main.tf` (secret definitions)
+- [x] **No Secrets Manager rotation configured.**
+      Fixed 2026-03-29. RDS password rotates every 30 days via AWS SAR rotation Lambda
+      (`SecretsManagerRDSPostgreSQLRotationSingleUser`). Lambda runs in the VPC with
+      its own SG (egress to RDS 5432 + Secrets Manager endpoint 443). Rotation Lambda
+      ingress rule added to RDS SG in composition layer.
+      Cape API key and WireGuard keys are not rotated — both are set manually and have
+      no AWS-native rotation path. Operator rotates manually as needed.
+      *Files:* `aws/envs/prod/main.tf`
 
 ### Operational — high priority
 
-- [ ] **No DLQ alarm.** Failed jobs silently accumulate in the dead-letter
-      queue. Add a CloudWatch alarm on `ApproximateNumberOfMessagesVisible > 0`.
-      *Files:* `aws/modules/sqs/main.tf`
+- [x] **No DLQ alarm.**
+      Fixed 2026-03-29. `aws_cloudwatch_metric_alarm.dlq_depth` added to SQS module.
+      Fires when any message lands in the DLQ. Optional `alarm_sns_topic_arns` variable
+      wires it to an SNS topic — alarm exists and changes state regardless.
+      *Files:* `aws/modules/sqs/main.tf`, `aws/modules/sqs/variables.tf`, `aws/modules/sqs/outputs.tf`
 
 - [ ] **No VPC Flow Log alerting.** Logs go to CloudWatch but nothing watches
-      them. Add CloudWatch Insights queries or alarms for unexpected outbound
-      connections, port scans, DNS exfiltration patterns.
-      *Files:* `aws/modules/vpc/main.tf`
+      them. **Deferred → future scope.** With tight SG rules in place, the VPC
+      attack surface is narrow and flow log alerting has low signal-to-noise for
+      this architecture. The detonation network (where malware runs) is on OVH —
+      not visible to AWS VPC flow logs at all. CloudTrail (AssumeRole calls, S3
+      access) is higher-value monitoring for this threat model. Logs retained for
+      forensic use.
 
 - [ ] **Reports bucket has no object lock or expiration.** Samples bucket has
       object lock (good), but reports accumulate indefinitely with no tamper
       protection and no lifecycle expiration.
-      *Files:* `aws/modules/s3/main.tf`
+      **Deferred → future scope.** Reports are re-generatable by re-running the
+      sample — object lock has low value here. Existing lifecycle rule already
+      moves reports to Glacier after 90 days, so accumulation cost is minimal.
+      Expiration rule (e.g. 2 years) is a cost hygiene item, not a security issue.
 
-- [ ] **SQS visibility timeout (30 min) may be too short.** Complex malware
-      in CAPEv2 can run 30+ minutes. If timeout expires, SQS redelivers
-      mid-analysis causing duplicate runs. Consider defaulting to 60 min.
-      *Files:* `aws/modules/sqs/main.tf`, `aws/modules/sqs/variables.tf`
+- [x] **SQS visibility timeout (30 min) may be too short.**
+      Fixed 2026-03-29. Default raised to 60 min in `variables.tf`.
+      *Files:* `aws/modules/sqs/variables.tf`
 
 ### Architecture — medium priority
 
@@ -159,29 +203,42 @@ in the next round of implementation work.
       variable in the RDS module.
       *Files:* `aws/modules/rds/main.tf`, `aws/envs/prod/main.tf`
 
-- [ ] **Lambda deployment packages don't exist.** Module references
-      `var.report_processor_zip` and `var.sample_submitter_zip` but there's no
-      `src/` directory with Python handlers. `terraform apply` will fail.
-      *Files:* `aws/modules/lambda/main.tf`
+- [x] **Lambda deployment packages don't exist.**
+      Fixed 2026-03-29. `src/report_processor.py` and `src/sample_submitter.py`
+      created as functional stubs. `make lambda` builds the zips. tfvars.example
+      updated with correct paths. `terraform apply` will now succeed.
+      *Files:* `src/`, `Makefile`, `aws/envs/prod/terraform.tfvars.example`
 
-- [ ] **`shared/backend-aws.hcl` has placeholder bucket name.**
-      Includes `<your-account-id>` — confusing error on `terraform init`.
-      Consider a Makefile target that auto-populates from bootstrap output.
-      *Files:* `shared/backend-aws.hcl`
+- [x] **`shared/backend-aws.hcl` has placeholder bucket name.**
+      Fixed 2026-03-29. Added `make configure-backend` — reads bootstrap outputs and
+      writes the file with real values. First-time setup order documented in `make help`.
+      *Files:* `Makefile`
 
 ### Operational — medium priority
 
-- [ ] **No CloudWatch dashboard or budget alerts.** No visibility into Lambda
-      errors, SQS queue depth, RDS connections, or S3 request rates. No AWS
-      Budget alarm for monthly spending.
+- [x] **No budget alerts.**
+      Fixed 2026-03-29. `aws_budgets_budget.monthly` alerts at 80% actual and 100%
+      forecasted against a configurable limit (default $75/month). Email addresses set
+      via `budget_alert_emails` in terraform.tfvars.
+      *Files:* `aws/envs/prod/main.tf`, `aws/envs/prod/variables.tf`, `aws/envs/prod/terraform.tfvars.example`
+
+- [ ] **No CloudWatch dashboard.** No unified view of Lambda errors, SQS queue
+      depth, RDS connections, or S3 request rates.
+      **Deferred → low priority / future scope**
 
 - [ ] **No backup/restore documentation for RDS.** 7-day retention + final
       snapshot configured, but no documented restore procedure.
+      **Deferred → low priority / future scope**
 
 ---
 
 ## Future scope (not started, not prioritised)
 
+- RDS ingress rule: move from composition layer into RDS module (accept `allowed_security_group_ids` variable)
+- CloudWatch dashboard: Lambda errors, SQS depth, RDS connections, S3 request rates
+- RDS backup/restore runbook
+- VPC Flow Log alerting — low value given tight SGs; CloudTrail is higher signal for this threat model
+- Reports bucket expiration rule (~2 years) — cost hygiene; object lock not warranted (reports are re-generatable)
 - Static analysis agent (Ghidra headless / Binary Ninja API)
 - Memory forensics agent (Volatility 3 post-detonation)
 - Agent orchestration layer (Step Functions or separate service)

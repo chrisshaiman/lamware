@@ -19,24 +19,13 @@
 
 resource "aws_security_group" "lambda" {
   name        = "${var.name_prefix}-lambda-sg"
-  description = "Lambda functions — outbound to RDS and S3 endpoint"
+  description = "Lambda functions — outbound to RDS and VPC endpoints only"
   vpc_id      = var.vpc_id
 
-  egress {
-    description = "PostgreSQL to RDS"
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["10.20.0.0/16"]  # VPC CIDR — tighten to RDS SG in prod
-  }
-
-  egress {
-    description = "HTTPS to VPC endpoints (S3, SQS, Secrets Manager) — no internet route exists"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["10.20.0.0/16"]  # VPC CIDR — endpoints are reachable via private IPs only
-  }
+  # Egress rules are added in the composition layer (aws/envs/prod/main.tf) using
+  # aws_vpc_security_group_egress_rule so the RDS rule can reference the RDS
+  # security group directly instead of hardcoding the VPC CIDR.
+  # See: lambda_to_rds_egress, lambda_to_endpoints_egress
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-lambda-sg" })
 }
