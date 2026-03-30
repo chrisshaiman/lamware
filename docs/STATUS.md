@@ -74,8 +74,8 @@ malware-sandbox-infra/
 │   └── backend-aws.hcl            ~ placeholder values, needs real bucket name
 │
 └── src/
-    ├── report_processor.py        ~ stub (deployable, no real logic yet)
-    └── sample_submitter.py        ~ stub (deployable, no real logic yet)
+    ├── report_processor.py        ~ stub (deployable, no real logic yet — needs real Cape report JSON)
+    └── sample_submitter.py        ✓ complete
     # run `make lambda` to build src/*.zip before terraform apply
 ```
 
@@ -229,6 +229,23 @@ in the next round of implementation work.
 - [ ] **No backup/restore documentation for RDS.** 7-day retention + final
       snapshot configured, but no documented restore procedure.
       **Deferred → low priority / future scope**
+
+---
+
+## Lambda handlers — implementation status
+
+- [x] **`src/sample_submitter.py` — implemented 2026-03-29.**
+      Validates `{filename, sha256, tags}` → sanitizes filename (path traversal strip)
+      → generates pre-signed S3 PUT URL (15 min TTL) → enqueues SQS job
+      → returns `{task_id, upload_url, expires_in, s3_key}`. boto3 clients
+      initialised at module level for warm-start reuse. Full input validation
+      and structured error responses.
+
+- [ ] **`src/report_processor.py` — defer until Cape is running.**
+      Needs real Cape JSON report output to define the parser and RDS schema correctly.
+      Building it blind risks getting the schema wrong and rewriting it anyway.
+      **Do after:** OVH provisioned → Ansible configured → Cape running → sample detonated
+      → actual report JSON captured. Then implement parser + define RDS tables together.
 
 ---
 
