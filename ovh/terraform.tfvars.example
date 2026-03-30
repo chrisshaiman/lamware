@@ -1,0 +1,37 @@
+# ovh/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in values before running terraform apply.
+# terraform.tfvars is gitignored — never commit it.
+#
+# OVH API credentials:
+#   1. Go to https://api.us.ovhcloud.com/createApp/
+#   2. Create an application — note application_key and application_secret
+#   3. Run the token creation flow to get consumer_key:
+#      https://api.us.ovhcloud.com/1.0/auth/credential
+#      Required rights: GET/PUT/POST/DELETE on /dedicated/server/*
+#                       GET/PUT/POST/DELETE on /ip/*
+#                       GET/PUT/POST/DELETE on /me/sshKey/*
+
+ovh_application_key    = ""
+ovh_application_secret = ""
+ovh_consumer_key       = ""
+
+# OVH service name — found in OVH manager under:
+#   Bare Metal Cloud → Dedicated Servers → <your server> → General Information
+# Format: "ns123456.ip-1-2-3.eu" or similar
+server_name = ""
+
+# Your admin IP(s) in CIDR notation — robot firewall allows SSH + WireGuard from these only.
+# Use your static IP. Check with: curl -s https://checkip.amazonaws.com
+admin_cidrs = ["YOUR_IP/32"]
+
+# Ed25519 public key for SSH access and Ansible runs.
+# Generate: ssh-keygen -t ed25519 -f ~/.ssh/sandbox_ed25519
+# Value: contents of ~/.ssh/sandbox_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAA..."
+
+# Optional overrides (defaults are fine for most deployments):
+# hostname       = "sandbox"
+# os_template    = "ubuntu2404-server_64"
+# wireguard_port = 51820
+# no_raid        = false
+# name_prefix    = "malware-sandbox"

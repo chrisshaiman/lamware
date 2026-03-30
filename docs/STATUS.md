@@ -40,7 +40,11 @@ malware-sandbox-infra/
 │       ├── s3-sync/               ~ STUB (will be absorbed into sqs-agent)
 │       └── sqs-agent/             ✗ NOT YET BUILT
 │
-├── ovh/                           ✗ NOT YET BUILT (bare metal provider)
+├── ovh/
+│   ├── main.tf                    ✓ complete (firewall, SSH key, OS install)
+│   ├── variables.tf               ✓ complete
+│   ├── outputs.tf                 ✓ complete
+│   └── terraform.tfvars.example   ✓ complete
 │
 ├── aws/
 │   ├── bootstrap/
@@ -94,6 +98,8 @@ malware-sandbox-infra/
 - `aws/modules/api/` — HTTP API Gateway v2, POST /submit route, IAM auth, throttling, access logs
 - `aws/envs/prod/` — composition layer wiring all modules; KMS key, Secrets Manager secrets, cross-module rules
 - `Makefile` — `make image`, `make infra`, `make configure` entry points
+- `ovh/` — OVH bare metal module: robot firewall (SSH + WireGuard allowlist), SSH key registration, Ubuntu 24.04 OS install
+- `src/sample_submitter.py` — Lambda handler: validates submission, issues pre-signed S3 URL, enqueues SQS job
 
 ---
 
