@@ -21,9 +21,12 @@ malware-sandbox-infra/
 │   └── STATUS.md                  ✓ this file
 │
 ├── packer/
-│   ├── ubuntu-sandbox.pkr.hcl     ~ STUB (file exists, not implemented)
+│   ├── ubuntu-sandbox.pkr.hcl     ✓ complete
+│   ├── ansible/
+│   │   └── hardening.yml          ✓ complete (konstruktoid.hardening playbook)
 │   └── http/
-│       └── user-data              ✗ NOT YET BUILT
+│       ├── meta-data              ✓ complete
+│       └── user-data              ✓ complete (placeholder hash — run make packer-setup)
 │
 ├── ansible/
 │   ├── site.yml                   ~ STUB
@@ -99,6 +102,7 @@ malware-sandbox-infra/
 - `aws/envs/prod/` — composition layer wiring all modules; KMS key, Secrets Manager secrets, cross-module rules
 - `Makefile` — `make image`, `make infra`, `make configure` entry points
 - `ovh/` — OVH bare metal module: robot firewall (SSH + WireGuard allowlist), SSH key registration, Ubuntu 24.04 OS install
+- `packer/ubuntu-sandbox.pkr.hcl` — hardened Ubuntu 24.04 image: KVM packages, CAPEv2 clone + deps, AWS CLI, konstruktoid hardening, qcow2 output
 - `src/sample_submitter.py` — Lambda handler: validates submission, issues pre-signed S3 URL, enqueues SQS job
 
 ---

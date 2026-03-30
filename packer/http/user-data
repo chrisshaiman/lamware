@@ -1,0 +1,52 @@
+#cloud-config
+autoinstall:
+  version: 1
+
+  locale: en_US.UTF-8
+
+  keyboard:
+    layout: us
+
+  network:
+    network:
+      version: 2
+      ethernets:
+        any:
+          match:
+            name: "en*"
+          dhcp4: true
+
+  identity:
+    hostname: sandbox-build
+    username: packer
+    # SHA-512 hashed password for build-time SSH access.
+    # This credential is removed/locked by the konstruktoid hardening role.
+    #
+    # One-time setup: generate a hash and set it here:
+    #   openssl passwd -6 YOUR_CHOSEN_PASSWORD
+    #
+    # Also set ssh_password = "YOUR_CHOSEN_PASSWORD" in packer/packer.auto.pkrvars.hcl
+    #
+    # REPLACE THIS PLACEHOLDER before running packer build:
+    password: "$6$PLACEHOLDER$REPLACE_THIS_WITH_OUTPUT_OF_openssl_passwd_-6"
+
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  storage:
+    layout:
+      name: lvm
+
+  late-commands:
+    # Grant packer user passwordless sudo for Packer provisioner steps
+    - echo 'packer ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/packer
+    - chmod 0440 /target/etc/sudoers.d/packer
+
+  # Minimal package set — everything else installed via Packer provisioners
+  packages:
+    - curl
+    - git
+
+  # Disable automatic updates during build — Packer manages package state
+  updates: none
