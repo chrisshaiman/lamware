@@ -1,0 +1,30 @@
+---
+# Applies konstruktoid/ansible-role-hardening to the Packer build VM.
+# This role provides a CIS-aligned Ubuntu baseline: sysctl hardening, PAM
+# configuration, SSH lockdown, kernel module restrictions, and more.
+#
+# Prerequisite:
+#   ansible-galaxy install konstruktoid.hardening -p packer/ansible/roles
+#
+# The role is intentionally run last in the Packer build so all packages
+# are in place before the system is locked down.
+- name: Apply konstruktoid hardening baseline
+  hosts: default
+  become: true
+
+  vars:
+    # Allow the packer user to keep sudo access during the build.
+    # The account is locked/removed on the deployed host by the Ansible
+    # hardening role in roles/hardening/ at configure time.
+    sshd_admin_net:
+      - "0.0.0.0/0"  # Build environment — restrict to admin_cidrs on the deployed host
+
+    # Keep password auth available for Packer's remaining provisioner steps.
+    # The deployed host disables password auth via roles/wireguard + roles/hardening.
+    sshd_password_authentication: "yes"
+
+    # Do not set a login banner during build — it interferes with Packer SSH
+    set_motd: false
+
+  roles:
+    - konstruktoid.hardening

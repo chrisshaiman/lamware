@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image infra-ovh infra-aws lambda configure validate clean configure-backend help
+.PHONY: all image infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -37,6 +37,7 @@ help:
 	@echo "Malware Sandbox Infrastructure"
 	@echo "================================"
 	@echo ""
+	@echo "  make packer-setup       One-time: generate build password + install Ansible hardening role"
 	@echo "  make configure-backend  Populate shared/backend-aws.hcl from bootstrap outputs"
 	@echo "  make lambda             Zip Lambda handler source into src/*.zip"
 	@echo "  make image              Build Packer base image"
@@ -94,17 +95,47 @@ lambda:
 	@echo "==> Lambda packages built: src/report_processor.zip src/sample_submitter.zip"
 
 # -----------------------------------------------------------------------------
+# packer-setup — one-time setup before first packer build
+# Generates the build password hash and installs the Ansible hardening role.
+# Run this once, then follow the printed instructions.
+# -----------------------------------------------------------------------------
+
+packer-setup:
+	@echo "==> Installing konstruktoid.hardening Ansible role..."
+	@ansible-galaxy install konstruktoid.hardening -p $(PACKER_DIR)/ansible/roles
+	@echo ""
+	@echo "==> Generating build password hash..."
+	@echo "    Enter a password for the Packer build user (used only during image build):"
+	@read -s PW && \
+		HASH=$$(openssl passwd -6 "$$PW") && \
+		echo "" && \
+		echo "  1. Replace the placeholder in packer/http/user-data identity.password with:" && \
+		echo "     $$HASH" && \
+		echo "" && \
+		echo "  2. Create packer/packer.auto.pkrvars.hcl with:" && \
+		echo '     ssh_password = "'$$PW'"'
+	@echo ""
+	@echo "==> packer-setup complete. Update user-data and pkrvars, then run: make image"
+
+# -----------------------------------------------------------------------------
 # Packer — build hardened base image
-# Outputs qcow2 to packer/output/ then uploads snapshot to OVH
+# Outputs qcow2 to packer/output/ then uploads snapshot to OVH via BYOI API.
+# Run make packer-setup first if this is your first build.
 # -----------------------------------------------------------------------------
 
 image:
+	@echo "==> Checking packer-setup prerequisites..."
+	@grep -q "PLACEHOLDER" $(PACKER_DIR)/http/user-data && \
+		(echo "ERROR: packer/http/user-data still has placeholder password hash. Run: make packer-setup" && exit 1) || true
+	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
+		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found. Run: make packer-setup" && exit 1)
 	@echo "==> Building Packer base image..."
 	@cd $(PACKER_DIR) && \
 		packer init . && \
 		packer validate . && \
 		packer build ubuntu-sandbox.pkr.hcl
-	@echo "==> Image build complete."
+	@echo "==> Image build complete: packer/output/ubuntu-sandbox.qcow2"
+	@echo "==> Next: upload to S3 and deploy via OVH BYOI API"
 
 # -----------------------------------------------------------------------------
 # Terraform — OVH bare metal
