@@ -25,6 +25,11 @@ output "sample_submitter_arn" {
   description = "ARN of sample_submitter — wire to API Gateway Lambda integration"
 }
 
+output "sample_submitter_invoke_arn" {
+  value       = aws_lambda_function.sample_submitter.invoke_arn
+  description = "Invoke ARN of sample_submitter — used as integration_uri in API Gateway (different format from arn)"
+}
+
 output "sample_submitter_function_name" {
   value       = aws_lambda_function.sample_submitter.function_name
   description = "Function name of sample_submitter — used by API Gateway invoke permission"

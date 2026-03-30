@@ -43,7 +43,10 @@ malware-sandbox-infra/
 ├── ovh/                           ✗ NOT YET BUILT (bare metal provider)
 │
 ├── aws/
-│   ├── bootstrap/                 ✗ NOT YET BUILT (S3 + DynamoDB for remote state)
+│   ├── bootstrap/
+│   │   ├── main.tf                ✓ complete
+│   │   ├── variables.tf           ✓ complete
+│   │   └── outputs.tf             ✓ complete
 │   ├── modules/
 │   │   ├── vpc/                   ✓ complete (subnets, NAT, flow logs)
 │   │   ├── s3/                    ✓ complete (buckets, object lock, KMS, lifecycle)
@@ -52,11 +55,20 @@ malware-sandbox-infra/
 │   │   │   ├── main.tf            ✓ complete
 │   │   │   ├── variables.tf       ✓ complete
 │   │   │   └── outputs.tf         ✓ complete
-│   │   ├── sqs/                   ✗ NOT YET BUILT
-│   │   └── api/                   ✗ NOT YET BUILT
+│   │   ├── sqs/
+│   │   │   ├── main.tf            ✓ complete
+│   │   │   ├── variables.tf       ✓ complete
+│   │   │   └── outputs.tf         ✓ complete
+│   │   └── api/
+│   │       ├── main.tf            ✓ complete
+│   │       ├── variables.tf       ✓ complete
+│   │       └── outputs.tf         ✓ complete
 │   └── envs/
 │       └── prod/
-│           └── main.tf            ~ STUB (provider + backend only, no module calls)
+│           ├── main.tf            ✓ complete
+│           ├── variables.tf       ✓ complete
+│           ├── outputs.tf         ✓ complete
+│           └── terraform.tfvars.example ✓ complete
 │
 └── shared/
     ├── backend-aws.hcl            ~ placeholder values, needs real bucket name
@@ -73,6 +85,10 @@ malware-sandbox-infra/
 - `aws/modules/s3/` — samples + reports buckets, object lock, KMS, lifecycle, S3 event notification
 - `aws/modules/rds/` — PostgreSQL, private subnet, Performance Insights, encrypted
 - `aws/modules/lambda/` — report_processor + sample_submitter functions, IAM, SQS permissions, VPC endpoint, variables, outputs
+- `aws/modules/sqs/` — job queue, DLQ, bare metal IAM user + policy, credentials in Secrets Manager
+- `aws/bootstrap/` — S3 state bucket + DynamoDB lock table; runs once with local state
+- `aws/modules/api/` — HTTP API Gateway v2, POST /submit route, IAM auth, throttling, access logs
+- `aws/envs/prod/` — composition layer wiring all modules; KMS key, Secrets Manager secrets, cross-module rules
 
 ---
 
