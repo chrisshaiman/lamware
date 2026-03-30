@@ -45,8 +45,14 @@ variable "samples_bucket_arn" {
 
 variable "visibility_timeout_seconds" {
   type        = number
-  default     = 1800  # 30 minutes — covers typical Cape analysis duration
+  default     = 3600  # 60 minutes — complex malware can run 30+ min; 60 min prevents spurious redelivery
   description = "How long a received message is hidden from other consumers. Must exceed the longest expected Cape analysis run."
+}
+
+variable "alarm_sns_topic_arns" {
+  type        = list(string)
+  default     = []
+  description = "SNS topic ARNs to notify when the DLQ alarm fires. Alarm is created regardless — leave empty until you have an ops notification topic."
 }
 
 variable "max_receive_count" {

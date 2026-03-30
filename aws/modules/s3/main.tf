@@ -30,14 +30,24 @@ resource "aws_s3_bucket_versioning" "samples" {
   versioning_configuration { status = "Enabled" }
 }
 
-# Object lock — COMPLIANCE mode means nobody (including root) can delete
-# Set retention to 90 days; adjust to your IR policy
+# Object lock — see docs/DECISIONS.md ADR-007 for mode rationale.
+#
+# GOVERNANCE (current): protects against accidental deletion and unprivileged
+# tampering. Can be bypassed by any principal with s3:BypassGovernanceRetention.
+# Useful escape hatch if a sample needs to be purged (legal takedown, CSAM
+# adjacent content, operator policy change).
+#
+# To upgrade to COMPLIANCE: change mode = "GOVERNANCE" → mode = "COMPLIANCE"
+# WARNING — this is irreversible per object. COMPLIANCE means nobody (including
+# root and AWS support) can delete the object until the retention period expires.
+# Only do this if you have a regulatory chain-of-custody requirement (DFIR
+# engagements, law enforcement cooperation). See ADR-007 for the full tradeoff.
 resource "aws_s3_bucket_object_lock_configuration" "samples" {
   bucket = aws_s3_bucket.samples.id
 
   rule {
     default_retention {
-      mode = "GOVERNANCE"  # Use COMPLIANCE for stricter — can't be overridden
+      mode = "GOVERNANCE"
       days = 90
     }
   }

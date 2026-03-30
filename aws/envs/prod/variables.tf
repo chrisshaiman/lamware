@@ -85,6 +85,22 @@ variable "api_throttle_rate_limit" {
   default = 5
 }
 
+# -----------------------------------------------------------------------------
+# Budget alerts — notifications when monthly AWS spend approaches/exceeds limit
+# Expected baseline: ~$43/month AWS. Threshold set above that with buffer.
+# -----------------------------------------------------------------------------
+
+variable "monthly_budget_limit" {
+  type        = string
+  default     = "75"
+  description = "Monthly AWS spend limit in USD. Alert fires at 80% actual and 100% forecasted. Default is ~75% above expected baseline to catch unexpected cost growth."
+}
+
+variable "budget_alert_emails" {
+  type        = list(string)
+  description = "Email addresses to notify when budget thresholds are breached. Must set at least one."
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

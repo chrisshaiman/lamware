@@ -35,7 +35,10 @@ RISE-1 is adequate for dev/test or low-volume use (~$127/month total).
 | SQS | Standard queue, low volume | <$1 | Within free tier (1M req/month) |
 | KMS | 1 CMK + API calls | ~$1 | Single key used across S3, RDS, Lambda logs |
 | Secrets Manager | ~6 secrets | ~$2 | DSDT, Cape key, DB password, WireGuard keys |
+| Secrets Manager rotation | RDS rotation Lambda (SAR) | ~$0 | 1 invocation/month; within Lambda free tier |
 | CloudWatch Logs | Lambda logs (30d retention) + VPC flow logs | ~$3 | |
+| CloudWatch alarm | DLQ depth alarm | ~$0 | First 10 alarms free per account |
+| AWS Budgets | Monthly spend alert | $0 | First 2 budgets per account always free |
 | DynamoDB | PAY_PER_REQUEST (TF state lock only) | <$1 | Negligible |
 | **AWS Total** | | **~$43/month** | |
 

@@ -143,6 +143,43 @@ Net saving: ~$19/month ($33 NAT removed, $14 endpoints added).
 
 ---
 
+## ADR-007: S3 Object Lock mode — GOVERNANCE, not COMPLIANCE
+
+**Status:** Decided (known limitation documented)
+
+**Context:**
+S3 Object Lock has two modes. GOVERNANCE prevents deletion by normal IAM principals
+but allows override by anyone with `s3:BypassGovernanceRetention`. COMPLIANCE is
+absolute — no principal (including root and AWS support) can delete an object before
+the retention period expires, and the mode itself cannot be downgraded once set.
+
+The samples bucket uses Object Lock to guarantee sample integrity and reproducibility —
+ensuring the exact binary that was detonated can be retrieved for re-analysis.
+
+**Decision:**
+Use GOVERNANCE mode. The primary threat model is accidental deletion and unprivileged
+tampering, not a determined insider or court order. COMPLIANCE introduces an escape
+hatch problem in the other direction: if a sample needs to be purged (legal takedown
+request, inadvertent ingestion of CSAM-adjacent content, operator policy change),
+COMPLIANCE mode makes that impossible without deleting the AWS account.
+
+This tool does not currently operate under a regulatory chain-of-custody requirement.
+If that changes — e.g., formal DFIR engagements where evidence admissibility matters —
+revisit COMPLIANCE mode for a dedicated evidence bucket at that time.
+
+**To change:**
+In `aws/modules/s3/main.tf`, change `mode = "GOVERNANCE"` to `mode = "COMPLIANCE"` in
+`aws_s3_bucket_object_lock_configuration.samples`. This is irreversible per object —
+existing locked objects cannot be downgraded. Create a new bucket if you need both modes.
+
+**Consequences:**
+- Operator retains the ability to purge samples if legally required
+- Root account / break-glass role can bypass object lock with `s3:BypassGovernanceRetention`
+- Does not meet evidentiary standards for court admissibility or strict compliance frameworks
+- Upgrade path is simple (one line change) if requirements change
+
+---
+
 ## ADR-005: Packer/Ansible/Terraform toolchain split
 
 **Status:** Decided
