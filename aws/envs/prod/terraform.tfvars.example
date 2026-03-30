@@ -1,0 +1,24 @@
+# aws/envs/prod/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in values before running terraform apply.
+# terraform.tfvars is gitignored — never commit it.
+
+aws_region  = "us-east-1"
+name_prefix = "malware-sandbox"
+
+# S3 bucket names must be globally unique across all AWS accounts.
+# Recommended pattern: <name>-<your-account-id>
+samples_bucket_name = "malware-sandbox-samples-<your-account-id>"
+reports_bucket_name = "malware-sandbox-reports-<your-account-id>"
+
+# RDS — defaults are fine for most deployments
+# db_name         = "sandbox_analysis"
+# db_username     = "sandbox_admin"
+# db_instance_class = "db.t4g.micro"
+
+# Lambda zip paths — build before applying
+# report_processor_zip = "../../src/report_processor.zip"
+# sample_submitter_zip = "../../src/sample_submitter.zip"
+
+# API throttling — tune to match bare metal capacity
+# api_throttle_burst_limit = 10
+# api_throttle_rate_limit  = 5

@@ -15,22 +15,9 @@ resource "aws_security_group" "rds" {
   description = "RDS access — Lambda and admin VPN only"
   vpc_id      = var.vpc_id
 
-  ingress {
-    description     = "PostgreSQL from Lambda SG"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [var.lambda_sg_id]
-  }
-
-  # Uncomment and set var.vpn_cidr if you want direct psql access over WireGuard
-  # ingress {
-  #   description = "PostgreSQL from admin VPN"
-  #   from_port   = 5432
-  #   to_port     = 5432
-  #   protocol    = "tcp"
-  #   cidr_blocks = [var.vpn_cidr]
-  # }
+  # Ingress rules are added in the composition layer (aws/envs/prod/main.tf)
+  # to avoid circular dependencies with the lambda module.
+  # See: aws_vpc_security_group_ingress_rule.lambda_to_rds
 
   egress {
     from_port   = 0
