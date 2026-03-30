@@ -102,13 +102,8 @@ resource "aws_s3_bucket_policy" "samples" {
           Bool = { "aws:SecureTransport" = "false" }
         }
       },
-      {
-        Sid       = "AllowSandboxPresign"
-        Effect    = "Allow"
-        Principal = { AWS = var.sandbox_role_arn }
-        Action    = ["s3:PutObject", "s3:GetObject"]
-        Resource  = "${aws_s3_bucket.samples.arn}/*"
-      }
+      # Sandbox agent access granted via IAM user policy in the sqs module,
+      # not here — keeps S3 module free of cross-module dependencies
     ]
   })
 }
@@ -188,28 +183,12 @@ resource "aws_s3_bucket_policy" "reports" {
           Bool = { "aws:SecureTransport" = "false" }
         }
       },
-      {
-        Sid       = "AllowSandboxSync"
-        Effect    = "Allow"
-        Principal = { AWS = var.sandbox_role_arn }
-        Action    = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
-        Resource  = [
-          "${aws_s3_bucket.reports.arn}",
-          "${aws_s3_bucket.reports.arn}/*"
-        ]
-      }
+      # Sandbox agent access granted via IAM user policy in the sqs module,
+      # not here — keeps S3 module free of cross-module dependencies
     ]
   })
 }
 
-# S3 event notification — triggers Lambda when a new report lands
-resource "aws_s3_bucket_notification" "reports" {
-  bucket = aws_s3_bucket.reports.id
-
-  lambda_function {
-    lambda_function_arn = var.report_processor_lambda_arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = "reports/"
-    filter_suffix       = ".json"
-  }
-}
+# S3 event notification is wired in aws/envs/prod/main.tf, not here,
+# because it needs the report_processor Lambda ARN which creates a
+# circular dependency if defined inside this module.

@@ -2,7 +2,8 @@
 variable "name_prefix"          { type = string }
 variable "vpc_id"               { type = string }
 variable "private_subnet_ids"   { type = list(string) }
-variable "lambda_sg_id"         { type = string }
+# lambda_sg_id intentionally absent — ingress rule is added in the composition
+# layer to avoid a circular dependency with the lambda module
 variable "kms_key_arn"          { type = string }
 variable "db_name"              { type = string; default = "sandbox_analysis" }
 variable "db_username"          { type = string; default = "sandbox_admin" }
