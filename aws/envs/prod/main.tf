@@ -51,6 +51,40 @@ locals {
 }
 
 # =============================================================================
+# Budget alert — catch unexpected AWS cost growth early
+#
+# Expected AWS baseline: ~$43/month (VPC endpoints, RDS, Lambda, SQS, S3).
+# Alert at 80% actual spend and 100% forecasted so you get a warning before
+# the month closes. Default limit is $75 — adjust in terraform.tfvars.
+# =============================================================================
+
+resource "aws_budgets_budget" "monthly" {
+  name         = "${var.name_prefix}-monthly"
+  budget_type  = "COST"
+  limit_amount = var.monthly_budget_limit
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  # Fire when actual spend exceeds 80% of limit
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = var.budget_alert_emails
+  }
+
+  # Fire when AWS forecasts you'll exceed 100% of limit before month end
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = var.budget_alert_emails
+  }
+}
+
+# =============================================================================
 # KMS — single key for the project
 # Used by: S3 (both buckets), RDS, SQS, Lambda logs, Secrets Manager secrets
 # =============================================================================
@@ -244,6 +278,111 @@ resource "aws_vpc_security_group_ingress_rule" "lambda_to_rds" {
   to_port                      = 5432
   ip_protocol                  = "tcp"
   referenced_security_group_id = module.lambda.security_group_id
+}
+
+# Lambda SG egress rules — defined here alongside the ingress rule above so all
+# cross-module security group wiring lives in one place.
+
+resource "aws_vpc_security_group_egress_rule" "lambda_to_rds" {
+  security_group_id            = module.lambda.security_group_id
+  description                  = "PostgreSQL to RDS security group"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.rds.rds_sg_id
+}
+
+resource "aws_vpc_security_group_egress_rule" "lambda_to_endpoints" {
+  security_group_id = module.lambda.security_group_id
+  description       = "HTTPS to VPC endpoints (S3, SQS, Secrets Manager) — no internet route in this VPC"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.vpc_cidr
+}
+
+# =============================================================================
+# Secrets Manager rotation — RDS password
+#
+# Uses the AWS-managed rotation Lambda from the Serverless Application Repository.
+# Single-user rotation: the Lambda connects to RDS with the current credentials,
+# generates a new password, updates RDS, then updates the secret. No secondary
+# user required.
+#
+# The rotation Lambda runs inside the VPC so it can reach RDS on port 5432 and
+# Secrets Manager via the existing VPC Interface Endpoint on port 443.
+# =============================================================================
+
+# Look up the latest version of the AWS-managed RDS PostgreSQL rotation Lambda
+data "aws_serverlessapplicationrepository_application" "rds_rotation" {
+  application_id = "arn:aws:serverlessrepo:us-east-1:297356227824:applications/SecretsManagerRDSPostgreSQLRotationSingleUser"
+}
+
+# Security group for the rotation Lambda — egress to RDS and Secrets Manager only
+resource "aws_security_group" "rotation_lambda" {
+  name        = "${var.name_prefix}-rotation-lambda-sg"
+  description = "Secrets Manager rotation Lambda — outbound to RDS and Secrets Manager VPC endpoint"
+  vpc_id      = module.vpc.vpc_id
+
+  tags = { Name = "${var.name_prefix}-rotation-lambda-sg" }
+}
+
+resource "aws_vpc_security_group_egress_rule" "rotation_to_rds" {
+  security_group_id            = aws_security_group.rotation_lambda.id
+  description                  = "PostgreSQL to RDS for password rotation"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = module.rds.rds_sg_id
+}
+
+resource "aws_vpc_security_group_egress_rule" "rotation_to_endpoints" {
+  security_group_id = aws_security_group.rotation_lambda.id
+  description       = "HTTPS to Secrets Manager VPC endpoint"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.vpc_cidr
+}
+
+# Allow the rotation Lambda into the RDS security group
+resource "aws_vpc_security_group_ingress_rule" "rds_from_rotation" {
+  security_group_id            = module.rds.rds_sg_id
+  description                  = "PostgreSQL from Secrets Manager rotation Lambda"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.rotation_lambda.id
+}
+
+# Deploy the AWS-managed rotation Lambda from SAR into this VPC
+resource "aws_serverlessapplicationrepository_cloudformation_stack" "rds_rotation" {
+  name             = "${var.name_prefix}-rds-rotation"
+  application_id   = data.aws_serverlessapplicationrepository_application.rds_rotation.application_id
+  semantic_version = data.aws_serverlessapplicationrepository_application.rds_rotation.semantic_version
+
+  capabilities = data.aws_serverlessapplicationrepository_application.rds_rotation.required_capabilities
+
+  parameters = {
+    endpoint            = "https://secretsmanager.${var.aws_region}.amazonaws.com"
+    functionName        = "${var.name_prefix}-rds-rotation"
+    vpcSubnetIds        = join(",", module.vpc.private_subnet_ids)
+    vpcSecurityGroupIds = aws_security_group.rotation_lambda.id
+  }
+}
+
+# Wire rotation to the DB credentials secret — rotate every 30 days
+resource "aws_secretsmanager_secret_rotation" "db_credentials" {
+  secret_id = aws_secretsmanager_secret.db_credentials.id
+
+  # The SAR stack outputs the Lambda ARN under "RotationLambdaARN"
+  rotation_lambda_arn = aws_serverlessapplicationrepository_cloudformation_stack.rds_rotation.outputs["RotationLambdaARN"]
+
+  rotation_rules {
+    automatically_after_days = 30
+  }
+
+  depends_on = [aws_serverlessapplicationrepository_cloudformation_stack.rds_rotation]
 }
 
 # S3 event notification — reports bucket triggers report_processor Lambda

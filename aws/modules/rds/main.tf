@@ -19,12 +19,10 @@ resource "aws_security_group" "rds" {
   # to avoid circular dependencies with the lambda module.
   # See: aws_vpc_security_group_ingress_rule.lambda_to_rds
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # No egress rules — RDS is a passive listener; it never initiates outbound
+  # connections in this architecture. Security groups are stateful, so response
+  # traffic to established inbound connections is permitted automatically.
+  egress = []
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-rds-sg" })
 }

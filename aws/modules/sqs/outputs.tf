@@ -26,3 +26,13 @@ output "baremetal_agent_iam_user" {
   value       = aws_iam_user.baremetal_agent.name
   description = "IAM username for the bare metal polling agent"
 }
+
+output "dlq_alarm_arn" {
+  value       = aws_cloudwatch_metric_alarm.dlq_depth.arn
+  description = "CloudWatch alarm ARN for DLQ depth — wire to an SNS topic via alarm_sns_topic_arns variable"
+}
+
+output "baremetal_agent_role_arn" {
+  value       = aws_iam_role.baremetal_agent.arn
+  description = "IAM role ARN the bare metal agent assumes for 1-hour sessions — monitor AssumeRole calls in CloudTrail"
+}
