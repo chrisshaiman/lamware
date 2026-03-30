@@ -70,6 +70,18 @@ Lifecycle rules are already scaffolded in `aws/modules/s3/`.
 
 ---
 
+## OVH — Additional Notes
+
+OVH bare metal is ordered manually via the OVH manager. Terraform manages configuration
+(robot firewall, OS install) but not hardware ordering. The `ovh/` module assumes the
+server is already provisioned and references it by service_name.
+
+Bandwidth: OVH includes generous unmetered bandwidth on dedicated servers (varies by tier).
+S3 transfer costs apply for report uploads from bare metal to AWS (~$0.09/GB out to internet,
+free for inbound). At typical malware analysis volumes this is negligible.
+
+---
+
 ## Not Yet Costed (future scope)
 
 | Component | Notes |
