@@ -123,7 +123,7 @@ this is the primary reason bare metal is required.
 
 ## Ansible roles
 
-> **Implementation status:** All roles are currently stubs. See **docs/STATUS.md** for current build state.
+> **Implementation status:** All roles are complete. See **docs/STATUS.md** for current build state.
 
 | Role | Purpose |
 |---|---|

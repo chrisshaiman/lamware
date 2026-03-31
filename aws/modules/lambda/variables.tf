@@ -82,10 +82,6 @@ variable "kms_key_arn" {
 # Secrets Manager
 # -----------------------------------------------------------------------------
 
-variable "secrets_arn_prefix" {
-  type        = string
-  description = "ARN prefix for Secrets Manager secrets Lambda may read — policy appends a wildcard suffix"
-}
 
 variable "db_secret_arn" {
   type        = string

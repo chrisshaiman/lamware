@@ -113,6 +113,71 @@ malware-sandbox-infra/
 
 ---
 
+## Review findings (2026-03-30) — Full system cross-component review
+
+Issues identified during full-system assessment, focusing on toxic pairs and unexpected
+interactions between components. Work through each: fix, defer, or accept.
+
+### High — toxic pairs / unexpected interactions
+
+- [x] **Pre-signed URL race: SQS message enqueued before sample is uploaded.**
+      Fixed 2026-03-30. Split `sample_submitter.py` into two phases. Phase 1 (API GW):
+      embeds job metadata (task_id, sha256, tags) in the pre-signed URL signature via
+      S3 object metadata — client MUST send x-amz-meta-* headers or PUT fails with 403.
+      Phase 2 (S3 ObjectCreated on samples/): reads metadata via head_object, enqueues SQS.
+      Job is now only enqueued after S3 confirms the object exists. Added S3 event
+      notification on samples bucket → sample_submitter, and Lambda permission for
+      samples bucket to invoke the function.
+      *Files:* `src/sample_submitter.py`, `aws/modules/lambda/main.tf`,
+               `aws/envs/prod/main.tf`
+
+- [x] **Cape API binding may not respect `api.conf [api] url`.**
+      Fixed 2026-03-30. Confirmed via CAPEv2 source that `api.conf [api] url` is the
+      display/callback URL only — it does not control the bind address. The real bind
+      address is the `runserver_plus 0.0.0.0:8000` argument in
+      `/lib/systemd/system/cape-web.service`. Added a `lineinfile` task that rewrites that
+      argument to the WireGuard IP after `cape2.sh` installs the unit file. Updated the
+      `url` task comment to clarify it is for display purposes only.
+      *Files:* `ansible/roles/cape/tasks/main.yml`
+
+- [x] **Lambda Secrets Manager policy is over-scoped.**
+      Fixed 2026-03-30. Replaced `secrets_arn_prefix/*` wildcard with the two exact ARNs
+      Lambda needs: `var.db_secret_arn` and `var.cape_api_secret_arn`. Removed the
+      `secrets_arn_prefix` variable from the lambda module interface and the composition
+      layer entirely — it only existed to enable the wildcard.
+      *Files:* `aws/modules/lambda/main.tf`, `aws/modules/lambda/variables.tf`,
+               `aws/envs/prod/main.tf`
+
+### Medium — operational risks
+
+- [~] **iptables rule ordering not guaranteed after libvirtd restart.** *(deferred)*
+      libvirtd re-inserts its own FORWARD rules on restart, potentially ahead of the DROP
+      rules. The detonation network uses an isolated libvirt network (no `<forward>` element)
+      so libvirt adds no external ACCEPT rules today — risk is low. Robust fix would use a
+      libvirt hook script (`/etc/libvirt/hooks/network`) to re-insert DROP rules whenever
+      the detonation network starts. Deferred: requires live testing on bare metal; current
+      risk is mitigated by the isolated network type.
+      *Files:* `ansible/roles/networking/tasks/main.yml`
+
+- [~] **Duplicate IOC records possible in RDS on Lambda retry.** *(deferred — revisit when report_processor is implemented)*
+      S3 event delivery retries up to 3× on Lambda failure. If `report_processor` is retried
+      after a partial write, the same report gets processed twice. Fix: use
+      `INSERT ... ON CONFLICT DO NOTHING` keyed on `(task_id, ioc_value)` in the RDS schema.
+      *Files:* `src/report_processor.py` (stub — not yet implemented)
+
+### Documentation — stale after Ansible implementation
+
+- [x] **CLAUDE.md "Build next" still lists Ansible roles as unbuilt.**
+      Fixed 2026-03-30. Removed the six-role list; section now points to STATUS.md and
+      lists only `report_processor.py` as remaining.
+      *Files:* `CLAUDE.md`
+
+- [x] **ARCHITECTURE.md says "All roles are currently stubs".**
+      Fixed 2026-03-30. Updated to "All roles are complete."
+      *Files:* `ARCHITECTURE.md`
+
+---
+
 ## Review findings (2026-03-30) — Ansible roles post-implementation review
 
 Issues identified after Ansible role implementation. Work through each: fix, defer, or accept.
@@ -179,10 +244,10 @@ Issues identified after Ansible role implementation. Work through each: fix, def
       sqs-agent (ADR-003) and not called from site.yml.
       *Files:* `ansible/roles/s3-sync/` (removed)
 
-- [~] **`except Exception` too broad in sqs agent.**
-      Accepted. Specific catches for `ClientError` and `requests.RequestException` already
-      sit above it. The broad catch only fires on truly unexpected errors — DLQ max-receive
-      is the backstop. Retrying on unknown errors is defensible for a long-running daemon.
+- [~] **`except Exception` too broad in sqs agent.** *(deferred)*
+      Specific catches for `ClientError` and `requests.RequestException` already sit above
+      it. The broad catch only fires on truly unexpected errors — DLQ max-receive is the
+      backstop. Narrow further when the full error surface is better understood in production.
       *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
 
 ---

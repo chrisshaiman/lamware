@@ -1,20 +1,24 @@
 """
 sample_submitter — Lambda handler
-Called by API Gateway v2 (POST /submit). Validates a sample submission request,
-issues a pre-signed S3 PUT URL for direct client upload, and enqueues an analysis
-job on SQS. Returns immediately — the client polls for results separately.
+Called by API Gateway v2 (POST /submit) and by S3 ObjectCreated events.
 
-Flow:
-  API GW POST /submit  {"filename": "...", "sha256": "...", "tags": [...]}
+Two-phase flow (eliminates the race where the agent could dequeue a job
+before the client finishes uploading the sample):
+
+  Phase 1 — API GW POST /submit {"filename": "...", "sha256": "...", "tags": [...]}
     → validate + sanitize request body
     → generate task_id (UUID4)
     → construct S3 key: samples/{sha256}/{task_id}/{filename}
-    → issue pre-signed S3 PUT URL (15 min TTL)
-    → publish SQS job {task_id, s3_key, sha256, tags, submitted_at}
+    → issue pre-signed S3 PUT URL with job metadata embedded in the signature
+      (task_id, sha256, tags — client MUST send x-amz-meta-* headers)
     → return {task_id, upload_url, expires_in, s3_key}
 
-The client uploads the sample directly to S3 using the pre-signed URL, then the
-bare metal sqs-agent picks up the job from SQS and submits it to Cape locally.
+  Phase 2 — S3 ObjectCreated on samples/{sha256}/{task_id}/{filename}
+    → read job metadata from the uploaded object (task_id, sha256, tags)
+    → publish SQS job {task_id, s3_key, sha256, tags, submitted_at}
+
+The SQS job is only enqueued after S3 confirms the object exists, so the bare
+metal agent can never receive a job for a sample that has not yet been uploaded.
 
 Environment variables (set by Terraform):
   SAMPLES_BUCKET      — S3 bucket name for sample uploads
@@ -52,19 +56,29 @@ _s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION_NAME", "us-east-
 _sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"))
 
 
-def handler(event: dict, context: object) -> dict:
+def handler(event: dict, context: object) -> dict | None:
     """
-    Entry point. Validates the submission, issues a pre-signed upload URL,
-    and enqueues an analysis job.
-
-    Args:
-        event:   API Gateway HTTP v2 payload (format 2.0)
-        context: Lambda context object
-
-    Returns:
-        API Gateway-compatible response dict.
+    Entry point. Routes between the two event sources:
+      - API Gateway v2 (POST /submit): validate and return pre-signed upload URL
+      - S3 ObjectCreated (samples/ prefix): enqueue the analysis job on SQS
     """
-    logger.info("sample_submitter invoked", extra={"request_id": context.aws_request_id})
+    if _is_s3_event(event):
+        _handle_s3_event(event, context)
+        return None  # S3 event triggers don't expect a return value
+    return _handle_api_request(event, context)
+
+
+# -----------------------------------------------------------------------------
+# Phase 1 — API Gateway handler
+# -----------------------------------------------------------------------------
+
+def _handle_api_request(event: dict, context: object) -> dict:
+    """
+    API Gateway path. Validates the request, issues a pre-signed S3 PUT URL
+    with job metadata embedded in the signature, and returns immediately.
+    The SQS job is enqueued by Phase 2 when the upload completes.
+    """
+    logger.info("sample_submitter: API request", extra={"request_id": context.aws_request_id})
 
     try:
         body = _parse_body(event)
@@ -81,19 +95,15 @@ def handler(event: dict, context: object) -> dict:
     s3_key = f"samples/{sha256}/{task_id}/{filename}"
 
     try:
-        upload_url = _presigned_put_url(os.environ["SAMPLES_BUCKET"], s3_key)
+        upload_url = _presigned_put_url(
+            os.environ["SAMPLES_BUCKET"], s3_key, task_id, sha256, tags
+        )
     except ClientError:
         logger.exception("Failed to generate pre-signed URL", extra={"s3_key": s3_key})
         return _error(500, "Failed to generate upload URL")
 
-    try:
-        _enqueue_job(task_id, s3_key, sha256, tags)
-    except ClientError:
-        logger.exception("Failed to enqueue analysis job", extra={"task_id": task_id})
-        return _error(500, "Failed to enqueue analysis job")
-
     logger.info(
-        "Sample submission accepted",
+        "Sample submission accepted — awaiting upload",
         extra={"task_id": task_id, "sha256": sha256, "s3_key": s3_key, "tags": tags},
     )
 
@@ -110,8 +120,65 @@ def handler(event: dict, context: object) -> dict:
 
 
 # -----------------------------------------------------------------------------
+# Phase 2 — S3 event handler
+# -----------------------------------------------------------------------------
+
+def _handle_s3_event(event: dict, context: object) -> None:
+    """
+    S3 ObjectCreated path. Fired when a sample lands in the samples/ prefix.
+    Reads job metadata from the S3 object (embedded by the presigned URL), then
+    enqueues the SQS analysis job. Guaranteed to run only after upload completes.
+    """
+    logger.info("sample_submitter: S3 event", extra={"request_id": context.aws_request_id})
+
+    for record in event.get("Records", []):
+        bucket = record["s3"]["bucket"]["name"]
+        s3_key = record["s3"]["object"]["key"]
+
+        if not s3_key.startswith("samples/"):
+            logger.warning("Ignoring S3 event for unexpected key prefix: %s", s3_key)
+            continue
+
+        logger.info("Sample uploaded — enqueuing job: s3://%s/%s", bucket, s3_key)
+
+        try:
+            head = _s3.head_object(Bucket=bucket, Key=s3_key)
+            metadata = head.get("Metadata", {})
+
+            task_id = metadata.get("task-id")
+            sha256 = metadata.get("sha256")
+            tags_raw = metadata.get("tags", "[]")
+
+            if not task_id or not sha256:
+                logger.error(
+                    "Sample uploaded without required metadata (task-id, sha256) "
+                    "— cannot enqueue job. s3_key=%s",
+                    s3_key,
+                )
+                continue
+
+            try:
+                tags = json.loads(tags_raw)
+            except json.JSONDecodeError:
+                logger.warning("Could not parse tags metadata — defaulting to []: %s", tags_raw)
+                tags = []
+
+            _enqueue_job(task_id, s3_key, sha256, tags)
+            logger.info("Enqueued analysis job: task_id=%s sha256=%s", task_id, sha256)
+
+        except ClientError:
+            logger.exception("Failed to process S3 event for key %s", s3_key)
+
+
+# -----------------------------------------------------------------------------
 # Internal helpers
 # -----------------------------------------------------------------------------
+
+def _is_s3_event(event: dict) -> bool:
+    """Return True if the event originated from S3."""
+    records = event.get("Records", [])
+    return bool(records) and records[0].get("eventSource") == "aws:s3"
+
 
 def _parse_body(event: dict) -> dict:
     """Extract and parse the JSON request body from an API Gateway v2 event."""
@@ -167,11 +234,27 @@ def _validate(body: dict) -> tuple[str, str, list[str]]:
     return filename, sha256, tags
 
 
-def _presigned_put_url(bucket: str, key: str) -> str:
-    """Generate a pre-signed S3 PUT URL for direct client upload."""
+def _presigned_put_url(
+    bucket: str, key: str, task_id: str, sha256: str, tags: list[str]
+) -> str:
+    """
+    Generate a pre-signed S3 PUT URL with job metadata embedded in the signature.
+
+    The Metadata dict is included in the signature — the client MUST send the
+    corresponding x-amz-meta-* headers or S3 will reject the PUT with a 403.
+    This guarantees the metadata is always present when the S3 event fires.
+    """
     return _s3.generate_presigned_url(
         "put_object",
-        Params={"Bucket": bucket, "Key": key},
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            "Metadata": {
+                "task-id": task_id,
+                "sha256": sha256,
+                "tags": json.dumps(tags),
+            },
+        },
         ExpiresIn=PRESIGNED_URL_TTL_SECONDS,
     )
 

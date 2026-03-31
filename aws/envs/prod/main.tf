@@ -46,10 +46,6 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
-locals {
-  secrets_arn_prefix = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}/*"
-}
-
 # =============================================================================
 # Budget alert — catch unexpected AWS cost growth early
 #
@@ -244,7 +240,6 @@ module "lambda" {
   sqs_queue_arn = module.sqs.queue_arn
 
   kms_key_arn        = aws_kms_key.main.arn
-  secrets_arn_prefix = local.secrets_arn_prefix
   db_secret_arn      = aws_secretsmanager_secret.db_credentials.arn
   cape_api_secret_arn = aws_secretsmanager_secret.cape_api_key.arn
 
@@ -395,6 +390,23 @@ resource "aws_s3_bucket_notification" "reports_to_lambda" {
     events              = ["s3:ObjectCreated:*"]
     filter_prefix       = "reports/"
     filter_suffix       = ".json"
+  }
+
+  depends_on = [module.lambda]
+}
+
+# S3 event notification — samples bucket triggers sample_submitter Phase 2
+# when an uploaded sample lands. Phase 2 reads job metadata from the S3 object
+# and enqueues the SQS analysis job, eliminating the race where the bare metal
+# agent could dequeue a job before the client finishes uploading.
+# (avoids circular dep between s3 and lambda modules — same pattern as above)
+resource "aws_s3_bucket_notification" "samples_to_lambda" {
+  bucket = module.s3.samples_bucket_name
+
+  lambda_function {
+    lambda_function_arn = module.lambda.sample_submitter_arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "samples/"
   }
 
   depends_on = [module.lambda]

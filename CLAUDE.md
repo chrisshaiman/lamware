@@ -27,14 +27,6 @@ not yet built). AWS holds the data plane. Bare metal is the execution plane. See
 ## Build next
 See **docs/STATUS.md** for authoritative build status. Remaining work as of 2026-03-30:
 
-- **`ansible/roles/`** — six roles to implement (in order):
-  - `roles/hardening/` — wrap konstruktoid/ansible-role-hardening
-  - `roles/kvm/` — install KVM, libvirt, configure hugepages
-  - `roles/networking/` — detonation bridge, iptables air-gap rules
-  - `roles/wireguard/` — WireGuard server config (admin access only)
-  - `roles/cape/` — run kvm-qemu.sh with DSDT vars, run cape2.sh, configure services
-  - `roles/sqs-agent/` — systemd service: polls SQS, submits jobs to Cape locally,
-    syncs reports to S3
 - **`src/report_processor.py`** — defer until Cape is running and real report JSON is available
 
 ---
