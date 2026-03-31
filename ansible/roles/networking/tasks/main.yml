@@ -48,7 +48,6 @@
   when: >
     virsh_detonation_info.rc != 0 or
     'Active:         yes' not in virsh_detonation_info.stdout
-  failed_when: false
 
 - name: Set detonation network to autostart
   ansible.builtin.command: virsh net-autostart detonation
@@ -67,7 +66,14 @@
 # that libvirt may add. Use -C to check idempotently before inserting.
 # -------------------------------------------------------------------------
 
-- name: Block detonation VMs from reaching internet (virbr-det → eth0)
+- name: Check air-gap rule — virbr-det → eth0
+  ansible.builtin.command: >
+    iptables -C FORWARD -i {{ detonation_bridge }} -o {{ management_interface }} -j DROP
+  register: rule_eth0_check
+  changed_when: false
+  failed_when: false
+
+- name: Insert air-gap rule — virbr-det → eth0 (no VM internet egress)
   ansible.builtin.iptables:
     chain: FORWARD
     in_interface: "{{ detonation_bridge }}"
@@ -76,8 +82,16 @@
     action: insert
     rule_num: 1
     comment: "Cape detonation air-gap: no VM internet egress"
+  when: rule_eth0_check.rc != 0
 
-- name: Block detonation VMs from reaching WireGuard VPN (virbr-det → wg0)
+- name: Check air-gap rule — virbr-det → wg0
+  ansible.builtin.command: >
+    iptables -C FORWARD -i {{ detonation_bridge }} -o wg0 -j DROP
+  register: rule_wg0_check
+  changed_when: false
+  failed_when: false
+
+- name: Insert air-gap rule — virbr-det → wg0 (no VM access to management VPN)
   ansible.builtin.iptables:
     chain: FORWARD
     in_interface: "{{ detonation_bridge }}"
@@ -86,6 +100,7 @@
     action: insert
     rule_num: 2
     comment: "Cape detonation air-gap: no VM access to management VPN"
+  when: rule_wg0_check.rc != 0
 
 - name: Enable IP forwarding (required for libvirt bridge DHCP and resultserver)
   ansible.posix.sysctl:

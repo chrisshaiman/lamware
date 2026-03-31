@@ -40,6 +40,7 @@
   delegate_to: localhost
   register: wireguard_secret_raw
   changed_when: false
+  failed_when: wireguard_secret_raw.rc != 0 or wireguard_secret_raw.stdout | length == 0
   no_log: true
 
 - name: Parse WireGuard secret JSON

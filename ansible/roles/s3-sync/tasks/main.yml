@@ -1,6 +1,0 @@
----
-# roles/s3-sync/tasks/main.yml — STUB
-# Claude Code: implement this role. See CLAUDE.md for full spec.
-- name: Placeholder — implement s3-sync role
-  debug:
-    msg: "s3-sync role not yet implemented."

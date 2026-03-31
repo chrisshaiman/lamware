@@ -41,7 +41,6 @@ malware-sandbox-infra/
 │       ├── networking/            ✓ complete (virbr-det libvirt network, iptables air-gap)
 │       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services)
 │       ├── wireguard/             ✓ complete (server config from Secrets Manager, wg-quick)
-│       ├── s3-sync/               ~ STUB (superseded by sqs-agent — leave in place, not run)
 │       └── sqs-agent/             ✓ complete (systemd service: SQS poll → Cape → S3 report upload)
 │
 ├── ovh/
@@ -111,6 +110,80 @@ malware-sandbox-infra/
 - `ansible/roles/wireguard/` — wg0 server config from Secrets Manager, wg-quick@wg0 service
 - `ansible/roles/cape/` — DSDT patch via kvm-qemu.sh, cape2.sh, cape.conf/api.conf/kvm.conf, systemd services
 - `ansible/roles/sqs-agent/` — systemd service polling SQS, submitting to Cape, uploading reports to S3
+
+---
+
+## Review findings (2026-03-30) — Ansible roles post-implementation review
+
+Issues identified after Ansible role implementation. Work through each: fix, defer, or accept.
+
+### Critical — security/functionality blockers
+
+- [x] **Cape API key not enforced at startup.**
+      Fixed 2026-03-30. Changed `os.environ.get("CAPE_API_KEY", "")` to
+      `os.environ["CAPE_API_KEY"]` — raises `KeyError` at startup if missing.
+      Removed silent empty-headers fallback in `_cape_headers()`.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
+
+- [x] **Cape race condition — services may auto-start during cape2.sh.**
+      Fixed 2026-03-30. Added explicit stop of cape/cape-web/cape-processor before
+      the ini_file config block, guarded by `when: cape_service_file.stat.exists`
+      so it's a no-op on first install. `failed_when: false` handles the case where
+      cape2.sh hasn't created units yet.
+      *Files:* `ansible/roles/cape/tasks/main.yml`
+
+- [x] **Empty S3 bucket names / missing ARN validation in vars.**
+      Fixed 2026-03-30. Added `pre_tasks` assert block in `site.yml` that validates all
+      five required vars (both S3 buckets + three secret ARNs) before any role runs.
+      Fail message includes the exact `terraform output` commands to populate each value.
+      *Files:* `ansible/site.yml`
+
+### High — operational correctness
+
+- [x] **Secrets Manager fetch has no explicit failure check.**
+      Fixed 2026-03-30. Added `failed_when: rc != 0 or stdout | length == 0` to all four
+      AWS CLI fetches (cape, wireguard, baremetal, cape-in-sqs-agent). Wrong ARN or missing
+      credentials now fails with a clear Ansible task error rather than an obscure JSON parse
+      error in the following task.
+      *Files:* `ansible/roles/cape/tasks/main.yml`, `ansible/roles/wireguard/tasks/main.yml`,
+               `ansible/roles/sqs-agent/tasks/main.yml`
+
+- [x] **iptables rule duplication on re-run.**
+      Fixed 2026-03-30. Replaced bare `insert` tasks with check-then-insert pattern:
+      `iptables -C` checks for the rule first (rc=0 if exists, rc=1 if absent);
+      the insert task only runs when rc != 0. Rules still inserted at positions 1 and 2
+      to stay ahead of libvirt's ACCEPT rules.
+      *Files:* `ansible/roles/networking/tasks/main.yml`
+
+- [x] **Hugepages count hardcoded in GRUB line.**
+      Fixed 2026-03-30. Created `roles/kvm/defaults/main.yml` with `kvm_hugepages_2mb: 4096`.
+      Both the GRUB lineinfile and sysctl tasks now reference the variable. Override in
+      `ansible/vars/main.yml` to tune for larger hosts (RISE-1: 16384 = 32 GB).
+      *Files:* `ansible/roles/kvm/tasks/main.yml`, `ansible/roles/kvm/defaults/main.yml`
+
+### Medium — resilience/code quality
+
+- [x] **SQS message validation — infinite retry on malformed messages.**
+      Fixed 2026-03-30. Added up-front key check before unpacking body fields. Missing
+      keys are logged and the message is deleted (return True) rather than retried.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
+
+- [x] **`failed_when: false` on `virsh net-start`.**
+      Fixed 2026-03-30. Removed `failed_when: false` — a failed net-start now aborts
+      the play. All downstream tasks (iptables rules, Cape bridge config) depend on the
+      bridge existing; silent failure here would produce a misconfigured host.
+      *Files:* `ansible/roles/networking/tasks/main.yml`
+
+- [x] **s3-sync stub directory should be deleted.**
+      Fixed 2026-03-30. Deleted `ansible/roles/s3-sync/` — role was superseded by
+      sqs-agent (ADR-003) and not called from site.yml.
+      *Files:* `ansible/roles/s3-sync/` (removed)
+
+- [~] **`except Exception` too broad in sqs agent.**
+      Accepted. Specific catches for `ClientError` and `requests.RequestException` already
+      sit above it. The broad catch only fires on truly unexpected errors — DLQ max-receive
+      is the backstop. Retrying on unknown errors is defensible for a long-running daemon.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
 
 ---
 
