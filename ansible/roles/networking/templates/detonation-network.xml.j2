@@ -1,0 +1,15 @@
+<!--
+  detonation-network.xml.j2 — libvirt isolated network definition
+  No <forward> element = isolated network: no NAT, no routing outside bridge.
+  VMs on this network can only reach: the bridge gateway (resultserver) and
+  each other. iptables DROP rules in tasks/main.yml provide belt-and-suspenders.
+-->
+<network>
+  <name>detonation</name>
+  <bridge name="{{ detonation_bridge }}" stp="on" delay="0"/>
+  <ip address="{{ detonation_gateway }}" netmask="255.255.255.0">
+    <dhcp>
+      <range start="{{ detonation_dhcp_start }}" end="{{ detonation_dhcp_end }}"/>
+    </dhcp>
+  </ip>
+</network>

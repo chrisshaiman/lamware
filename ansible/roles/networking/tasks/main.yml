@@ -1,6 +1,100 @@
 ---
-# roles/networking/tasks/main.yml — STUB
-# Claude Code: implement this role. See CLAUDE.md for full spec.
-- name: Placeholder — implement networking role
-  debug:
-    msg: "networking role not yet implemented."
+# =============================================================================
+# roles/networking/tasks/main.yml
+# Creates the isolated detonation bridge network and applies iptables
+# air-gap rules per SECURITY_CONSTRAINTS.md:
+#
+#   virbr-det → eth0  DROP  (no VM internet egress)
+#   virbr-det → wg0   DROP  (no VM access to management VPN)
+#
+# libvirt isolated networks (no <forward> element) block external routing
+# by default. Explicit iptables rules are belt-and-suspenders — they survive
+# libvirt rule flushes and make the constraint auditable with `iptables -L`.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install iptables-persistent (saves rules across reboots)
+  ansible.builtin.apt:
+    name:
+      - iptables-persistent
+      - netfilter-persistent
+    state: present
+    update_cache: false
+
+# -------------------------------------------------------------------------
+# Detonation bridge — libvirt isolated network
+# -------------------------------------------------------------------------
+
+- name: Copy detonation network XML definition
+  ansible.builtin.template:
+    src: detonation-network.xml.j2
+    dest: /tmp/detonation-network.xml
+    mode: "0644"
+
+- name: Check if detonation libvirt network is defined
+  ansible.builtin.command: virsh net-info detonation
+  register: virsh_detonation_info
+  changed_when: false
+  failed_when: false
+
+- name: Define detonation libvirt network
+  ansible.builtin.command: virsh net-define /tmp/detonation-network.xml
+  when: virsh_detonation_info.rc != 0
+
+- name: Start detonation libvirt network
+  ansible.builtin.command: virsh net-start detonation
+  when: >
+    virsh_detonation_info.rc != 0 or
+    'Active:         yes' not in virsh_detonation_info.stdout
+  failed_when: false
+
+- name: Set detonation network to autostart
+  ansible.builtin.command: virsh net-autostart detonation
+  when: >
+    virsh_detonation_info.rc != 0 or
+    'Autostart:      yes' not in virsh_detonation_info.stdout
+
+- name: Remove temp network XML
+  ansible.builtin.file:
+    path: /tmp/detonation-network.xml
+    state: absent
+
+# -------------------------------------------------------------------------
+# iptables air-gap rules (belt-and-suspenders on top of libvirt isolation)
+# Inserted at the top of FORWARD chain so they run before any ACCEPT rules
+# that libvirt may add. Use -C to check idempotently before inserting.
+# -------------------------------------------------------------------------
+
+- name: Block detonation VMs from reaching internet (virbr-det → eth0)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    in_interface: "{{ detonation_bridge }}"
+    out_interface: "{{ management_interface }}"
+    jump: DROP
+    action: insert
+    rule_num: 1
+    comment: "Cape detonation air-gap: no VM internet egress"
+
+- name: Block detonation VMs from reaching WireGuard VPN (virbr-det → wg0)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    in_interface: "{{ detonation_bridge }}"
+    out_interface: wg0
+    jump: DROP
+    action: insert
+    rule_num: 2
+    comment: "Cape detonation air-gap: no VM access to management VPN"
+
+- name: Enable IP forwarding (required for libvirt bridge DHCP and resultserver)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+    sysctl_file: /etc/sysctl.d/90-ipforward.conf
+    reload: true
+
+- name: Save iptables rules (persist across reboots)
+  ansible.builtin.command: netfilter-persistent save
+  changed_when: true

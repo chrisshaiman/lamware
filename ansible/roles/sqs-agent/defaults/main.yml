@@ -1,0 +1,21 @@
+---
+# roles/sqs-agent/defaults/main.yml
+# Tunable defaults — override in vars/main.yml or via --extra-vars.
+
+# How often to poll SQS when idle (long-poll wait time, max 20s per AWS docs)
+sqs_agent_poll_wait_seconds: 20
+
+# Max time to wait for a Cape analysis before declaring timeout
+sqs_agent_cape_timeout_seconds: 3600
+
+# How often to poll Cape for job completion status
+sqs_agent_cape_poll_interval_seconds: 30
+
+# Refresh STS session credentials this many seconds before they expire
+sqs_agent_session_refresh_buffer_seconds: 300
+
+# Run as this user on the bare metal host
+sqs_agent_user: cape
+
+# Installation directory
+sqs_agent_dir: /opt/sqs-agent

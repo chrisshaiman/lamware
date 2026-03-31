@@ -1,0 +1,39 @@
+# /etc/systemd/system/sqs-agent.service
+# Managed by Ansible — do not edit manually.
+# Polls AWS SQS for analysis jobs, submits to Cape, uploads reports to S3.
+
+[Unit]
+Description=Malware sandbox SQS polling agent
+After=network-online.target cape.service wg-quick@wg0.service
+Wants=network-online.target
+Requires=cape.service
+
+[Service]
+Type=simple
+User={{ sqs_agent_user }}
+Group={{ sqs_agent_user }}
+
+ExecStart=/usr/bin/python3 {{ sqs_agent_dir }}/sqs_agent.py
+
+# Credentials and config injected from this file (mode 0600, owned by cape user)
+EnvironmentFile=/etc/sqs-agent/env
+
+# Restart on any failure with a 10s backoff — transient AWS/Cape errors
+# are expected and should not bring down the service permanently.
+Restart=on-failure
+RestartSec=10s
+
+# Log to journald (stdout captured automatically by systemd)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sqs-agent
+
+# Limit blast radius if the process is somehow compromised
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp {{ sqs_agent_dir }}
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

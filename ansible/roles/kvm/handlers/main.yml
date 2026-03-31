@@ -1,0 +1,5 @@
+---
+- name: Update GRUB
+  ansible.builtin.command: update-grub
+  # Note: hugepage change in GRUB requires a reboot to take full effect.
+  # Runtime sysctl change in tasks/main.yml handles the current session.

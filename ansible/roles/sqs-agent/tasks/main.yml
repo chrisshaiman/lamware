@@ -1,0 +1,126 @@
+---
+# =============================================================================
+# roles/sqs-agent/tasks/main.yml
+# Deploys the SQS polling agent as a systemd service.
+#
+# The agent polls the job queue, downloads samples from S3, submits them
+# to Cape, waits for completion, uploads the report to S3, and deletes
+# the SQS message. It absorbs the previously planned s3-sync role.
+#
+# Credentials flow:
+#   1. Ansible (control node) pulls baremetal credentials from Secrets Manager
+#   2. Ansible writes them to /etc/sqs-agent/env (mode 0600, owned by cape user)
+#   3. systemd injects env file into the agent process at runtime
+#   4. Agent uses the long-lived key (sts:AssumeRole only) to call STS
+#   5. Agent uses 1-hour session credentials for all SQS/S3/KMS operations
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install Python dependencies for sqs-agent
+  ansible.builtin.apt:
+    name:
+      - python3-boto3
+      - python3-requests
+    state: present
+    update_cache: false
+
+- name: Create sqs-agent install directory
+  ansible.builtin.file:
+    path: "{{ sqs_agent_dir }}"
+    state: directory
+    owner: "{{ sqs_agent_user }}"
+    group: "{{ sqs_agent_user }}"
+    mode: "0750"
+
+- name: Create /etc/sqs-agent directory (for env file)
+  ansible.builtin.file:
+    path: /etc/sqs-agent
+    state: directory
+    owner: root
+    group: "{{ sqs_agent_user }}"
+    mode: "0750"
+
+# -------------------------------------------------------------------------
+# Pull credentials from Secrets Manager on control node
+# -------------------------------------------------------------------------
+
+- name: Fetch baremetal credentials from Secrets Manager
+  ansible.builtin.command: >
+    aws secretsmanager get-secret-value
+    --secret-id {{ secret_arn_baremetal }}
+    --query SecretString
+    --output text
+    --region {{ secrets_manager_region }}
+  delegate_to: localhost
+  register: baremetal_secret_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse baremetal credentials JSON
+  ansible.builtin.set_fact:
+    baremetal_creds: "{{ baremetal_secret_raw.stdout | from_json }}"
+  no_log: true
+
+# cape_secret should already be set by the cape role (same play).
+# If running sqs-agent role standalone, pull it here.
+- name: Fetch Cape secret if not already loaded
+  ansible.builtin.command: >
+    aws secretsmanager get-secret-value
+    --secret-id {{ secret_arn_cape }}
+    --query SecretString
+    --output text
+    --region {{ secrets_manager_region }}
+  delegate_to: localhost
+  register: cape_secret_raw_sqs
+  changed_when: false
+  no_log: true
+  when: cape_secret is not defined
+
+- name: Parse Cape secret JSON (if not already loaded)
+  ansible.builtin.set_fact:
+    cape_secret: "{{ cape_secret_raw_sqs.stdout | from_json }}"
+  no_log: true
+  when: cape_secret is not defined
+
+# -------------------------------------------------------------------------
+# Deploy agent script and environment file
+# -------------------------------------------------------------------------
+
+- name: Deploy sqs_agent.py
+  ansible.builtin.template:
+    src: sqs_agent.py.j2
+    dest: "{{ sqs_agent_dir }}/sqs_agent.py"
+    owner: "{{ sqs_agent_user }}"
+    group: "{{ sqs_agent_user }}"
+    mode: "0750"
+  notify: Restart sqs-agent
+
+# EnvironmentFile contains long-lived credentials — must be unreadable to
+# other users on the host.
+- name: Write sqs-agent environment file
+  ansible.builtin.template:
+    src: sqs-agent.env.j2
+    dest: /etc/sqs-agent/env
+    owner: "{{ sqs_agent_user }}"
+    group: "{{ sqs_agent_user }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart sqs-agent
+
+- name: Install sqs-agent systemd service
+  ansible.builtin.template:
+    src: sqs-agent.service.j2
+    dest: /etc/systemd/system/sqs-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart sqs-agent
+
+- name: Enable and start sqs-agent
+  ansible.builtin.systemd:
+    name: sqs-agent
+    state: started
+    enabled: true
+    daemon_reload: true
