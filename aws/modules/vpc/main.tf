@@ -166,7 +166,8 @@ resource "aws_iam_role_policy" "flow_log" {
         "logs:DescribeLogGroups",
         "logs:DescribeLogStreams"
       ]
-      Resource = "*"
+      # Scoped to the specific flow log group — wildcard would allow writes to any log group
+      Resource = "${aws_cloudwatch_log_group.flow_log.arn}:*"
     }]
   })
 }

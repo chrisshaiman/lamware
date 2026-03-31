@@ -98,14 +98,14 @@ resource "aws_iam_role_policy" "lambda_s3" {
 
 resource "aws_cloudwatch_log_group" "report_processor" {
   name              = "/aws/lambda/${var.name_prefix}-report-processor"
-  retention_in_days = 30
+  retention_in_days = 90  # Match VPC flow logs and API Gateway for forensic consistency
   kms_key_id        = var.kms_key_arn
   tags              = var.tags
 }
 
 resource "aws_cloudwatch_log_group" "sample_submitter" {
   name              = "/aws/lambda/${var.name_prefix}-sample-submitter"
-  retention_in_days = 30
+  retention_in_days = 90  # Match VPC flow logs and API Gateway for forensic consistency
   kms_key_id        = var.kms_key_arn
   tags              = var.tags
 }

@@ -24,30 +24,18 @@ not yet built). AWS holds the data plane. Bare metal is the execution plane. See
 
 ---
 
-## Build next (in order)
-1. **`aws/modules/lambda/variables.tf` + `outputs.tf`** — missing from lambda module;
-   update `main.tf` to remove `CAPE_HOST` env var (no longer needed with SQS approach)
-2. **`aws/modules/sqs/`** — job queue module (DLQ, visibility timeout, KMS, IAM policy
-   for bare metal polling agent)
-3. **`aws/bootstrap/`** — one-time Terraform: S3 bucket + DynamoDB table for remote state;
-   run manually before any other `terraform init`
-4. **`aws/modules/api/`** — HTTP API Gateway in front of `sample_submitter` Lambda
-5. **`aws/envs/prod/main.tf`** — composition layer wiring all modules, KMS key,
-   Secrets Manager secrets (DSDT, Cape API key, DB password, WireGuard keys)
-6. **`Makefile`** — `make image`, `make infra`, `make configure` entry points
-7. **`packer/ubuntu-sandbox.pkr.hcl`** — hardened Ubuntu 24.04 base image
-   - konstruktoid/hardened-images as foundation
-   - Install KVM deps, clone CAPEv2, install Python deps
-   - Do NOT run kvm-qemu.sh — hardware-specific, Ansible injects at runtime
-8. **`ansible/`** — full role structure
-   - `roles/hardening/` — wrap konstruktoid/ansible-role-hardening
-   - `roles/kvm/` — install KVM, libvirt, configure hugepages
-   - `roles/networking/` — detonation bridge, iptables air-gap rules
-   - `roles/cape/` — run kvm-qemu.sh with DSDT vars, run cape2.sh, configure services
-   - `roles/wireguard/` — WireGuard server config (admin access only)
-   - `roles/sqs-agent/` — systemd service: polls SQS, submits jobs to Cape locally,
-     syncs reports to S3
-9. **`ovh/`** — OVH Terraform provider module (server, network, firewall, floating IP)
+## Build next
+See **docs/STATUS.md** for authoritative build status. Remaining work as of 2026-03-30:
+
+- **`ansible/roles/`** — six roles to implement (in order):
+  - `roles/hardening/` — wrap konstruktoid/ansible-role-hardening
+  - `roles/kvm/` — install KVM, libvirt, configure hugepages
+  - `roles/networking/` — detonation bridge, iptables air-gap rules
+  - `roles/wireguard/` — WireGuard server config (admin access only)
+  - `roles/cape/` — run kvm-qemu.sh with DSDT vars, run cape2.sh, configure services
+  - `roles/sqs-agent/` — systemd service: polls SQS, submits jobs to Cape locally,
+    syncs reports to S3
+- **`src/report_processor.py`** — defer until Cape is running and real report JSON is available
 
 ---
 
