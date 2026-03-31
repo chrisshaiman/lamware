@@ -1,0 +1,14 @@
+---
+# ansible/requirements.yml — Galaxy role and collection dependencies
+# Install before running the playbook:
+#   ansible-galaxy install -r ansible/requirements.yml
+# (handled automatically by: make configure)
+
+roles:
+  - name: konstruktoid.hardening
+    version: ">=2.9.0"
+
+collections:
+  # ini_file module (used by cape role for conf edits)
+  - name: community.general
+    version: ">=8.0.0"

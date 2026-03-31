@@ -177,6 +177,8 @@ configure:
 	@echo "==> Configuring host with Ansible..."
 	@[ -f $(ANSIBLE_DIR)/inventory/hosts ] || \
 		(echo "ERROR: ansible/inventory/hosts not found. Run make infra-ovh first." && exit 1)
+	@echo "==> Installing Ansible Galaxy requirements..."
+	@ansible-galaxy install -r $(ANSIBLE_DIR)/requirements.yml --force-with-deps
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \

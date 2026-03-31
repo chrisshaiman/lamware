@@ -1,6 +1,29 @@
 ---
-# roles/hardening/tasks/main.yml — STUB
-# Claude Code: implement this role. See CLAUDE.md for full spec.
-- name: Placeholder — implement hardening role
-  debug:
-    msg: "hardening role not yet implemented."
+# =============================================================================
+# roles/hardening/tasks/main.yml
+# Applies the konstruktoid.hardening CIS-aligned baseline with production
+# settings. This role re-runs after Packer so production settings differ
+# from the build-time settings:
+#   - Packer enabled password auth (needed for Packer SSH communicator)
+#   - Ansible disables it (production: key-only SSH)
+#
+# Robot firewall enforces source IP restriction at the network edge, so
+# sshd_admin_net stays open here. SSH restriction to wg0 can be done
+# manually after the wireguard role confirms the tunnel is working.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Apply konstruktoid.hardening baseline (production settings)
+  ansible.builtin.include_role:
+    name: konstruktoid.hardening
+  vars:
+    # Production: key-only SSH (Packer enabled password auth during build)
+    sshd_password_authentication: "no"
+    # Robot firewall enforces source IP at network edge — no need to restrict here
+    sshd_admin_net: ["0.0.0.0/0"]
+    # Disable MOTD — this is a headless analysis host
+    set_motd: false
+    # Do not force a reboot after hardening — operator controls reboots
+    system_upgrade: false

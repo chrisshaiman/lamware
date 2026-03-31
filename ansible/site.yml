@@ -32,5 +32,6 @@
     # 5. CAPEv2 — runs kvm-qemu.sh (DSDT patching) then cape2.sh
     - role: cape
 
-    # 6. S3 sync — report upload cron
-    - role: s3-sync
+    # 6. SQS agent — polls SQS, submits to Cape, syncs reports to S3
+    #    (absorbs the previously planned s3-sync role — see ADR-003)
+    - role: sqs-agent

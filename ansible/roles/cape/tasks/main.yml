@@ -1,31 +1,182 @@
 ---
 # =============================================================================
 # roles/cape/tasks/main.yml
-# Installs and configures CAPEv2.
+# Installs and configures CAPEv2 on the bare metal sandbox host.
 #
-# IMPORTANT: kvm-qemu.sh patches ACPI DSDT tables with host-specific values.
-# The dsdt_string variable MUST be pulled from Secrets Manager before this
-# role runs. It cannot be pre-baked — it's specific to the physical hardware.
+# IMPORTANT — DSDT requirement:
+#   kvm-qemu.sh patches ACPI DSDT tables with host-specific hex values to
+#   defeat sandbox evasion by malware that fingerprints ACPI/SMBIOS firmware.
+#   These values are unique to the physical hardware and MUST be captured
+#   before running this role:
+#
+#     sudo apt install -y acpica-tools
+#     sudo acpidump -b
+#     iasl -d dsdt.dat
+#     # The DSDT string is the hex dump — capture it and store in:
+#     #   secret_arn_cape -> { "dsdt_string": "<hex>", "api_key": "<key>" }
 #
 # Execution order:
-#   1. Pull secrets from AWS Secrets Manager
-#   2. Create cape user
-#   3. Clone CAPEv2
-#   4. Run kvm-qemu.sh (DSDT patching + KVM build)
-#   5. Run cape2.sh (Cape itself)
-#   6. Configure cape.conf / api.conf
-#   7. Enable systemd services
+#   1. Pull DSDT string + API key from Secrets Manager (control node)
+#   2. Create cape system user
+#   3. Run kvm-qemu.sh with DSDT value substituted (builds patched QEMU)
+#   4. Run cape2.sh (installs Cape services)
+#   5. Configure resultserver IP, API binding, reporting
+#   6. Enable systemd services
+#
+# Idempotency: kvm-qemu.sh and cape2.sh are guarded by stamp files so they
+# don't re-run on every Ansible pass. Config changes (lineinfile/ini_file)
+# are always idempotent.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
 # =============================================================================
 
-# --- STUB --- Claude Code: implement this role.
-# Reference: https://github.com/kevoreilly/CAPEv2
-# Key scripts in repo: installer/kvm-qemu.sh, installer/cape2.sh
-# kvm-qemu.sh takes: all <username> — requires <WOOT> replaced with dsdt_string
-# cape2.sh takes: base <username>
-#
-# The dsdt_string comes from: sudo acpidump | grep -A1 "DSDT" — run on the
-# actual hardware and store result in Secrets Manager before running Ansible.
+# -------------------------------------------------------------------------
+# Secrets
+# -------------------------------------------------------------------------
 
-- name: Placeholder — implement cape role
-  debug:
-    msg: "Cape role not yet implemented. See role README and CLAUDE.md for spec."
+- name: Fetch Cape secrets from Secrets Manager
+  ansible.builtin.command: >
+    aws secretsmanager get-secret-value
+    --secret-id {{ secret_arn_cape }}
+    --query SecretString
+    --output text
+    --region {{ secrets_manager_region }}
+  delegate_to: localhost
+  register: cape_secret_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse Cape secret JSON
+  ansible.builtin.set_fact:
+    cape_secret: "{{ cape_secret_raw.stdout | from_json }}"
+  no_log: true
+
+# -------------------------------------------------------------------------
+# Cape user
+# -------------------------------------------------------------------------
+
+- name: Create cape system user
+  ansible.builtin.user:
+    name: "{{ cape_user }}"
+    system: true
+    shell: /bin/bash
+    home: /home/{{ cape_user }}
+    create_home: true
+    groups: libvirt,kvm
+    append: true
+
+- name: Ensure cape owns its install directory
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    recurse: true
+
+# -------------------------------------------------------------------------
+# kvm-qemu.sh — builds DSDT-patched QEMU binary (slow; runs once)
+# The script has a <WOOT> placeholder for the DSDT hex string.
+# A stamp file prevents re-running after a successful build.
+# -------------------------------------------------------------------------
+
+- name: Check if kvm-qemu.sh has already run
+  ansible.builtin.stat:
+    path: /opt/.cape-kvm-qemu-installed
+  register: kvm_qemu_stamp
+
+- name: Patch and run kvm-qemu.sh (builds patched QEMU — may take 30-60 min)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ cape_install_dir }}/installer
+    sed 's/<WOOT>/{{ cape_secret.dsdt_string }}/g' kvm-qemu.sh > /tmp/kvm-qemu-patched.sh
+    chmod +x /tmp/kvm-qemu-patched.sh
+    bash /tmp/kvm-qemu-patched.sh all {{ cape_user }}
+    rm -f /tmp/kvm-qemu-patched.sh
+    touch /opt/.cape-kvm-qemu-installed
+  when: not kvm_qemu_stamp.stat.exists
+  no_log: true  # dsdt_string must not appear in logs
+
+# -------------------------------------------------------------------------
+# cape2.sh — installs Cape services (runs once)
+# -------------------------------------------------------------------------
+
+- name: Check if cape2.sh has already run
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cape.service
+  register: cape_service_file
+
+- name: Run cape2.sh (installs Cape systemd services)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ cape_install_dir }}/installer
+    bash cape2.sh base {{ cape_user }}
+  when: not cape_service_file.stat.exists
+
+# -------------------------------------------------------------------------
+# Cape configuration — always applied (idempotent ini_file edits)
+# -------------------------------------------------------------------------
+
+# Resultserver must listen on the detonation bridge gateway so VMs can
+# reach it. VMs have no route to eth0 or wg0.
+- name: Set Cape resultserver IP to detonation gateway
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/cape.conf"
+    section: resultserver
+    option: ip
+    value: "{{ cape_result_ip }}"
+    mode: "0640"
+
+# Cape API binds to wg0 only — security constraint (never expose to eth0)
+- name: Set Cape API listen IP to WireGuard interface
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/api.conf"
+    section: api
+    option: url
+    value: "http://{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}"
+    mode: "0640"
+
+# API key authentication — prevents unauthenticated sample submission
+- name: Set Cape API key
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/api.conf"
+    section: api
+    option: api_token
+    value: "{{ cape_secret.api_key }}"
+    mode: "0640"
+  no_log: true
+
+# KVM is the only supported machinery for bare metal analysis
+- name: Set Cape machinery to kvm
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/cape.conf"
+    section: cuckoo
+    option: machinery
+    value: kvm
+    mode: "0640"
+
+# KVM machinery config — use the detonation bridge
+- name: Set KVM interface to detonation bridge
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/kvm.conf"
+    section: kvm
+    option: interface
+    value: "{{ cape_interface }}"
+    mode: "0640"
+
+# -------------------------------------------------------------------------
+# Enable Cape services
+# -------------------------------------------------------------------------
+
+- name: Reload systemd after cape2.sh installs unit files
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start Cape services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - cape
+    - cape-web
+    - cape-processor

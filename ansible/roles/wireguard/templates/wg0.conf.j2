@@ -1,0 +1,17 @@
+# /etc/wireguard/wg0.conf — managed by Ansible, do not edit manually
+# WireGuard server config — admin access only (ADR-004)
+# Operator laptop connects here to reach Cape web UI and manage the host.
+
+[Interface]
+Address    = {{ wireguard_address }}
+ListenPort = {{ wireguard_port }}
+PrivateKey = {{ wireguard_private_key }}
+
+# PostUp/PostDown: no NAT rules needed — WireGuard is management-only,
+# not a gateway for analysis traffic.
+
+[Peer]
+# Operator laptop
+PublicKey  = {{ wireguard_peer_pubkey }}
+# Only traffic sourced from the peer's tunnel IP is accepted
+AllowedIPs = {{ wireguard_peer_address }}
