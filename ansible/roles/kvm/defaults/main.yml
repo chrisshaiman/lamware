@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/kvm/defaults/main.yml
+# Tunable defaults for the KVM role. Override in ansible/vars/main.yml.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# Number of 2 MB hugepages to reserve for KVM guests.
+# 4096 pages = 8 GB — appropriate for a 32 GB host (ADVANCE-1).
+# Increase for larger hosts: 64 GB host (RISE-1) can support 16384+ pages.
+# Formula: desired_GB * 1024 / 2 = page_count
+kvm_hugepages_2mb: 4096

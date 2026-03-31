@@ -45,6 +45,7 @@
   delegate_to: localhost
   register: cape_secret_raw
   changed_when: false
+  failed_when: cape_secret_raw.rc != 0 or cape_secret_raw.stdout | length == 0
   no_log: true
 
 - name: Parse Cape secret JSON
@@ -114,7 +115,21 @@
 
 # -------------------------------------------------------------------------
 # Cape configuration — always applied (idempotent ini_file edits)
+# Stop services before editing config so they don't run with stale settings.
+# cape2.sh may auto-start services; explicit stop ensures config is applied
+# before the services come back up.
 # -------------------------------------------------------------------------
+
+- name: Stop Cape services before configuration
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - cape
+    - cape-web
+    - cape-processor
+  failed_when: false  # services may not exist yet on first run
+  when: cape_service_file.stat.exists
 
 # Resultserver must listen on the detonation bridge gateway so VMs can
 # reach it. VMs have no route to eth0 or wg0.
