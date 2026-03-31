@@ -25,7 +25,8 @@ ansible/*.retry
 *.pem
 *.key
 !*.key.example
-wireguard/
+# Exclude a top-level wireguard/ directory (generated key files), not the Ansible role
+/wireguard/
 
 # OS
 .DS_Store

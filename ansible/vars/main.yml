@@ -47,16 +47,30 @@ cape_interface: "{{ detonation_bridge }}"
 # cape_dsdt_string: pulled from Secrets Manager
 
 # -----------------------------------------------------------------------------
-# AWS / S3 sync
+# AWS / S3
+# Fill these in from terraform output after AWS infra is deployed:
+#   terraform -chdir=aws/envs/prod output -raw samples_bucket_name
+#   terraform -chdir=aws/envs/prod output -raw reports_bucket_name
 # -----------------------------------------------------------------------------
 aws_region: us-east-1
-# s3_bucket_reports: pulled from Secrets Manager
-s3_sync_interval_minutes: 15
+s3_bucket_samples: ""         # fill from: terraform output -raw samples_bucket_name
+s3_bucket_reports: ""         # fill from: terraform output -raw reports_bucket_name
+
+# -----------------------------------------------------------------------------
+# Cape API
+# -----------------------------------------------------------------------------
+cape_api_port: 8000
+# Cape API URL as seen from the bare metal host (wg0 IP, local loopback to same machine)
+cape_api_url: "http://{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}/apiv2"
+
+# WireGuard peer — operator laptop tunnel address (AllowedIPs in server peer block)
+wireguard_peer_address: 10.200.0.2/32
 
 # -----------------------------------------------------------------------------
 # Secrets Manager ARNs — set these to match your AWS deployment
+# Run: terraform -chdir=aws/envs/prod output  to get the ARNs
 # -----------------------------------------------------------------------------
 secrets_manager_region: us-east-1
-secret_arn_wireguard: ""      # fill after AWS infra is deployed
-secret_arn_cape: ""           # fill after AWS infra is deployed
-secret_arn_s3: ""             # fill after AWS infra is deployed
+secret_arn_baremetal: ""      # fill from: terraform output -raw baremetal_agent_secret_arn
+secret_arn_wireguard: ""      # fill after manually creating WireGuard keys secret in AWS
+secret_arn_cape: ""           # fill after manually creating Cape API key secret in AWS

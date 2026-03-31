@@ -29,19 +29,20 @@ malware-sandbox-infra/
 │       └── user-data              ✓ complete (placeholder hash — run make packer-setup)
 │
 ├── ansible/
-│   ├── site.yml                   ~ STUB
+│   ├── site.yml                   ✓ complete
+│   ├── requirements.yml           ✓ complete (konstruktoid.hardening, community.general)
 │   ├── inventory/
 │   │   └── hosts.example          ✓ exists
 │   ├── vars/
-│   │   └── main.yml               ✓ exists
+│   │   └── main.yml               ✓ complete (fill in ARNs + bucket names post-deploy)
 │   └── roles/
-│       ├── hardening/             ~ STUB
-│       ├── kvm/                   ~ STUB
-│       ├── networking/            ~ STUB
-│       ├── cape/                  ~ STUB
-│       ├── wireguard/             ~ STUB
-│       ├── s3-sync/               ~ STUB (will be absorbed into sqs-agent)
-│       └── sqs-agent/             ✗ NOT YET BUILT
+│       ├── hardening/             ✓ complete (wraps konstruktoid.hardening, production settings)
+│       ├── kvm/                   ✓ complete (libvirt, hugepages, groups, disable default net)
+│       ├── networking/            ✓ complete (virbr-det libvirt network, iptables air-gap)
+│       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services)
+│       ├── wireguard/             ✓ complete (server config from Secrets Manager, wg-quick)
+│       ├── s3-sync/               ~ STUB (superseded by sqs-agent — leave in place, not run)
+│       └── sqs-agent/             ✓ complete (systemd service: SQS poll → Cape → S3 report upload)
 │
 ├── ovh/
 │   ├── main.tf                    ✓ complete (firewall, SSH key, OS install)
@@ -104,6 +105,12 @@ malware-sandbox-infra/
 - `ovh/` — OVH bare metal module: robot firewall (SSH + WireGuard allowlist), SSH key registration, Ubuntu 24.04 OS install
 - `packer/ubuntu-sandbox.pkr.hcl` — hardened Ubuntu 24.04 image: KVM packages, CAPEv2 clone + deps, AWS CLI, konstruktoid hardening, qcow2 output
 - `src/sample_submitter.py` — Lambda handler: validates submission, issues pre-signed S3 URL, enqueues SQS job
+- `ansible/roles/hardening/` — wraps konstruktoid.hardening with production settings (key-only SSH)
+- `ansible/roles/kvm/` — libvirt enabled, hugepages configured, cape user groups, default network disabled
+- `ansible/roles/networking/` — virbr-det libvirt isolated network, iptables air-gap DROP rules, netfilter-persistent
+- `ansible/roles/wireguard/` — wg0 server config from Secrets Manager, wg-quick@wg0 service
+- `ansible/roles/cape/` — DSDT patch via kvm-qemu.sh, cape2.sh, cape.conf/api.conf/kvm.conf, systemd services
+- `ansible/roles/sqs-agent/` — systemd service polling SQS, submitting to Cape, uploading reports to S3
 
 ---
 

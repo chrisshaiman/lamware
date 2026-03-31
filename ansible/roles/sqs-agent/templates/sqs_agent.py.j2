@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+"""
+sqs_agent.py — SQS polling agent for the malware sandbox bare metal host.
+
+Polls the SQS job queue, downloads samples from S3, submits them to Cape
+for dynamic analysis, waits for completion, uploads the JSON report to S3,
+and deletes the SQS message. Uses STS AssumeRole so the long-lived IAM
+credentials stored on disk are scoped to sts:AssumeRole only.
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import logging
+import os
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+import boto3
+import requests
+from botocore.exceptions import ClientError
+
+# ---------------------------------------------------------------------------
+# Configuration — injected by Ansible via systemd EnvironmentFile
+# ---------------------------------------------------------------------------
+
+_AWS_ACCESS_KEY_ID   = os.environ["AWS_ACCESS_KEY_ID"]
+_SECRET_ACCESS_KEY   = os.environ["AWS_SECRET_ACCESS_KEY"]
+_ROLE_ARN            = os.environ["ROLE_ARN"]
+_SQS_QUEUE_URL       = os.environ["SQS_QUEUE_URL"]
+_REPORTS_BUCKET      = os.environ["REPORTS_BUCKET"]
+_SAMPLES_BUCKET      = os.environ["SAMPLES_BUCKET"]
+_AWS_REGION          = os.environ.get("AWS_REGION", "us-east-1")
+_CAPE_API_URL        = os.environ.get("CAPE_API_URL", "http://127.0.0.1:8000/apiv2")
+_CAPE_API_KEY        = os.environ.get("CAPE_API_KEY", "")
+
+POLL_WAIT_SECONDS    = int(os.environ.get("POLL_WAIT_SECONDS",    "{{ sqs_agent_poll_wait_seconds }}"))
+CAPE_TIMEOUT_SECONDS = int(os.environ.get("CAPE_TIMEOUT_SECONDS", "{{ sqs_agent_cape_timeout_seconds }}"))
+CAPE_POLL_INTERVAL   = int(os.environ.get("CAPE_POLL_INTERVAL",   "{{ sqs_agent_cape_poll_interval_seconds }}"))
+SESSION_REFRESH_BUFFER = int(os.environ.get("SESSION_REFRESH_BUFFER", "{{ sqs_agent_session_refresh_buffer_seconds }}"))
+
+# ---------------------------------------------------------------------------
+# Logging — stdout is captured by journald via systemd
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    stream=sys.stdout,
+)
+log = logging.getLogger("sqs-agent")
+
+# ---------------------------------------------------------------------------
+# Session management — short-lived STS credentials via AssumeRole
+# ---------------------------------------------------------------------------
+
+class SessionManager:
+    """
+    Manages short-lived AWS credentials via STS AssumeRole.
+    The long-lived IAM key is scoped only to sts:AssumeRole — all real
+    permissions (SQS, S3, KMS) live on the assumed role with 1-hour sessions.
+    """
+
+    def __init__(self) -> None:
+        self._expiry: Optional[datetime] = None
+        self._creds: Optional[dict] = None
+        self._sts = boto3.client(
+            "sts",
+            aws_access_key_id=_AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=_SECRET_ACCESS_KEY,
+            region_name=_AWS_REGION,
+        )
+
+    def credentials(self) -> dict:
+        """Return current session credentials, refreshing if needed."""
+        if self._needs_refresh():
+            self._refresh()
+        return self._creds
+
+    def _needs_refresh(self) -> bool:
+        if self._expiry is None:
+            return True
+        remaining = (self._expiry - datetime.now(timezone.utc)).total_seconds()
+        return remaining < SESSION_REFRESH_BUFFER
+
+    def _refresh(self) -> None:
+        log.info("Refreshing STS session credentials")
+        resp = self._sts.assume_role(
+            RoleArn=_ROLE_ARN,
+            RoleSessionName=f"sqs-agent-{int(time.time())}",
+            DurationSeconds=3600,
+        )
+        c = resp["Credentials"]
+        self._creds = {
+            "aws_access_key_id":     c["AccessKeyId"],
+            "aws_secret_access_key": c["SecretAccessKey"],
+            "aws_session_token":     c["SessionToken"],
+        }
+        self._expiry = c["Expiration"]
+        log.info("STS session valid until %s", self._expiry.isoformat())
+
+
+# ---------------------------------------------------------------------------
+# AWS client helpers
+# ---------------------------------------------------------------------------
+
+def _make_clients(creds: dict):
+    """Create boto3 SQS and S3 clients from the given assumed-role credentials."""
+    sqs = boto3.client("sqs", region_name=_AWS_REGION, **creds)
+    s3  = boto3.client("s3",  region_name=_AWS_REGION, **creds)
+    return sqs, s3
+
+
+def _cape_headers() -> dict:
+    """Authorization headers for Cape REST API requests."""
+    if _CAPE_API_KEY:
+        return {"Authorization": f"Bearer {_CAPE_API_KEY}"}
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# Core pipeline steps
+# ---------------------------------------------------------------------------
+
+def poll_message(sqs) -> Optional[dict]:
+    """Long-poll SQS for one message. Returns the message dict or None."""
+    resp = sqs.receive_message(
+        QueueUrl=_SQS_QUEUE_URL,
+        MaxNumberOfMessages=1,
+        WaitTimeSeconds=POLL_WAIT_SECONDS,
+        AttributeNames=["All"],
+    )
+    messages = resp.get("Messages", [])
+    return messages[0] if messages else None
+
+
+def download_sample(s3, s3_key: str) -> Path:
+    """Download sample from S3 to a temp file. Returns the local path."""
+    filename = Path(s3_key).name
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="sample_",
+        suffix=f"_{filename}",
+        delete=False,
+    )
+    log.info("Downloading s3://%s/%s", _SAMPLES_BUCKET, s3_key)
+    s3.download_fileobj(_SAMPLES_BUCKET, s3_key, tmp)
+    tmp.flush()
+    return Path(tmp.name)
+
+
+def submit_to_cape(sample_path: Path, task_id: str, tags: list) -> int:
+    """
+    Submit the sample file to Cape's REST API.
+    Returns the Cape-assigned task ID (integer).
+    """
+    url = f"{_CAPE_API_URL}/tasks/create/file/"
+    with sample_path.open("rb") as fh:
+        resp = requests.post(
+            url,
+            files={"file": (sample_path.name, fh)},
+            data={
+                "tags":    ",".join(tags),
+                "custom":  task_id,   # propagates our task_id into Cape's task record
+                "timeout": CAPE_TIMEOUT_SECONDS,
+            },
+            headers=_cape_headers(),
+            timeout=30,
+        )
+    resp.raise_for_status()
+    cape_task_id = resp.json()["data"]["task_ids"][0]
+    log.info("Submitted to Cape as task %d (our task_id=%s)", cape_task_id, task_id)
+    return cape_task_id
+
+
+def wait_for_cape(cape_task_id: int) -> bool:
+    """
+    Poll Cape until the task completes or the timeout is reached.
+    Returns True if the report is ready, False on failure or timeout.
+    """
+    url = f"{_CAPE_API_URL}/tasks/view/{cape_task_id}/"
+    deadline = time.monotonic() + CAPE_TIMEOUT_SECONDS
+
+    while time.monotonic() < deadline:
+        resp = requests.get(url, headers=_cape_headers(), timeout=10)
+        resp.raise_for_status()
+        status = resp.json()["data"]["status"]
+        log.info("Cape task %d status: %s", cape_task_id, status)
+
+        if status in ("reported", "completed"):
+            return True
+        if status in ("failed_analysis", "failed_processing"):
+            log.error("Cape task %d failed with status: %s", cape_task_id, status)
+            return False
+
+        time.sleep(CAPE_POLL_INTERVAL)
+
+    log.error(
+        "Cape task %d timed out after %d seconds", cape_task_id, CAPE_TIMEOUT_SECONDS
+    )
+    return False
+
+
+def get_cape_report(cape_task_id: int) -> dict:
+    """Fetch the full JSON report from Cape."""
+    url = f"{_CAPE_API_URL}/tasks/get/report/{cape_task_id}/"
+    resp = requests.get(url, headers=_cape_headers(), timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def upload_report(s3, report: dict, task_id: str, sha256: str) -> str:
+    """
+    Upload the Cape JSON report to the reports S3 bucket.
+    Key pattern: reports/<sha256>/<task_id>/<timestamp>.json
+    Returns the S3 key.
+    """
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    s3_key = f"reports/{sha256}/{task_id}/{timestamp}.json"
+    body = json.dumps(report, indent=2).encode()
+    s3.put_object(
+        Bucket=_REPORTS_BUCKET,
+        Key=s3_key,
+        Body=body,
+        ContentType="application/json",
+    )
+    log.info("Uploaded report to s3://%s/%s", _REPORTS_BUCKET, s3_key)
+    return s3_key
+
+
+# ---------------------------------------------------------------------------
+# Message processor
+# ---------------------------------------------------------------------------
+
+def process_message(sqs, s3, message: dict) -> bool:
+    """
+    Process one SQS message end-to-end.
+    Returns True if the message should be deleted (success or unrecoverable error).
+    Returns False to leave the message visible for retry (transient error).
+    """
+    body     = json.loads(message["Body"])
+    task_id  = body["task_id"]
+    s3_key   = body["s3_key"]
+    sha256   = body["sha256"]
+    tags     = body.get("tags", [])
+
+    log.info("Processing task %s (sha256=%s)", task_id, sha256)
+    sample_path = None
+
+    try:
+        sample_path  = download_sample(s3, s3_key)
+        cape_task_id = submit_to_cape(sample_path, task_id, tags)
+        completed    = wait_for_cape(cape_task_id)
+
+        if completed:
+            report = get_cape_report(cape_task_id)
+            upload_report(s3, report, task_id, sha256)
+            log.info("Task %s complete", task_id)
+            return True
+
+        log.error("Task %s: Cape analysis did not complete successfully", task_id)
+        # Cape failures are unrecoverable — delete to avoid infinite retries
+        return True
+
+    except ClientError as exc:
+        log.error("Task %s: AWS error — %s", task_id, exc)
+        return False  # transient; let SQS retry
+
+    except requests.RequestException as exc:
+        log.error("Task %s: Cape API error — %s", task_id, exc)
+        return False  # transient; let SQS retry
+
+    except Exception:
+        log.exception("Task %s: unexpected error", task_id)
+        return False  # transient; let SQS retry
+
+    finally:
+        if sample_path and sample_path.exists():
+            sample_path.unlink()
+            log.debug("Cleaned up temp file %s", sample_path)
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    log.info("SQS agent starting. Queue: %s", _SQS_QUEUE_URL)
+    session_mgr = SessionManager()
+
+    while True:
+        try:
+            creds     = session_mgr.credentials()
+            sqs, s3   = _make_clients(creds)
+            message   = poll_message(sqs)
+
+            if message is None:
+                continue  # long-poll returned empty; loop immediately
+
+            if process_message(sqs, s3, message):
+                sqs.delete_message(
+                    QueueUrl=_SQS_QUEUE_URL,
+                    ReceiptHandle=message["ReceiptHandle"],
+                )
+                log.info("Deleted SQS message")
+            else:
+                log.warning(
+                    "Message not deleted — visibility timeout will expire "
+                    "and SQS will redeliver for retry"
+                )
+
+        except ClientError as exc:
+            log.error("AWS API error in main loop: %s", exc)
+            time.sleep(5)
+
+        except Exception:
+            log.exception("Unexpected error in main loop")
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()

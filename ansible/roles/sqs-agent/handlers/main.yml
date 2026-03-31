@@ -1,0 +1,6 @@
+---
+- name: Restart sqs-agent
+  ansible.builtin.systemd:
+    name: sqs-agent
+    state: restarted
+    daemon_reload: true
