@@ -45,8 +45,8 @@ variable "samples_bucket_arn" {
 
 variable "visibility_timeout_seconds" {
   type        = number
-  default     = 3600  # 60 minutes — complex malware can run 30+ min; 60 min prevents spurious redelivery
-  description = "How long a received message is hidden from other consumers. Must exceed the longest expected Cape analysis run."
+  default     = 5400  # 90 minutes — 60 min worst-case analysis + 30 min buffer for S3 report upload
+  description = "How long a received message is hidden from other consumers. Must exceed the longest expected Cape analysis run plus report upload time."
 }
 
 variable "alarm_sns_topic_arns" {

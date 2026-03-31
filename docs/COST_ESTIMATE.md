@@ -16,8 +16,8 @@ Actual costs vary with sample volume, analysis frequency, and data transfer.
 | **Total (RISE-1)** | **~$108/month** |
 | **Total (ADVANCE-1)** | **~$148/month** |
 
-Recommended for active analysis work: ADVANCE-1 (~$167/month total).
-RISE-1 is adequate for dev/test or low-volume use (~$127/month total).
+Recommended for active analysis work: ADVANCE-1 (~$148/month total).
+RISE-1 is adequate for dev/test or low-volume use (~$108/month total).
 
 ---
 
