@@ -205,3 +205,44 @@ Hardware-specific steps (DSDT patching) are Ansible-only. Never baked into Packe
 - Packer image is provider-agnostic (qcow2 output, convertible to OVH snapshot)
 - Host rebuilds skip the slow Packer step if the snapshot is current
 - `make configure` can be re-run safely after any config change
+
+---
+
+## ADR-008: Two-phase sample submission to eliminate SQS/S3 race
+
+**Status:** Decided
+
+**Context:**
+The original `sample_submitter` Lambda (Phase 1 only) issued a pre-signed S3 PUT URL
+and immediately enqueued an SQS job. The bare metal sqs-agent could dequeue and attempt
+to process the job before the client finished uploading the sample, resulting in a
+"object not found" error and unnecessary retry churn.
+
+**Decision:**
+Split submission into two phases, both handled by the same Lambda function:
+
+- **Phase 1 (API Gateway POST /submit):** Validate request, generate `task_id`, issue
+  pre-signed S3 PUT URL with job metadata (`task_id`, `sha256`, `tags`) embedded in the
+  AWS signature via S3 object metadata. The client MUST include `x-amz-meta-*` headers
+  matching the signature or S3 rejects the PUT with 403. Return `{task_id, upload_url}`
+  immediately. No SQS message is sent here.
+
+- **Phase 2 (S3 ObjectCreated on `samples/` prefix):** Triggered only after S3 confirms
+  the object exists. Reads job metadata from the object via `head_object`, then enqueues
+  the SQS job. The sqs-agent cannot receive a job for a sample that has not been fully
+  uploaded.
+
+Metadata is embedded in the presigned URL signature rather than written to a separate
+storage location (e.g. DynamoDB, or a temp object in S3) to avoid cleanup complexity.
+The samples bucket has GOVERNANCE Object Lock (90-day) on all objects, so any temp file
+written there cannot be deleted by Lambda without a bypass permission — ruling out the
+temp-file pattern.
+
+**Consequences:**
+- Race condition between upload and job dispatch is eliminated by design
+- No new Lambda functions or storage resources required — same zip artifact
+- Client API contract is unchanged (`POST /submit` → presigned URL → poll)
+- Client must send the `x-amz-meta-*` headers specified in the presigned URL or the
+  PUT will be rejected with 403 — this is a documented API requirement
+- Lambda must be granted `s3:InvokeFunction` permission from the samples bucket
+  (in addition to the existing reports bucket permission)
