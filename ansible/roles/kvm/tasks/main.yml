@@ -41,19 +41,19 @@
 
 # Hugepages pre-allocate memory for KVM guests, reducing latency from
 # page faults during analysis and preventing the host from swapping VM
-# memory under load. 8 GB reserved (8192 x 2MB pages) — tune to host RAM.
+# memory under load. Count set via kvm_hugepages_2mb (defaults/main.yml).
 - name: Configure hugepages in GRUB
   ansible.builtin.lineinfile:
     path: /etc/default/grub
     regexp: '^GRUB_CMDLINE_LINUX='
-    line: 'GRUB_CMDLINE_LINUX="hugepages=4096 default_hugepagesz=2M hugepagesz=2M"'
+    line: 'GRUB_CMDLINE_LINUX="hugepages={{ kvm_hugepages_2mb }} default_hugepagesz=2M hugepagesz=2M"'
     backup: true
   notify: Update GRUB
 
 - name: Set hugepages at runtime (takes effect without reboot)
   ansible.posix.sysctl:
     name: vm.nr_hugepages
-    value: "4096"
+    value: "{{ kvm_hugepages_2mb }}"
     state: present
     sysctl_file: /etc/sysctl.d/90-hugepages.conf
     reload: true

@@ -39,7 +39,7 @@ _REPORTS_BUCKET      = os.environ["REPORTS_BUCKET"]
 _SAMPLES_BUCKET      = os.environ["SAMPLES_BUCKET"]
 _AWS_REGION          = os.environ.get("AWS_REGION", "us-east-1")
 _CAPE_API_URL        = os.environ.get("CAPE_API_URL", "http://127.0.0.1:8000/apiv2")
-_CAPE_API_KEY        = os.environ.get("CAPE_API_KEY", "")
+_CAPE_API_KEY        = os.environ["CAPE_API_KEY"]  # required — agent refuses to start without it
 
 POLL_WAIT_SECONDS    = int(os.environ.get("POLL_WAIT_SECONDS",    "{{ sqs_agent_poll_wait_seconds }}"))
 CAPE_TIMEOUT_SECONDS = int(os.environ.get("CAPE_TIMEOUT_SECONDS", "{{ sqs_agent_cape_timeout_seconds }}"))
@@ -120,9 +120,7 @@ def _make_clients(creds: dict):
 
 def _cape_headers() -> dict:
     """Authorization headers for Cape REST API requests."""
-    if _CAPE_API_KEY:
-        return {"Authorization": f"Bearer {_CAPE_API_KEY}"}
-    return {}
+    return {"Authorization": f"Bearer {_CAPE_API_KEY}"}
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +242,12 @@ def process_message(sqs, s3, message: dict) -> bool:
     Returns True if the message should be deleted (success or unrecoverable error).
     Returns False to leave the message visible for retry (transient error).
     """
-    body     = json.loads(message["Body"])
+    body = json.loads(message["Body"])
+    missing = [k for k in ("task_id", "s3_key", "sha256") if k not in body]
+    if missing:
+        log.error("Malformed SQS message — missing keys %s — deleting to prevent retry loop", missing)
+        return True  # delete; retrying a malformed message will never succeed
+
     task_id  = body["task_id"]
     s3_key   = body["s3_key"]
     sha256   = body["sha256"]
