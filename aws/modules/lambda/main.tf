@@ -77,10 +77,11 @@ resource "aws_iam_role_policy" "lambda_s3" {
         Resource = [var.kms_key_arn]
       },
       {
-        # Read Cape API key and DB password from Secrets Manager
+        # Scope to the two secrets Lambda actually needs — db credentials and Cape
+        # API key. Wildcard would also expose WireGuard keys and DSDT values.
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [var.secrets_arn_prefix]
+        Resource = [var.db_secret_arn, var.cape_api_secret_arn]
       },
       {
         # sample_submitter puts analysis jobs on the queue; bare metal host polls and submits to Cape
@@ -149,13 +150,25 @@ resource "aws_lambda_function" "report_processor" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-report-processor" })
 }
 
-# Allow S3 to invoke this function
+# Allow reports S3 bucket to invoke report_processor when a new Cape report lands
 resource "aws_lambda_permission" "s3_invoke_report_processor" {
   statement_id  = "AllowS3Invoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.report_processor.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = var.reports_bucket_arn
+}
+
+# Allow samples S3 bucket to invoke sample_submitter when a new sample is uploaded.
+# Phase 2 of the two-phase submission flow: the SQS job is enqueued here, not in
+# the API handler, so the agent can never dequeue a job for a sample that hasn't
+# finished uploading yet.
+resource "aws_lambda_permission" "s3_invoke_sample_submitter" {
+  statement_id  = "AllowSamplesS3Invoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sample_submitter.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = var.samples_bucket_arn
 }
 
 # -----------------------------------------------------------------------------
