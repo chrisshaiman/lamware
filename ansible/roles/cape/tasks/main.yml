@@ -141,14 +141,26 @@
     value: "{{ cape_result_ip }}"
     mode: "0640"
 
-# Cape API binds to wg0 only — security constraint (never expose to eth0)
-- name: Set Cape API listen IP to WireGuard interface
+# api.conf [api] url is the display URL shown in the web UI — not the bind address.
+# Set it to the WireGuard address so Cape links and callbacks use the correct host.
+- name: Set Cape API display URL to WireGuard interface
   community.general.ini_file:
     path: "{{ cape_install_dir }}/conf/api.conf"
     section: api
     option: url
     value: "http://{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}"
     mode: "0640"
+
+# The actual bind address for the Cape web/API server is controlled by the
+# ExecStart line in cape-web.service, which defaults to 0.0.0.0:8000 (all
+# interfaces). Replace it with the WireGuard IP so the API is never reachable
+# on eth0 — security constraint from SECURITY_CONSTRAINTS.md.
+- name: Restrict cape-web to WireGuard interface
+  ansible.builtin.lineinfile:
+    path: /lib/systemd/system/cape-web.service
+    regexp: 'runserver_plus\s+\S+:\d+'
+    line: "ExecStart=/etc/poetry/bin/poetry run python manage.py runserver_plus {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }} --traceback --keep-meta-shutdown"
+    backrefs: false
 
 # API key authentication — prevents unauthenticated sample submission
 - name: Set Cape API key
