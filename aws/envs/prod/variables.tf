@@ -99,6 +99,10 @@ variable "monthly_budget_limit" {
 variable "budget_alert_emails" {
   type        = list(string)
   description = "Email addresses to notify when budget thresholds are breached. Must set at least one."
+  validation {
+    condition     = length(var.budget_alert_emails) > 0
+    error_message = "At least one email address must be provided for budget alerts."
+  }
 }
 
 variable "tags" {

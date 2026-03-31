@@ -123,6 +123,8 @@ this is the primary reason bare metal is required.
 
 ## Ansible roles
 
+> **Implementation status:** All roles are currently stubs. See **docs/STATUS.md** for current build state.
+
 | Role | Purpose |
 |---|---|
 | `hardening` | Wraps konstruktoid/ansible-role-hardening (CIS-aligned baseline) |

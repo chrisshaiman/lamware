@@ -244,6 +244,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
 
 # -----------------------------------------------------------------------------
 # Secrets Manager — Ansible pulls these at configure time
+resource "aws_secretsmanager_secret" "baremetal_credentials" {
   name        = "${var.name_prefix}/baremetal-agent-credentials"
   description = "AWS IAM credentials for the bare metal SQS polling agent. Static key can only call sts:AssumeRole — all real permissions require assuming the role ARN also stored here."
   kms_key_id  = var.kms_key_id

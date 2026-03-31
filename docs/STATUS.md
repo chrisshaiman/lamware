@@ -107,31 +107,79 @@ malware-sandbox-infra/
 
 ---
 
-## Next session recommendation (2026-03-29)
+## Review findings (2026-03-30)
 
-**Work findings before features.**
+Issues identified during second architecture/security review. Address criticals and highs
+before Ansible role implementation.
 
-Rationale:
-- `terraform apply` fails today — Lambda ZIP packages don't exist (architecture finding below).
-  Everything else is blocked behind that.
-- IAM long-lived key fix must land before the OVH bare metal host is provisioned. Once credentials
-  are pulled to disk on a host running malware, the window to fix it is gone.
-- SQS 30-min visibility timeout causes silent duplicate detonations for complex samples — bad
-  foundation to build Packer/Ansible on top of.
-- High-priority findings are 1–2 hour Terraform changes. Packer + Ansible + OVH is days of work.
+### Critical — blocks terraform apply
 
-**Suggested order:**
-1. Lambda ZIP blocker (create `src/` with stub handlers so `terraform apply` succeeds)
-2. Bare metal IAM: long-lived keys → `sts:AssumeRole` with 1-hour sessions
-3. SQS visibility timeout: 30 min → 60 min
-4. DLQ CloudWatch alarm
-5. Lambda SG egress: hardcoded CIDR → `referenced_security_group_id`
-6. RDS SG egress: unrestricted → deny-all
-7. S3 Object Lock: GOVERNANCE → COMPLIANCE (or document the tradeoff explicitly)
-8. Secrets Manager rotation for RDS password (AWS-managed rotation Lambda)
+- [x] **SQS module: missing `resource` declaration for `aws_secretsmanager_secret.baremetal_credentials`.**
+      Line 246 of `aws/modules/sqs/main.tf` has the block body (name, description, kms_key_id, tags)
+      but the `resource "aws_secretsmanager_secret" "baremetal_credentials" {` opener is missing.
+      `terraform plan` will fail with a parse error.
+      *Files:* `aws/modules/sqs/main.tf`
 
-Medium-priority findings (dashboard, backend placeholder, RDS ingress in module) can defer to a
-later session without blocking progress.
+### Security — high priority
+
+- [x] **VPC Flow Log IAM role uses `Resource = "*"`.**
+      The `aws_iam_role_policy.flow_log` policy allows `logs:CreateLogGroup/Stream/PutLogEvents`
+      on all CloudWatch log groups. Should be scoped to the specific flow log group ARN.
+      *Files:* `aws/modules/vpc/main.tf`
+
+- [x] **Packer: `shutdown_command` echoes `ssh_password` into build logs.**
+      `echo '${var.ssh_password}' | sudo -S shutdown -P now` — the packer user already has
+      `NOPASSWD:ALL` from user-data sudoers, so the password flag is unnecessary.
+      Fix: `sudo shutdown -P now`.
+      *Files:* `packer/ubuntu-sandbox.pkr.hcl`
+
+- [x] **Packer: `pip3 install || true` silently swallows dependency failures.**
+      A broken CAPEv2 requirements install produces a healthy-looking image that fails at runtime.
+      Remove `|| true` so the build fails fast on dependency errors.
+      *Files:* `packer/ubuntu-sandbox.pkr.hcl`
+
+### Operational — medium priority
+
+- [x] **Lambda CloudWatch log retention inconsistent with rest of stack.**
+      Lambda logs retain 30 days; VPC flow logs and API Gateway logs retain 90 days.
+      Forensic consistency argues for 90 days across all log groups.
+      *Files:* `aws/modules/lambda/main.tf`
+
+- [x] **SQS visibility timeout has no buffer for post-analysis S3 upload.**
+      Fixed 2026-03-30. Raised default from 3600s to 5400s (90 min): 60 min worst-case
+      analysis + 30 min buffer for report upload. Prevents duplicate detonations on
+      slow or complex samples.
+      *Files:* `aws/modules/sqs/variables.tf`
+
+- [x] **`budget_alert_emails` variable has no non-empty validation.**
+      Fixed 2026-03-30. Added validation block — `terraform plan` now fails with a clear
+      error message if the list is empty rather than silently creating a budget that notifies nobody.
+      *Files:* `aws/envs/prod/variables.tf`
+
+- [ ] **`report_processor.py` uses `os.environ["AWS_REGION_NAME"]` without fallback.**
+      `sample_submitter.py` uses `.get(..., "us-east-1")` — `report_processor.py` should match.
+      **Deferred** — fix when implementing the real handler (post-Cape). File is a stub; no value in patching it now.
+      *Files:* `src/report_processor.py`
+
+### Documentation — medium priority
+
+- [x] **CLAUDE.md "Build next" section lists completed work as pending.**
+      Fixed 2026-03-30. Replaced stale 9-item list with a pointer to STATUS.md and
+      the actual remaining work (Ansible roles + report_processor stub).
+      *Files:* `CLAUDE.md`
+
+- [x] **COST_ESTIMATE.md summary arithmetic is wrong.**
+      Fixed 2026-03-30. Table was correct ($108/$148); narrative text had stale figures.
+      Corrected narrative to match: ADVANCE-1 ~$148, RISE-1 ~$108.
+      *Files:* `docs/COST_ESTIMATE.md`
+
+- [x] **STATUS.md "Next session recommendation" section is redundant.**
+      Fixed 2026-03-30. Removed — all items were already resolved and tracked in the findings sections.
+      *Files:* `docs/STATUS.md`
+
+- [x] **ARCHITECTURE.md implies Ansible roles are implemented.**
+      Fixed 2026-03-30. Added status note above the roles table pointing to STATUS.md.
+      *Files:* `ARCHITECTURE.md`
 
 ---
 

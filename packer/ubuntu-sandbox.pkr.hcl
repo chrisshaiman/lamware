@@ -152,7 +152,9 @@ source "qemu" "ubuntu_sandbox" {
   ssh_timeout            = "90m"
   ssh_handshake_attempts = 300
 
-  shutdown_command = "echo '${var.ssh_password}' | sudo -S shutdown -P now"
+  # NOPASSWD:ALL is set for the packer user in user-data — no password needed here.
+  # Avoid echoing the password into Packer logs via the previous sudo -S pattern.
+  shutdown_command = "sudo shutdown -P now"
 }
 
 # =============================================================================
@@ -199,7 +201,7 @@ build {
       "echo '==> Installing CAPEv2 system dependencies...'",
       "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev libffi-dev libfuzzy-dev ssdeep libmagic1 libjansson-dev",
       "echo '==> Installing CAPEv2 Python dependencies...'",
-      "sudo pip3 install --break-system-packages -r /opt/CAPEv2/requirements.txt || true",
+      "sudo pip3 install --break-system-packages -r /opt/CAPEv2/requirements.txt",
     ]
   }
 
