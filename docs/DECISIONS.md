@@ -245,4 +245,175 @@ temp-file pattern.
 - Client must send the `x-amz-meta-*` headers specified in the presigned URL or the
   PUT will be rejected with 403 — this is a documented API requirement
 - Lambda must be granted `s3:InvokeFunction` permission from the samples bucket
-  (in addition to the existing reports bucket permission)
+
+---
+
+## ADR-009: Windows guest OS — Windows 10 22H2 Enterprise evaluation ISO
+
+**Status:** Decided
+
+**Context:**
+Cape requires a Windows guest VM for dynamic malware analysis. Choices are Windows 10,
+Windows 11, or both. Licensing options are Microsoft evaluation ISOs (90-day, free) or
+a paid MSDN/Visual Studio subscription.
+
+**Decision:**
+Start with Windows 10 22H2 Enterprise evaluation ISO. Evaluate adding Windows 11 once
+the Windows 10 lab is stable and producing real sample volume.
+
+Rationale for Windows 10: the majority of malware in the wild still targets Win10-era
+environments; Cape community tooling has the most Win10 test coverage; lighter resource
+footprint (~2 GB RAM baseline vs ~4 GB for Win11); Win11 adds TPM emulation complexity
+(swtpm) with limited near-term benefit.
+
+Rationale for evaluation ISO: Microsoft distributes these specifically for lab use;
+the 90-day rebuild cycle is manageable with an automated Packer pipeline; activation
+state is not a significant variable for the malware classes this lab targets.
+Enterprise SKU (not Home or Pro) is required — Group Policy hooks used by some Cape
+analysis modules are Enterprise-only.
+
+**Consequences:**
+- Guest image must be rebuilt from a fresh evaluation ISO every 90 days
+- Packer guest image pipeline handles rebuilds; rotation process should be documented
+  in the runbook before the first guest is deployed
+- Windows 11 support deferred — tracked in docs/STATUS.md future scope
+
+---
+
+## ADR-010: Cape agent mode — cape-agent.py (Python in-guest)
+
+**Status:** Decided
+
+**Context:**
+Cape supports two in-guest agent modes: the traditional Python-based `cape-agent.py`
+(runs as a persistent process inside the guest) and capemon DLL injection (Cape injects
+capemon.dll into spawned malware processes at runtime, no persistent agent process).
+The choice affects both setup complexity and detection resistance against evasion-aware
+malware.
+
+**Decision:**
+Use `cape-agent.py` for the initial deployment. Evaluate migrating to capemon DLL
+injection once evasion behaviour is observed in practice.
+
+Rationale: cape-agent.py is the default Cape path with the most community documentation
+and tested configurations. The primary anti-evasion investment for this lab is ACPI/DSDT
+table patching (already implemented) and network simulation — these provide more value
+against the realistic sample population than agent-mode selection. Detection-aware malware
+sophisticated enough to enumerate Python installations or probe the agent port is a small
+fraction of early-stage sample volume.
+
+**Consequences:**
+- Python must be installed in the guest image (included in the Win10 Packer build)
+- Agent process is visible in the guest process list before detonation — a potential
+  evasion signal for advanced samples
+- Migrating to capemon injection later requires changes to the guest Packer image
+  and Cape configuration but no changes to the host Ansible roles or AWS infrastructure
+- Migration trigger: evasion observed in practice — tracked in docs/STATUS.md future scope
+
+---
+
+## ADR-011: Guest network simulation — INetSim on host
+
+**Status:** Decided
+
+**Context:**
+Cape guest VMs need a network environment for analysis. Options are full internet access,
+simulated internet (INetSim/FakeNet-NG), or fully isolated. Full internet access exposes
+the host IP to live C2 infrastructure, risks abuse complaints, and may trigger destructive
+second-stage payloads. Fully isolated misses all network-based behavior.
+
+**Decision:**
+Run INetSim on the bare metal host, bound to the virbr-det bridge gateway IP. Cape's
+`routing.conf` is configured with `internet_access = no` and `inetsim = yes`. All guest
+DNS queries resolve to the INetSim host; all TCP connections are answered by INetSim
+service simulators (HTTP, HTTPS, SMTP, FTP, DNS).
+
+FakeNet-NG was considered but runs inside the guest (Windows-only), which is
+architecturally less clean — it cannot be managed by Ansible alongside the host
+network configuration.
+
+**Consequences:**
+- Guest traffic never reaches the real internet — no abuse risk, no C2 contact
+- Malware that performs a live connectivity check before detonating may go dormant;
+  `report_processor.py` will detect this pattern and alert the operator (see planned
+  features in docs/STATUS.md)
+- INetSim serves generic responses — second-stage payload downloads receive dummy content;
+  operator can choose selective passthrough for re-analysis if warranted
+- Requires new `ansible/roles/inetsim/` role and updates to `roles/networking/` and
+  `roles/cape/` — tracked in docs/STATUS.md next build section
+
+---
+
+## ADR-012: Guest VM anti-evasion hardening
+
+**Status:** Decided
+
+**Context:**
+Malware commonly checks for sandbox artifacts before executing its payload. Without
+anti-evasion measures, detection-aware samples will go dormant and produce empty reports.
+The ACPI/DSDT table patching (already implemented in `roles/cape/`) is the highest-value
+single control. Additional measures vary in effort and payoff.
+
+**Decision:**
+Implement the following in the Windows 10 guest Packer image and libvirt XML template:
+
+*Packer image (guest build-time):*
+- Screen resolution: 1920x1080 (800x600 is a classic sandbox tell)
+- CPU cores: 2 (single-core = sandbox signal)
+- RAM: 4096 MB
+- Disk: 60 GB presented to guest
+- Hostname: randomized realistic pattern (`DESKTOP-XXXXXXX` style)
+- Username: common first-name pattern, not `analyst`, `sandbox`, `malware`, etc.
+- Decoy files: plausible Documents/Downloads/Desktop content (fake PDFs, Word doc,
+  browser history) to avoid an obviously empty user profile
+
+*libvirt XML template (roles/cape/):*
+- Mask hypervisor CPUID bit: `<feature policy='disable' name='hypervisor'/>` with
+  `host-passthrough` CPU mode — prevents `CPUID EAX=1 ECX bit31` detection
+
+*Deferred:*
+- User activity simulation (mouse movement, file opens) — high effort, marginal payoff
+  for most samples; tracked in docs/STATUS.md future scope
+- Network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low
+  priority, revisit if OUI-based detection is observed in practice
+- RDTSC timing attack mitigation — hard to fully defeat without hardware tricks; DSDT
+  work provides partial coverage
+
+**Consequences:**
+- Hostname and username must be parameterized in the Packer template (variables, not
+  hardcoded) so they can be varied across image rebuilds
+- CPUID mask requires `host-passthrough` CPU mode in libvirt — already used for ACPI
+  compatibility, no new constraint
+- Decoy file content should be benign and non-identifying (no real personal data)
+
+---
+
+## ADR-013: Guest snapshot strategy — clean + office profiles
+
+**Status:** Decided
+
+**Context:**
+Cape reverts the guest VM to a clean snapshot before each analysis run. A single clean
+snapshot covers most malware but document-based samples (macro Word/Excel, PDF exploits)
+won't detonate without the target application installed, producing empty reports for a
+large and common sample class.
+
+**Decision:**
+Maintain two guest snapshots: `clean` (bare OS + cape-agent) and `office` (clean +
+LibreOffice). Cape routes samples to the `office` profile based on file extension tags
+(`.doc`, `.docm`, `.xls`, `.xlsm`, `.odt`, etc.) via the existing tag field in the SQS
+job schema and `kvm.conf` machine profile mapping.
+
+Use LibreOffice rather than Microsoft Office: free, no account or license required, good
+enough for most macro samples. If VBA compatibility issues are observed in practice,
+switching to Microsoft Office evaluation is an option — that decision is deferred until
+there is evidence LibreOffice is the limiting factor.
+
+**Consequences:**
+- Two snapshots to maintain and rotate on the 90-day evaluation ISO rebuild cycle
+- `packer/windows10-guest.pkr.hcl` builds the base image; LibreOffice installation is
+  a second provisioner pass or a separate Packer build that extends the base
+- `roles/cape/` `kvm.conf` template needs machine stanzas for both `clean` and `office`
+  profiles with the correct snapshot names
+- Tag-based routing is already supported by the SQS job schema — no infrastructure changes
+- Additional profiles (browser, PDF reader) deferred until sample volume justifies them
