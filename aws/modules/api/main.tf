@@ -102,13 +102,13 @@ resource "aws_apigatewayv2_route" "submit" {
   authorization_type = "AWS_IAM"
 }
 
-# Allow API Gateway to invoke the Lambda function
+# Allow API Gateway to invoke the Lambda function — scoped to POST /submit only
 resource "aws_lambda_permission" "api_gw_invoke" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = var.sample_submitter_function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/*/*/submit"
+  source_arn    = "${aws_apigatewayv2_api.this.execution_arn}/$default/POST/submit"
 }
 
 # -----------------------------------------------------------------------------

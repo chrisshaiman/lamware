@@ -39,12 +39,14 @@ _REPORTS_BUCKET      = os.environ["REPORTS_BUCKET"]
 _SAMPLES_BUCKET      = os.environ["SAMPLES_BUCKET"]
 _AWS_REGION          = os.environ.get("AWS_REGION", "us-east-1")
 _CAPE_API_URL        = os.environ.get("CAPE_API_URL", "http://127.0.0.1:8000/apiv2")
-_CAPE_API_KEY        = os.environ["CAPE_API_KEY"]  # required — agent refuses to start without it
+_CAPE_API_SECRET_ARN = os.environ["CAPE_API_SECRET_ARN"]  # key fetched at runtime — not stored on disk
+_CAPE_API_KEY        = ""  # populated in main() after assumed-role session is ready
 
 POLL_WAIT_SECONDS    = int(os.environ.get("POLL_WAIT_SECONDS",    "{{ sqs_agent_poll_wait_seconds }}"))
 CAPE_TIMEOUT_SECONDS = int(os.environ.get("CAPE_TIMEOUT_SECONDS", "{{ sqs_agent_cape_timeout_seconds }}"))
 CAPE_POLL_INTERVAL   = int(os.environ.get("CAPE_POLL_INTERVAL",   "{{ sqs_agent_cape_poll_interval_seconds }}"))
 SESSION_REFRESH_BUFFER = int(os.environ.get("SESSION_REFRESH_BUFFER", "{{ sqs_agent_session_refresh_buffer_seconds }}"))
+MAX_SAMPLE_BYTES     = int(os.environ.get("MAX_SAMPLE_BYTES",     "{{ sqs_agent_max_sample_bytes }}"))
 
 # ---------------------------------------------------------------------------
 # Logging — stdout is captured by journald via systemd
@@ -92,11 +94,19 @@ class SessionManager:
 
     def _refresh(self) -> None:
         log.info("Refreshing STS session credentials")
-        resp = self._sts.assume_role(
-            RoleArn=_ROLE_ARN,
-            RoleSessionName=f"sqs-agent-{int(time.time())}",
-            DurationSeconds=3600,
-        )
+        try:
+            resp = self._sts.assume_role(
+                RoleArn=_ROLE_ARN,
+                RoleSessionName=f"sqs-agent-{int(time.time())}",
+                DurationSeconds=3600,
+            )
+        except ClientError as exc:
+            log.error(
+                "STS AssumeRole failed — role may be deleted or trust policy broken. "
+                "RoleArn=%s error=%s",
+                _ROLE_ARN, exc,
+            )
+            raise
         c = resp["Credentials"]
         self._creds = {
             "aws_access_key_id":     c["AccessKeyId"],
@@ -140,14 +150,26 @@ def poll_message(sqs) -> Optional[dict]:
 
 
 def download_sample(s3, s3_key: str) -> Path:
-    """Download sample from S3 to a temp file. Returns the local path."""
+    """
+    Download sample from S3 to a temp file. Returns the local path.
+    Raises ValueError if the object exceeds MAX_SAMPLE_BYTES — caller should
+    delete the SQS message (oversized samples will never succeed on retry).
+    """
+    head = s3.head_object(Bucket=_SAMPLES_BUCKET, Key=s3_key)
+    size = head["ContentLength"]
+    if size > MAX_SAMPLE_BYTES:
+        raise ValueError(
+            f"Sample too large: {size} bytes (max {MAX_SAMPLE_BYTES}). "
+            f"Deleting job to prevent retry loop. s3_key={s3_key}"
+        )
+
     filename = Path(s3_key).name
     tmp = tempfile.NamedTemporaryFile(
         prefix="sample_",
         suffix=f"_{filename}",
         delete=False,
     )
-    log.info("Downloading s3://%s/%s", _SAMPLES_BUCKET, s3_key)
+    log.info("Downloading s3://%s/%s (%d bytes)", _SAMPLES_BUCKET, s3_key, size)
     s3.download_fileobj(_SAMPLES_BUCKET, s3_key, tmp)
     tmp.flush()
     return Path(tmp.name)
@@ -271,6 +293,10 @@ def process_message(sqs, s3, message: dict) -> bool:
         # Cape failures are unrecoverable — delete to avoid infinite retries
         return True
 
+    except ValueError as exc:
+        log.error("Task %s: unrecoverable error — %s", task_id, exc)
+        return True  # delete; retrying will never succeed
+
     except ClientError as exc:
         log.error("Task %s: AWS error — %s", task_id, exc)
         return False  # transient; let SQS retry
@@ -294,8 +320,37 @@ def process_message(sqs, s3, message: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global _CAPE_API_KEY
     log.info("SQS agent starting. Queue: %s", _SQS_QUEUE_URL)
     session_mgr = SessionManager()
+
+    # Fetch Cape API key from Secrets Manager using assumed-role credentials.
+    # Key is never written to disk — only held in process memory.
+    creds = session_mgr.credentials()
+    sm = boto3.client("secretsmanager", region_name=_AWS_REGION, **creds)
+    _CAPE_API_KEY = json.loads(
+        sm.get_secret_value(SecretId=_CAPE_API_SECRET_ARN)["SecretString"]
+    )["api_key"]
+    log.info("Cape API key loaded from Secrets Manager")
+
+    # Verify Cape is reachable and the API key is valid before entering the loop.
+    # Fails fast with a clear error rather than waiting for the first job to expose
+    # a misconfigured CAPE_API_URL or stale key.
+    try:
+        resp = requests.get(
+            f"{_CAPE_API_URL}/cuckoo/status/",
+            headers=_cape_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        log.info("Cape API health check passed (status %d)", resp.status_code)
+    except requests.RequestException as exc:
+        log.error(
+            "Cape API health check failed — check CAPE_API_URL and API key. "
+            "url=%s error=%s",
+            _CAPE_API_URL, exc,
+        )
+        sys.exit(1)
 
     while True:
         try:

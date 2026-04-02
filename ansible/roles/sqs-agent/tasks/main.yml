@@ -8,11 +8,14 @@
 # the SQS message. It absorbs the previously planned s3-sync role.
 #
 # Credentials flow:
-#   1. Ansible (control node) pulls baremetal credentials from Secrets Manager
-#   2. Ansible writes them to /etc/sqs-agent/env (mode 0600, owned by cape user)
+#   1. Ansible (control node) pulls baremetal IAM credentials from Secrets Manager
+#   2. Ansible writes them to /etc/sqs-agent/env (mode 0600) alongside a Cape
+#      secret ARN — the actual Cape API key is NOT written to disk
 #   3. systemd injects env file into the agent process at runtime
 #   4. Agent uses the long-lived key (sts:AssumeRole only) to call STS
 #   5. Agent uses 1-hour session credentials for all SQS/S3/KMS operations
+#   6. Agent fetches Cape API key from Secrets Manager at startup using the
+#      assumed-role credentials — key lives in process memory only
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -63,28 +66,6 @@
   ansible.builtin.set_fact:
     baremetal_creds: "{{ baremetal_secret_raw.stdout | from_json }}"
   no_log: true
-
-# cape_secret should already be set by the cape role (same play).
-# If running sqs-agent role standalone, pull it here.
-- name: Fetch Cape secret if not already loaded
-  ansible.builtin.command: >
-    aws secretsmanager get-secret-value
-    --secret-id {{ secret_arn_cape }}
-    --query SecretString
-    --output text
-    --region {{ secrets_manager_region }}
-  delegate_to: localhost
-  register: cape_secret_raw_sqs
-  changed_when: false
-  failed_when: cape_secret_raw_sqs.rc != 0 or cape_secret_raw_sqs.stdout | length == 0
-  no_log: true
-  when: cape_secret is not defined
-
-- name: Parse Cape secret JSON (if not already loaded)
-  ansible.builtin.set_fact:
-    cape_secret: "{{ cape_secret_raw_sqs.stdout | from_json }}"
-  no_log: true
-  when: cape_secret is not defined
 
 # -------------------------------------------------------------------------
 # Deploy agent script and environment file
