@@ -37,10 +37,15 @@
     # 1. OS hardening — CIS-aligned baseline (konstruktoid)
     - role: hardening
 
-    # 2. Networking — detonation bridge + iptables air-gap
+    # 2. Networking — detonation bridge + iptables air-gap + INetSim INPUT rules
     - role: networking
 
-    # 3. KVM/QEMU/libvirt
+    # 3. INetSim — host-side network simulator for guest VM traffic (ADR-011)
+    #    Must run after networking (needs virbr-det bridge IP to exist).
+    #    Must run before cape (cape routing.conf references inetsim_server).
+    - role: inetsim
+
+    # 4. KVM/QEMU/libvirt
     - role: kvm
 
     # 4. WireGuard VPN

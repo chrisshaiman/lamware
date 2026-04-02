@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  autounattend.xml — Windows 10 22H2 Enterprise Evaluation unattended setup
+  for the malware sandbox Cape detonation guest VM.
+
+  This file is placed on a virtual floppy (A:\autounattend.xml) by the Packer
+  QEMU builder. Windows Setup auto-detects it on the A: drive and runs fully
+  unattended.
+
+  Design decisions:
+  - No product key: evaluation ISO, 90-day expiry (see ADR-009)
+  - Edition: Windows 10 Enterprise Evaluation (only edition in the eval ISO)
+  - Build user: local Administrator account, enabled for Packer WinRM access
+  - Password: must match winrm_password in windows10-guest.pkr.hcl
+  - UAC: disabled for build phase (restored by configure-system.ps1 is intentional
+    — for a sandbox guest, UAC is left disabled so samples run with full admin)
+  - WinRM: HTTP on port 5985, basic auth, unencrypted — build network only,
+    not exposed outside the Packer QEMU process
+  - Final hostname and user are set by PowerShell provisioners after WinRM connects
+
+  Managed by Packer build. Do not edit manually.
+  Author: Christopher Shaiman
+  License: Apache 2.0
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =========================================================
+       PASS 1: windowsPE — runs from the WinPE boot environment
+       Handles disk layout and image selection.
+       ========================================================= -->
+  <settings pass="windowsPE">
+
+    <!-- International settings for the install media -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <!-- Disk setup and image selection -->
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <!-- Accept EULA (evaluation license) -->
+      <AcceptEula>true</AcceptEula>
+
+      <!-- No product key — evaluation ISO activates automatically -->
+
+      <!-- Disk layout: BIOS/legacy (simpler than UEFI for KVM/QEMU guests)
+           Partition 1: 350 MB System Reserved (boot)
+           Partition 2: Remainder — C: drive (Windows) -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>Primary</Type>
+              <Size>350</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Active>true</Active>
+              <Format>NTFS</Format>
+              <Label>System Reserved</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Image selection: ImageIndex 1 = the only edition in the eval ISO
+           (Windows 10 Enterprise Evaluation). Do not use ImageIndex for
+           multi-edition ISOs — use ImageName instead. -->
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>2</PartitionID>
+          </InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <WillShowUI>Never</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- User data passed through to the specialize phase -->
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- No ProductKey element — evaluation ISO does not need one -->
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- =========================================================
+       PASS 3: specialize — runs after OS files are copied,
+       before first boot. Sets machine-level identity.
+       ========================================================= -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <!-- Placeholder hostname; renamed to the real value by configure-system.ps1
+           after Packer WinRM connects. Using a generic name keeps the autounattend
+           static while allowing Packer to set the final hostname via variable. -->
+      <ComputerName>DESKTOP-PKRBLD</ComputerName>
+      <TimeZone>Eastern Standard Time</TimeZone>
+      <RegisteredOrganization>Contoso Ltd</RegisteredOrganization>
+      <RegisteredOwner>John Smith</RegisteredOwner>
+    </component>
+
+    <!-- Disable Windows Defender real-time monitoring in the specialize pass
+         so it doesn't interfere with subsequent provisioning steps.
+         The disable-defender.ps1 provisioner applies full Defender suppression
+         at the service level after first boot. -->
+    <component name="Microsoft-Windows-Security-SPP-UX"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SkipAutoActivation>true</SkipAutoActivation>
+    </component>
+
+    <!-- Disable UAC — sandbox guests run samples as admin, UAC prompts would
+         block automated analysis. -->
+    <component name="Microsoft-Windows-UAC"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <EnableLUA>false</EnableLUA>
+    </component>
+
+    <!-- Suppress the Windows Firewall setup prompt. Firewall is managed by
+         configure-system.ps1 to allow WinRM and Cape agent traffic. -->
+    <component name="Networking-MPSSVC-Svc"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <FirewallGroups>
+        <FirewallGroup wcm:action="add" wcm:keyValue="WinRM">
+          <Active>true</Active>
+          <Group>Windows Remote Management</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+
+  </settings>
+
+  <!-- =========================================================
+       PASS 7: oobeSystem — runs at first logon / OOBE phase.
+       Creates the Administrator account, enables auto-logon,
+       and runs the commands that configure WinRM for Packer.
+       ========================================================= -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <!-- Skip OOBE — fully unattended -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Enable built-in Administrator account for Packer WinRM access.
+           Password MUST match winrm_password in windows10-guest.pkr.hcl.
+           This account is the Packer build account — the real sandbox user
+           is created by create-user.ps1 after WinRM connects. -->
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>Packer@Build1</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <!-- Auto-logon as Administrator once so FirstLogonCommands run.
+           The count is set high enough to survive any reboots Packer triggers
+           during provisioning. -->
+      <AutoLogon>
+        <Password>
+          <Value>Packer@Build1</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>8</LogonCount>
+        <Username>Administrator</Username>
+      </AutoLogon>
+
+      <!-- FirstLogonCommands — run as Administrator at first login.
+           Goal: get WinRM into a state where Packer can connect.
+           All remaining provisioning is done by Packer PowerShell provisioners. -->
+      <FirstLogonCommands>
+
+        <!-- 1. Enable the built-in Administrator account (may be disabled by default) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>cmd /c net user Administrator /active:yes</CommandLine>
+          <Description>Enable built-in Administrator</Description>
+        </SynchronousCommand>
+
+        <!-- 2. Set PowerShell execution policy so provisioner scripts can run -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>cmd /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force -Scope LocalMachine"</CommandLine>
+          <Description>Set PowerShell execution policy</Description>
+        </SynchronousCommand>
+
+        <!-- 3. Configure WinRM for Packer: basic auth, unencrypted, HTTP only.
+             This is the build network inside QEMU — not exposed externally. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>cmd /c winrm quickconfig -q</CommandLine>
+          <Description>WinRM quickconfig</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service @{AllowUnencrypted="true"}</CommandLine>
+          <Description>WinRM allow unencrypted</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service/auth @{Basic="true"}</CommandLine>
+          <Description>WinRM enable basic auth</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>cmd /c winrm set winrm/config/listener?Address=*+Transport=HTTP @{Port="5985"}</CommandLine>
+          <Description>WinRM HTTP listener on 5985</Description>
+        </SynchronousCommand>
+
+        <!-- 4. Open WinRM port in Windows Firewall -->
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
+          <CommandLine>cmd /c netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in localport=5985 protocol=tcp action=allow</CommandLine>
+          <Description>Firewall: allow WinRM HTTP</Description>
+        </SynchronousCommand>
+
+        <!-- 5. Open Cape agent port (8000) — Cape host connects here to control the guest -->
+        <SynchronousCommand wcm:action="add">
+          <Order>8</Order>
+          <CommandLine>cmd /c netsh advfirewall firewall add rule name="CapeAgent" dir=in localport=8000 protocol=tcp action=allow</CommandLine>
+          <Description>Firewall: allow Cape agent port 8000</Description>
+        </SynchronousCommand>
+
+        <!-- 6. Disable Windows Update — evaluation guests are ephemeral;
+             updates during the build would take hours and are unwanted. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>9</Order>
+          <CommandLine>cmd /c sc config wuauserv start= disabled</CommandLine>
+          <Description>Disable Windows Update service</Description>
+        </SynchronousCommand>
+
+        <!-- 7. Start WinRM service so Packer can connect -->
+        <SynchronousCommand wcm:action="add">
+          <Order>10</Order>
+          <CommandLine>cmd /c net start WinRM</CommandLine>
+          <Description>Start WinRM service</Description>
+        </SynchronousCommand>
+
+      </FirstLogonCommands>
+
+    </component>
+
+    <!-- Set UI language at OOBE phase -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+  </settings>
+
+</unattend>

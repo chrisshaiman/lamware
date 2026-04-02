@@ -207,3 +207,91 @@
     - cape
     - cape-web
     - cape-processor
+
+# -------------------------------------------------------------------------
+# routing.conf — network simulation via INetSim (ADR-011)
+# Tells Cape to route all guest traffic to INetSim on the detonation
+# bridge gateway rather than passing through to the internet.
+# -------------------------------------------------------------------------
+
+- name: Deploy routing.conf
+  ansible.builtin.template:
+    src: routing.conf.j2
+    dest: "{{ cape_install_dir }}/conf/routing.conf"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0640"
+  notify: Restart Cape services
+
+# -------------------------------------------------------------------------
+# kvm.conf — machine list and per-machine stanzas (ADR-013)
+# Two machines: clean (base Win10 snapshot) and office (LibreOffice snapshot).
+# Tag "office" routes Office document samples to the office machine.
+# -------------------------------------------------------------------------
+
+- name: Set Cape machine list in kvm.conf
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/kvm.conf"
+    section: kvm
+    option: machines
+    value: "{{ cape_guests | map(attribute='name') | join(',') }}"
+    mode: "0640"
+  notify: Restart Cape services
+
+- name: Configure kvm.conf machine stanzas
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/kvm.conf"
+    section: "{{ item.0.name }}"
+    option: "{{ item.1.key }}"
+    value: "{{ item.1.value }}"
+    mode: "0640"
+  loop: "{{ cape_guests | subelements('conf_options') }}"
+  loop_control:
+    label: "[{{ item.0.name }}] {{ item.1.key }}"
+  notify: Restart Cape services
+
+# -------------------------------------------------------------------------
+# Guest VM libvirt domain definitions
+# Renders guest-domain.xml.j2 for each entry in cape_guests, writes it to
+# a temp file, and calls virsh define. The domain is redefined on every
+# Ansible run so CPU/memory/disk changes are always applied.
+# Snapshots are NOT managed here — the operator takes snapshots manually
+# after verifying the guest image is ready. See docs/STATUS.md for the
+# snapshot workflow.
+# -------------------------------------------------------------------------
+
+- name: Ensure guest image directory exists
+  ansible.builtin.file:
+    path: "{{ cape_guest_image_dir }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Deploy guest libvirt domain XML
+  ansible.builtin.template:
+    src: guest-domain.xml.j2
+    dest: "/tmp/cape-guest-{{ item.name }}.xml"
+    mode: "0600"
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Define guest libvirt domains (virsh define)
+  ansible.builtin.command:
+    cmd: virsh define /tmp/cape-guest-{{ item.name }}.xml
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: virsh_define_result
+  changed_when: "'Domain' in virsh_define_result.stdout"
+  # Idempotent: virsh define replaces an existing domain definition without
+  # error, so re-running Ansible is safe even if the domain already exists.
+
+- name: Remove temporary domain XML files
+  ansible.builtin.file:
+    path: "/tmp/cape-guest-{{ item.name }}.xml"
+    state: absent
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"

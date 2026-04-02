@@ -1,0 +1,116 @@
+---
+# =============================================================================
+# roles/inetsim/tasks/main.yml
+# Installs and configures INetSim on the bare metal sandbox host.
+#
+# INetSim is a network simulation daemon that intercepts DNS, HTTP, HTTPS,
+# SMTP, and FTP traffic from guest VMs and returns synthetic responses.
+# It runs on the host, bound to the virbr-det bridge gateway IP, so guests
+# can reach it but it is not reachable from the internet or management VPN.
+#
+# Execution order:
+#   1. Install the inetsim package (Ubuntu universe repo)
+#   2. Create log and report directories
+#   3. Deploy inetsim.conf (bind address, services, log paths)
+#   4. Install a systemd drop-in that orders INetSim after libvirtd
+#      (so the virbr-det bridge IP exists before INetSim tries to bind)
+#   5. Enable and start the inetsim service
+#
+# Dependency on virbr-det:
+#   INetSim binds to {{ detonation_gateway }} (the virbr-det bridge IP).
+#   This IP only exists after libvirtd starts and brings up the detonation
+#   network. The systemd drop-in (step 4) enforces this ordering at boot.
+#   During the Ansible run, the networking role runs before this role, so
+#   the bridge is already up by the time this role executes.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Install
+# -------------------------------------------------------------------------
+
+- name: Install inetsim
+  ansible.builtin.apt:
+    name: inetsim
+    state: present
+    update_cache: false
+  # inetsim is in Ubuntu universe; ensure universe is enabled before running Ansible.
+  # Command if needed: add-apt-repository universe
+
+# -------------------------------------------------------------------------
+# Log and report directories
+# -------------------------------------------------------------------------
+
+- name: Create inetsim log directory
+  ansible.builtin.file:
+    path: "{{ inetsim_log_dir }}"
+    state: directory
+    owner: inetsim
+    group: inetsim
+    mode: "0750"
+
+- name: Create inetsim report directory
+  ansible.builtin.file:
+    path: "{{ inetsim_report_dir }}"
+    state: directory
+    owner: inetsim
+    group: inetsim
+    mode: "0750"
+
+# -------------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------------
+
+- name: Deploy inetsim.conf
+  ansible.builtin.template:
+    src: inetsim.conf.j2
+    dest: /etc/inetsim/inetsim.conf
+    owner: root
+    group: inetsim
+    mode: "0640"
+  notify: Restart inetsim
+
+# -------------------------------------------------------------------------
+# Systemd drop-in — order INetSim after libvirtd
+# -------------------------------------------------------------------------
+# INetSim binds to the virbr-det bridge gateway IP. That IP only exists
+# after libvirtd starts and activates the detonation network. Without this
+# ordering, INetSim starts at boot before the bridge is up and fails to bind,
+# leaving guests with no network simulation until the service is manually restarted.
+
+- name: Create systemd drop-in directory for inetsim
+  ansible.builtin.file:
+    path: /etc/systemd/system/inetsim.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install inetsim systemd drop-in (require libvirtd)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/inetsim.service.d/after-libvirtd.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Ansible-managed: ensure virbr-det bridge IP exists before INetSim binds.
+      # libvirtd brings up the detonation network (and its gateway IP) at startup.
+      [Unit]
+      Requires=libvirtd.service
+      After=libvirtd.service
+  notify:
+    - Reload systemd daemon
+    - Restart inetsim
+
+# -------------------------------------------------------------------------
+# Enable and start
+# -------------------------------------------------------------------------
+
+- name: Enable and start inetsim service
+  ansible.builtin.systemd:
+    name: inetsim
+    state: started
+    enabled: true
+    daemon_reload: true

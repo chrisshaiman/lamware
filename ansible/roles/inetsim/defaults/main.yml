@@ -1,0 +1,23 @@
+---
+# roles/inetsim/defaults/main.yml
+# INetSim configuration defaults. Override in ansible/vars/main.yml.
+
+# Services INetSim will start. DNS is first so guests can resolve any domain
+# to INetSim's own IP before attempting HTTP/SMTP/FTP connections.
+inetsim_services:
+  - dns
+  - http
+  - https
+  - smtp
+  - ftp
+
+# DNS: return this IP for all queries (points back to INetSim itself so
+# subsequent HTTP/SMTP connections also hit INetSim).
+# Defaults to the detonation_gateway (virbr-det bridge IP).
+inetsim_dns_default_ip: "{{ detonation_gateway }}"
+inetsim_dns_default_ttl: 300
+
+# Where INetSim writes per-session connection reports.
+# Useful for manual inspection; Cape's own network capture is the primary evidence.
+inetsim_report_dir: /var/log/inetsim/reports
+inetsim_log_dir:    /var/log/inetsim
