@@ -113,6 +113,62 @@ malware-sandbox-infra/
 
 ---
 
+## Next build — guest VM and network simulation
+
+Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-012, ADR-013):
+- Windows 10 22H2 Enterprise evaluation ISO
+- cape-agent.py (Python in-guest)
+- INetSim on host for network simulation
+- Anti-evasion: resolution, CPU, RAM, disk, hostname/username, decoy files, CPUID mask
+- Two guest snapshots: `clean` and `office` (LibreOffice); tag-based routing via kvm.conf
+
+### Ansible roles to build
+
+- [ ] **`ansible/roles/inetsim/`** — Install and configure INetSim on the bare metal host
+      - Install `inetsim` package
+      - Template `/etc/inetsim/inetsim.conf`: bind to virbr-det gateway IP, DNS default IP,
+        enable HTTP/HTTPS/DNS/SMTP/FTP, set `report_dir`
+      - Enable and start `inetsim` systemd service
+
+- [ ] **`ansible/roles/networking/` — add INetSim INPUT rules**
+      - Explicit ACCEPT on INPUT chain for virbr-det → host on ports 53, 80, 443, 25, 21
+      - Documents intent; ensures order-safe with existing DROP FORWARD rules
+
+- [ ] **`ansible/roles/cape/` — add `routing.conf` template**
+      - `internet_access = no`, `inetsim = yes`, `inetsim_server = <virbr-det gateway IP>`
+      - Cape uses this to configure per-analysis guest DNS and route guest traffic to INetSim
+
+### Packer image to build
+
+- [ ] **`packer/windows10-guest.pkr.hcl`** — Windows 10 22H2 guest image for Cape detonation
+      - Source: Windows 10 Enterprise evaluation ISO
+      - Install Python (required for cape-agent.py)
+      - Install Cape agent (`agent.py` from CAPEv2 repo)
+      - Configure agent to start on boot
+      - Output: qcow2 base image for libvirt snapshot
+      Anti-evasion measures baked into image (see ADR-012):
+      - Screen resolution: 1920x1080
+      - CPU cores: 2, RAM: 4096 MB, disk: 60 GB
+      - Hostname: randomized `DESKTOP-XXXXXXX` pattern (parameterized variable)
+      - Username: realistic first-name pattern, not analyst/sandbox/malware
+      - Decoy files: plausible Documents/Downloads/Desktop content (benign, non-identifying)
+
+- [ ] **`ansible/roles/cape/` — CPUID hypervisor bit mask in libvirt XML template** (see ADR-012)
+      - Add `<feature policy='disable' name='hypervisor'/>` to guest CPU definition
+      - Use `host-passthrough` CPU mode (already required for ACPI; no new constraint)
+
+- [ ] **`packer/windows10-office.pkr.hcl`** — Office profile snapshot (see ADR-013)
+      - Extends `windows10-guest.pkr.hcl` base image (or second provisioner pass)
+      - Install LibreOffice (free, no account required)
+      - Output: qcow2 image for libvirt `office` snapshot
+
+- [ ] **`ansible/roles/cape/` — `kvm.conf` machine profile stanzas** (see ADR-013)
+      - Add `[clean]` and `[office]` machine stanzas with correct snapshot names
+      - Tag mapping: `.doc`, `.docm`, `.xls`, `.xlsm`, `.odt` → `office` profile
+      - All other samples → `clean` profile
+
+---
+
 ## Review findings (2026-03-30) — Automated security scan
 
 Issues identified by automated security review tool. Work through each: fix, defer, or accept.
@@ -530,6 +586,15 @@ in the next round of implementation work.
       Building it blind risks getting the schema wrong and rewriting it anyway.
       **Do after:** OVH provisioned → Ansible configured → Cape running → sample detonated
       → actual report JSON captured. Then implement parser + define RDS tables together.
+      **Planned features (implement once real report JSON is available):**
+      - Parse Cape report JSON → normalize IOCs → write to RDS (dedup via `INSERT ... ON CONFLICT DO NOTHING`)
+      - Network behavior heuristics: evaluate `network.dns`, `network.http`, `network.tcp` for
+        signals suggesting the sample went dormant due to INetSim (high NXDOMAIN rate, repeated
+        connection attempts to same host, low API call count despite network probes, process exit
+        within 30s with no file/registry writes). Alert operator with specific domain/IP clusters
+        observed so they can decide whether selective passthrough is warranted for re-analysis.
+      - TLS certificate pinning detection: repeated TLS handshake failures to same host → flag
+        separately (passthrough won't help; different analysis approach needed)
 
 ---
 
@@ -543,5 +608,10 @@ in the next round of implementation work.
 - Static analysis agent (Ghidra headless / Binary Ninja API)
 - Memory forensics agent (Volatility 3 post-detonation)
 - Agent orchestration layer (Step Functions or separate service)
-- Windows guest Packer image (Cape detonation VM)
+- Windows guest Packer image (Cape detonation VM) — starting with Windows 10 22H2; evaluate adding Windows 11 once Win10 lab is stable and producing real sample volume
+- Windows guest image rotation runbook — evaluation ISO expires every 90 days; document the rebuild-and-redeploy procedure (Packer rebuild → replace libvirt base image → restore clean snapshot) before first guest is deployed
+- Cape injected agent (capemon DLL) — currently using cape-agent.py; evaluate capemon injection once evasion is observed in practice (see ADR-010)
+- Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
+- Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
+- Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
 - Alternative bare metal provider module (Vultr/Latitude.sh) if OVH proves unworkable
