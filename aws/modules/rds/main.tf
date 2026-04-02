@@ -70,6 +70,26 @@ resource "aws_db_parameter_group" "this" {
 }
 
 # -----------------------------------------------------------------------------
+# CloudWatch Log Groups — explicit so KMS key and retention are set
+# Without these, RDS auto-creates groups using the AWS default managed key.
+# Retention matches Lambda and API Gateway (90 days) for forensic consistency.
+# -----------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "rds_postgresql" {
+  name              = "/aws/rds/instance/${var.name_prefix}-analysis-db/postgresql"
+  retention_in_days = 90
+  kms_key_id        = var.kms_key_arn
+  tags              = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "rds_upgrade" {
+  name              = "/aws/rds/instance/${var.name_prefix}-analysis-db/upgrade"
+  retention_in_days = 90
+  kms_key_id        = var.kms_key_arn
+  tags              = var.tags
+}
+
+# -----------------------------------------------------------------------------
 # RDS Instance
 # db.t4g.medium is a good starting point — upgrade to db.r7g.large
 # if your IOC enrichment agents hammer it heavily
@@ -119,4 +139,9 @@ resource "aws_db_instance" "this" {
   final_snapshot_identifier = "${var.name_prefix}-final-snapshot"
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-analysis-db" })
+
+  depends_on = [
+    aws_cloudwatch_log_group.rds_postgresql,
+    aws_cloudwatch_log_group.rds_upgrade,
+  ]
 }
