@@ -1,0 +1,58 @@
+# {{ cape_install_dir }}/conf/routing.conf
+# Cape network routing configuration for the malware sandbox.
+# Managed by Ansible. Do not edit manually.
+#
+# Design decision (ADR-011):
+#   All guest traffic is routed to INetSim running on the host at
+#   {{ detonation_gateway }} (the virbr-det bridge gateway).
+#   Guests have no route to the internet or the management plane.
+#   FakeNet-NG was considered but rejected: it runs inside the guest
+#   (Windows-only) and is harder to manage than a host-side daemon.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+[routing]
+# Default route applied to all analyses unless overridden per-submission.
+# "none" means no routing change is applied — the guest can only reach
+# what the iptables rules allow, which is only virbr-det (INetSim).
+route = none
+
+# Disable internet pass-through — no guest traffic exits the host.
+# Enforced redundantly by iptables DROP rules in roles/networking/.
+internet_access = no
+
+# Enable INetSim as the network simulator. Cape configures guest DNS
+# to point to inetsim_server, which handles all DNS/HTTP/HTTPS/SMTP/FTP
+# responses with synthetic replies.
+inetsim = yes
+inetsim_server = {{ detonation_gateway }}
+
+# DNS port INetSim listens on (default 53). Matches inetsim.conf.
+inetsim_dnsport = 53
+
+[inetsim]
+# No additional INetSim-specific Cape options needed; the global
+# inetsim_server setting above is sufficient for the base integration.
+
+[internet]
+# Internet routing is disabled (ADR-011). These options are present
+# so Cape does not fail on missing section/key lookups.
+enabled = no
+interface = {{ management_interface }}
+
+[drop]
+# Drop mode silently drops all guest network traffic. Not used here —
+# INetSim provides synthetic responses which is more useful for analysis.
+enabled = no
+
+[tor]
+enabled = no
+dnsport = 5300
+proxyport = 9040
+
+[vpn]
+enabled = no
+
+[socks5]
+enabled = no

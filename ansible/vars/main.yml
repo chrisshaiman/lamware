@@ -74,3 +74,56 @@ secrets_manager_region: us-east-1
 secret_arn_baremetal: ""      # fill from: terraform output -raw baremetal_agent_secret_arn
 secret_arn_wireguard: ""      # fill after manually creating WireGuard keys secret in AWS
 secret_arn_cape: ""           # fill after manually creating Cape API key secret in AWS
+
+# -----------------------------------------------------------------------------
+# Cape guest VM definitions (ADR-012, ADR-013)
+# Each entry defines one libvirt domain and one kvm.conf machine stanza.
+# The `name` field is both the libvirt domain name and the kvm.conf section.
+#
+# Prerequisites before running Ansible with these defined:
+#   1. Copy the Packer-built qcow2 files to the bare metal host:
+#        scp packer/output/windows10-guest.qcow2  root@<host>:/var/lib/libvirt/images/
+#        scp packer/output/windows10-office.qcow2 root@<host>:/var/lib/libvirt/images/
+#   2. Run Ansible (it will define the libvirt domains)
+#   3. Start each VM, verify cape-agent.py is listening on port 8000
+#   4. Take the named snapshot from the host:
+#        virsh snapshot-create-as clean  --name clean  --disk-only --atomic
+#        virsh snapshot-create-as office --name office --disk-only --atomic
+#   5. Shut down the VM — Cape restores from snapshot for each analysis
+#
+# MAC addresses: locally administered, unicast (02:xx:xx:xx:xx:xx range).
+# Use stable values so DHCP leases on virbr-det are deterministic.
+# -----------------------------------------------------------------------------
+cape_guests:
+  - name: clean
+    disk_path: "{{ cape_guest_image_dir }}/windows10-guest.qcow2"
+    snapshot: clean
+    ip: "{{ detonation_dhcp_start }}"   # 192.168.100.10 — first DHCP address
+    mac: "02:ca:fe:00:00:10"
+    # tags: empty — clean is the default machine for untagged submissions
+    conf_options:
+      - { key: label,              value: clean }
+      - { key: platform,           value: windows }
+      - { key: ip,                 value: "{{ detonation_dhcp_start }}" }
+      - { key: snapshot,           value: clean }
+      - { key: interface,          value: "{{ detonation_bridge }}" }
+      - { key: resultserver_ip,    value: "{{ detonation_gateway }}" }
+      - { key: resultserver_port,  value: "{{ cape_resultserver_port }}" }
+      - { key: tags,               value: "" }
+
+  - name: office
+    disk_path: "{{ cape_guest_image_dir }}/windows10-office.qcow2"
+    snapshot: office
+    ip: "192.168.100.11"
+    mac: "02:ca:fe:00:00:11"
+    # tags: office — matched when the submitter includes tag "office".
+    # sample_submitter.py (Lambda) adds this tag for .doc/.docm/.xls/.xlsm/.odt
+    conf_options:
+      - { key: label,              value: office }
+      - { key: platform,           value: windows }
+      - { key: ip,                 value: "192.168.100.11" }
+      - { key: snapshot,           value: office }
+      - { key: interface,          value: "{{ detonation_bridge }}" }
+      - { key: resultserver_ip,    value: "{{ detonation_gateway }}" }
+      - { key: resultserver_port,  value: "{{ cape_resultserver_port }}" }
+      - { key: tags,               value: office }
