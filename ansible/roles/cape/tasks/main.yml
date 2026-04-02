@@ -89,7 +89,7 @@
   ansible.builtin.shell: |
     set -euo pipefail
     cd {{ cape_install_dir }}/installer
-    sed 's/<WOOT>/{{ cape_secret.dsdt_string }}/g' kvm-qemu.sh > /tmp/kvm-qemu-patched.sh
+    sed 's|<WOOT>|{{ cape_secret.dsdt_string }}|g' kvm-qemu.sh > /tmp/kvm-qemu-patched.sh
     chmod +x /tmp/kvm-qemu-patched.sh
     bash /tmp/kvm-qemu-patched.sh all {{ cape_user }}
     rm -f /tmp/kvm-qemu-patched.sh

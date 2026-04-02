@@ -98,6 +98,40 @@ resource "aws_kms_alias" "main" {
   target_key_id = aws_kms_key.main.key_id
 }
 
+# Explicit key policy — extends the AWS default (account root admin) to also
+# grant CloudTrail the minimum permissions it needs to encrypt logs with this key.
+# Without this, CloudTrail cannot use a customer-managed KMS key.
+resource "aws_kms_key_policy" "main" {
+  key_id = aws_kms_key.main.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Required: account root retains full key administration
+        Sid       = "EnableRootAccess"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        # CloudTrail needs these two permissions to encrypt log files
+        Sid       = "AllowCloudTrailEncrypt"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = ["kms:GenerateDataKey*", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          StringLike = {
+            "kms:EncryptionContext:aws:cloudtrail:arn" = "arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/*"
+          }
+        }
+      }
+    ]
+  })
+}
+
 # =============================================================================
 # Secrets Manager — create all secrets upfront so ARNs are stable
 # Values are populated here or by Ansible at configure time
@@ -410,4 +444,129 @@ resource "aws_s3_bucket_notification" "samples_to_lambda" {
   }
 
   depends_on = [module.lambda]
+}
+
+# =============================================================================
+# CloudTrail — audit log for all AWS API activity
+#
+# Management events: free — IAM, KMS, Secrets Manager, SQS, Lambda management.
+# S3 data events (WriteOnly): sample uploads and report writes at object level.
+# Lambda data events: every invocation of sample_submitter and report_processor.
+#
+# Encrypted with the project KMS key. The key policy grants CloudTrail
+# kms:GenerateDataKey* and kms:DescribeKey (see aws_kms_key_policy.main above).
+# =============================================================================
+
+resource "aws_s3_bucket" "cloudtrail" {
+  bucket = "${var.name_prefix}-cloudtrail-${data.aws_caller_identity.current.account_id}"
+  tags   = { Name = "${var.name_prefix}-cloudtrail" }
+}
+
+resource "aws_s3_bucket_public_access_block" "cloudtrail" {
+  bucket                  = aws_s3_bucket.cloudtrail.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.main.arn
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
+    expiration { days = 365 }
+  }
+}
+
+# CloudTrail requires a specific bucket policy to deliver logs
+resource "aws_s3_bucket_policy" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AWSCloudTrailAclCheck"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:GetBucketAcl"
+        Resource  = aws_s3_bucket.cloudtrail.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceArn" = "arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
+          }
+        }
+      },
+      {
+        Sid       = "AWSCloudTrailWrite"
+        Effect    = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.cloudtrail.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-acl"  = "bucket-owner-full-control"
+            "aws:SourceArn" = "arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
+          }
+        }
+      },
+      {
+        Sid       = "DenyNonHTTPS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.cloudtrail.arn, "${aws_s3_bucket.cloudtrail.arn}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.cloudtrail]
+}
+
+resource "aws_cloudtrail" "main" {
+  name                          = "${var.name_prefix}-trail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail.id
+  kms_key_id                    = aws_kms_key.main.arn
+  include_global_service_events = true  # IAM, STS, and other global services
+  is_multi_region_trail         = false # single region — all infra is in var.aws_region
+  enable_log_file_validation    = true  # detect log tampering
+
+  event_selector {
+    read_write_type           = "All"
+    include_management_events = true
+
+    # S3 data events — sample uploads and report writes
+    data_resource {
+      type   = "AWS::S3::Object"
+      values = [
+        "${module.s3.samples_bucket_arn}/",
+        "${module.s3.reports_bucket_arn}/",
+      ]
+    }
+
+    # Lambda data events — every invocation
+    data_resource {
+      type   = "AWS::Lambda::Function"
+      values = ["arn:aws:lambda"]
+    }
+  }
+
+  depends_on = [aws_s3_bucket_policy.cloudtrail, aws_kms_key_policy.main]
+
+  tags = { Name = "${var.name_prefix}-trail" }
 }

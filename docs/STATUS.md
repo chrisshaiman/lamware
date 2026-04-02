@@ -113,6 +113,87 @@ malware-sandbox-infra/
 
 ---
 
+## Review findings (2026-03-30) — Automated security scan
+
+Issues identified by automated security review tool. Work through each: fix, defer, or accept.
+
+### Critical
+
+- [x] **DSDT sed injection risk.**
+      Fixed 2026-03-30. Switched sed delimiter from `/` to `|`. DSDT values are pure hex
+      (`[0-9a-f]`) so `|` can never appear in the value, eliminating the injection surface
+      without requiring escaping.
+      *Files:* `ansible/roles/cape/tasks/main.yml`
+
+- [x] **Cape API key written to plaintext env file on disk.**
+      Fixed 2026-03-30. Replaced `CAPE_API_KEY=<value>` in the env file with
+      `CAPE_API_SECRET_ARN=<arn>`. The agent now fetches the key at startup from Secrets
+      Manager using its assumed-role credentials — the key is held in process memory only,
+      never written to disk. Removed the Cape secret Ansible-time fetch from the sqs-agent
+      role (key is no longer needed at deploy time).
+      *Files:* `ansible/roles/sqs-agent/templates/sqs-agent.env.j2`,
+               `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`,
+               `ansible/roles/sqs-agent/tasks/main.yml`
+
+### High
+
+- [x] **RDS CloudWatch log groups not KMS-encrypted with project key.**
+      Fixed 2026-03-30. Added explicit `aws_cloudwatch_log_group` resources for
+      `postgresql` and `upgrade` log streams with `kms_key_id` set to the project KMS key
+      and `retention_in_days = 90`. Added `depends_on` to the RDS instance so groups exist
+      before RDS starts writing. Without this, AWS auto-creates groups using the default
+      managed key.
+      *Files:* `aws/modules/rds/main.tf`
+
+- [x] **Lambda permission source ARN uses HTTP method wildcard.**
+      Fixed 2026-03-30. Changed `source_arn` from `/*/*/submit` to
+      `/$default/POST/submit` — now matches only the `$default` stage and `POST` method,
+      consistent with the IAM submitter policy in the same file.
+      *Files:* `aws/modules/api/main.tf`
+
+### Medium
+
+- [x] **No S3 object size check before sample download in sqs-agent.**
+      Fixed 2026-03-30. Added `head_object` call in `download_sample()` before any data
+      is transferred. Raises `ValueError` if `ContentLength` exceeds `MAX_SAMPLE_BYTES`
+      (default 256 MB, configurable via `sqs_agent_max_sample_bytes`). `process_message()`
+      catches `ValueError` and returns `True` (delete message) — oversized samples are
+      unrecoverable and should not be retried.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`,
+               `ansible/roles/sqs-agent/templates/sqs-agent.env.j2`,
+               `ansible/roles/sqs-agent/defaults/main.yml`
+
+- [x] **STS AssumeRole failure not explicitly caught in sqs-agent `_refresh()`.**
+      Fixed 2026-03-30. Wrapped `assume_role()` in a `try/except ClientError` that logs
+      the role ARN and error before re-raising. Differentiates "STS broken" from transient
+      SQS errors in `journalctl` output.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
+
+- [x] **No Cape API health check on sqs-agent startup.**
+      Fixed 2026-03-30. Added a `GET /apiv2/cuckoo/status/` check in `main()` after the
+      API key is loaded, before entering the poll loop. On failure the agent calls
+      `sys.exit(1)` with a clear error naming the URL and exception — systemd will report
+      the service as failed immediately rather than appearing healthy for 5 minutes.
+      *Files:* `ansible/roles/sqs-agent/templates/sqs_agent.py.j2`
+
+### Low
+
+- [x] **No CloudTrail Terraform resource.**
+      Fixed 2026-04-01. Added `aws_cloudtrail` with a dedicated S3 bucket encrypted
+      with the project KMS key. Added `aws_kms_key_policy` to grant CloudTrail
+      `kms:GenerateDataKey*` and `kms:DescribeKey` while preserving root admin access.
+      Captures management events (free), S3 data events for samples and reports buckets,
+      and Lambda invocation events. Log file validation enabled. 365-day retention.
+      *Files:* `aws/envs/prod/main.tf`
+
+- [~] **Cape API key and WireGuard keys have no rotation procedure.** *(deferred — revisit when feature-complete)*
+      Both use `lifecycle { ignore_changes }` — static until manually rotated. No documented
+      cadence or runbook. Rotation requires: generate new key, update Secrets Manager,
+      re-run Ansible configure, restart services.
+      *Files:* `aws/envs/prod/main.tf`
+
+---
+
 ## Review findings (2026-03-30) — Full system cross-component review
 
 Issues identified during full-system assessment, focusing on toxic pairs and unexpected

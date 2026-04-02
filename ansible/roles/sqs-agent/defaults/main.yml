@@ -14,6 +14,10 @@ sqs_agent_cape_poll_interval_seconds: 30
 # Refresh STS session credentials this many seconds before they expire
 sqs_agent_session_refresh_buffer_seconds: 300
 
+# Maximum sample size to download — reject oversized samples before touching disk.
+# 256 MB is generous for most malware; adjust upward for packed installers.
+sqs_agent_max_sample_bytes: 268435456  # 256 MB
+
 # Run as this user on the bare metal host
 sqs_agent_user: cape
 
