@@ -1,0 +1,102 @@
+# /etc/inetsim/inetsim.conf
+# INetSim network simulation configuration for the Cape malware sandbox.
+# Managed by Ansible. Do not edit manually.
+#
+# Design decision (ADR-011):
+#   INetSim runs on the bare metal host, bound to the virbr-det bridge gateway
+#   ({{ detonation_gateway }}). All DNS/HTTP/HTTPS/SMTP/FTP traffic from guest
+#   VMs is intercepted and answered with synthetic responses. Guests have no
+#   route to the internet — INetSim is the only reachable external service.
+#
+#   This allows Cape to:
+#     - Observe which domains malware tries to resolve
+#     - Capture HTTP C2 beacon traffic (INetSim accepts it and returns 200 OK)
+#     - Record SMTP exfiltration attempts
+#     - Detect FTP staging behavior
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+# =============================================================================
+# Global settings
+# =============================================================================
+
+# Bind all INetSim services to the detonation bridge gateway IP only.
+# This ensures INetSim is reachable from guest VMs (which are on virbr-det)
+# but NOT from eth0 (internet) or wg0 (management VPN).
+service_bind_address   {{ detonation_gateway }}
+
+# Maximum concurrent child processes per service.
+# 10 is sufficient for a single-tenant sandbox.
+service_max_childs     10
+
+# =============================================================================
+# DNS service — intercepts all name resolution from guest VMs
+# =============================================================================
+
+start_service          dns
+
+# Return inetsim_dns_default_ip for ALL queries regardless of name.
+# This means malware C2 domains, update servers, and CDNs all resolve to
+# INetSim's address — subsequent connections are captured by http/https.
+dns_bind_port          53
+dns_default_ip         {{ inetsim_dns_default_ip }}
+dns_default_ttl        {{ inetsim_dns_default_ttl }}
+
+# =============================================================================
+# HTTP service — captures plain-text HTTP C2 and download attempts
+# =============================================================================
+
+start_service          http
+
+http_bind_port         80
+# INetSim returns a default HTTP 200 response for all requests.
+# The response body is a small HTML page — sufficient to trigger C2 callbacks
+# that check for a live server before proceeding.
+http_version           1.1
+http_fakemode          yes
+
+# =============================================================================
+# HTTPS service — captures TLS-wrapped HTTP C2
+# =============================================================================
+
+start_service          https
+
+https_bind_port        443
+https_version          1.1
+https_fakemode         yes
+# INetSim generates a self-signed certificate on first start.
+# Malware that pins certificates or validates the CA chain will fail the TLS
+# handshake — this is observable in Cape's network capture as repeated
+# TLS failures (see report_processor.py planned heuristics in STATUS.md).
+
+# =============================================================================
+# SMTP service — captures email exfiltration and spam relay attempts
+# =============================================================================
+
+start_service          smtp
+
+smtp_bind_port         25
+smtp_fakemode          yes
+smtp_banner            ESMTP Mail Service
+
+# =============================================================================
+# FTP service — captures file staging / exfiltration over FTP
+# =============================================================================
+
+start_service          ftp
+
+ftp_bind_port          21
+ftp_fakemode           yes
+ftp_banner             FTP Server ready
+
+# =============================================================================
+# Logging
+# =============================================================================
+
+# INetSim writes a per-analysis-session report here.
+# Rotate old reports periodically (logrotate or manual cleanup).
+report_dir             {{ inetsim_report_dir }}
+
+# INetSim daemon log. Captured by journald when running under systemd.
+log_dir                {{ inetsim_log_dir }}

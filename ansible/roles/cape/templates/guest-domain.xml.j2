@@ -1,0 +1,149 @@
+<!--
+  guest-domain.xml.j2 — libvirt domain definition for a Cape Windows 10 guest VM.
+  Rendered once per entry in cape_guests (see ansible/vars/main.yml).
+
+  Key anti-evasion decisions (ADR-012):
+    - CPU mode: host-passthrough — exposes real CPU topology and microarch to
+      the guest so CPUID-based fingerprinting tools (e.g., Pafish, al-khaser)
+      see a real processor, not a KVM virtual CPU.
+    - hypervisor feature disabled — prevents malware from detecting KVM via
+      CPUID leaf 0x40000000 (the "KVM" hypervisor signature bit).
+    - 2 vCPUs, 4096 MB RAM, no ballooning during analysis — matches the
+      baked-in values from the Packer build (ADR-012).
+    - VGA video 16 MB VRAM — supports 1920x1080 resolution (ADR-012).
+    - Clock: localtime, catchup timer — matches normal workstation behavior.
+
+  Network: guest NIC connects to {{ detonation_bridge }} (virbr-det). All
+  traffic is intercepted by INetSim on the host (ADR-011). The bridge has
+  no route to the internet or management plane.
+
+  Display: VNC on 127.0.0.1, autoport. Cape connects via VNC for screenshot
+  capture and interactive analysis. Never expose VNC externally.
+
+  on_reboot = destroy: if malware reboots the guest, the libvirt domain is
+  destroyed rather than restarted. Cape detects the domain exit and ends the
+  analysis cleanly.
+
+  Managed by Ansible. Do not edit manually.
+  Author: Christopher Shaiman
+  License: Apache 2.0
+-->
+<domain type='kvm'>
+
+  <!-- Domain name = the machine label in kvm.conf -->
+  <name>{{ item.name }}</name>
+
+  <!-- Memory: 4096 MB, no dynamic balloon during analysis.
+       Balloon model is defined (required by QEMU) but growth is disabled. -->
+  <memory unit='KiB'>{{ item.memory_kb | default(cape_guest_memory_kb) }}</memory>
+  <currentMemory unit='KiB'>{{ item.memory_kb | default(cape_guest_memory_kb) }}</currentMemory>
+
+  <!-- vCPU count: 2 (ADR-012) -->
+  <vcpu placement='static'>{{ item.vcpus | default(cape_guest_vcpus) }}</vcpu>
+
+  <!-- -----------------------------------------------------------------------
+       CPU: host-passthrough + hypervisor bit disabled
+       host-passthrough: guest CPUID reflects the real host CPU brand, family,
+       model, and feature flags — indistinguishable from bare metal.
+       hypervisor feature disabled: removes the CPUID bit that KVM sets in
+       leaf 0x40000000 to signal "you are running in a VM". Malware that calls
+       CPUID and checks ECX bit 31 (hypervisor present) will see it cleared.
+       ----------------------------------------------------------------------- -->
+  <cpu mode='host-passthrough' check='none'>
+    <topology sockets='1' dies='1'
+              cores='{{ item.vcpus | default(cape_guest_vcpus) }}'
+              threads='1'/>
+    <feature policy='disable' name='hypervisor'/>
+  </cpu>
+
+  <!-- OS: x86_64, q35 machine type (same chipset used in the Packer build),
+       boot from hard disk only. CD-ROM boot is not needed at analysis time. -->
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+
+  <!-- Standard PC features — required for Windows 10 boot -->
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+
+  <!-- Clock: localtime offset (matches a real Windows workstation).
+       catchup tickpolicy: if the host falls behind, catch up smoothly rather
+       than delivering a burst of ticks that can be detected via timing attacks. -->
+  <clock offset='localtime'>
+    <timer name='rtc'  tickpolicy='catchup'/>
+    <timer name='pit'  tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+    <!-- TSC: native mode so guest time is sourced from the real TSC.
+         Avoids the rdtsc / rdtscp timing delta that sandbox-aware malware
+         uses to detect VM-inflated execution time. -->
+    <timer name='tsc'  present='yes' mode='native'/>
+  </clock>
+
+  <!-- Lifecycle: destroy (not restart) on any guest exit event.
+       Cape expects the domain to stop so it can collect artifacts.
+       Reboot requests from malware are treated as analysis end, not reboots. -->
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>destroy</on_reboot>
+  <on_crash>destroy</on_crash>
+
+  <devices>
+
+    <!-- Emulator: the DSDT-patched QEMU binary built by kvm-qemu.sh.
+         The patch replaces vendor-identifiable strings in the ACPI DSDT
+         tables with hardware-specific values from the real host BIOS.
+         Path is set by cape_qemu_binary (default: /usr/bin/qemu-system-x86_64). -->
+    <emulator>{{ cape_qemu_binary }}</emulator>
+
+    <!-- System disk: qcow2 backing file, IDE bus.
+         Cape restores the named snapshot before each analysis, so the disk
+         always starts from the clean post-Packer state. -->
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' cache='none' io='native'/>
+      <source file='{{ item.disk_path }}'/>
+      <target dev='hda' bus='ide'/>
+    </disk>
+
+    <!-- IDE controller (required when using bus='ide') -->
+    <controller type='ide' index='0'/>
+
+    <!-- Network interface: e1000 on the detonation bridge.
+         MAC is per-machine so DHCP assignments are stable across snapshots.
+         detonation_bridge = virbr-det (isolated; no external routes). -->
+    <interface type='bridge'>
+      <mac address='{{ item.mac }}'/>
+      <source bridge='{{ detonation_bridge }}'/>
+      <model type='e1000'/>
+    </interface>
+
+    <!-- VNC display: autoport, listen on loopback only.
+         Cape connects via VNC for screenshot capture. Never bind to 0.0.0.0.
+         Password is empty — access is restricted to loopback by the listen address. -->
+    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'>
+      <listen type='address' address='127.0.0.1'/>
+    </graphics>
+
+    <!-- Video: standard VGA with 16 MB VRAM.
+         16 MB is sufficient for 1920x1080 @ 32bpp (1920*1080*4 = ~8 MB).
+         set-resolution.ps1 in the Packer build writes 1920x1080 to the
+         Windows display driver registry so it persists from the snapshot. -->
+    <video>
+      <model type='vga' vram='16384' heads='1' primary='yes'/>
+    </video>
+
+    <!-- USB tablet: provides absolute mouse pointer coordinates over VNC.
+         Without this, VNC mouse tracking uses relative coordinates and
+         drifts — making Cape's screenshot-based analysis less reliable. -->
+    <input type='tablet' bus='usb'/>
+    <input type='keyboard' bus='ps2'/>
+
+    <!-- Memory balloon: virtio model present (QEMU requires it) but
+         Cape does not resize guest memory during analysis.
+         Do not remove — causes QEMU startup errors on some versions. -->
+    <memballoon model='none'/>
+
+  </devices>
+
+</domain>

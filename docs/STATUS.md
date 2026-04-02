@@ -22,6 +22,11 @@ malware-sandbox-infra/
 │
 ├── packer/
 │   ├── ubuntu-sandbox.pkr.hcl     ✓ complete
+│   ├── windows10-guest.pkr.hcl    ✓ complete (Win10 22H2 eval, Python, cape-agent, anti-evasion)
+│   ├── windows10-office.pkr.hcl   ✓ complete (boots from base, adds LibreOffice, macro security LOW)
+│   ├── answer-files/
+│   │   └── autounattend.xml       ✓ complete (unattended Win10 install, WinRM, eval ISO)
+│   ├── scripts/windows/           ✓ complete (8 PowerShell provisioner scripts)
 │   ├── ansible/
 │   │   └── hardening.yml          ✓ complete (konstruktoid.hardening playbook)
 │   └── http/
@@ -38,8 +43,10 @@ malware-sandbox-infra/
 │   └── roles/
 │       ├── hardening/             ✓ complete (wraps konstruktoid.hardening, production settings)
 │       ├── kvm/                   ✓ complete (libvirt, hugepages, groups, disable default net)
-│       ├── networking/            ✓ complete (virbr-det libvirt network, iptables air-gap)
-│       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services)
+│       ├── networking/            ✓ complete (virbr-det libvirt network, iptables air-gap + INetSim INPUT rules)
+│       ├── inetsim/               ✓ complete (install, bind to virbr-det, DNS/HTTP/HTTPS/SMTP/FTP, systemd ordering)
+│       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services,
+│       │                                      routing.conf, guest-domain.xml, kvm.conf stanzas)
 │       ├── wireguard/             ✓ complete (server config from Secrets Manager, wg-quick)
 │       └── sqs-agent/             ✓ complete (systemd service: SQS poll → Cape → S3 report upload)
 │
@@ -124,48 +131,79 @@ Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-
 
 ### Ansible roles to build
 
-- [ ] **`ansible/roles/inetsim/`** — Install and configure INetSim on the bare metal host
-      - Install `inetsim` package
-      - Template `/etc/inetsim/inetsim.conf`: bind to virbr-det gateway IP, DNS default IP,
-        enable HTTP/HTTPS/DNS/SMTP/FTP, set `report_dir`
-      - Enable and start `inetsim` systemd service
+- [x] **`ansible/roles/inetsim/`** — Install and configure INetSim on the bare metal host
+      - Installs `inetsim` package (Ubuntu universe)
+      - Templates `/etc/inetsim/inetsim.conf`: binds to `{{ detonation_gateway }}` only
+        (not 0.0.0.0), enables DNS/HTTP/HTTPS/SMTP/FTP, sets `report_dir`
+      - Systemd drop-in `/etc/systemd/system/inetsim.service.d/after-libvirtd.conf`:
+        `Requires=libvirtd.service` / `After=libvirtd.service` so virbr-det bridge IP
+        exists before INetSim tries to bind (prevents boot-time bind failure)
+      - Enables and starts `inetsim` systemd service
+      - *Files:* `ansible/roles/inetsim/tasks/main.yml`, `templates/inetsim.conf.j2`,
+                 `defaults/main.yml`, `handlers/main.yml`
 
-- [ ] **`ansible/roles/networking/` — add INetSim INPUT rules**
-      - Explicit ACCEPT on INPUT chain for virbr-det → host on ports 53, 80, 443, 25, 21
-      - Documents intent; ensures order-safe with existing DROP FORWARD rules
+- [x] **`ansible/roles/networking/` — add INetSim INPUT rules**
+      - ACCEPT on INPUT chain for virbr-det → host: DNS UDP/TCP (53), HTTP (80),
+        HTTPS (443), SMTP (25), FTP (21), Cape resultserver (2042)
+      - All 7 rules use `-C` check before insert (idempotent)
+      - Persisted by `netfilter-persistent save` at end of networking tasks
+      - *Files:* `ansible/roles/networking/tasks/main.yml`
 
-- [ ] **`ansible/roles/cape/` — add `routing.conf` template**
+- [x] **`ansible/roles/cape/` — add `routing.conf` template**
       - `internet_access = no`, `inetsim = yes`, `inetsim_server = <virbr-det gateway IP>`
       - Cape uses this to configure per-analysis guest DNS and route guest traffic to INetSim
+      - *Files:* `ansible/roles/cape/templates/routing.conf.j2`, tasks appended to `main.yml`
 
 ### Packer image to build
 
-- [ ] **`packer/windows10-guest.pkr.hcl`** — Windows 10 22H2 guest image for Cape detonation
-      - Source: Windows 10 Enterprise evaluation ISO
-      - Install Python (required for cape-agent.py)
-      - Install Cape agent (`agent.py` from CAPEv2 repo)
-      - Configure agent to start on boot
+- [x] **`packer/windows10-guest.pkr.hcl`** — Windows 10 22H2 guest image for Cape detonation
+      - Source: Windows 10 Enterprise evaluation ISO (local path, set in packer.auto.pkrvars.hcl)
+      - Installs Python 3.11 and cape-agent.py; Scheduled Task starts agent at boot (port 8000)
       - Output: qcow2 base image for libvirt snapshot
-      Anti-evasion measures baked into image (see ADR-012):
-      - Screen resolution: 1920x1080
+      Anti-evasion measures baked into image (ADR-012):
+      - Screen resolution: 1920x1080 (registry + live ChangeDisplaySettings)
       - CPU cores: 2, RAM: 4096 MB, disk: 60 GB
-      - Hostname: randomized `DESKTOP-XXXXXXX` pattern (parameterized variable)
-      - Username: realistic first-name pattern, not analyst/sandbox/malware
-      - Decoy files: plausible Documents/Downloads/Desktop content (benign, non-identifying)
+      - Hostname: DESKTOP-XXXXXXX pattern (`guest_hostname` Packer variable)
+      - Username: realistic first-name (`guest_username` Packer variable, default `jsmith`)
+      - Decoy files: Documents/Downloads/Desktop populated with realistic work files
+      - Windows Defender fully suppressed (Tamper Protection + GP keys + scheduled tasks)
+      - *Files:* `packer/windows10-guest.pkr.hcl`, `packer/answer-files/autounattend.xml`,
+                 `packer/scripts/windows/*.ps1` (8 provisioner scripts)
 
-- [ ] **`ansible/roles/cape/` — CPUID hypervisor bit mask in libvirt XML template** (see ADR-012)
-      - Add `<feature policy='disable' name='hypervisor'/>` to guest CPU definition
-      - Use `host-passthrough` CPU mode (already required for ACPI; no new constraint)
+- [x] **`ansible/roles/cape/` — CPUID hypervisor bit mask in libvirt XML template** (ADR-012)
+      - `<feature policy='disable' name='hypervisor'/>` in `host-passthrough` CPU block
+      - TSC in native mode (reduces rdtsc timing delta detection)
+      - `on_reboot=destroy` so sample reboots end the analysis cleanly
+      - *Files:* `ansible/roles/cape/templates/guest-domain.xml.j2`
 
-- [ ] **`packer/windows10-office.pkr.hcl`** — Office profile snapshot (see ADR-013)
-      - Extends `windows10-guest.pkr.hcl` base image (or second provisioner pass)
-      - Install LibreOffice (free, no account required)
-      - Output: qcow2 image for libvirt `office` snapshot
+- [x] **`packer/windows10-office.pkr.hcl`** — Office profile snapshot (see ADR-013)
+      - Boots from `windows10-guest.qcow2`, installs LibreOffice, outputs `windows10-office.qcow2`
+      - WinRM as guest user (`jsmith`) — Administrator is disabled by base cleanup.ps1
+      - Macro security set to LOW in LibreOffice user profile (required for VBA detonation)
+      - File associations registered for .doc/.docm/.xls/.xlsm/.odt/.ppt and Open Document variants
+      - *Files:* `packer/windows10-office.pkr.hcl`, `packer/scripts/windows/install-libreoffice.ps1`
 
-- [ ] **`ansible/roles/cape/` — `kvm.conf` machine profile stanzas** (see ADR-013)
-      - Add `[clean]` and `[office]` machine stanzas with correct snapshot names
-      - Tag mapping: `.doc`, `.docm`, `.xls`, `.xlsm`, `.odt` → `office` profile
-      - All other samples → `clean` profile
+- [x] **`ansible/roles/cape/` — `kvm.conf` machine profile stanzas** (see ADR-013)
+      - `[clean]` and `[office]` machine stanzas via `cape_guests` list in `ansible/vars/main.yml`
+      - Tag `office` routes Office document samples to the LibreOffice guest
+      - All other samples → `clean` profile (no tag)
+      - *Files:* `ansible/roles/cape/tasks/main.yml`, `ansible/vars/main.yml`,
+                 `ansible/roles/cape/defaults/main.yml`
+
+### Snapshot workflow (manual — after Ansible runs)
+
+Once Ansible has defined the libvirt domains and the qcow2 images are on the host:
+
+```
+# Start the VM, verify cape-agent.py is listening, then shut it down cleanly
+virsh start clean && sleep 60 && virsh shutdown clean
+
+# Take the snapshot (disk-only = fast, no memory state needed)
+virsh snapshot-create-as clean  clean  --disk-only --atomic
+virsh snapshot-create-as office office --disk-only --atomic
+```
+
+Cape restores from these snapshots at the start of each analysis run.
 
 ---
 

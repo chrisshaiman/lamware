@@ -1,0 +1,11 @@
+---
+# roles/inetsim/handlers/main.yml
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart inetsim
+  ansible.builtin.systemd:
+    name: inetsim
+    state: restarted

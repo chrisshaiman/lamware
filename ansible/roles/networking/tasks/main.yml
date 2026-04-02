@@ -110,6 +110,153 @@
     sysctl_file: /etc/sysctl.d/90-ipforward.conf
     reload: true
 
+# -------------------------------------------------------------------------
+# iptables INPUT rules — allow guest VMs to reach host services on virbr-det
+# -------------------------------------------------------------------------
+# Guests on the detonation bridge (virbr-det) need to reach:
+#   - INetSim: DNS (53), HTTP (80), HTTPS (443), SMTP (25), FTP (21)
+#   - Cape resultserver: port {{ cape_resultserver_port }}
+#
+# Without these ACCEPT rules, iptables may drop inbound packets on the
+# INPUT chain if the hardening role or a future policy tightens the default.
+# Using -C (check) before inserting ensures idempotency.
+#
+# DNS gets both UDP and TCP rules: UDP for standard queries, TCP for large
+# responses and zone transfers (INetSim handles both).
+
+- name: "Check INPUT rule — virbr-det DNS UDP (53)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p udp --dport 53 -j ACCEPT
+  register: _inp_dns_udp
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det DNS UDP (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: udp
+    destination_port: "53"
+    jump: ACCEPT
+    action: insert
+    rule_num: 1
+    comment: "INetSim: guest DNS (UDP)"
+  when: _inp_dns_udp.rc != 0
+
+- name: "Check INPUT rule — virbr-det DNS TCP (53)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 53 -j ACCEPT
+  register: _inp_dns_tcp
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det DNS TCP (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "53"
+    jump: ACCEPT
+    action: insert
+    rule_num: 2
+    comment: "INetSim: guest DNS (TCP)"
+  when: _inp_dns_tcp.rc != 0
+
+- name: "Check INPUT rule — virbr-det HTTP (80)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 80 -j ACCEPT
+  register: _inp_http
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det HTTP (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "80"
+    jump: ACCEPT
+    action: insert
+    rule_num: 3
+    comment: "INetSim: guest HTTP"
+  when: _inp_http.rc != 0
+
+- name: "Check INPUT rule — virbr-det HTTPS (443)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 443 -j ACCEPT
+  register: _inp_https
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det HTTPS (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "443"
+    jump: ACCEPT
+    action: insert
+    rule_num: 4
+    comment: "INetSim: guest HTTPS"
+  when: _inp_https.rc != 0
+
+- name: "Check INPUT rule — virbr-det SMTP (25)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 25 -j ACCEPT
+  register: _inp_smtp
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det SMTP (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "25"
+    jump: ACCEPT
+    action: insert
+    rule_num: 5
+    comment: "INetSim: guest SMTP"
+  when: _inp_smtp.rc != 0
+
+- name: "Check INPUT rule — virbr-det FTP (21)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 21 -j ACCEPT
+  register: _inp_ftp
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det FTP (INetSim)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "21"
+    jump: ACCEPT
+    action: insert
+    rule_num: 6
+    comment: "INetSim: guest FTP"
+  when: _inp_ftp.rc != 0
+
+- name: "Check INPUT rule — virbr-det Cape resultserver ({{ cape_resultserver_port }})"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport {{ cape_resultserver_port }} -j ACCEPT
+  register: _inp_resultserver
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det Cape resultserver"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "{{ cape_resultserver_port }}"
+    jump: ACCEPT
+    action: insert
+    rule_num: 7
+    comment: "Cape: guest resultserver"
+  when: _inp_resultserver.rc != 0
+
 - name: Save iptables rules (persist across reboots)
   ansible.builtin.command: netfilter-persistent save
   changed_when: true
