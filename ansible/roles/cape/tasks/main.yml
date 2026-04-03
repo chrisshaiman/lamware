@@ -158,9 +158,14 @@
 - name: Restrict cape-web to WireGuard interface
   ansible.builtin.lineinfile:
     path: /lib/systemd/system/cape-web.service
-    regexp: 'runserver_plus\s+\S+:\d+'
-    line: "ExecStart=/etc/poetry/bin/poetry run python manage.py runserver_plus {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }} --traceback --keep-meta-shutdown"
-    backrefs: false
+    regexp: '(ExecStart=.*runserver_plus\s+)\S+(:\d+.*)'
+    line: "\\g<1>{{ wireguard_address | ansible.utils.ipaddr('address') }}\\g<2>"
+    backrefs: true
+  # backrefs: true — only modifies when the regex matches. If Cape changes the
+  # unit file format and the regex no longer matches, the task is skipped (no
+  # change) rather than appending a second ExecStart line which systemd rejects.
+  # If this task is skipped unexpectedly, the next Ansible run will surface it
+  # as a changed=0 on a task that should always change on first provision.
 
 # API key authentication — prevents unauthenticated sample submission
 - name: Set Cape API key
@@ -283,10 +288,10 @@
   loop: "{{ cape_guests }}"
   loop_control:
     label: "{{ item.name }}"
-  register: virsh_define_result
-  changed_when: "'Domain' in virsh_define_result.stdout"
-  # Idempotent: virsh define replaces an existing domain definition without
-  # error, so re-running Ansible is safe even if the domain already exists.
+  changed_when: false
+  # virsh define is idempotent — it silently replaces an existing domain with
+  # no meaningful distinction between "created" and "updated" in its output.
+  # changed_when: false avoids spurious changed counts on re-runs.
 
 - name: Remove temporary domain XML files
   ansible.builtin.file:

@@ -35,11 +35,16 @@ Exposing it on the public interface means anyone who can reach the host IP can s
 malware for analysis, enumerate running tasks, or attempt to exploit Cape itself.
 WireGuard-only binding means you must be an authenticated VPN peer to reach it.
 
-**Implementation:** Set in Cape's `cuckoo.conf`:
-```ini
-[resultserver]
-ip = <wg0_ip>
-```
+**Implementation:** Two separate bindings, each restricted to the correct interface:
+
+- **Resultserver** (`cape.conf [resultserver] ip`): bound to `detonation_gateway`
+  (192.168.100.1 — the virbr-det bridge IP) so guest VMs can deliver analysis data
+  to the host. Guests have no route to eth0 or wg0, so this is the only IP they can reach.
+
+- **Cape web UI / API** (`cape-web.service ExecStart`): bound to the WireGuard interface
+  IP only (`wg0`). Never bound to eth0 or 0.0.0.0. Enforced by a `lineinfile` task in
+  `ansible/roles/cape/tasks/main.yml` that rewrites the `runserver_plus` bind address
+  after `cape2.sh` installs the unit file.
 
 ---
 

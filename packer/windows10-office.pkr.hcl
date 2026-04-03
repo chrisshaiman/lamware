@@ -83,8 +83,16 @@ variable "guest_password" {
 
 variable "libreoffice_version" {
   type        = string
-  description = "LibreOffice version to install. Update when a new stable release is available."
-  default     = "24.2.7"
+  description = "LibreOffice version to install. Must be set alongside libreoffice_checksum."
+  # No default — must be set alongside libreoffice_checksum in packer.auto.pkrvars.hcl.
+  # Find the latest release: https://www.libreoffice.org/download/download-libreoffice/
+}
+
+variable "libreoffice_checksum" {
+  type        = string
+  description = "SHA-256 hash of the LibreOffice Windows x86-64 MSI. Must match libreoffice_version."
+  # No default — find on the LibreOffice download page (Checksum column / .sha256 file).
+  # Or compute: sha256sum LibreOffice_<version>_Win_x86-64.msi
 }
 
 variable "disk_size" {
@@ -182,6 +190,7 @@ build {
     script = "${path.root}/scripts/windows/install-libreoffice.ps1"
     environment_vars = [
       "LIBREOFFICE_VERSION=${var.libreoffice_version}",
+      "LIBREOFFICE_CHECKSUM=${var.libreoffice_checksum}",
       "GUEST_USERNAME=${var.guest_username}",
     ]
   }

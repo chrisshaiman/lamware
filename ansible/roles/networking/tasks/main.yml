@@ -102,10 +102,63 @@
     comment: "Cape detonation air-gap: no VM access to management VPN"
   when: rule_wg0_check.rc != 0
 
-- name: Enable IP forwarding (required for libvirt bridge DHCP and resultserver)
+# -------------------------------------------------------------------------
+# ip6tables air-gap rules — mirror the IPv4 DROP rules for IPv6
+# -------------------------------------------------------------------------
+# Ubuntu 24.04 enables IPv6 by default. Without matching ip6tables rules,
+# a VM escape could route traffic over IPv6 even though the IPv4 path is
+# blocked. Belt-and-suspenders alongside disabling IPv6 forwarding below.
+
+- name: Check ip6tables air-gap rule — virbr-det → eth0
+  ansible.builtin.command: >
+    ip6tables -C FORWARD -i {{ detonation_bridge }} -o {{ management_interface }} -j DROP
+  register: rule6_eth0_check
+  changed_when: false
+  failed_when: false
+
+- name: Insert ip6tables air-gap rule — virbr-det → eth0
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: FORWARD
+    in_interface: "{{ detonation_bridge }}"
+    out_interface: "{{ management_interface }}"
+    jump: DROP
+    action: insert
+    rule_num: 1
+    comment: "Cape detonation air-gap (IPv6): no VM internet egress"
+  when: rule6_eth0_check.rc != 0
+
+- name: Check ip6tables air-gap rule — virbr-det → wg0
+  ansible.builtin.command: >
+    ip6tables -C FORWARD -i {{ detonation_bridge }} -o wg0 -j DROP
+  register: rule6_wg0_check
+  changed_when: false
+  failed_when: false
+
+- name: Insert ip6tables air-gap rule — virbr-det → wg0
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: FORWARD
+    in_interface: "{{ detonation_bridge }}"
+    out_interface: wg0
+    jump: DROP
+    action: insert
+    rule_num: 2
+    comment: "Cape detonation air-gap (IPv6): no VM access to management VPN"
+  when: rule6_wg0_check.rc != 0
+
+- name: Enable IPv4 forwarding (required for libvirt bridge DHCP and resultserver)
   ansible.posix.sysctl:
     name: net.ipv4.ip_forward
     value: "1"
+    state: present
+    sysctl_file: /etc/sysctl.d/90-ipforward.conf
+    reload: true
+
+- name: Disable IPv6 forwarding (no IPv6 routing on detonation bridge)
+  ansible.posix.sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: "0"
     state: present
     sysctl_file: /etc/sysctl.d/90-ipforward.conf
     reload: true
