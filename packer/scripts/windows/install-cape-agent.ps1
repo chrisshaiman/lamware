@@ -37,7 +37,29 @@ Write-Host "==> install-cape-agent: downloading and installing agent.py"
 $AgentDir  = "C:\cape-agent"
 $AgentPath = "$AgentDir\agent.py"
 $PythonExe = "C:\Python3\python.exe"
-$AgentUrl  = "https://raw.githubusercontent.com/kevoreilly/CAPEv2/master/agent/agent.py"
+
+# Pin to a specific commit to prevent supply chain attacks. agent.py runs as
+# SYSTEM and listens on a network port — it is the most sensitive binary in
+# the guest. Update the commit SHA and checksum together when upgrading Cape.
+#
+# To get these values:
+#   1. Browse https://github.com/kevoreilly/CAPEv2/commits/master/agent/agent.py
+#   2. Pick the commit SHA you want to pin to
+#   3. Download agent.py at that commit and compute its SHA-256:
+#        curl -sL https://raw.githubusercontent.com/kevoreilly/CAPEv2/<commit>/agent/agent.py | sha256sum
+#   4. Set both values in packer.auto.pkrvars.hcl
+$AgentCommit   = $env:CAPE_AGENT_COMMIT
+$AgentChecksum = $env:CAPE_AGENT_SHA256
+if (-not $AgentCommit) {
+    Write-Error "CAPE_AGENT_COMMIT is not set — must be a CAPEv2 repo commit SHA"
+    exit 1
+}
+if (-not $AgentChecksum) {
+    Write-Error "CAPE_AGENT_SHA256 is not set — must be the SHA-256 hash of agent.py at that commit"
+    exit 1
+}
+
+$AgentUrl  = "https://raw.githubusercontent.com/kevoreilly/CAPEv2/$AgentCommit/agent/agent.py"
 
 # -------------------------------------------------------------------------
 # 1. Create install directory
@@ -58,7 +80,18 @@ if (-not (Test-Path $AgentPath)) {
 Write-Host "==> agent.py saved to $AgentPath"
 
 # -------------------------------------------------------------------------
-# 3. Verify agent.py is valid Python syntax
+# 3. Verify SHA-256 hash — supply chain integrity check
+# -------------------------------------------------------------------------
+$actualHash = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLower()
+if ($actualHash -ne $AgentChecksum.ToLower()) {
+    Write-Error "agent.py hash mismatch!`n  Expected: $AgentChecksum`n  Actual:   $actualHash`nThis may indicate a compromised download. Aborting."
+    Remove-Item -Path $AgentPath -Force
+    exit 1
+}
+Write-Host "==> agent.py hash verified: $actualHash"
+
+# -------------------------------------------------------------------------
+# 4. Verify agent.py is valid Python syntax
 # -------------------------------------------------------------------------
 $checkResult = & $PythonExe -m py_compile $AgentPath 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -68,7 +101,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "==> agent.py syntax OK"
 
 # -------------------------------------------------------------------------
-# 4. Create a Scheduled Task to start agent.py at boot (SYSTEM account)
+# 5. Create a Scheduled Task to start agent.py at boot (SYSTEM account)
 # -------------------------------------------------------------------------
 # Using the Scheduled Task API rather than a registry Run key so that the
 # agent starts before any user session begins (important for Cape to connect
@@ -111,7 +144,7 @@ Register-ScheduledTask `
 Write-Host "==> Scheduled Task '$TaskName' registered"
 
 # -------------------------------------------------------------------------
-# 5. Verify the task was registered correctly
+# 6. Verify the task was registered correctly
 # -------------------------------------------------------------------------
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (-not $task) {

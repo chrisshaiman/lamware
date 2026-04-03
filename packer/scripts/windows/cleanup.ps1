@@ -40,7 +40,7 @@ $tempPaths = @(
     $env:TEMP,
     $env:TMP,
     "C:\Windows\Temp",
-    "C:\Windows\Prefetch",
+    "C:\Windows\Prefetch"
 )
 foreach ($path in $tempPaths) {
     if (Test-Path $path) {
@@ -124,7 +124,26 @@ Get-ScheduledTask -TaskName "CreateProfile_*" -ErrorAction SilentlyContinue |
     Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
 
 # -------------------------------------------------------------------------
-# 8. Sync and final status
+# 8. Disable WinRM
+# -------------------------------------------------------------------------
+# WinRM was enabled during the Packer build phase so provisioner scripts
+# could run. The final guest image does not need it — Cape communicates
+# with the guest via the cape-agent.py scheduled task on port 8000, not WinRM.
+# Leaving WinRM enabled (port 5985, basic auth, unencrypted) is unnecessary
+# attack surface on the detonation bridge during analysis.
+Write-Host "==> Disabling WinRM"
+try {
+    Stop-Service -Name WinRM -Force -ErrorAction SilentlyContinue
+    Set-Service  -Name WinRM -StartupType Disabled
+    # Remove the firewall rules added by autounattend.xml FirstLogonCommands
+    netsh advfirewall firewall delete rule name="WinRM-HTTP" | Out-Null
+    Write-Host "  WinRM stopped, disabled, and firewall rule removed"
+} catch {
+    Write-Host "  WinRM disable raised an error (non-fatal): $_"
+}
+
+# -------------------------------------------------------------------------
+# 9. Sync and final status
 # -------------------------------------------------------------------------
 Write-Host "==> Flushing disk write buffers"
 # Write-VolumeCache may not exist in all PS versions; use diskperf as fallback

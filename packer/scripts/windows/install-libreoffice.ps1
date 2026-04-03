@@ -31,10 +31,18 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$LibreOfficeVersion = $env:LIBREOFFICE_VERSION
-$GuestUsername      = $env:GUEST_USERNAME
-if (-not $LibreOfficeVersion) { $LibreOfficeVersion = "24.2.7" }
-if (-not $GuestUsername)      { $GuestUsername      = "jsmith" }
+$LibreOfficeVersion  = $env:LIBREOFFICE_VERSION
+$LibreOfficeChecksum = $env:LIBREOFFICE_CHECKSUM
+$GuestUsername       = $env:GUEST_USERNAME
+if (-not $LibreOfficeVersion) {
+    Write-Error "LIBREOFFICE_VERSION is not set. Set both LIBREOFFICE_VERSION and LIBREOFFICE_CHECKSUM together in packer.auto.pkrvars.hcl."
+    exit 1
+}
+if (-not $LibreOfficeChecksum) {
+    Write-Error "LIBREOFFICE_CHECKSUM is not set. Find the SHA-256 hash on the LibreOffice download page (Checksum column) for the version you are installing."
+    exit 1
+}
+if (-not $GuestUsername) { $GuestUsername = "jsmith" }
 
 Write-Host "==> install-libreoffice: version=$LibreOfficeVersion user=$GuestUsername"
 
@@ -56,6 +64,17 @@ if (-not (Test-Path $TmpMsi)) {
     exit 1
 }
 Write-Host "==> Downloaded $('{0:N0}' -f (Get-Item $TmpMsi).Length) bytes"
+
+# -------------------------------------------------------------------------
+# Verify SHA-256 hash — supply chain integrity check
+# -------------------------------------------------------------------------
+$actualHash = (Get-FileHash -Path $TmpMsi -Algorithm SHA256).Hash.ToLower()
+if ($actualHash -ne $LibreOfficeChecksum.ToLower()) {
+    Write-Error "LibreOffice MSI hash mismatch!`n  Expected: $LibreOfficeChecksum`n  Actual:   $actualHash`nThis may indicate a compromised download. Aborting."
+    Remove-Item -Path $TmpMsi -Force
+    exit 1
+}
+Write-Host "==> LibreOffice MSI hash verified: $actualHash"
 
 # -------------------------------------------------------------------------
 # 2. Install LibreOffice silently
@@ -152,9 +171,16 @@ Write-Host "==> Macro security config written to $XcuPath"
 # When Cape submits a sample by opening it, the OS needs to know which
 # application to launch. Without explicit file association, .doc/.xls files
 # may open in WordPad or Notepad instead of LibreOffice.
-Write-Host "==> Registering file associations"
+#
+# HKCU:\...\UserChoice is protected by a hash on Windows 10 1803+ — direct
+# writes are silently reverted. Instead we write to HKLM:\SOFTWARE\Classes,
+# which sets system-level defaults with no hash protection and applies to all
+# users including the guest account.
+Write-Host "==> Registering system-level file associations (HKLM:\SOFTWARE\Classes)"
 
-# Map of extension -> ProgID (LibreOffice registers these during install)
+# Map of extension -> ProgID
+# ProgIDs are registered by the LibreOffice MSI installer. We set the default
+# value of the extension key so Windows resolves the ProgID on open.
 $FileAssociations = @{
     ".doc"  = "LibreOffice.WriterDocument.1"
     ".docm" = "LibreOffice.WriterDocument.1"
@@ -170,14 +196,15 @@ $FileAssociations = @{
 }
 
 foreach ($ext in $FileAssociations.Keys) {
-    $progId = $FileAssociations[$ext]
-    $keyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$ext\UserChoice"
+    $progId  = $FileAssociations[$ext]
+    $extKey  = "HKLM:\SOFTWARE\Classes\$ext"
     try {
-        New-Item -Path $keyPath -Force | Out-Null
-        Set-ItemProperty -Path $keyPath -Name "ProgId" -Value $progId
+        # Set the default ProgID for this extension at the system level
+        if (-not (Test-Path $extKey)) { New-Item -Path $extKey -Force | Out-Null }
+        Set-ItemProperty -Path $extKey -Name "(Default)" -Value $progId
         Write-Host "  Associated $ext -> $progId"
     } catch {
-        Write-Host "  Warning: could not set association for $ext : $_"
+        Write-Warning "Could not set association for $ext : $_"
     }
 }
 

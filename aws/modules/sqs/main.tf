@@ -30,6 +30,10 @@ resource "aws_sqs_queue" "dlq" {
   name              = "${var.name_prefix}-analysis-jobs-dlq"
   kms_master_key_id = var.kms_key_id
 
+  # 14 days (SQS maximum) — gives enough time to investigate failed jobs even
+  # during extended downtime or a multi-day bare metal rebuild.
+  message_retention_seconds = 1209600
+
   tags = merge(var.tags, { Name = "${var.name_prefix}-analysis-jobs-dlq" })
 }
 

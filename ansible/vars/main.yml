@@ -13,7 +13,7 @@ sandbox_hostname: malware-sandbox-01
 
 # -----------------------------------------------------------------------------
 # Networking — detonation bridge
-# This network is air-gapped. Guests detonate here, FakeNet-NG listens here.
+# This network is air-gapped. Guests detonate here, INetSim listens here.
 # No route to management plane or internet.
 # -----------------------------------------------------------------------------
 detonation_bridge: virbr-det

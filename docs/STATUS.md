@@ -97,6 +97,93 @@ malware-sandbox-infra/
 
 ---
 
+## Review findings (2026-04-02) — Packer/Ansible security & functional review
+
+Issues identified during deep review of Packer guest builds, Ansible roles, and Terraform.
+
+### Critical — supply chain / integrity
+
+- [x] **No hash verification on cape-agent.py download.**
+      Fixed 2026-04-02. Added required `cape_agent_commit` and `cape_agent_sha256` Packer
+      variables (no defaults — must be set together). Script pins the download URL to the
+      commit SHA and verifies `Get-FileHash` after download; aborts with error on mismatch.
+      Instructions for deriving both values added to the variable descriptions.
+      *Files:* `packer/windows10-guest.pkr.hcl`, `packer/scripts/windows/install-cape-agent.ps1`
+
+- [x] **No hash verification on Python installer.**
+      Fixed 2026-04-02. Removed `python_version` default (no default — must be set alongside
+      `python_checksum`). Added required `python_checksum` variable. Script validates both are
+      set, verifies `Get-FileHash` after download, aborts on mismatch.
+      *Files:* `packer/windows10-guest.pkr.hcl`, `packer/scripts/windows/install-python.ps1`
+
+- [x] **No hash verification on LibreOffice MSI.**
+      Fixed 2026-04-02. Removed `libreoffice_version` default. Added required
+      `libreoffice_checksum` variable. Script validates both are set, verifies `Get-FileHash`
+      after download, aborts on mismatch.
+      *Files:* `packer/windows10-office.pkr.hcl`, `packer/scripts/windows/install-libreoffice.ps1`
+
+### High — functional correctness
+
+- [x] **Office guest IP not reserved in DHCP — will get wrong address.**
+      Fixed 2026-04-02. Added `{% for guest in cape_guests %}<host>{% endfor %}` loop inside
+      the `<dhcp>` block of `detonation-network.xml.j2`. Static reservations are now derived
+      directly from the `cape_guests` list so MAC/IP pairs stay in sync with kvm.conf.
+      *Files:* `ansible/roles/networking/templates/detonation-network.xml.j2`
+
+- [x] **LibreOffice file associations won't work — UserChoice hash protection.**
+      Fixed 2026-04-02. Replaced `HKCU:\...\UserChoice` writes (silently ignored on
+      Windows 10 1803+) with `HKLM:\SOFTWARE\Classes\.<ext>` system-level defaults.
+      HKLM\SOFTWARE\Classes has no hash protection and applies to all users.
+      *Files:* `packer/scripts/windows/install-libreoffice.ps1`
+
+- [x] **SECURITY_CONSTRAINTS.md incorrectly describes resultserver binding.**
+      Fixed 2026-04-02. Corrected: resultserver binds to `detonation_gateway` (virbr-det,
+      192.168.100.1) for guest access; cape-web binds to WireGuard IP only. Both bindings
+      now documented accurately with implementation details.
+      *Files:* `docs/SECURITY_CONSTRAINTS.md`
+
+- [x] **WinRM left enabled in final guest image.**
+      Fixed 2026-04-02. Added step 8 to `cleanup.ps1`: stops WinRM service, sets startup
+      type to Disabled, and removes the `WinRM-HTTP` firewall rule added by autounattend.xml.
+      *Files:* `packer/scripts/windows/cleanup.ps1`
+
+### Medium — operational / hardening
+
+- [x] **`cape-web.service` lineinfile with `backrefs: false` can append duplicate ExecStart.**
+      Fixed 2026-04-02. Switched to `backrefs: true` with a capture-group regex so the task
+      only substitutes the bind address when the ExecStart line matches. No-match now silently
+      skips rather than appending a second ExecStart that would break systemd.
+      *Files:* `ansible/roles/cape/tasks/main.yml`
+
+- [x] **No IPv6 iptables rules — air-gap only covers IPv4.**
+      Fixed 2026-04-02. Added matching `ip6tables` DROP rules for `virbr-det → eth0` and
+      `virbr-det → wg0` using the same check-then-insert idempotency pattern. Also added
+      `net.ipv6.conf.all.forwarding = 0` sysctl to `/etc/sysctl.d/90-ipforward.conf`.
+      *Files:* `ansible/roles/networking/tasks/main.yml`
+
+- [x] **SQS DLQ retention too short — defaults to 4 days.**
+      Fixed 2026-04-02. Set `message_retention_seconds = 1209600` (14 days, SQS maximum)
+      on the DLQ so failed jobs survive extended downtime or bare metal rebuilds.
+      *Files:* `aws/modules/sqs/main.tf`
+
+- [x] **`virsh define` `changed_when` always true — misleading idempotency.**
+      Fixed 2026-04-02. Changed to `changed_when: false` — virsh define outputs "Domain X
+      defined" on both new and re-define, so tracking changes via stdout is meaningless.
+      Removed now-unused `register` variable.
+      *Files:* `ansible/roles/cape/tasks/main.yml`
+
+### Low — cleanup / cosmetic
+
+- [x] **`vars/main.yml` comment references "FakeNet-NG" — stale after ADR-011.**
+      Fixed 2026-04-02. Updated comment to reference INetSim.
+      *Files:* `ansible/vars/main.yml`
+
+- [x] **`install-python.ps1` dead comment about `requests` package.**
+      Fixed 2026-04-02. Removed stale comment — only Pillow is installed, not requests.
+      *Files:* `packer/scripts/windows/install-python.ps1`
+
+---
+
 ## Done (fully implemented)
 
 - `aws/modules/vpc/` — VPC, subnets, NAT gateway, flow logs
@@ -204,6 +291,27 @@ virsh snapshot-create-as office office --disk-only --atomic
 ```
 
 Cape restores from these snapshots at the start of each analysis run.
+
+### Packer build — required variables before first build
+
+The supply chain fixes (2026-04-02) removed all version defaults. Before running either
+Packer build, populate `packer/packer.auto.pkrvars.hcl` with the following:
+
+```hcl
+# Windows 10 guest (windows10-guest.pkr.hcl)
+iso_path       = "/path/to/Win10_22H2_EnterpriseEval.iso"
+iso_checksum   = "sha256:<checksum>"   # sha256sum <iso>
+
+python_version  = "3.x.x"             # https://www.python.org/downloads/windows/
+python_checksum = "<sha256>"           # listed on the Python release page beside "Windows installer (64-bit)"
+
+cape_agent_commit = "<commit-sha>"     # https://github.com/kevoreilly/CAPEv2/commits/master/agent/agent.py
+cape_agent_sha256 = "<sha256>"         # curl -sL https://raw.githubusercontent.com/kevoreilly/CAPEv2/<commit>/agent/agent.py | sha256sum
+
+# Windows 10 office (windows10-office.pkr.hcl) — also needs the above guest vars
+libreoffice_version  = "x.x.x"        # https://www.libreoffice.org/download/download-libreoffice/
+libreoffice_checksum = "<sha256>"      # listed on the LibreOffice download page (Checksum column)
+```
 
 ---
 

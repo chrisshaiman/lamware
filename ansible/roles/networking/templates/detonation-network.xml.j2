@@ -10,6 +10,15 @@
   <ip address="{{ detonation_gateway }}" netmask="255.255.255.0">
     <dhcp>
       <range start="{{ detonation_dhcp_start }}" end="{{ detonation_dhcp_end }}"/>
+      <!--
+        Static DHCP reservations — MAC addresses match cape_guests in vars/main.yml.
+        Without these, guests get whatever IP the DHCP server assigns, which may
+        not match the ip= values in kvm.conf that Cape uses to communicate with
+        the in-guest agent.
+      -->
+      {% for guest in cape_guests %}
+      <host mac="{{ guest.mac }}" ip="{{ guest.ip }}"/>
+      {% endfor %}
     </dhcp>
   </ip>
 </network>
