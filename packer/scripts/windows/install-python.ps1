@@ -22,7 +22,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $PythonVersion  = $env:PYTHON_VERSION
-if (-not $PythonVersion) { $PythonVersion = "3.11.9" }
+$PythonChecksum = $env:PYTHON_CHECKSUM
+if (-not $PythonVersion) {
+    Write-Error "PYTHON_VERSION is not set. Set both PYTHON_VERSION and PYTHON_CHECKSUM together in packer.auto.pkrvars.hcl."
+    exit 1
+}
+if (-not $PythonChecksum) {
+    Write-Error "PYTHON_CHECKSUM is not set. Find the SHA-256 hash on the Python release page alongside 'Windows installer (64-bit)' for the version you're installing."
+    exit 1
+}
 
 Write-Host "==> install-python: version=$PythonVersion"
 
@@ -38,6 +46,17 @@ $InstallDir    = "C:\Python3"
 Write-Host "==> Downloading $Url"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Invoke-WebRequest -Uri $Url -OutFile $TmpPath -UseBasicParsing
+
+# -------------------------------------------------------------------------
+# Verify SHA-256 hash — supply chain integrity check
+# -------------------------------------------------------------------------
+$actualHash = (Get-FileHash -Path $TmpPath -Algorithm SHA256).Hash.ToLower()
+if ($actualHash -ne $PythonChecksum.ToLower()) {
+    Write-Error "Python installer hash mismatch!`n  Expected: $PythonChecksum`n  Actual:   $actualHash`nThis may indicate a compromised download. Aborting."
+    Remove-Item -Path $TmpPath -Force
+    exit 1
+}
+Write-Host "==> Python installer hash verified: $actualHash"
 
 # -------------------------------------------------------------------------
 # Silent install
@@ -90,7 +109,6 @@ Write-Host "==> Upgrading pip"
 # Install packages required by cape-agent.py
 # -------------------------------------------------------------------------
 # Pillow: used by agent.py for screenshot capture (Cape uses this for evidence)
-# requests is in stdlib-adjacent; installing explicitly pins a known-good version
 Write-Host "==> Installing cape-agent Python dependencies"
 & $pyExe -m pip install --quiet Pillow
 

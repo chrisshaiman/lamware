@@ -139,7 +139,29 @@ variable "headless" {
 variable "python_version" {
   type        = string
   description = "Python version to install (used to construct the download URL)."
-  default     = "3.11.9"
+  # No default — must be set alongside python_checksum in packer.auto.pkrvars.hcl.
+  # Find the latest release: https://www.python.org/downloads/windows/
+}
+
+variable "python_checksum" {
+  type        = string
+  description = "SHA-256 hash of the Python Windows amd64 installer. Must match python_version."
+  # No default — find on the Python release page next to 'Windows installer (64-bit)'.
+  # Example: https://www.python.org/downloads/release/python-3119/
+}
+
+variable "cape_agent_commit" {
+  type        = string
+  description = "CAPEv2 repo commit SHA to download agent.py from. Pin this to prevent supply chain attacks."
+  # No default — must be set in packer.auto.pkrvars.hcl.
+  # Find the latest commit: https://github.com/kevoreilly/CAPEv2/commits/master/agent/agent.py
+}
+
+variable "cape_agent_sha256" {
+  type        = string
+  description = "SHA-256 hash of agent.py at the pinned commit. Verified after download."
+  # No default — must be set in packer.auto.pkrvars.hcl.
+  # Compute: curl -sL https://raw.githubusercontent.com/kevoreilly/CAPEv2/<commit>/agent/agent.py | sha256sum
 }
 
 # =============================================================================
@@ -260,6 +282,7 @@ build {
     script = "${path.root}/scripts/windows/install-python.ps1"
     environment_vars = [
       "PYTHON_VERSION=${var.python_version}",
+      "PYTHON_CHECKSUM=${var.python_checksum}",
     ]
   }
 
@@ -272,6 +295,10 @@ build {
   # analysis, and collect results.
   provisioner "powershell" {
     script = "${path.root}/scripts/windows/install-cape-agent.ps1"
+    environment_vars = [
+      "CAPE_AGENT_COMMIT=${var.cape_agent_commit}",
+      "CAPE_AGENT_SHA256=${var.cape_agent_sha256}",
+    ]
   }
 
   # ---------------------------------------------------------------------------
