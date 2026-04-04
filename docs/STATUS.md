@@ -97,6 +97,182 @@ malware-sandbox-infra/
 
 ---
 
+## Deployment status (2026-04-03)
+
+Code is complete. Nothing has been deployed yet. Work through these in order.
+
+### Pre-deployment checklist
+
+- [ ] **`shared/backend-aws.hcl`** — fill in real S3 state bucket name.
+      Run `terraform -chdir=aws/bootstrap apply` first (local state), then copy the
+      `state_bucket_name` output into `shared/backend-aws.hcl`.
+      *File:* `shared/backend-aws.hcl`
+
+- [ ] **AWS bootstrap** — create Terraform state bucket + DynamoDB lock table.
+      ```
+      cd aws/bootstrap && terraform init && terraform apply
+      ```
+      One-time. Uses local state (no remote backend needed for bootstrap itself).
+
+- [ ] **AWS prod Terraform plan + apply** — provision VPC, S3, RDS, Lambda, SQS, API Gateway,
+      KMS, Secrets Manager, CloudTrail.
+      ```
+      cd aws/envs/prod && terraform init -backend-config=../../shared/backend-aws.hcl
+      terraform plan -out=tfplan
+      terraform apply tfplan
+      ```
+      Outputs needed for the next steps:
+      - `samples_bucket_name`, `reports_bucket_name` → `ansible/vars/main.yml`
+      - `baremetal_agent_secret_arn` → `ansible/vars/main.yml`
+      - API Gateway invoke URL → note for client use
+
+- [ ] **WireGuard keys** — generate server + client keypair, create AWS secret.
+      ```
+      wg genkey | tee server.key | wg pubkey > server.pub
+      wg genkey | tee client.key | wg pubkey > client.pub
+      ```
+      Store `{ "private_key": "<server.key>", "peer_pubkey": "<client.pub>" }` in a new
+      Secrets Manager secret; record the ARN in `ansible/vars/main.yml` → `secret_arn_wireguard`.
+      Generate client WireGuard config from `client.key` + `server.pub` + server WireGuard IP.
+
+- [ ] **Cape API key** — generate a random key, create AWS secret.
+      ```
+      python3 -c "import secrets; print(secrets.token_hex(32))"
+      ```
+      Store `{ "dsdt_string": "<hex>", "api_key": "<key>" }` in a new Secrets Manager secret;
+      record the ARN in `ansible/vars/main.yml` → `secret_arn_cape`.
+      DSDT string: run `acpidump -b && iasl -d dsdt.dat` on the bare metal host after OS install.
+
+- [ ] **`ansible/vars/main.yml`** — fill in all ARNs and bucket names from Terraform outputs.
+      Fields: `s3_bucket_samples`, `s3_bucket_reports`, `secret_arn_baremetal`,
+      `secret_arn_wireguard`, `secret_arn_cape`.
+
+- [ ] **OVH bare metal provisioning** — provision server, apply firewall, install Ubuntu 24.04.
+      ```
+      cd ovh && terraform init && terraform apply
+      ```
+      Then update `ansible/inventory/hosts` with the server IP.
+
+- [ ] **Ansible** — configure bare metal host (KVM, Cape, INetSim, WireGuard, sqs-agent).
+      ```
+      ansible-galaxy install -r ansible/requirements.yml
+      ansible-playbook -i ansible/inventory/hosts ansible/site.yml
+      ```
+
+- [ ] **Packer guest builds** — build Windows guest images.
+      Populate `packer/packer.auto.pkrvars.hcl` first (see checklist below).
+      ```
+      make image
+      ```
+      Then `scp` the two qcow2 files to `/var/lib/libvirt/images/` on the bare metal host.
+
+- [ ] **Libvirt snapshots** — take clean + office snapshots (manual, after Ansible defines domains).
+      See snapshot workflow in the "Next build" section below.
+
+- [ ] **`src/report_processor.py`** — implement report ingestion logic once Cape is running
+      and real analysis JSON is available. Currently a deployable stub.
+
+---
+
+## Documentation (2026-04-03)
+
+**`docs/DEPLOYMENT.md`** — written. Single document covering all 10 deployment phases.
+The README should link to it.
+
+### `docs/DEPLOYMENT.md` — phase checklist
+
+- [ ] **Phase 0 — Prerequisites**
+      Everything that must be in place before any `terraform` or `ansible` command runs.
+      - Accounts: OVHcloud US account, AWS account (dedicated — not shared with other infra)
+      - Tools and minimum versions: Terraform ≥ 1.6, Ansible ≥ 2.14, Packer ≥ 1.10,
+        AWS CLI v2, WireGuard tools (`wg`, `wg-quick`), Python 3.11+ (local, for Lambda build),
+        `make`, `acpica-tools` (for DSDT capture on the bare metal host after OS install)
+      - AWS credentials configured (`aws configure` or profile) with AdministratorAccess
+        on the sandbox account
+      - OVHcloud API credentials: `OVH_ENDPOINT`, `OVH_APPLICATION_KEY`,
+        `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY`
+      - Windows 10 22H2 Enterprise evaluation ISO downloaded locally
+        (link to official Microsoft evaluation download page)
+
+- [ ] **Phase 1 — AWS bootstrap**
+      One-time: creates the S3 state bucket and DynamoDB lock table with local state.
+      - Copy `aws/bootstrap/terraform.tfvars.example` → `terraform.tfvars`, fill in
+        `name_prefix` and `aws_region`
+      - `terraform init && terraform apply`
+      - Record `state_bucket_name` output → fill into `shared/backend-aws.hcl`
+
+- [ ] **Phase 2 — AWS infrastructure**
+      Provisions VPC, S3, RDS, SQS, Lambda, API Gateway, KMS, Secrets Manager, CloudTrail.
+      - `make lambda` — build Lambda ZIPs before plan (plan will error without them)
+      - Copy `aws/envs/prod/terraform.tfvars.example` → `terraform.tfvars`; fill in
+        `samples_bucket_name`, `reports_bucket_name` (globally unique — include account ID),
+        `budget_alert_emails`
+      - `terraform init -backend-config=../../shared/backend-aws.hcl`
+      - `terraform plan -out=tfplan && terraform apply tfplan`
+      - Record outputs: `samples_bucket_name`, `reports_bucket_name`,
+        `baremetal_agent_secret_arn`, `api_invoke_url` → fill into `ansible/vars/main.yml`
+
+- [ ] **Phase 3 — Secrets setup**
+      Two secrets must be created manually (outside Terraform) because they contain
+      information only available after provisioning or key generation.
+      - **WireGuard**: generate server + client keypair; create Secrets Manager secret;
+        record ARN → `ansible/vars/main.yml` → `secret_arn_wireguard`
+      - **Cape API key + DSDT**: generate API key now (random hex); DSDT captured later
+        in Phase 5 after bare metal OS install; create the secret once both values exist;
+        record ARN → `ansible/vars/main.yml` → `secret_arn_cape`
+      - Exact commands for key generation, secret creation via AWS CLI
+
+- [ ] **Phase 4 — OVH bare metal provisioning**
+      Provisions the server, applies OVH robot firewall (SSH + WireGuard allowlist),
+      registers SSH key, installs Ubuntu 24.04.
+      - Copy `ovh/terraform.tfvars.example` → `terraform.tfvars`; fill in OVH credentials,
+        admin CIDR (your IP), SSH public key
+      - `terraform init && terraform apply`
+      - Wait for OS install to complete (~15 min); record server IP
+      - Update `ansible/inventory/hosts` with the server IP
+      - Verify SSH access: `ssh root@<server-ip>`
+
+- [ ] **Phase 5 — DSDT capture (bare metal, post-OS-install)**
+      Must be done on the physical host before running Ansible — value is hardware-specific.
+      ```
+      apt install -y acpica-tools
+      acpidump -b && iasl -d dsdt.dat
+      ```
+      Extract the DSDT hex string; update the Cape Secrets Manager secret with it.
+
+- [ ] **Phase 6 — Ansible configuration**
+      Configures KVM, CAPEv2, INetSim, WireGuard, and the SQS polling agent on the host.
+      - Install Galaxy requirements: `ansible-galaxy install -r ansible/requirements.yml`
+      - `ansible-playbook -i ansible/inventory/hosts ansible/site.yml`
+      - Note: `kvm-qemu.sh` (DSDT-patched QEMU build) takes 30–60 min — expected
+      - Verify services: `systemctl status cape cape-web cape-processor inetsim wg-quick@wg0`
+
+- [ ] **Phase 7 — Packer guest image builds**
+      Builds the Windows 10 base image and the LibreOffice office image.
+      Prerequisite: `packer/packer.auto.pkrvars.hcl` populated (see "required variables"
+      checklist in the Packer section of this file).
+      - `make image` — builds both images sequentially (~2–3 hours total)
+      - SCP both qcow2 files to the bare metal host:
+        ```
+        scp packer/output/windows10-guest.qcow2  root@<host>:/var/lib/libvirt/images/
+        scp packer/output/windows10-office.qcow2 root@<host>:/var/lib/libvirt/images/
+        ```
+      - Re-run Ansible to define libvirt domains: `ansible-playbook ... ansible/site.yml`
+
+- [ ] **Phase 8 — Libvirt snapshots**
+      Manual steps on the bare metal host after images are in place and domains are defined.
+      See "Snapshot workflow" section in this file.
+
+- [ ] **Phase 9 — Smoke test**
+      Verify the full pipeline end to end before treating the system as operational.
+      - Submit a known-benign sample via the API (e.g., `calc.exe` or a simple `hello.exe`)
+      - Verify it appears in the SQS queue, is picked up by sqs-agent, detonated by Cape,
+        and the report lands in S3
+      - Check Cape web UI (via WireGuard) for the analysis report
+      - Suggested test sample: EICAR test file (detected but harmless)
+
+---
+
 ## Review findings (2026-04-02) — Packer/Ansible security & functional review
 
 Issues identified during deep review of Packer guest builds, Ansible roles, and Terraform.
