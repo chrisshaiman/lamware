@@ -248,9 +248,9 @@ temp-file pattern.
 
 ---
 
-## ADR-009: Windows guest OS — Windows 10 22H2 Enterprise evaluation ISO
+## ADR-009: Windows guest OS — Windows 11 Enterprise evaluation ISO
 
-**Status:** Decided
+**Status:** Revised 2026-04-04 (supersedes original Windows 10 decision)
 
 **Context:**
 Cape requires a Windows guest VM for dynamic malware analysis. Choices are Windows 10,
@@ -258,13 +258,14 @@ Windows 11, or both. Licensing options are Microsoft evaluation ISOs (90-day, fr
 a paid MSDN/Visual Studio subscription.
 
 **Decision:**
-Start with Windows 10 22H2 Enterprise evaluation ISO. Evaluate adding Windows 11 once
-the Windows 10 lab is stable and producing real sample volume.
+Use Windows 11 Enterprise evaluation ISO. Windows 10 was the original choice but
+Microsoft reached end-of-life on October 14, 2025 and removed evaluation ISOs from
+the eval center — they are no longer available.
 
-Rationale for Windows 10: the majority of malware in the wild still targets Win10-era
-environments; Cape community tooling has the most Win10 test coverage; lighter resource
-footprint (~2 GB RAM baseline vs ~4 GB for Win11); Win11 adds TPM emulation complexity
-(swtpm) with limited near-term benefit.
+Rationale for Windows 11: the only viable evaluation ISO available from Microsoft;
+malware authors are increasingly targeting Win11-era environments; Windows 10 EOL means
+it is no longer representative of production endpoints. The added complexity of TPM
+emulation (swtpm) is worth accepting to stay current.
 
 Rationale for evaluation ISO: Microsoft distributes these specifically for lab use;
 the 90-day rebuild cycle is manageable with an automated Packer pipeline; activation
@@ -273,10 +274,11 @@ Enterprise SKU (not Home or Pro) is required — Group Policy hooks used by some
 analysis modules are Enterprise-only.
 
 **Consequences:**
+- Packer templates (autounattend.xml, pkr.hcl files) must be updated for Windows 11
+- TPM 2.0 emulation via swtpm required in the QEMU/libvirt config
 - Guest image must be rebuilt from a fresh evaluation ISO every 90 days
 - Packer guest image pipeline handles rebuilds; rotation process should be documented
   in the runbook before the first guest is deployed
-- Windows 11 support deferred — tracked in docs/STATUS.md future scope
 
 ---
 
