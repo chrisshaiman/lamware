@@ -81,6 +81,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "samples" {
     id     = "archive-old-samples"
     status = "Enabled"
 
+    filter {}
+
     transition {
       days          = 30
       storage_class = "GLACIER"
@@ -161,6 +163,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "reports" {
   rule {
     id     = "tier-old-reports"
     status = "Enabled"
+
+    filter {}
 
     transition {
       days          = 7

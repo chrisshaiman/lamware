@@ -7,18 +7,26 @@ tfplan
 terraform.tfvars
 !terraform.tfvars.example
 
-# Remote state files — ignored everywhere except bootstrap, which uses local state
+# Remote state files — all ignored (including bootstrap local state; contains account IDs)
 *.tfstate
-!aws/bootstrap/terraform.tfstate
 
 # Packer
 packer/output/
 packer/packer_cache/
+packer/packer.auto.pkrvars.hcl
 
 # Ansible
 ansible/inventory/hosts
 ansible/*.retry
 *.log
+
+# Environment-specific files filled in during deployment (contain account IDs / ARNs)
+shared/backend-aws.hcl
+!shared/backend-aws.hcl.example
+ansible/vars/main.yml
+!ansible/vars/main.yml.example
+packer/http/user-data
+!packer/http/user-data.example
 
 # Secrets / local config
 .env

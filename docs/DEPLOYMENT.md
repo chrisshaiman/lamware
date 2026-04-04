@@ -36,6 +36,12 @@ Everything that must be in place on your local machine before running any comman
 
 Install all of these before starting. Verify versions with the commands shown.
 
+> **Windows users:** Install WSL2 first and run all commands from a WSL2 terminal.
+> The `make` targets are the primary workflow and require a Linux environment — there is
+> no benefit to splitting tools between native Windows and WSL2. The one exception is the
+> WireGuard GUI app (`wireguard-windows`), which manages the VPN tunnel at the OS level
+> and should be installed on native Windows.
+
 ```bash
 # Terraform >= 1.6
 terraform -version
@@ -49,7 +55,7 @@ packer --version
 # AWS CLI v2
 aws --version
 
-# WireGuard tools
+# WireGuard tools (wg genkey, wg pubkey)
 wg --version
 
 # Python 3.11+ (local — for Lambda zip build via `make lambda`)
@@ -69,9 +75,8 @@ openssl version
 qemu-system-x86_64 --version
 ```
 
-> **Note:** Packer Windows builds require QEMU and must run on Linux. If your workstation
-> is macOS or Windows, use the bare metal host itself (after Phase 7) or a Linux VM for
-> the Packer builds in Phase 8.
+> **Note:** Packer Windows guest builds require QEMU and must run on Linux. Use the bare
+> metal host itself (after Phase 7) or any Linux machine with 8 GB+ RAM and 100 GB+ disk.
 
 ### AWS credentials
 
@@ -163,6 +168,7 @@ Populate `shared/backend-aws.hcl` automatically:
 
 ```bash
 cd ../..   # back to repo root
+cp shared/backend-aws.hcl.example shared/backend-aws.hcl   # gitignored — copy once
 make configure-backend
 ```
 
@@ -305,6 +311,12 @@ aws secretsmanager put-secret-value \
 ```
 
 ### 4c. Update ansible/vars/main.yml
+
+`ansible/vars/main.yml` is gitignored — copy the example first:
+
+```bash
+cp ansible/vars/main.yml.example ansible/vars/main.yml
+```
 
 Fill in the three ARNs you recorded in Phase 3:
 
@@ -523,6 +535,7 @@ Run this once to generate the build password hash and install the Ansible harden
 used during the Ubuntu base image build:
 
 ```bash
+cp packer/http/user-data.example packer/http/user-data   # gitignored — copy once
 make packer-setup
 # Prompts for a build password (used only during Packer build, not in production)
 # Prints:

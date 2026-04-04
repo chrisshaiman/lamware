@@ -36,10 +36,11 @@ docs/           - Architecture decisions, security constraints, status
 
 ## Prerequisites
 
-- Terraform >= 1.6
+- Terraform >= 1.6, Packer >= 1.10, Ansible >= 2.14, AWS CLI v2
 - OVHcloud API credentials
 - AWS credentials with appropriate permissions
 - WireGuard keypair generated locally
+- **Windows:** WSL2 required — run all commands from a WSL2 terminal
 
 ## Usage
 
