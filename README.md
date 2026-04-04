@@ -49,7 +49,8 @@ make infra      # provision OVH server + AWS resources
 make configure  # run Ansible against provisioned host
 ```
 
-See `docs/STATUS.md` for current build status and `ARCHITECTURE.md` for design detail.
+See `docs/DEPLOYMENT.md` for the full deployment guide. See `docs/STATUS.md` for current
+build status and `ARCHITECTURE.md` for design detail.
 
 ## Security Notes
 
