@@ -920,6 +920,16 @@ in the next round of implementation work.
 
 ---
 
+## Deferred housekeeping
+
+- **Sandbox AWS account root email** — created with a plus-addressed email on a mail
+  host that does not support plus addressing. Root inbox is unreachable. Low risk since
+  all operations go through IAM roles via Organizations, but root account recovery would
+  be blocked if ever needed. Fix: log into the sandbox account as root via the AWS
+  console and update the root email to a reachable address.
+
+---
+
 ## Future scope (not started, not prioritised)
 
 - RDS ingress rule: move from composition layer into RDS module (accept `allowed_security_group_ids` variable)
