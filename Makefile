@@ -71,8 +71,8 @@ all: lambda image infra-ovh infra-aws configure
 
 configure-backend:
 	@echo "==> Populating shared/backend-aws.hcl from bootstrap outputs..."
-	@[ -f aws/bootstrap/.terraform/terraform.tfstate ] || \
-		(echo "ERROR: Bootstrap not initialised. Run: cd aws/bootstrap && terraform init && terraform apply" && exit 1)
+	@[ -f aws/bootstrap/terraform.tfstate ] || \
+		(echo "ERROR: Bootstrap not applied. Run: cd aws/bootstrap && terraform init && terraform apply" && exit 1)
 	@cd aws/bootstrap && \
 		BUCKET=$$(terraform output -raw tfstate_bucket_name) && \
 		TABLE=$$(terraform output -raw tfstate_lock_table) && \

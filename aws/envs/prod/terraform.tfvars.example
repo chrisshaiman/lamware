@@ -16,8 +16,8 @@ reports_bucket_name = "malware-sandbox-reports-<your-account-id>"
 # db_instance_class = "db.t4g.micro"
 
 # Lambda zip paths — run `make lambda` before terraform apply
-report_processor_zip = "../../src/report_processor.zip"
-sample_submitter_zip = "../../src/sample_submitter.zip"
+report_processor_zip = "../../../src/report_processor.zip"
+sample_submitter_zip = "../../../src/sample_submitter.zip"
 
 # Budget alerts — at least one email required
 budget_alert_emails  = ["you@example.com"]
