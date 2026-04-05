@@ -419,10 +419,10 @@ Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-
 
 ### Packer image to build
 
-- [!] **`packer/windows10-guest.pkr.hcl`** — **Needs update for Windows 11** (see ADR-009)
-      - Windows 10 eval ISO is no longer available (EOL Oct 2025); switching to Windows 11
-      - Packer templates require updates: autounattend.xml, pkr.hcl iso vars, swtpm for TPM 2.0
-      - Current template was written for Win10 22H2 — do not build until updated for Win11
+- [!] **`packer/windows10-guest.pkr.hcl`** — **On hold pending ISO sourcing** (see ADR-009)
+      - Windows 10 eval ISO removed by Microsoft (EOL Oct 2025); need to source ISO via other means
+      - Templates are complete and will be used once a Win10 ISO is available — do not delete
+      - Do not build until ISO is sourced and path/checksum set in packer.auto.pkrvars.hcl
       - Installs Python 3.11 and cape-agent.py; Scheduled Task starts agent at boot (port 8000)
       - Output: qcow2 base image for libvirt snapshot
       Anti-evasion measures baked into image (ADR-012):
@@ -441,7 +441,7 @@ Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-
       - `on_reboot=destroy` so sample reboots end the analysis cleanly
       - *Files:* `ansible/roles/cape/templates/guest-domain.xml.j2`
 
-- [!] **`packer/windows10-office.pkr.hcl`** — **Blocked pending Win11 update to windows10-guest.pkr.hcl**
+- [!] **`packer/windows10-office.pkr.hcl`** — **On hold pending Win10 ISO sourcing**
       - Boots from `windows10-guest.qcow2`, installs LibreOffice, outputs `windows10-office.qcow2`
       - WinRM as guest user (`jsmith`) — Administrator is disabled by base cleanup.ps1
       - Macro security set to LOW in LibreOffice user profile (required for VBA detonation)

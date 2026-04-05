@@ -224,7 +224,7 @@ resource "aws_iam_role_policy" "baremetal_agent" {
 
 resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
   alarm_name          = "${var.name_prefix}-dlq-depth"
-  alarm_description   = "Jobs in the dead-letter queue — analysis failures need investigation. Check sqs-agent logs and Cape status on the bare metal host."
+  alarm_description   = "Jobs in the dead-letter queue - analysis failures need investigation. Check sqs-agent logs and Cape status on the bare metal host."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "ApproximateNumberOfMessagesVisible"
