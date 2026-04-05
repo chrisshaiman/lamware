@@ -80,6 +80,115 @@ resource "aws_budgets_budget" "monthly" {
   }
 }
 
+# Budget action — auto-freeze account when spend hits the hard cap.
+# Applies a deny-all policy (except read-only + budget management) to prevent
+# new resource creation. Remove the policy manually from IAM after investigating.
+# This is the closest AWS offers to a hard spending cap.
+
+resource "aws_iam_policy" "budget_freeze" {
+  name        = "${var.name_prefix}-budget-freeze"
+  description = "Deny all mutating actions — applied automatically when budget cap is reached"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "DenyAllMutating"
+        Effect   = "Deny"
+        Action   = "*"
+        Resource = "*"
+        Condition = {
+          StringNotEquals = {
+            "aws:RequestedRegion" = ["_never_match_"]
+          }
+        }
+      },
+      {
+        Sid      = "AllowReadAndBudgetManagement"
+        Effect   = "Allow"
+        Action = [
+          "budgets:*",
+          "ce:*",
+          "iam:Get*",
+          "iam:List*",
+          "sts:GetCallerIdentity",
+          "s3:Get*",
+          "s3:List*",
+          "rds:Describe*",
+          "ec2:Describe*",
+          "logs:Get*",
+          "logs:Describe*"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "budget_action" {
+  name = "${var.name_prefix}-budget-action"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "budgets.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "budget_action_attach" {
+  name = "attach-freeze-policy"
+  role = aws_iam_role.budget_action.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:AttachGroupPolicy",
+          "iam:DetachGroupPolicy",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:AttachUserPolicy",
+          "iam:DetachUserPolicy"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_budgets_budget_action" "freeze" {
+  budget_name        = aws_budgets_budget.monthly.name
+  action_type        = "APPLY_IAM_POLICY"
+  approval_model     = "AUTOMATIC"
+  notification_type  = "ACTUAL"
+  execution_role_arn = aws_iam_role.budget_action.arn
+  account_id         = data.aws_caller_identity.current.account_id
+
+  action_threshold {
+    action_threshold_type  = "PERCENTAGE"
+    action_threshold_value = 100
+  }
+
+  definition {
+    iam_action_definition {
+      policy_arn = aws_iam_policy.budget_freeze.arn
+      roles      = [aws_iam_role.budget_action.name]
+    }
+  }
+
+  subscriber {
+    subscription_type = "EMAIL"
+    address           = var.budget_alert_emails[0]
+  }
+}
+
 # =============================================================================
 # KMS — single key for the project
 # Used by: S3 (both buckets), RDS, SQS, Lambda logs, Secrets Manager secrets
@@ -125,6 +234,25 @@ resource "aws_kms_key_policy" "main" {
         Condition = {
           StringLike = {
             "kms:EncryptionContext:aws:cloudtrail:arn" = "arn:aws:cloudtrail:${var.aws_region}:${data.aws_caller_identity.current.account_id}:trail/*"
+          }
+        }
+      },
+      {
+        # CloudWatch Logs needs these permissions to encrypt RDS and Lambda log groups
+        Sid       = "AllowCloudWatchLogsEncrypt"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${var.aws_region}.amazonaws.com" }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*"
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
           }
         }
       }
@@ -323,7 +451,7 @@ resource "aws_vpc_security_group_egress_rule" "lambda_to_rds" {
 
 resource "aws_vpc_security_group_egress_rule" "lambda_to_endpoints" {
   security_group_id = module.lambda.security_group_id
-  description       = "HTTPS to VPC endpoints (S3, SQS, Secrets Manager) — no internet route in this VPC"
+  description       = "HTTPS to VPC endpoints (S3, SQS, Secrets Manager) - no internet route in this VPC"
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
@@ -350,7 +478,7 @@ data "aws_serverlessapplicationrepository_application" "rds_rotation" {
 # Security group for the rotation Lambda — egress to RDS and Secrets Manager only
 resource "aws_security_group" "rotation_lambda" {
   name        = "${var.name_prefix}-rotation-lambda-sg"
-  description = "Secrets Manager rotation Lambda — outbound to RDS and Secrets Manager VPC endpoint"
+  description = "Secrets Manager rotation Lambda - outbound to RDS and Secrets Manager VPC endpoint"
   vpc_id      = module.vpc.vpc_id
 
   tags = { Name = "${var.name_prefix}-rotation-lambda-sg" }
@@ -488,6 +616,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
   rule {
     id     = "expire-old-logs"
     status = "Enabled"
+    filter {}
     expiration { days = 365 }
   }
 }
