@@ -525,9 +525,12 @@ Builds two Windows 10 guest images:
 - `windows10-guest.qcow2` — base image with Python and cape-agent (the `clean` snapshot)
 - `windows10-office.qcow2` — extends the base with LibreOffice (the `office` snapshot)
 
-**These builds must run on a Linux machine with QEMU installed.** They can run on the
-bare metal host itself (after Phase 7) or on any Linux machine with sufficient RAM (8 GB+)
-and disk (100 GB+).
+**These builds must run on a Linux machine with QEMU installed.** Options:
+- The bare metal host itself (after Phase 7) — preferred for production
+- Any Linux machine with sufficient RAM (8 GB+) and disk (100 GB+)
+- **WSL2 on Windows** — fully supported if your machine has 8 GB+ RAM free and 100 GB+
+  disk available in the WSL2 volume. Install QEMU first:
+  `sudo apt-get install -y qemu-system-x86 qemu-utils`
 
 ### 8a. One-time Packer setup
 

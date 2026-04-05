@@ -19,7 +19,7 @@
 
 resource "aws_security_group" "lambda" {
   name        = "${var.name_prefix}-lambda-sg"
-  description = "Lambda functions — outbound to RDS and VPC endpoints only"
+  description = "Lambda functions - outbound to RDS and VPC endpoints only"
   vpc_id      = var.vpc_id
 
   # Egress rules are added in the composition layer (aws/envs/prod/main.tf) using

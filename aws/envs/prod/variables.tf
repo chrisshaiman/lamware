@@ -86,14 +86,15 @@ variable "api_throttle_rate_limit" {
 }
 
 # -----------------------------------------------------------------------------
-# Budget alerts — notifications when monthly AWS spend approaches/exceeds limit
-# Expected baseline: ~$43/month AWS. Threshold set above that with buffer.
+# Budget — alerts + auto-freeze when spend hits the cap
+# Expected baseline: ~$43/month AWS. At 80% actual you get warned, at 100%
+# a deny-all IAM policy is auto-applied to freeze the account (see main.tf).
 # -----------------------------------------------------------------------------
 
 variable "monthly_budget_limit" {
   type        = string
-  default     = "75"
-  description = "Monthly AWS spend limit in USD. Alert fires at 80% actual and 100% forecasted. Default is ~75% above expected baseline to catch unexpected cost growth."
+  default     = "200"
+  description = "Monthly AWS spend hard cap in USD. Alerts fire at 80% actual and 100% forecasted. At 100% actual, a deny-all IAM policy is auto-applied to freeze the account."
 }
 
 variable "budget_alert_emails" {
