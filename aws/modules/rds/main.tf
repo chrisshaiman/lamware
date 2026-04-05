@@ -12,7 +12,7 @@
 
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds-sg"
-  description = "RDS access — Lambda and admin VPN only"
+  description = "RDS access - Lambda and admin VPN only"
   vpc_id      = var.vpc_id
 
   # Ingress rules are added in the composition layer (aws/envs/prod/main.tf)

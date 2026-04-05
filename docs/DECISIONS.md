@@ -274,8 +274,9 @@ Enterprise SKU (not Home or Pro) is required — Group Policy hooks used by some
 analysis modules are Enterprise-only.
 
 **Consequences:**
-- Packer templates (autounattend.xml, pkr.hcl files) must be updated for Windows 11
-- TPM 2.0 emulation via swtpm required in the QEMU/libvirt config
+- New Packer templates needed for Windows 11 (autounattend.xml, pkr.hcl, swtpm for TPM 2.0)
+- Existing Win10 templates are complete and retained — on hold pending ISO sourcing via
+  MSDN/VS subscription or community contacts; will run both profiles once Win10 ISO available
 - Guest image must be rebuilt from a fresh evaluation ISO every 90 days
 - Packer guest image pipeline handles rebuilds; rotation process should be documented
   in the runbook before the first guest is deployed
