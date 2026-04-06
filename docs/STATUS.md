@@ -181,7 +181,7 @@ The README should link to it.
 
 ### `docs/DEPLOYMENT.md` — phase checklist
 
-- [ ] **Phase 0 — Prerequisites**
+- [x] **Phase 0 — Prerequisites**
       Everything that must be in place before any `terraform` or `ansible` command runs.
       - Accounts: OVHcloud US account, AWS account (dedicated — not shared with other infra)
       - Tools and minimum versions: Terraform ≥ 1.6, Ansible ≥ 2.14, Packer ≥ 1.10,
@@ -194,14 +194,14 @@ The README should link to it.
       - Windows 10 22H2 Enterprise evaluation ISO downloaded locally
         (link to official Microsoft evaluation download page)
 
-- [ ] **Phase 1 — AWS bootstrap**
+- [x] **Phase 1 — AWS bootstrap**
       One-time: creates the S3 state bucket and DynamoDB lock table with local state.
       - Copy `aws/bootstrap/terraform.tfvars.example` → `terraform.tfvars`, fill in
         `name_prefix` and `aws_region`
       - `terraform init && terraform apply`
       - Record `state_bucket_name` output → fill into `shared/backend-aws.hcl`
 
-- [ ] **Phase 2 — AWS infrastructure**
+- [x] **Phase 2 — AWS infrastructure**
       Provisions VPC, S3, RDS, SQS, Lambda, API Gateway, KMS, Secrets Manager, CloudTrail.
       - `make lambda` — build Lambda ZIPs before plan (plan will error without them)
       - Copy `aws/envs/prod/terraform.tfvars.example` → `terraform.tfvars`; fill in
@@ -212,7 +212,7 @@ The README should link to it.
       - Record outputs: `samples_bucket_name`, `reports_bucket_name`,
         `baremetal_agent_secret_arn`, `api_invoke_url` → fill into `ansible/vars/main.yml`
 
-- [ ] **Phase 3 — Secrets setup**
+- [x] **Phase 3 — Secrets setup**
       Two secrets must be created manually (outside Terraform) because they contain
       information only available after provisioning or key generation.
       - **WireGuard**: generate server + client keypair; create Secrets Manager secret;
