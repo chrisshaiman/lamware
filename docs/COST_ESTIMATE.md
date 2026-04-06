@@ -1,7 +1,7 @@
 # COST_ESTIMATE.md — Monthly Infrastructure Cost Tracking
 
 Keep this document current. Update it when components are added, removed, or resized.
-All costs are USD/month estimates based on us-east-1 pricing (March 2026).
+All costs are USD/month estimates based on us-east-1 pricing (April 2026).
 Actual costs vary with sample volume, analysis frequency, and data transfer.
 
 ---
@@ -11,13 +11,11 @@ Actual costs vary with sample volume, analysis frequency, and data transfer.
 | Layer | Est. Monthly |
 |---|---|
 | AWS supporting infra | ~$43 |
-| OVH bare metal (RISE-1) | ~$65 |
-| OVH bare metal (ADVANCE-1) | ~$105 |
-| **Total (RISE-1)** | **~$108/month** |
-| **Total (ADVANCE-1)** | **~$148/month** |
+| OVH bare metal (RISE-2 + 64GB upgrade) | ~$92 |
+| **Total** | **~$135/month** |
 
-Recommended for active analysis work: ADVANCE-1 (~$148/month total).
-RISE-1 is adequate for dev/test or low-volume use (~$108/month total).
+Recommended: RISE-2 with 64GB RAM upgrade (~$135/month total).
+One-time setup fee: $80 (waived with 12-month commitment).
 
 ---
 
@@ -44,16 +42,24 @@ RISE-1 is adequate for dev/test or low-volume use (~$108/month total).
 
 ---
 
-## OVH Bare Metal — Options
+## OVH Bare Metal — Selected Configuration
 
-| Tier | Specs | Est. Monthly | Suitable For |
+| Tier | Specs | Est. Monthly | Notes |
 |---|---|---|---|
-| RISE-1 | 4c/8t, 32GB RAM, 2×2TB HDD | ~$65 | Dev/test, low-volume analysis |
-| ADVANCE-1 | 8c/16t, 32GB RAM, 2×512GB NVMe | ~$105 | Active analysis, multiple concurrent VMs |
-| ADVANCE-2 | 8c/16t, 64GB RAM, 2×512GB NVMe | ~$125 | High-throughput analysis |
+| **RISE-2 + 64GB** | Xeon E-2388G 8c/16t, 64GB DDR4, 2×512GB NVMe | ~$92 | Best value for 8-core US bare metal |
 
-Cape can run 2–4 concurrent analysis VMs on ADVANCE-1. RISE-1 is limited to 1–2.
-NVMe storage on ADVANCE series significantly improves VM snapshot and disk I/O speed.
+Alternatives evaluated (April 2026 pricing, US availability only):
+
+| Tier | Specs | Est. Monthly | Why Not |
+|---|---|---|---|
+| RISE-1 | Xeon E-2386G 6c/12t, 32GB DDR4, 2×512GB NVMe | $70 | Only 6 cores — limits concurrent VMs |
+| RISE-S | Ryzen 7 9700X 8c/16t, 64GB DDR5, 2×512GB NVMe | $77 | Not available in US datacenters |
+| ADVANCE-1 | EPYC 4244P 6c/12t, 32GB DDR5, 2×960GB NVMe | $115 | Only 6 cores, more expensive than RISE-2 |
+| ADVANCE-2 | EPYC 4344P 8c/16t, 64GB DDR5, 2×960GB NVMe | $160 | DDR5 + larger NVMe but $68/mo more |
+| Vultr E-2286G | Xeon E-2286G 6c/12t, 32GB, 2×960GB SSD | $185 | Poor value vs OVH |
+
+Cape can run 3-5 concurrent analysis VMs with 64GB RAM.
+NVMe storage provides fast VM snapshot creation and restore.
 
 ---
 
@@ -76,7 +82,9 @@ OVH bare metal is ordered manually via the OVH manager. Terraform manages config
 (robot firewall, OS install) but not hardware ordering. The `ovh/` module assumes the
 server is already provisioned and references it by service_name.
 
-Bandwidth: OVH includes generous unmetered bandwidth on dedicated servers (varies by tier).
+RISE-2 product page: https://eco.us.ovhcloud.com/rise/rise-2/
+
+Bandwidth: OVH RISE includes 1 Gbps unmetered public bandwidth and anti-DDoS.
 S3 transfer costs apply for report uploads from bare metal to AWS (~$0.09/GB out to internet,
 free for inbound). At typical malware analysis volumes this is negligible.
 
