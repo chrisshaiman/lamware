@@ -1,0 +1,6 @@
+# Runtime dependencies
+# Install with: pip install -r requirements.txt
+
+anthropic>=0.40.0   # Claude API — vm_agent.py, vm_agent_cape.py
+boto3>=1.35.0       # AWS SDK — vm_agent_cape.py, sample_submitter.py, report_processor.py
+Pillow>=11.0.0      # PPM→PNG screenshot conversion — qemu_monitor.py
