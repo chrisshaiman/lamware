@@ -276,7 +276,7 @@ def _enqueue_job(task_id: str, s3_key: str, sha256: str, tags: list[str]) -> Non
 
 def _error(status_code: int, message: str) -> dict:
     """Return an API Gateway-compatible error response."""
-    logger.warning("Returning error response", extra={"status_code": status_code, "message": message})
+    logger.warning("Returning error response", extra={"status_code": status_code, "error_message": message})
     return {
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},
