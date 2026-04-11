@@ -12,7 +12,3 @@ output "server_name" {
   description = "OVH service name for the server — use for subsequent API calls or manual OVH manager operations."
 }
 
-output "ssh_key_name" {
-  value       = ovh_me_ssh_key.admin.key_name
-  description = "OVH SSH key name registered at account level — injected during OS install."
-}
