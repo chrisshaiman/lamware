@@ -44,7 +44,7 @@ import logging
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -59,7 +59,7 @@ except ImportError:
     print("ERROR: pip3 install boto3")
     sys.exit(1)
 
-from fake_credentials import PROMPT_CREDENTIALS, GUEST_IDENTITY, FINANCIAL
+from fake_credentials import FINANCIAL, GUEST_IDENTITY, PROMPT_CREDENTIALS
 from qemu_monitor import click_at, screenshot, send_key, type_string
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ def run_cape_agent(
 
     while time.monotonic() - start < duration:
         iteration += 1
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(datetime.UTC).isoformat()
         elapsed = int(time.monotonic() - start)
         log.info("[%ss/%ss] Iteration %s", elapsed, duration, iteration)
 
