@@ -33,15 +33,12 @@ Write-Host "==> disable-defender: suppressing Windows Defender"
 # -------------------------------------------------------------------------
 # 1. Disable Tamper Protection
 # -------------------------------------------------------------------------
-# Tamper Protection (Windows 10 1903+) prevents modification of Defender
-# settings via registry or PowerShell. Must be turned off via registry before
-# the Group Policy keys below take effect. Requires SYSTEM or TrustedInstaller;
-# Packer runs as Administrator which is sufficient here.
-Write-Host "==> Disabling Tamper Protection"
-$tpPath = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"
-New-Item -Path $tpPath -Force | Out-Null
-Set-ItemProperty -Path $tpPath -Name "TamperProtection" -Value 4 -Type DWord
-# 4 = disabled; 5 = enabled (Microsoft default)
+# HKLM:\SOFTWARE\Microsoft\Windows Defender\Features is owned by TrustedInstaller
+# and cannot be written by Administrator even in an elevated WinRM session.
+# On Enterprise SKU the Group Policy keys (step 3) are the authoritative
+# suppression mechanism and override Tamper Protection — skip the registry
+# approach and rely on GP keys instead.
+Write-Host "==> Skipping Tamper Protection registry key (TrustedInstaller-owned, GP keys used instead)"
 
 # -------------------------------------------------------------------------
 # 2. Real-time protection via MpPreference
