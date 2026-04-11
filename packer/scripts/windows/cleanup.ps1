@@ -20,7 +20,7 @@
          (this step is optional and skipped if defrag takes too long)
 
     The Windows Defender and Windows Update disables applied in earlier
-    provisioners are preserved — this script does not re-enable them.
+    provisioners are preserved  -  this script does not re-enable them.
 
     Managed by Packer. Do not edit manually.
     Author: Christopher Shaiman
@@ -85,7 +85,7 @@ Disable-LocalUser -Name "Administrator"
 $winlogonPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 $currentAutoUser = (Get-ItemProperty -Path $winlogonPath -Name "DefaultUserName" -ErrorAction SilentlyContinue).DefaultUserName
 if ($currentAutoUser -eq "Administrator") {
-    Write-Warning "Autologon was still set to Administrator — correcting"
+    Write-Warning "Autologon was still set to Administrator  -  correcting"
     # This should not happen if create-user.ps1 ran correctly, but guard anyway
     Remove-ItemProperty -Path $winlogonPath -Name "DefaultUserName"  -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path $winlogonPath -Name "DefaultPassword"  -ErrorAction SilentlyContinue
@@ -127,7 +127,7 @@ Get-ScheduledTask -TaskName "CreateProfile_*" -ErrorAction SilentlyContinue |
 # 8. Disable WinRM
 # -------------------------------------------------------------------------
 # WinRM was enabled during the Packer build phase so provisioner scripts
-# could run. The final guest image does not need it — Cape communicates
+# could run. The final guest image does not need it  -  Cape communicates
 # with the guest via the cape-agent.py scheduled task on port 8000, not WinRM.
 # Leaving WinRM enabled (port 5985, basic auth, unencrypted) is unnecessary
 # attack surface on the detonation bridge during analysis.
@@ -153,4 +153,4 @@ try {
     Write-Host "  Optimize-Volume not available (non-fatal)"
 }
 
-Write-Host "==> cleanup complete — image ready for qcow2 export"
+Write-Host "==> cleanup complete  -  image ready for qcow2 export"

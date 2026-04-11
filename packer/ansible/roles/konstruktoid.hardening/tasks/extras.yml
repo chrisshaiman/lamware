@@ -1,0 +1,18 @@
+---
+- name: Reboot if required
+  when:
+    - reboot_ubuntu
+  block:
+    - name: Stat /var/run/reboot-required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: stat_reboot_required
+
+    - name: Notify reboot handler
+      become: true
+      ansible.builtin.setup:
+      notify:
+        - Reboot node
+      when:
+        - ansible_facts.distribution == "Ubuntu"
+        - stat_reboot_required.stat.exists

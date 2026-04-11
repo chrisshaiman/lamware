@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Python: lint (ruff) + tests (pytest)
+  # ---------------------------------------------------------------------------
+  python:
+    name: Python lint & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check src/
+
+      - name: Test (pytest)
+        run: pytest --tb=short
+
+  # ---------------------------------------------------------------------------
+  # Terraform validate — all root modules
+  # ---------------------------------------------------------------------------
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        dir:
+          - aws/bootstrap
+          - aws/envs/prod
+          - ovh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.10"
+
+      - name: terraform init (${{ matrix.dir }})
+        working-directory: ${{ matrix.dir }}
+        # -backend=false skips S3/OVH backend auth — validate only needs provider schemas
+        run: terraform init -backend=false
+
+      - name: terraform validate (${{ matrix.dir }})
+        working-directory: ${{ matrix.dir }}
+        run: terraform validate

@@ -269,14 +269,14 @@ def _enqueue_job(task_id: str, s3_key: str, sha256: str, tags: list[str]) -> Non
             "sha256": sha256,
             "tags": tags,
             # submitted_at lets the sqs-agent and report_processor correlate job age
-            "submitted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "submitted_at": datetime.datetime.now(datetime.UTC).isoformat(),
         }),
     )
 
 
 def _error(status_code: int, message: str) -> dict:
     """Return an API Gateway-compatible error response."""
-    logger.warning("Returning error response", extra={"status_code": status_code, "message": message})
+    logger.warning("Returning error response", extra={"status_code": status_code, "error_message": message})
     return {
         "statusCode": status_code,
         "headers": {"Content-Type": "application/json"},

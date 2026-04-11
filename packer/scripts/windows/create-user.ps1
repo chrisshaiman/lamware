@@ -82,21 +82,22 @@ Write-Host "==> Creating user profile for '$Username'"
 $profilePath = "C:\Users\$Username"
 
 if (-not (Test-Path $profilePath)) {
-    # Schedule a dummy task as the user — Windows creates the profile when
+    # Schedule a dummy task as the user  -  Windows creates the profile when
     # the task runs, then we immediately delete the task.
     $taskName   = "CreateProfile_$Username"
     $secPwd     = $Password
     $action     = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c exit"
-    $principal  = New-ScheduledTaskPrincipal -UserId $Username -RunLevel Limited -LogonType Password
     $settings   = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 30)
     $trigger    = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5)
 
+    # -Principal and -Password are in separate parameter sets - cannot combine.
+    # Use -User / -Password directly; RunLevel defaults to Limited.
     Register-ScheduledTask `
         -TaskName  $taskName `
         -Action    $action `
-        -Principal $principal `
         -Settings  $settings `
         -Trigger   $trigger `
+        -User      $Username `
         -Password  $secPwd `
         -Force | Out-Null
 

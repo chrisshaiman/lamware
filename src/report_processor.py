@@ -68,6 +68,6 @@ def handler(event: dict, context: object) -> dict:
 
 def _get_secret(secret_arn: str) -> dict:
     """Fetch and parse a JSON secret from Secrets Manager."""
-    client = boto3.client("secretsmanager", region_name=os.environ["AWS_REGION_NAME"])
+    client = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"))
     response = client.get_secret_value(SecretId=secret_arn)
     return json.loads(response["SecretString"])

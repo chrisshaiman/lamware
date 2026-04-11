@@ -51,15 +51,6 @@ data "ovh_dedicated_server" "sandbox" {
 }
 
 # =============================================================================
-# Admin SSH key — registered at OVH account level, injected during OS install
-# =============================================================================
-
-resource "ovh_me_ssh_key" "admin" {
-  key_name = "${var.name_prefix}-admin"
-  key      = var.ssh_public_key
-}
-
-# =============================================================================
 # Robot firewall — network-edge allowlist, active before the OS boots
 #
 # OVH's hardware firewall drops all traffic not matching a permit rule.
@@ -125,10 +116,15 @@ resource "ovh_dedicated_server_install_task" "os" {
   template_name = var.os_template
 
   details {
-    custom_hostname    = var.hostname
-    ssh_key_name       = ovh_me_ssh_key.admin.key_name
-    use_distrib_kernel = true
-    no_raid            = var.no_raid
+    custom_hostname = var.hostname
+    no_raid         = var.no_raid
+  }
+
+  # ovh_me_ssh_key was removed in provider 0.44.0 — SSH key is injected
+  # directly at install time via user_metadata instead.
+  user_metadata {
+    key   = "sshKey"
+    value = var.ssh_public_key
   }
 
   timeouts {
