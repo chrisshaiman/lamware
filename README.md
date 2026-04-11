@@ -58,7 +58,7 @@ build status and `ARCHITECTURE.md` for design detail.
 - Detonation network is air-gapped — no route from `virbr-det` to `eth0` or `wg0`
 - All sample uploads require pre-signed S3 URLs (no public bucket access)
 - RDS is in a private subnet with no internet route
-- OVH robot firewall applied before OS boot — whitelist admin CIDRs first
+- OVH robot firewall applied before OS boot — allowlist admin CIDRs first
 - Separate AWS account required — do not mix with other infra
 - All infrastructure in US jurisdiction
 
