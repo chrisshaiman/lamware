@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  win11-autounattend.xml — Windows 11 Enterprise Evaluation unattended setup
+  for the malware sandbox Cape detonation guest VM.
+
+  This file is placed on a virtual floppy (A:\autounattend.xml) by the Packer
+  QEMU builder. Windows Setup auto-detects it on the A: drive and runs fully
+  unattended.
+
+  Key differences from the Windows 10 autounattend:
+  - UEFI/GPT disk layout (required by Windows 11)
+  - BypassTPMCheck, BypassSecureBootCheck, BypassRAMCheck registry keys
+    injected during windowsPE to allow installation without full hardware
+    compliance. swtpm provides a real TPM 2.0 for anti-evasion realism,
+    but the bypass keys ensure the install succeeds even if OVMF is not
+    configured for Secure Boot enforcement.
+  - ImageIndex 1 targets Windows 11 Enterprise Evaluation
+
+  Design decisions:
+  - No product key: evaluation ISO, 90-day expiry (see ADR-009)
+  - Edition: Windows 11 Enterprise Evaluation (only edition in the eval ISO)
+  - Build user: local Administrator account, enabled for Packer WinRM access
+  - Password: must match winrm_password in windows11-guest.pkr.hcl
+  - UAC: disabled — sandbox guests run samples with full admin context
+  - WinRM: HTTP on port 5985, basic auth, unencrypted — build network only
+
+  Managed by Packer build. Do not edit manually.
+  Author: Christopher Shaiman
+  License: Apache 2.0
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =========================================================
+       PASS 1: windowsPE — runs from the WinPE boot environment
+       Handles disk layout, image selection, and Win11 bypass.
+       ========================================================= -->
+  <settings pass="windowsPE">
+
+    <!-- International settings for the install media -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <!-- Disk setup and image selection -->
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <!-- Accept EULA (evaluation license) -->
+      <AcceptEula>true</AcceptEula>
+
+      <!-- No product key — evaluation ISO activates automatically -->
+
+      <!-- Bypass Windows 11 hardware requirement checks.
+           swtpm provides real TPM 2.0 for anti-evasion, but the bypass keys
+           are belt-and-suspenders in case Secure Boot validation fails in OVMF.
+           These registry keys are the official Microsoft-documented method for
+           bypassing hardware checks during unattended install. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+          <Description>Bypass TPM 2.0 requirement check</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+          <Description>Bypass Secure Boot requirement check</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+          <Description>Bypass RAM requirement check</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- Disk layout: UEFI/GPT (required by Windows 11)
+           Partition 1: 100 MB EFI System Partition (FAT32, boot firmware)
+           Partition 2: 16 MB Microsoft Reserved (MSR, GPT housekeeping)
+           Partition 3: Remainder — C: drive (Windows, NTFS) -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- EFI System Partition -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
+            <!-- Microsoft Reserved Partition -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- Windows partition (remainder of disk) -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Image selection: ImageIndex 1 = the only edition in the eval ISO
+           (Windows 11 Enterprise Evaluation). -->
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <WillShowUI>Never</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- User data passed through to the specialize phase -->
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- No ProductKey element — evaluation ISO does not need one -->
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- =========================================================
+       PASS 3: specialize — runs after OS files are copied,
+       before first boot. Sets machine-level identity.
+       ========================================================= -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <!-- Placeholder hostname; renamed to the real value by configure-system.ps1
+           after Packer WinRM connects. -->
+      <ComputerName>DESKTOP-PKRBLD</ComputerName>
+      <TimeZone>Eastern Standard Time</TimeZone>
+      <RegisteredOrganization>Contoso Ltd</RegisteredOrganization>
+      <RegisteredOwner>John Smith</RegisteredOwner>
+    </component>
+
+    <!-- Skip auto-activation for evaluation ISO -->
+    <component name="Microsoft-Windows-Security-SPP-UX"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SkipAutoActivation>true</SkipAutoActivation>
+    </component>
+
+    <!-- Disable UAC — sandbox guests run samples as admin -->
+    <component name="Microsoft-Windows-UAC"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <EnableLUA>false</EnableLUA>
+    </component>
+
+    <!-- Allow WinRM through Windows Firewall -->
+    <component name="Networking-MPSSVC-Svc"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <FirewallGroups>
+        <FirewallGroup wcm:action="add" wcm:keyValue="WinRM">
+          <Active>true</Active>
+          <Group>Windows Remote Management</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+
+  </settings>
+
+  <!-- =========================================================
+       PASS 7: oobeSystem — runs at first logon / OOBE phase.
+       Creates the Administrator account, enables auto-logon,
+       and runs the commands that configure WinRM for Packer.
+       ========================================================= -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+      <!-- Skip OOBE — fully unattended -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Enable built-in Administrator account for Packer WinRM access.
+           Password MUST match winrm_password in windows11-guest.pkr.hcl. -->
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>Packer@Build1</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <!-- Auto-logon as Administrator for FirstLogonCommands -->
+      <AutoLogon>
+        <Password>
+          <Value>Packer@Build1</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <LogonCount>8</LogonCount>
+        <Username>Administrator</Username>
+      </AutoLogon>
+
+      <!-- FirstLogonCommands — get WinRM into a state where Packer can connect -->
+      <FirstLogonCommands>
+
+        <!-- 1. Enable the built-in Administrator account -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>cmd /c net user Administrator /active:yes</CommandLine>
+          <Description>Enable built-in Administrator</Description>
+        </SynchronousCommand>
+
+        <!-- 2. Set PowerShell execution policy -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>cmd /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force -Scope LocalMachine"</CommandLine>
+          <Description>Set PowerShell execution policy</Description>
+        </SynchronousCommand>
+
+        <!-- 3. Configure WinRM for Packer -->
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>cmd /c winrm quickconfig -q</CommandLine>
+          <Description>WinRM quickconfig</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service @{AllowUnencrypted="true"}</CommandLine>
+          <Description>WinRM allow unencrypted</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <CommandLine>cmd /c winrm set winrm/config/service/auth @{Basic="true"}</CommandLine>
+          <Description>WinRM enable basic auth</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>cmd /c winrm set winrm/config/listener?Address=*+Transport=HTTP @{Port="5985"}</CommandLine>
+          <Description>WinRM HTTP listener on 5985</Description>
+        </SynchronousCommand>
+
+        <!-- 4. Open WinRM port in Windows Firewall -->
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
+          <CommandLine>cmd /c netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in localport=5985 protocol=tcp action=allow</CommandLine>
+          <Description>Firewall: allow WinRM HTTP</Description>
+        </SynchronousCommand>
+
+        <!-- 5. Open Cape agent port (8000) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>8</Order>
+          <CommandLine>cmd /c netsh advfirewall firewall add rule name="CapeAgent" dir=in localport=8000 protocol=tcp action=allow</CommandLine>
+          <Description>Firewall: allow Cape agent port 8000</Description>
+        </SynchronousCommand>
+
+        <!-- 6. Disable Windows Update — evaluation guests are ephemeral -->
+        <SynchronousCommand wcm:action="add">
+          <Order>9</Order>
+          <CommandLine>cmd /c sc config wuauserv start= disabled</CommandLine>
+          <Description>Disable Windows Update service</Description>
+        </SynchronousCommand>
+
+        <!-- 7. Start WinRM service so Packer can connect -->
+        <SynchronousCommand wcm:action="add">
+          <Order>10</Order>
+          <CommandLine>cmd /c net start WinRM</CommandLine>
+          <Description>Start WinRM service</Description>
+        </SynchronousCommand>
+
+      </FirstLogonCommands>
+
+    </component>
+
+    <!-- Set UI language at OOBE phase -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+  </settings>
+
+</unattend>

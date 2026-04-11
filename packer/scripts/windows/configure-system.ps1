@@ -93,7 +93,7 @@ New-Item -Path $ssPath -Force | Out-Null
 Set-ItemProperty -Path $ssPath -Name "EnableSmartScreen" -Value 0 -Type DWord
 
 # -------------------------------------------------------------------------
-# 6. Set timezone — Eastern Standard Time
+# 6. Set timezone  -  Eastern Standard Time
 # -------------------------------------------------------------------------
 # Matches a common US corporate timezone. Malware that checks the locale
 # should see a realistic US machine identity.
