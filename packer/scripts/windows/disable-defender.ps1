@@ -7,12 +7,12 @@
     suppresses Windows Defender at multiple layers to ensure samples are not
     quarantined before Cape can observe their behavior:
 
-      1. Real-time protection (MpPreference) — immediate effect
-      2. Group Policy registry keys — persist across reboots and survive
+      1. Real-time protection (MpPreference)  -  immediate effect
+      2. Group Policy registry keys  -  persist across reboots and survive
          Defender service restarts
-      3. Tamper Protection disabled via registry — required before the GP
+      3. Tamper Protection disabled via registry  -  required before the GP
          keys take full effect on Windows 10 21H2+
-      4. Defender scheduled tasks disabled — prevents background scans
+      4. Defender scheduled tasks disabled  -  prevents background scans
 
     This is intentional for a malware analysis sandbox. Do NOT apply this
     script to any production or user-facing system.
@@ -63,7 +63,7 @@ try {
 }
 
 # -------------------------------------------------------------------------
-# 3. Group Policy registry keys — persistent Defender suppression
+# 3. Group Policy registry keys  -  persistent Defender suppression
 # -------------------------------------------------------------------------
 Write-Host "==> Applying Defender Group Policy registry keys"
 $defenderPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
