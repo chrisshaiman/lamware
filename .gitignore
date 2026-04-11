@@ -28,6 +28,9 @@ ansible/vars/main.yml
 packer/http/user-data
 !packer/http/user-data.example
 
+# Claude Code project context (developer-specific, not for public repo)
+CLAUDE.md
+
 # Secrets / local config
 .env
 *.pem
@@ -35,6 +38,11 @@ packer/http/user-data
 !*.key.example
 # Exclude a top-level wireguard/ directory (generated key files), not the Ansible role
 /wireguard/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
 
 # OS
 .DS_Store
