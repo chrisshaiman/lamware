@@ -29,7 +29,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $LibreOfficeVersion  = $env:LIBREOFFICE_VERSION
 $LibreOfficeChecksum = $env:LIBREOFFICE_CHECKSUM

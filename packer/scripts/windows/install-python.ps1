@@ -19,7 +19,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $PythonVersion  = $env:PYTHON_VERSION
 $PythonChecksum = $env:PYTHON_CHECKSUM

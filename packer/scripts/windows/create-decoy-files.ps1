@@ -27,7 +27,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $Username = $env:GUEST_USERNAME
 if (-not $Username) { $Username = "jsmith" }

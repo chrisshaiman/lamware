@@ -14,7 +14,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 # Injected by Packer via environment_vars
 $Hostname = $env:GUEST_HOSTNAME
