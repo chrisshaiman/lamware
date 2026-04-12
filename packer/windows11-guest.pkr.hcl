@@ -29,25 +29,22 @@
 #   - QEMU plugin ~> 1.1: packer init .
 #   - Windows 11 Enterprise evaluation ISO downloaded locally
 #     Download from: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
+#   - Autounattend floppy: run `make autounattend-floppy` once (re-run after editing autounattend.xml)
 #   - packer.auto.pkrvars.hcl with:
 #       winrm_password      = "Packer@Build1"   # must match win11-autounattend.xml
 #       win11_iso_path      = "/path/to/Win11_EnterpriseEval.iso"
 #       win11_iso_checksum  = "sha256:<checksum>"
 #
 # autounattend.xml delivery:
-#   Embedded directly in the Win11 ISO at the root using xorriso:
-#     xorriso -indev win11.iso -outdev win11-unattend.iso \
-#       -boot_image any keep \
-#       -map answer-files/win11-autounattend.xml /autounattend.xml --
-#   WinPE finds autounattend.xml on the boot ISO at startup — no secondary
-#   drive needed. The modified ISO path is set in packer.auto.pkrvars.hcl.
-#   Set win11_iso_path and win11_iso_checksum in packer.auto.pkrvars.hcl
-#   to point to the modified ISO.
+#   A virtual floppy (A:) containing autounattend.xml is attached via -fda.
+#   WinPE checks A: before all other drives — the most reliable delivery
+#   method for QEMU Windows builds, independent of ISO filesystem type.
+#   Pre-build: run `make autounattend-floppy` once per autounattend.xml change.
 #
 # Build:
-#   cd packer/
-#   packer init windows11-guest.pkr.hcl
-#   packer build -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
+#   make autounattend-floppy        # run once, re-run after editing autounattend.xml
+#   make win11-image
+#   # or directly: cd packer/ && packer build -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
 #
 # After build:
 #   Copy packer/output/windows11-guest.qcow2 to the bare metal host.
@@ -98,7 +95,7 @@ variable "winrm_password" {
   sensitive   = true
   description = "Password for the built-in Administrator account during the Packer build."
   # MUST match the AdministratorPassword in answer-files/win11-autounattend.xml.
-  default     = "Packer@Build1"
+  # No default — set in packer.auto.pkrvars.hcl.
 }
 
 variable "guest_hostname" {
@@ -117,7 +114,7 @@ variable "guest_password" {
   type        = string
   sensitive   = true
   description = "Password for the guest user account (var.guest_username)."
-  default     = "Password123!"
+  # No default — set in packer.auto.pkrvars.hcl.
 }
 
 variable "disk_size" {
@@ -171,6 +168,20 @@ variable "cape_agent_sha256" {
   description = "SHA-256 hash of agent.py at the pinned commit. Verified after download."
 }
 
+variable "autounattend_img_path" {
+  type        = string
+  description = "Path to the autounattend floppy image (FAT12, 1.44 MB) containing autounattend.xml at the root. Create with: make autounattend-floppy. Set in packer.auto.pkrvars.hcl."
+  # No default — must be set in packer.auto.pkrvars.hcl.
+}
+
+variable "efivars_path" {
+  type        = string
+  description = "Path for the writable OVMF VARS file (efivars.fd). Must be outside output_directory — packer -force deletes the output directory before QEMU starts, which would destroy efivars.fd if it lived there. make win11-image copies a fresh OVMF_VARS_4M.fd here before each build."
+  # /tmp works for all Linux/WSL builds without any per-machine configuration.
+  # Override in packer.auto.pkrvars.hcl if you need a persistent location.
+  default     = "/tmp/packer-win11-efivars.fd"
+}
+
 # OVMF firmware paths — these are the standard locations on Debian/Ubuntu.
 # Override if your build host uses different paths.
 variable "ovmf_code" {
@@ -181,13 +192,25 @@ variable "ovmf_code" {
 
 variable "ovmf_vars" {
   type        = string
-  description = "Path to OVMF_VARS_4M.ms.fd (UEFI firmware variables with MS Secure Boot keys) on the build host."
-  # Use the .ms.fd variant (pre-enrolled MS Secure Boot keys).
-  # With the Win11 ISO on USB XHCI (not SATA), the pre-enrolled SATA boot entries
-  # fail fast ("Not Found" — device absent) rather than timing out. OVMF then
-  # falls through to the bootindex=1 USB dynamic entry and boots the Win11 ISO.
-  # Empty OVMF_VARS_4M.fd has no boot entries at all, causing OVMF to drop to the
-  # UEFI interactive shell regardless of bootindex.
+  description = "Path to OVMF_VARS_4M.fd (empty UEFI firmware variables) on the build host."
+  # Use the EMPTY vars file (not .ms.fd).
+  #
+  # OVMF_VARS_4M.ms.fd has pre-enrolled Secure Boot keys AND pre-built NVRAM
+  # boot entries (SATA HDD, PXE IPv4, PXE IPv6, HTTP Boot). Our machine has no
+  # AHCI/SATA device (disk is ICH9 IDE, ISO is USB XHCI), so the SATA entries
+  # fail fast, then OVMF falls through to PXE/HTTP — causing a boot loop.
+  #
+  # OVMF_VARS_4M.fd is empty: no boot entries of any kind. OVMF drops directly
+  # to the UEFI interactive shell, which is exactly what boot_command expects —
+  # it types FS1: then EFI\BOOT\bootx64.efi to launch WinPE from the USB ISO.
+  # After Windows Setup runs, it writes its own UEFI boot entry to efivars.fd
+  # and subsequent reboots boot directly into Windows.
+  #
+  # Secure Boot: empty vars = OVMF "Setup Mode" (not enforced). autounattend.xml
+  # includes BypassSecureBootCheck as belt-and-suspenders. No key enrollment needed.
+  #
+  # IMPORTANT: make win11-image copies a fresh OVMF_VARS_4M.fd to efivars.fd
+  # before each build so stale NVRAM entries from failed builds never carry over.
   default     = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
 }
 
@@ -220,68 +243,56 @@ source "qemu" "windows11_guest" {
   efi_firmware_code = var.ovmf_code
   efi_firmware_vars = var.ovmf_vars
 
-  # --- Disk and network interfaces ---
+  # --- Disk, CDROM, and network interfaces ---
   disk_interface = "ide"
   net_device     = "e1000"
+  machine_type   = "q35"
 
-  # --- QEMU machine type and drive layout ---
+  # --- Minimal qemuargs — only what Packer can't configure natively ---
   #
-  # Why full qemuargs:
-  #   The Packer QEMU plugin v1.1.x assigns disk and ISO both to IDE index=0 when
-  #   disk_interface="ide", causing a QEMU conflict. Full qemuargs lets us place the
-  #   disk on ICH9 IDE (ide-hd) and the Win11 ISO on USB XHCI
-  #   (avoids AHCI ATAPI read timeout under nested KVM, RH BZ#1443345).
+  # Packer handles: disk (ide index=0), ISO CDROM (ide index=2), pflash (OVMF),
+  # network (e1000 + WinRM port forward), VNC, memory, SMP, TPM.
+  # Both disk and CDROM land on the SAME built-in ICH9 AHCI controller
+  # (different ports), which is critical — a separate AHCI controller splits
+  # CDROM partitions and breaks cdboot.efi (RH BZ#1443345).
   #
-  # Drive layout:
-  #   ide.0 unit=0: main guest disk (ICH9 IDE HDD, installation target)
-  #   xhci0:        Win11 ISO (with autounattend.xml at root) as USB CD-ROM (no bootindex — see below)
-  #   pflash unit=0/1: OVMF firmware (explicit — suppressed by Packer when qemuargs has -drive)
-  #
-  # Note: q35 ICH9 IDE (ide.0) only supports unit=0 — cannot use unit=1.
-  # autounattend.xml is embedded in the Win11 ISO itself — no secondary drive needed.
+  # We only override: CPU model, VGA, monitor socket, floppy, PXE suppression.
   qemuargs = [
-    ["-machine", "type=q35,accel=kvm"],
     ["-cpu", "host"],
     ["-vga", "std"],
-    # QEMU human monitor on a Unix socket — enables direct keystroke injection
-    # and VM control from vm_agent.py without touching the VNC channel.
-    # Usage: echo "sendkey ret" | socat - UNIX-CONNECT:<output_dir>/qemu-monitor.sock
+    # QEMU monitor socket for boot-helper.sh sendkey and screendump
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
-    ["-drive", "if=pflash,format=raw,readonly=on,unit=0,file=${var.ovmf_code}"],
-    ["-drive", "if=pflash,format=raw,unit=1,file=${var.output_directory}/efivars.fd"],
-    ["-device", "ide-hd,bus=ide.0,unit=0,drive=drive0"],
-    ["-drive", "file=${var.output_directory}/windows11-guest.qcow2,if=none,id=drive0,cache=writeback,discard=ignore,format=qcow2"],
-    ["-device", "qemu-xhci,id=xhci0"],
-    ["-device", "usb-storage,bus=xhci0.0,drive=cdrom0"],
+    # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
+    ["-fda", var.autounattend_img_path],
+    # Suppress e1000 PXE ROM to prevent OVMF network boot loops
+    ["-global", "e1000.rombar=0"],
+    # CDROM on ide.1 (same built-in ICH9 as Packer's HDD on ide.0).
+    # bootindex=0 for El Torito boot. boot-helper.sh ejects the CDROM after
+    # WinPE loads to prevent the reboot loop (cdboot_noprompt.efi).
+    # Including the ISO path here tells Packer to skip its own CDROM attachment.
+    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0,bootindex=0"],
     ["-drive", "file=${var.win11_iso_path},media=cdrom,id=cdrom0,readonly=on,if=none"],
-    # autounattend.xml is embedded in the Win11 ISO at /autounattend.xml.
-    # WinPE scans the boot ISO root at startup — found immediately, no secondary drive.
   ]
 
   # --- swtpm (TPM 2.0 emulation) ---
   vtpm = true
 
   # --- Boot ---
-  # OVMF drops to the UEFI interactive shell in nested KVM: USB enumeration
-  # completes after OVMF's initial boot attempt. No bootindex is set on the USB
-  # device — bootindex=1 was removed because it created a dynamic UEFI entry that
-  # overrode the Windows NVRAM boot entry on every Packer-triggered reboot, forcing
-  # manual intervention. Without it, initial boot still lands in the UEFI shell
-  # (handled by boot_command below), and post-install reboots find the Windows
-  # NVRAM entry written by setup.exe and boot directly.
+  # Packer attaches the ISO as -cdrom (ide index=2) on the built-in ICH9 AHCI.
+  # OVMF may boot the CDROM directly or drop to the UEFI shell.
+  # boot-helper.sh (started by Makefile in background) handles both cases:
+  #   - Sends Enter for "Press any key to boot from CD" if OVMF boots the ISO
+  #   - Types the shell boot command as fallback if OVMF drops to shell
+  # Once WinPE loads, autounattend.xml on A: (floppy) drives unattended install.
   #
-  # boot_wait covers: OVMF init (~10s) + USB enumerate + 5s shell countdown = ~25s.
-  # boot_command types the two-step boot sequence at the Shell> prompt:
-  #   FS0: — switches to the Win11 ISO ISO9660/Joliet data partition
-  #   efi\boot\bootx64.efi — launches the Windows PE bootloader
+  # boot-helper.sh runs in the background (started by Makefile). It waits for the
+  # QEMU monitor socket, then sends Enter to catch the "Press any key" prompt.
+  # Fallback: if bootindex fails, it types the full shell boot command.
+  #
+  # Packer still briefly connects to VNC (even with empty boot_command).
+  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log.
   boot_wait    = "30s"
-  # After bootx64.efi launches, Windows bootmgr shows "Press any key to boot
-  # from CD or DVD..." for ~2-3 seconds. <wait1> presses Enter quickly enough
-  # to catch it. startup.nsh is NOT on the unattend disk — it caused a spurious
-  # first boot attempt that raced with this command and caused bootmgr to time out.
-  #
-  # Original Win11 ISO is UDF. OVMF mounts UDF on USB block devices as FS1:.
-  boot_command = ["FS1:<enter>", "EFI\\BOOT\\bootx64.efi<enter>", "<wait1>", "<enter>"]
+  boot_command = []
 
   # --- WinRM communicator ---
   communicator   = "winrm"

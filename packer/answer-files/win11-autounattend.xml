@@ -61,10 +61,8 @@
                versionScope="nonSxS"
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-      <!-- Accept EULA (evaluation license) -->
-      <AcceptEula>true</AcceptEula>
-
-      <!-- No product key — evaluation ISO activates automatically -->
+      <!-- No product key — evaluation ISO activates automatically.
+           AcceptEula is in <UserData> below (after ImageInstall). -->
 
       <!-- Bypass Windows 11 hardware requirement checks.
            swtpm provides real TPM 2.0 for anti-evasion, but the bypass keys

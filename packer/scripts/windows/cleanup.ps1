@@ -79,7 +79,23 @@ Write-Host "==> Disabling built-in Administrator account"
 Disable-LocalUser -Name "Administrator"
 
 # -------------------------------------------------------------------------
-# 4. Remove Administrator autologon registry entries
+# 4. Remove PBAdmin build account (created during manual install)
+# -------------------------------------------------------------------------
+# This account was used to bootstrap the OS before WinRM/Packer took over.
+# The guest user (created by create-user.ps1) is the intended analysis user.
+if (Get-LocalUser -Name "PBAdmin" -ErrorAction SilentlyContinue) {
+    Write-Host "==> Removing PBAdmin build account"
+    Remove-LocalUser -Name "PBAdmin"
+    # Remove profile directory
+    $profilePath = "C:\Users\PBAdmin"
+    if (Test-Path $profilePath) {
+        Remove-Item -Path $profilePath -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Removed profile: $profilePath"
+    }
+}
+
+# -------------------------------------------------------------------------
+# 5. Remove Administrator autologon registry entries
 # -------------------------------------------------------------------------
 # create-user.ps1 set autologon for the guest user. Ensure no Administrator
 # autologon entry was left by the build process.
