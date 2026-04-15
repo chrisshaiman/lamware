@@ -295,15 +295,22 @@ source "qemu" "windows11_guest" {
   #   5. boot_command sends Enter to catch the prompt
   #   6. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
   #
-  # boot_command sends Enter at multiple intervals (8s, 13s, 18s, 23s) to reliably
-  # catch the "Press any key" prompt regardless of exact OVMF timing.
+  # startup.nsh on the floppy isn't reliably auto-executed by the UEFI shell,
+  # so boot_command types the full boot path at the Shell> prompt.
+  #
+  # Flow: OVMF → Shell (1s countdown) → boot_command types FS0:\EFI\BOOT\bootx64.efi
+  # → CDROM boot loader → "Press any key" → boot_command presses Enter → WinPE
+  #
   # boot-helper.sh handles CDROM eject (prevents reboot loop) and screendumps.
   #
   # Do NOT connect VNC until "Waiting for WinRM" appears in the build log —
   # Packer needs exclusive VNC access during boot_command.
-  boot_wait    = "8s"
+  boot_wait    = "6s"
   boot_command = [
-    "<enter><wait5><enter><wait5><enter><wait5><enter>"
+    # Wait for UEFI shell startup.nsh countdown to expire, then type the boot path
+    "<wait3>FS0:\\EFI\\BOOT\\bootx64.efi<enter>",
+    # Wait for "Press any key to boot from CD or DVD" prompt
+    "<wait8><enter><wait3><enter><wait3><enter>"
   ]
 
   # --- WinRM communicator ---
