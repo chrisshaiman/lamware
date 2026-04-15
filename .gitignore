@@ -17,6 +17,7 @@ packer/packer.auto.pkrvars.hcl
 
 # Ansible
 ansible/inventory/hosts
+ansible/inventory/local-test
 ansible/*.retry
 *.log
 
@@ -44,6 +45,9 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+
+# Superpowers plans (developer-specific, not for public repo)
+docs/superpowers/
 
 # OS
 .DS_Store

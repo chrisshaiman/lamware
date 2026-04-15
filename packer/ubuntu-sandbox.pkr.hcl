@@ -185,7 +185,7 @@ build {
   # All runtime configuration is Ansible's job.
   provisioner "shell" {
     inline = [
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst cpu-checker libhugetlbfs-bin libguestfs-tools python3-pip python3-dev python3-venv git curl unzip",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-kvm qemu-utils libvirt-daemon-system libvirt-clients bridge-utils virtinst cpu-checker libhugetlbfs-bin libguestfs-tools dnsmasq-base ovmf swtpm swtpm-tools python3-pip python3-dev python3-venv git curl unzip",
     ]
   }
 

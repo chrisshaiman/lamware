@@ -16,12 +16,18 @@
   ansible.builtin.apt:
     name:
       - qemu-kvm
+      - qemu-utils
       - libvirt-daemon-system
       - libvirt-clients
       - virtinst
       - cpu-checker
       - libguestfs-tools
       - bridge-utils
+      - dnsmasq-base
+      - libhugetlbfs-bin
+      - ovmf
+      - swtpm
+      - swtpm-tools
     state: present
     update_cache: false
 
