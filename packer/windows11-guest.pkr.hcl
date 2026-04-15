@@ -250,16 +250,23 @@ source "qemu" "windows11_guest" {
 
   # --- Minimal qemuargs — only what Packer can't configure natively ---
   #
-  # Packer handles: disk (ide index=0), ISO CDROM (ide index=2), pflash (OVMF),
-  # network (e1000 + WinRM port forward), VNC, memory, SMP, TPM.
+  # IMPORTANT: When qemuargs is present, Packer's QEMU plugin (v1.1.4) drops
+  # its auto-generated pflash drives for OVMF. We MUST include them explicitly
+  # here, or the VM boots with SeaBIOS instead of UEFI (Win11 requires UEFI).
+  #
+  # Packer still handles: disk (ide index=0), network (e1000 + WinRM port
+  # forward), VNC, memory, SMP, TPM.
   # Both disk and CDROM land on the SAME built-in ICH9 AHCI controller
   # (different ports), which is critical — a separate AHCI controller splits
   # CDROM partitions and breaks cdboot.efi (RH BZ#1443345).
-  #
-  # We only override: CPU model, VGA, monitor socket, floppy, PXE suppression.
   qemuargs = [
     ["-cpu", "host"],
     ["-vga", "std"],
+    # OVMF UEFI firmware — pflash drives that Packer fails to auto-generate
+    # when qemuargs is present. Code is read-only, vars is writable (stores
+    # UEFI boot entries written by Windows Setup).
+    ["-drive", "if=pflash,format=raw,readonly=on,file=${var.ovmf_code}"],
+    ["-drive", "if=pflash,format=raw,file=${var.efivars_path}"],
     # QEMU monitor socket for boot-helper.sh sendkey and screendump
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
     # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
