@@ -62,54 +62,22 @@ if [ ! -S "$SOCK" ]; then
   exit 1
 fi
 
-# --- Boot flow with OVMF (empty NVRAM vars) ---
+# --- Boot keystrokes are handled by Packer boot_command (via VNC) ---
 #
-# With empty OVMF_VARS_4M.fd, there are no UEFI boot entries. OVMF:
-#   1. Tries boot entries → none → drops to UEFI Interactive Shell
-#   2. Shell shows "Press ESC in 1 seconds to skip startup.nsh..."
-#   3. After 1s countdown, auto-executes startup.nsh from the floppy (A:)
-#   4. startup.nsh contains: FS0:\EFI\BOOT\bootx64.efi (the CDROM boot loader)
-#   5. CDROM boot loader shows "Press any key to boot from CD or DVD..."
-#   6. We press Enter → WinPE loads → autounattend.xml takes over
+# Boot flow with OVMF (empty NVRAM vars):
+#   1. OVMF enumerates devices → no boot entries → drops to UEFI Interactive Shell
+#   2. Shell auto-executes startup.nsh from the floppy (A:) after 1s countdown
+#   3. startup.nsh runs: FS0:\EFI\BOOT\bootx64.efi (the CDROM boot loader)
+#   4. "Press any key to boot from CD or DVD..." prompt appears
+#   5. Packer's boot_command sends Enter at multiple intervals to catch the prompt
+#   6. WinPE loads → autounattend.xml on A: takes over
 #
-# IMPORTANT: Do NOT send keystrokes during the startup.nsh countdown (step 2-3).
-# Any keystroke during that 1s window either skips startup.nsh (ESC) or is
-# consumed as input, potentially disrupting the auto-execution.
+# boot-helper.sh only handles:
+#   - CDROM eject/re-insert (prevents reboot loop after WinPE starts Setup)
+#   - Periodic screendumps for OOBE diagnostics
 
-# Wait for OVMF to reach the shell and startup.nsh to auto-execute.
-# OVMF takes ~3-5s to enumerate devices, then ~1s countdown, then startup.nsh
-# launches bootx64.efi which takes ~2-3s to show "Press any key".
-# Total: ~8-10s from QEMU start.
-echo "boot-helper: socket found. Waiting 10s for startup.nsh to auto-execute..."
-sleep 10
-
-# Now send Enter for the "Press any key to boot from CD or DVD" prompt.
-# If startup.nsh worked, bootmgr is waiting for a keypress right now.
-echo "boot-helper: sending Enter for 'Press any key to boot from CD' prompt..."
-send_key ret
-sleep 1
-send_key ret  # belt-and-suspenders: second Enter in case the first was too early
-echo "boot-helper: sent Enter for CD boot prompt."
-
-# --- Fallback: type the command manually if startup.nsh failed ---
-# If we ended up at Shell> (startup.nsh didn't run or wrong FS mapping),
-# wait a few seconds then type the boot command manually.
-# CDROM is FS0 in the OVMF device mapping (confirmed via screendump).
-sleep 8
-echo "boot-helper: sending fallback shell boot command (FS0)..."
-send_key ret  # get a fresh Shell> prompt
-sleep 1
-send_string 'FS0:\EFI\BOOT\bootx64.efi'
-sleep 0.3
-send_key ret
-
-# If the fallback triggered "Press any key to boot from CD", press Enter
-sleep 5
-send_key ret
-sleep 1
-send_key ret
-
-echo "boot-helper: boot commands sent. WinPE should be loading."
+echo "boot-helper: socket found. Waiting for Packer boot_command to handle boot keystrokes..."
+echo "boot-helper: boot-helper only handles CDROM eject and screendumps."
 
 # --- Eject + re-insert CDROM to prevent reboot loop ---
 # The ISO uses cdboot_noprompt.efi — boots WinPE immediately on every reboot
