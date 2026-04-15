@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
+.PHONY: all image win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -24,6 +24,15 @@ PACKER_DIR      := packer
 ANSIBLE_DIR     := ansible
 OVH_DIR         := ovh
 AWS_DIR         := aws/envs/$(AWS_ENV)
+
+# OVMF firmware vars template — must match ovmf_vars default in windows11-guest.pkr.hcl.
+# Empty VARS (not .ms.fd): no pre-built PXE/HTTP boot entries, OVMF drops to
+# UEFI shell so boot_command can type the ISO path. Override in .env if needed.
+OVMF_VARS_TEMPLATE ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+# Path for the writable OVMF VARS file — must be OUTSIDE the packer output directory.
+# packer -force deletes the output directory before QEMU starts; keeping efivars.fd
+# here ensures it survives that cleanup. Must match efivars_path in windows11-guest.pkr.hcl.
+EFIVARS_PATH       ?= /tmp/packer-win11-efivars.fd
 
 # Load .env if it exists (local secrets, not committed)
 -include .env
@@ -37,24 +46,26 @@ help:
 	@echo "Malware Sandbox Infrastructure"
 	@echo "================================"
 	@echo ""
-	@echo "  make packer-setup       One-time: generate build password + install Ansible hardening role"
-	@echo "  make configure-backend  Populate shared/backend-aws.hcl from bootstrap outputs"
-	@echo "  make lambda             Zip Lambda handler source into src/*.zip"
-	@echo "  make image              Build Packer base image"
-	@echo "  make infra-ovh          Provision OVH bare metal"
-	@echo "  make infra-aws          Provision AWS supporting infra (run make lambda first)"
-	@echo "  make configure          Run Ansible against provisioned host"
-	@echo "  make all                Full pipeline: lambda + image + infra + configure"
-	@echo "  make validate           Validate Packer + Terraform configs"
-	@echo "  make clean              Remove local build artifacts"
+	@echo "  make packer-setup         One-time: generate build password + install Ansible hardening role"
+	@echo "  make configure-backend    Populate shared/backend-aws.hcl from bootstrap outputs"
+	@echo "  make lambda               Zip Lambda handler source into src/*.zip"
+	@echo "  make autounattend-floppy  Create autounattend floppy image for Windows 11 builds (run once per XML change)"
+	@echo "  make win11-image          Build Windows 11 guest image (runs autounattend-floppy first)"
+	@echo "  make image                Build Ubuntu sandbox base image"
+	@echo "  make infra-ovh            Provision OVH bare metal"
+	@echo "  make infra-aws            Provision AWS supporting infra (run make lambda first)"
+	@echo "  make configure            Run Ansible against provisioned host"
+	@echo "  make all                  Full pipeline: lambda + image + infra + configure"
+	@echo "  make validate             Validate Packer + Terraform configs"
+	@echo "  make clean                Remove local build artifacts"
 	@echo ""
 	@echo "  First-time setup order:"
 	@echo "    1. cd aws/bootstrap && terraform init && terraform apply"
 	@echo "    2. make configure-backend"
 	@echo "    3. make lambda && make infra-aws"
-	@echo "    4. make image && make infra-ovh && make configure"
+	@echo "    4. make autounattend-floppy && make win11-image && make infra-ovh && make configure"
 	@echo ""
-	@echo "  AWS_ENV=prod            AWS environment (prod | staging)"
+	@echo "  AWS_ENV=prod              AWS environment (prod | staging)"
 	@echo ""
 
 # -----------------------------------------------------------------------------
@@ -116,6 +127,67 @@ packer-setup:
 		echo '     ssh_password = "'$$PW'"'
 	@echo ""
 	@echo "==> packer-setup complete. Update user-data and pkrvars, then run: make image"
+
+# -----------------------------------------------------------------------------
+# autounattend-floppy — create a 1.44 MB FAT12 floppy image with autounattend.xml
+# at the root. WinPE checks A: before all other drives — reliable regardless of ISO
+# filesystem type. Run once; re-run whenever answer-files/win11-autounattend.xml changes.
+# Requires mtools (apt-get install mtools).
+# Override the output path with: make autounattend-floppy AUTOUNATTEND_IMG=/your/path
+# The path must match autounattend_img_path in packer.auto.pkrvars.hcl.
+# -----------------------------------------------------------------------------
+
+AUTOUNATTEND_IMG ?= $(PACKER_DIR)/output/autounattend.img
+
+autounattend-floppy:
+	@echo "==> Creating autounattend floppy image at $(AUTOUNATTEND_IMG)..."
+	@command -v mformat >/dev/null 2>&1 || \
+		(echo "ERROR: mtools not found. Run: sudo apt-get install mtools" && exit 1)
+	@mkdir -p $(dir $(AUTOUNATTEND_IMG))
+	@dd if=/dev/zero of=$(AUTOUNATTEND_IMG) bs=512 count=2880 2>/dev/null
+	@mformat -i $(AUTOUNATTEND_IMG) -f 1440 ::
+	@mcopy -i $(AUTOUNATTEND_IMG) \
+		$(PACKER_DIR)/answer-files/win11-autounattend.xml \
+		::/autounattend.xml
+	@mcopy -i $(AUTOUNATTEND_IMG) \
+		$(PACKER_DIR)/answer-files/startup.nsh \
+		::/startup.nsh
+	@echo "==> $(AUTOUNATTEND_IMG) ready."
+
+# -----------------------------------------------------------------------------
+# win11-image — build Windows 11 guest image
+# Runs autounattend-floppy first to ensure the floppy is current.
+# Build is fully unattended — WinPE finds A:\autounattend.xml automatically.
+# Expect 45-90 minutes. Run inside tmux/screen.
+#
+# Boot flow: OVMF drops to UEFI shell (USB not ready in nested KVM) →
+# boot-helper.sh types FS0:\EFI\BOOT\bootx64.efi via QEMU monitor sendkey →
+# WinPE boots, finds autounattend.xml on A: → unattended install → WinRM up.
+# -----------------------------------------------------------------------------
+
+win11-image: autounattend-floppy
+	@echo "==> Building Windows 11 guest image..."
+	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
+		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
+	@[ -f $(OVMF_VARS_TEMPLATE) ] || \
+		(echo "ERROR: OVMF VARS not found at $(OVMF_VARS_TEMPLATE). Run: sudo apt-get install ovmf" && exit 1)
+	@command -v socat >/dev/null 2>&1 || \
+		(echo "ERROR: socat not found. Run: sudo apt-get install socat" && exit 1)
+	@[ -n "$(QEMU_MONITOR_SOCK)" ] || \
+		(echo "ERROR: QEMU_MONITOR_SOCK not set. Add it to .env (must match -monitor path in HCL qemuargs)." && exit 1)
+	@echo "==> Copying fresh OVMF VARS to $(EFIVARS_PATH) (clears stale NVRAM boot entries)..."
+	@cp $(OVMF_VARS_TEMPLATE) $(EFIVARS_PATH)
+	@echo "==> Starting boot helper (sends keystrokes via QEMU monitor at $(QEMU_MONITOR_SOCK))..."
+	@chmod +x $(PACKER_DIR)/scripts/boot-helper.sh
+	@[ -n "$(WIN11_ISO_PATH)" ] || \
+		(echo "ERROR: WIN11_ISO_PATH not set. Add it to .env (must match win11_iso_path in pkrvars)." && exit 1)
+	@[ -n "$(WIN11_OUTPUT_DIR)" ] || \
+		(echo "ERROR: WIN11_OUTPUT_DIR not set. Add it to .env (must match output_directory in pkrvars)." && exit 1)
+	@$(PACKER_DIR)/scripts/boot-helper.sh $(QEMU_MONITOR_SOCK) $(WIN11_ISO_PATH) $(WIN11_OUTPUT_DIR) &
+	@cd $(PACKER_DIR) && \
+		packer init windows11-guest.pkr.hcl && \
+		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
+	@echo "==> Windows 11 guest image complete. Output: check output_directory in packer.auto.pkrvars.hcl"
 
 # -----------------------------------------------------------------------------
 # Packer — build hardened base image

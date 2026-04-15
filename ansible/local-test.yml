@@ -1,0 +1,49 @@
+---
+# local-test.yml — Run testable roles against a local QEMU VM
+# Skips: hardening (done by Packer), wireguard (needs AWS), sqs-agent (needs AWS)
+# Cape role runs in local-test mode (skips DSDT/Secrets Manager)
+
+- name: Local test — configure sandbox host
+  hosts: sandbox
+  become: true
+  gather_facts: true
+
+  vars:
+    # Networking
+    detonation_bridge: virbr-det
+    detonation_network: 192.168.100.0/24
+    detonation_gateway: 192.168.100.1
+    detonation_dhcp_start: 192.168.100.10
+    detonation_dhcp_end: 192.168.100.50
+    management_interface: eth0
+
+    # Cape
+    cape_user: cape
+    cape_install_dir: /opt/CAPEv2
+    cape_result_ip: "{{ detonation_gateway }}"
+    cape_interface: "{{ detonation_bridge }}"
+    cape_api_port: 8000
+    cape_resultserver_port: 2042
+    cape_guest_image_dir: /var/lib/libvirt/images
+
+    # Guest definitions — Win11 instead of Win10
+    cape_guests:
+      - name: clean-w11
+        disk_path: "{{ cape_guest_image_dir }}/windows11-guest.qcow2"
+        snapshot: clean
+        ip: "{{ detonation_dhcp_start }}"
+        mac: "02:ca:fe:00:00:10"
+        conf_options:
+          - { key: label,              value: clean-w11 }
+          - { key: platform,           value: windows }
+          - { key: ip,                 value: "{{ detonation_dhcp_start }}" }
+          - { key: snapshot,           value: clean }
+          - { key: interface,          value: "{{ detonation_bridge }}" }
+          - { key: resultserver_ip,    value: "{{ detonation_gateway }}" }
+          - { key: resultserver_port,  value: "2042" }
+          - { key: tags,               value: "" }
+
+  roles:
+    - role: networking
+    - role: kvm
+    - role: inetsim

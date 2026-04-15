@@ -53,7 +53,7 @@ packer {
 
 variable "ubuntu_iso_url" {
   type    = string
-  default = "https://releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso"
+  default = "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
 }
 
 variable "ubuntu_iso_checksum" {
@@ -95,6 +95,12 @@ variable "headless" {
   default = true  # Set false temporarily if you need to debug the autoinstall
 }
 
+variable "ubuntu_output_directory" {
+  type        = string
+  description = "Directory for the output qcow2. Use a WSL-native path to avoid NTFS issues."
+  # No default — must be set in packer.auto.pkrvars.hcl.
+}
+
 variable "cape_repo_url" {
   type    = string
   default = "https://github.com/kevoreilly/CAPEv2.git"
@@ -110,7 +116,7 @@ source "qemu" "ubuntu_sandbox" {
   iso_checksum = var.ubuntu_iso_checksum
 
   # --- Output ---
-  output_directory = "${path.root}/output"
+  output_directory = var.ubuntu_output_directory
   vm_name          = "ubuntu-sandbox.qcow2"
   format           = "qcow2"
   disk_size        = var.disk_size
@@ -179,7 +185,7 @@ build {
   # All runtime configuration is Ansible's job.
   provisioner "shell" {
     inline = [
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst cpu-checker hugepages libguestfs-tools python3-pip python3-dev python3-venv git curl unzip",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qemu-kvm qemu-utils libvirt-daemon-system libvirt-clients bridge-utils virtinst cpu-checker libhugetlbfs-bin libguestfs-tools dnsmasq-base ovmf swtpm swtpm-tools python3-pip python3-dev python3-venv git curl unzip",
     ]
   }
 
@@ -199,9 +205,9 @@ build {
   provisioner "shell" {
     inline = [
       "echo '==> Installing CAPEv2 system dependencies...'",
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev libffi-dev libfuzzy-dev ssdeep libmagic1 libjansson-dev",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libssl-dev libffi-dev libfuzzy-dev ssdeep libmagic1 libjansson-dev libtlsh-dev build-essential cmake",
       "echo '==> Installing CAPEv2 Python dependencies...'",
-      "sudo pip3 install --break-system-packages -r /opt/CAPEv2/requirements.txt",
+      "sudo pip3 install --break-system-packages --ignore-installed -r /opt/CAPEv2/requirements.txt",
     ]
   }
 
@@ -237,7 +243,11 @@ build {
 
   # 7. Cleanup — shrink image size
   # cloud-init clean: resets cloud-init state so it runs fresh on first boot of the deployed image
+  # env_var_format + remote_folder: the hardening role mounts /tmp with noexec,
+  # so Packer must upload and execute scripts from /var/tmp instead.
   provisioner "shell" {
+    env_var_format = "export %s='%s'; "
+    remote_folder  = "/var/tmp"
     inline = [
       "sudo apt-get clean",
       "sudo apt-get autoremove -y",

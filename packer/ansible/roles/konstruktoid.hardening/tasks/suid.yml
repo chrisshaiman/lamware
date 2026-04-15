@@ -1,0 +1,37 @@
+---
+- name: Remove risky suid bits
+  block:
+    - name: Find possible suid binaries
+      ansible.builtin.shell:
+        cmd: command -v "{{ item }}"
+      args:
+        executable: /bin/bash
+      loop:
+        - "{{ suid_sgid_blocklist }}"
+      register: find_result
+      changed_when: false
+      failed_when: false
+
+    - name: Stat permissions
+      ansible.builtin.stat:
+        path: "{{ item.stdout }}"
+      check_mode: true
+      register: suid_file
+      when:
+        - item.rc == 0
+      with_items:
+        - "{{ find_result.results }}"
+
+    - name: Remove suid/sgid permissions
+      become: true
+      ansible.builtin.file:
+        path: "{{ item.stat.path }}"
+        mode: a-s
+        state: file
+        follow: true
+      when:
+        - item.stat.mode is defined
+        - item.stat.mode | int >= 2000
+        - item.stat.mode | int <= 5000
+      loop:
+        - "{{ suid_file.results }}"

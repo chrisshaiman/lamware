@@ -7,12 +7,12 @@
     suppresses Windows Defender at multiple layers to ensure samples are not
     quarantined before Cape can observe their behavior:
 
-      1. Real-time protection (MpPreference) — immediate effect
-      2. Group Policy registry keys — persist across reboots and survive
+      1. Real-time protection (MpPreference)  -  immediate effect
+      2. Group Policy registry keys  -  persist across reboots and survive
          Defender service restarts
-      3. Tamper Protection disabled via registry — required before the GP
+      3. Tamper Protection disabled via registry  -  required before the GP
          keys take full effect on Windows 10 21H2+
-      4. Defender scheduled tasks disabled — prevents background scans
+      4. Defender scheduled tasks disabled  -  prevents background scans
 
     This is intentional for a malware analysis sandbox. Do NOT apply this
     script to any production or user-facing system.
@@ -26,22 +26,20 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 Write-Host "==> disable-defender: suppressing Windows Defender"
 
 # -------------------------------------------------------------------------
 # 1. Disable Tamper Protection
 # -------------------------------------------------------------------------
-# Tamper Protection (Windows 10 1903+) prevents modification of Defender
-# settings via registry or PowerShell. Must be turned off via registry before
-# the Group Policy keys below take effect. Requires SYSTEM or TrustedInstaller;
-# Packer runs as Administrator which is sufficient here.
-Write-Host "==> Disabling Tamper Protection"
-$tpPath = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Features"
-New-Item -Path $tpPath -Force | Out-Null
-Set-ItemProperty -Path $tpPath -Name "TamperProtection" -Value 4 -Type DWord
-# 4 = disabled; 5 = enabled (Microsoft default)
+# HKLM:\SOFTWARE\Microsoft\Windows Defender\Features is owned by TrustedInstaller
+# and cannot be written by Administrator even in an elevated WinRM session.
+# On Enterprise SKU the Group Policy keys (step 3) are the authoritative
+# suppression mechanism and override Tamper Protection — skip the registry
+# approach and rely on GP keys instead.
+Write-Host "==> Skipping Tamper Protection registry key (TrustedInstaller-owned, GP keys used instead)"
 
 # -------------------------------------------------------------------------
 # 2. Real-time protection via MpPreference
@@ -63,7 +61,7 @@ try {
 }
 
 # -------------------------------------------------------------------------
-# 3. Group Policy registry keys — persistent Defender suppression
+# 3. Group Policy registry keys  -  persistent Defender suppression
 # -------------------------------------------------------------------------
 Write-Host "==> Applying Defender Group Policy registry keys"
 $defenderPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"

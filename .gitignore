@@ -17,6 +17,7 @@ packer/packer.auto.pkrvars.hcl
 
 # Ansible
 ansible/inventory/hosts
+ansible/inventory/local-test
 ansible/*.retry
 *.log
 
@@ -28,6 +29,9 @@ ansible/vars/main.yml
 packer/http/user-data
 !packer/http/user-data.example
 
+# Claude Code project context (developer-specific, not for public repo)
+CLAUDE.md
+
 # Secrets / local config
 .env
 *.pem
@@ -35,6 +39,15 @@ packer/http/user-data
 !*.key.example
 # Exclude a top-level wireguard/ directory (generated key files), not the Ansible role
 /wireguard/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Superpowers plans (developer-specific, not for public repo)
+docs/superpowers/
 
 # OS
 .DS_Store

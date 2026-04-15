@@ -1,0 +1,61 @@
+---
+- name: Install python3-pexpect
+  become: true
+  ansible.builtin.apt:
+    name: python3-pexpect
+    state: present
+    update_cache: true
+  when:
+    - ansible_facts.os_family == "Debian"
+
+- name: RedHat family pre tasks
+  become: true
+  when:
+    - ansible_facts.os_family == "RedHat"
+  block:
+    - name: Install EPEL repository
+      ansible.builtin.dnf:
+        name: epel-release
+        state: present
+        update_cache: true
+
+    - name: Install python3-rpm
+      ansible.builtin.dnf:
+        name: python3-rpm
+        state: present
+
+    - name: Install python3-packaging
+      ansible.builtin.dnf:
+        name: python3-packaging
+        state: present
+
+- name: Install python3-passlib
+  become: true
+  ansible.builtin.package:
+    name: python3-passlib
+    state: present
+  register: python3_passlib
+  failed_when:
+    - python3_passlib.rc is defined
+    - python3_passlib.rc != 0
+    - not ansible_facts.distribution == "AlmaLinux"
+
+- name: Install Python pip passlib
+  become: true
+  when:
+    - python3_passlib.rc is defined
+    - python3_passlib.rc != 0
+  block:
+    - name: Python3-pip installation
+      ansible.builtin.package:
+        name: python3-pip
+        state: present
+
+    - name: Pip passlib installation
+      ansible.builtin.pip:
+        name: passlib
+        state: present
+
+- name: EFI or UEFI booting check
+  ansible.builtin.set_fact:
+    booted_with_efi: "{{ ansible_facts.mounts | selectattr('mount', 'equalto', '/boot/efi') | list | length > 0 }}"

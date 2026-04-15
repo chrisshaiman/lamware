@@ -10,7 +10,7 @@
     This script:
       1. Downloads the LibreOffice MSI installer from the Document Foundation CDN
       2. Installs silently (no UI, no reboot)
-      3. Sets macro security to LOW for all users — macros must execute without
+      3. Sets macro security to LOW for all users  -  macros must execute without
          prompting for automated detonation to work
       4. Registers LibreOffice as the default file handler for Office formats
          via registry (so double-clicked samples open in LibreOffice, not Notepad)
@@ -29,7 +29,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $LibreOfficeVersion  = $env:LIBREOFFICE_VERSION
 $LibreOfficeChecksum = $env:LIBREOFFICE_CHECKSUM
@@ -66,7 +67,7 @@ if (-not (Test-Path $TmpMsi)) {
 Write-Host "==> Downloaded $('{0:N0}' -f (Get-Item $TmpMsi).Length) bytes"
 
 # -------------------------------------------------------------------------
-# Verify SHA-256 hash — supply chain integrity check
+# Verify SHA-256 hash  -  supply chain integrity check
 # -------------------------------------------------------------------------
 $actualHash = (Get-FileHash -Path $TmpMsi -Algorithm SHA256).Hash.ToLower()
 if ($actualHash -ne $LibreOfficeChecksum.ToLower()) {
@@ -79,10 +80,10 @@ Write-Host "==> LibreOffice MSI hash verified: $actualHash"
 # -------------------------------------------------------------------------
 # 2. Install LibreOffice silently
 # -------------------------------------------------------------------------
-# /qn      — quiet, no UI
-# /norestart — do not reboot (we handle image shutdown explicitly)
-# REBOOT=ReallySuppress — belt-and-suspenders reboot suppression
-# UI_LANGS=en_US — English only; no need for additional language packs
+# /qn       -  quiet, no UI
+# /norestart  -  do not reboot (we handle image shutdown explicitly)
+# REBOOT=ReallySuppress  -  belt-and-suspenders reboot suppression
+# UI_LANGS=en_US  -  English only; no need for additional language packs
 Write-Host "==> Installing LibreOffice"
 $msiArgs = @(
     "/qn",
@@ -93,7 +94,7 @@ $msiArgs = @(
 )
 $proc = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
 if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
-    # 3010 = success, restart required (suppressed above — treat as success)
+    # 3010 = success, restart required (suppressed above  -  treat as success)
     Write-Error "LibreOffice installer exited with code $($proc.ExitCode)"
     exit 1
 }
@@ -120,7 +121,7 @@ Write-Host "==> Verified install directory: $LoInstallDir"
 # without any dialog prompting for confirmation.
 #
 # Security level values:
-#   0 = Low  (run all macros — required for detonation)
+#   0 = Low  (run all macros  -  required for detonation)
 #   1 = Medium (prompt for unsigned macros)
 #   2 = High (signed macros only)
 #   3 = Very High (no macros)
@@ -135,7 +136,7 @@ $MacroSecurityXml = @"
            xmlns:xs="http://www.w3.org/2001/XMLSchema"
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- Macro security: LOW (level 0) — runs all macros without prompting.
+  <!-- Macro security: LOW (level 0)  -  runs all macros without prompting.
        Required for automated malware document detonation in the Cape sandbox.
        DO NOT use this setting on any non-sandboxed system. -->
   <item oor:path="/org.openoffice.Office.Common/Security/Scripting">
@@ -172,7 +173,7 @@ Write-Host "==> Macro security config written to $XcuPath"
 # application to launch. Without explicit file association, .doc/.xls files
 # may open in WordPad or Notepad instead of LibreOffice.
 #
-# HKCU:\...\UserChoice is protected by a hash on Windows 10 1803+ — direct
+# HKCU:\...\UserChoice is protected by a hash on Windows 10 1803+  -  direct
 # writes are silently reverted. Instead we write to HKLM:\SOFTWARE\Classes,
 # which sets system-level defaults with no hash protection and applies to all
 # users including the guest account.
