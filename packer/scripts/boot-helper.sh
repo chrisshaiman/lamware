@@ -79,29 +79,31 @@ fi
 echo "boot-helper: socket found. Waiting for Packer boot_command to handle boot keystrokes..."
 echo "boot-helper: boot-helper only handles CDROM eject and screendumps."
 
-# --- Eject + re-insert CDROM to prevent reboot loop ---
-# The ISO uses cdboot_noprompt.efi — boots WinPE immediately on every reboot
-# without any "Press any key" timeout. bootindex=0 makes OVMF try the CDROM
-# first, so WinPE reboots into itself endlessly (~20s cycles).
+# --- Eject CDROM to prevent reboot loop ---
+# bootindex=0 makes OVMF try the CDROM first on every boot. After Windows
+# Setup copies files and reboots, the CDROM would boot WinPE again instead
+# of the newly installed Windows.
 #
-# Fix: poll the qcow2 disk image until Windows Setup starts writing to it
-# (>20MB = partitioning/file copy underway), then eject the CDROM to break
-# the boot loop and re-insert so WinPE can still read install.wim.
-# A fixed sleep doesn't work — nested KVM timing is unpredictable.
-echo "boot-helper: waiting for Windows Setup to write to disk (polling ${QCOW2})..."
+# Strategy: wait until file copy is mostly complete (qcow2 > 4GB), THEN eject.
+# Do NOT eject early — Setup needs continuous CDROM access to read install.wim
+# throughout the entire file copy phase (~20-40 min, qcow2 grows from ~100MB
+# to ~5-6GB). Ejecting at 20MB or 100MB kills the install.
+#
+# After eject, we do NOT re-insert — the files are on disk already.
+echo "boot-helper: waiting for Windows Setup file copy to complete (polling ${QCOW2})..."
 WAITED=0
-MAX_WAIT=1800  # 30 min — if nothing by then, Setup failed
+MAX_WAIT=5400  # 90 min — generous timeout for slow builds
 while [ "$WAITED" -lt "$MAX_WAIT" ]; do
   if [ -f "$QCOW2" ]; then
     SIZE=$(stat -c%s "$QCOW2" 2>/dev/null || echo 0)
     SIZE_MB=$((SIZE / 1048576))
-    if [ "$SIZE_MB" -gt 20 ]; then
-      echo "boot-helper: qcow2 is ${SIZE_MB}MB — Setup is writing. Proceeding with eject."
+    if [ "$SIZE_MB" -gt 4000 ]; then
+      echo "boot-helper: qcow2 is ${SIZE_MB}MB — file copy likely complete. Ejecting CDROM."
       break
     fi
   fi
-  sleep 10
-  WAITED=$((WAITED + 10))
+  sleep 15
+  WAITED=$((WAITED + 15))
   if [ $((WAITED % 60)) -eq 0 ]; then
     SIZE_MB=$((${SIZE:-0} / 1048576))
     echo "boot-helper: waiting... (${WAITED}s, qcow2: ${SIZE_MB}MB)"
@@ -109,16 +111,13 @@ while [ "$WAITED" -lt "$MAX_WAIT" ]; do
 done
 
 if [ "$WAITED" -ge "$MAX_WAIT" ]; then
-  echo "boot-helper: WARNING — qcow2 never grew past 20MB after ${MAX_WAIT}s. Setup may have failed." >&2
+  echo "boot-helper: WARNING — qcow2 never grew past 4GB after ${MAX_WAIT}s. Setup may have failed." >&2
   echo "boot-helper: skipping CDROM eject. Check VNC for errors." >&2
   exit 0
 fi
 
 echo "boot-helper: ejecting CDROM to break reboot loop..."
 echo "eject cdrom0" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
-sleep 2
-echo "boot-helper: re-inserting ISO so WinPE can access install.wim..."
-echo "change cdrom0 ${ISO_PATH}" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
 echo "boot-helper: CDROM cycled. install.wim accessible, reboot loop broken."
 
 # --- Periodic screendumps for OOBE diagnostics ---
