@@ -129,3 +129,25 @@ sleep 2
 echo "boot-helper: re-inserting ISO so WinPE can access install.wim..."
 echo "change cdrom0 ${ISO_PATH}" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
 echo "boot-helper: CDROM cycled. install.wim accessible, reboot loop broken."
+
+# --- Periodic screendumps for OOBE diagnostics ---
+# Capture a screenshot every 60s so we can see where OOBE is (or where it stalled).
+# Stops after 90 minutes or when the monitor socket disappears (QEMU shut down).
+DUMP_DIR="${OUTPUT_DIR}/screendumps"
+mkdir -p "$DUMP_DIR"
+echo "boot-helper: starting screendump capture to ${DUMP_DIR}/ (every 60s, up to 90 min)..."
+
+DUMP_WAITED=0
+DUMP_MAX=5400  # 90 min
+while [ "$DUMP_WAITED" -lt "$DUMP_MAX" ]; do
+  if [ ! -S "$SOCK" ]; then
+    echo "boot-helper: monitor socket gone — QEMU shut down. Stopping screendumps."
+    break
+  fi
+  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+  echo "screendump ${DUMP_DIR}/screen-${TIMESTAMP}.ppm" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null || true
+  sleep 60
+  DUMP_WAITED=$((DUMP_WAITED + 60))
+done
+
+echo "boot-helper: screendump capture finished. Check ${DUMP_DIR}/ for OOBE progress images."
