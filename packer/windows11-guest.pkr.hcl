@@ -287,19 +287,24 @@ source "qemu" "windows11_guest" {
   # --- Boot ---
   # Packer attaches the ISO as -cdrom (ide index=2) on the built-in ICH9 AHCI.
   # OVMF may boot the CDROM directly or drop to the UEFI shell.
-  # boot-helper.sh (started by Makefile in background) handles both cases:
-  #   - Sends Enter for "Press any key to boot from CD" if OVMF boots the ISO
-  #   - Types the shell boot command as fallback if OVMF drops to shell
-  # Once WinPE loads, autounattend.xml on A: (floppy) drives unattended install.
+  # Boot flow with OVMF (empty NVRAM vars):
+  #   1. OVMF enumerates devices → no boot entries → drops to UEFI shell (~3-5s)
+  #   2. Shell auto-executes startup.nsh from floppy after 1s countdown
+  #   3. startup.nsh runs: FS0:\EFI\BOOT\bootx64.efi (CDROM boot loader)
+  #   4. "Press any key to boot from CD or DVD..." prompt (~7-10s from boot)
+  #   5. boot_command sends Enter to catch the prompt
+  #   6. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
   #
-  # boot-helper.sh runs in the background (started by Makefile). It waits for the
-  # QEMU monitor socket, then sends Enter to catch the "Press any key" prompt.
-  # Fallback: if bootindex fails, it types the full shell boot command.
+  # boot_command sends Enter at multiple intervals (8s, 13s, 18s, 23s) to reliably
+  # catch the "Press any key" prompt regardless of exact OVMF timing.
+  # boot-helper.sh handles CDROM eject (prevents reboot loop) and screendumps.
   #
-  # Packer still briefly connects to VNC (even with empty boot_command).
-  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log.
-  boot_wait    = "30s"
-  boot_command = []
+  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log —
+  # Packer needs exclusive VNC access during boot_command.
+  boot_wait    = "8s"
+  boot_command = [
+    "<enter><wait5><enter><wait5><enter><wait5><enter>"
+  ]
 
   # --- WinRM communicator ---
   communicator   = "winrm"
