@@ -251,32 +251,34 @@ source "qemu" "windows11_guest" {
   # --- Minimal qemuargs — only what Packer can't configure natively ---
   #
   # IMPORTANT: When qemuargs is present, Packer's QEMU plugin (v1.1.4) drops
-  # its auto-generated pflash drives for OVMF. We MUST include them explicitly
-  # here, or the VM boots with SeaBIOS instead of UEFI (Win11 requires UEFI).
+  # ALL auto-generated drives — pflash (OVMF), disk, and CDROM. We MUST
+  # include them all explicitly here. Without pflash: SeaBIOS instead of UEFI.
+  # Without disk: WinPE crashes immediately (no target disk found).
   #
-  # Packer still handles: disk (ide index=0), network (e1000 + WinRM port
-  # forward), VNC, memory, SMP, TPM.
+  # Packer still handles: network (e1000 + WinRM port forward), VNC, memory,
+  # SMP, TPM.
   # Both disk and CDROM land on the SAME built-in ICH9 AHCI controller
   # (different ports), which is critical — a separate AHCI controller splits
   # CDROM partitions and breaks cdboot.efi (RH BZ#1443345).
   qemuargs = [
     ["-cpu", "host"],
     ["-vga", "std"],
-    # OVMF UEFI firmware — pflash drives that Packer fails to auto-generate
-    # when qemuargs is present. Code is read-only, vars is writable (stores
-    # UEFI boot entries written by Windows Setup).
+    # OVMF UEFI firmware — pflash drives for UEFI boot (required by Win11).
+    # Code is read-only, vars is writable (stores UEFI boot entries).
     ["-drive", "if=pflash,format=raw,readonly=on,file=${var.ovmf_code}"],
     ["-drive", "if=pflash,format=raw,file=${var.efivars_path}"],
-    # QEMU monitor socket for boot-helper.sh sendkey and screendump
+    # Hard disk — IDE on the built-in ICH9 controller. Packer creates the
+    # qcow2 but doesn't attach it when qemuargs is present.
+    ["-drive", "file=${var.output_directory}/windows11-guest.qcow2,if=ide,format=qcow2"],
+    # QEMU monitor socket for boot-helper.sh screendump and CDROM eject
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
     # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
     ["-fda", var.autounattend_img_path],
     # Suppress e1000 PXE ROM to prevent OVMF network boot loops
     ["-global", "e1000.rombar=0"],
-    # CDROM on ide.1 (same built-in ICH9 as Packer's HDD on ide.0).
+    # CDROM on ide.1 (same built-in ICH9 as HDD on ide.0).
     # bootindex=0 for El Torito boot. boot-helper.sh ejects the CDROM after
     # WinPE loads to prevent the reboot loop (cdboot_noprompt.efi).
-    # Including the ISO path here tells Packer to skip its own CDROM attachment.
     ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0,bootindex=0"],
     ["-drive", "file=${var.win11_iso_path},media=cdrom,id=cdrom0,readonly=on,if=none"],
   ]
