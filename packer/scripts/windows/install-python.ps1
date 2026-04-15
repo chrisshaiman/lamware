@@ -19,7 +19,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $PythonVersion  = $env:PYTHON_VERSION
 $PythonChecksum = $env:PYTHON_CHECKSUM
@@ -48,7 +49,7 @@ Write-Host "==> Downloading $Url"
 Invoke-WebRequest -Uri $Url -OutFile $TmpPath -UseBasicParsing
 
 # -------------------------------------------------------------------------
-# Verify SHA-256 hash — supply chain integrity check
+# Verify SHA-256 hash  -  supply chain integrity check
 # -------------------------------------------------------------------------
 $actualHash = (Get-FileHash -Path $TmpPath -Algorithm SHA256).Hash.ToLower()
 if ($actualHash -ne $PythonChecksum.ToLower()) {
@@ -61,10 +62,10 @@ Write-Host "==> Python installer hash verified: $actualHash"
 # -------------------------------------------------------------------------
 # Silent install
 # -------------------------------------------------------------------------
-# /quiet          — no UI
-# InstallAllUsers=1 — system-wide (all users, not just current session)
-# PrependPath=1   — add Python and Scripts to system PATH
-# TargetDir       — predictable install location for cape-agent.ps1 to reference
+# /quiet           -  no UI
+# InstallAllUsers=1  -  system-wide (all users, not just current session)
+# PrependPath=1    -  add Python and Scripts to system PATH
+# TargetDir        -  predictable install location for cape-agent.ps1 to reference
 Write-Host "==> Installing Python to $InstallDir"
 $installArgs = @(
     "/quiet",

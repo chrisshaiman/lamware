@@ -1,0 +1,27 @@
+[project]
+name = "malware-sandbox-infra"
+version = "0.1.0"
+description = "Distributed malware analysis platform — CAPEv2 on bare metal KVM"
+authors = [{ name = "Christopher Shaiman" }]
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "G",   # flake8-logging-format (catches f-string logging)
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",  # line too long — ruff format handles wrapping
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

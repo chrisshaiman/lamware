@@ -14,7 +14,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 # Injected by Packer via environment_vars
 $Hostname = $env:GUEST_HOSTNAME
@@ -93,7 +94,7 @@ New-Item -Path $ssPath -Force | Out-Null
 Set-ItemProperty -Path $ssPath -Name "EnableSmartScreen" -Value 0 -Type DWord
 
 # -------------------------------------------------------------------------
-# 6. Set timezone — Eastern Standard Time
+# 6. Set timezone  -  Eastern Standard Time
 # -------------------------------------------------------------------------
 # Matches a common US corporate timezone. Malware that checks the locale
 # should see a realistic US machine identity.

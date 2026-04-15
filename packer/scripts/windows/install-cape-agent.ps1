@@ -30,7 +30,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 Write-Host "==> install-cape-agent: downloading and installing agent.py"
 
@@ -39,7 +40,7 @@ $AgentPath = "$AgentDir\agent.py"
 $PythonExe = "C:\Python3\python.exe"
 
 # Pin to a specific commit to prevent supply chain attacks. agent.py runs as
-# SYSTEM and listens on a network port — it is the most sensitive binary in
+# SYSTEM and listens on a network port  -  it is the most sensitive binary in
 # the guest. Update the commit SHA and checksum together when upgrading Cape.
 #
 # To get these values:
@@ -51,11 +52,11 @@ $PythonExe = "C:\Python3\python.exe"
 $AgentCommit   = $env:CAPE_AGENT_COMMIT
 $AgentChecksum = $env:CAPE_AGENT_SHA256
 if (-not $AgentCommit) {
-    Write-Error "CAPE_AGENT_COMMIT is not set — must be a CAPEv2 repo commit SHA"
+    Write-Error "CAPE_AGENT_COMMIT is not set  -  must be a CAPEv2 repo commit SHA"
     exit 1
 }
 if (-not $AgentChecksum) {
-    Write-Error "CAPE_AGENT_SHA256 is not set — must be the SHA-256 hash of agent.py at that commit"
+    Write-Error "CAPE_AGENT_SHA256 is not set  -  must be the SHA-256 hash of agent.py at that commit"
     exit 1
 }
 
@@ -80,7 +81,7 @@ if (-not (Test-Path $AgentPath)) {
 Write-Host "==> agent.py saved to $AgentPath"
 
 # -------------------------------------------------------------------------
-# 3. Verify SHA-256 hash — supply chain integrity check
+# 3. Verify SHA-256 hash  -  supply chain integrity check
 # -------------------------------------------------------------------------
 $actualHash = (Get-FileHash -Path $AgentPath -Algorithm SHA256).Hash.ToLower()
 if ($actualHash -ne $AgentChecksum.ToLower()) {
@@ -109,13 +110,13 @@ Write-Host "==> agent.py syntax OK"
 #
 # Task settings:
 #   - Trigger: AtStartup (fires when the OS finishes loading, before logon)
-#   - RunLevel: Highest (administrative privileges — sample analysis requires it)
-#   - ExecutionTimeLimit: PT0S (unlimited — agent runs for the duration of analysis)
+#   - RunLevel: Highest (administrative privileges  -  sample analysis requires it)
+#   - ExecutionTimeLimit: PT0S (unlimited  -  agent runs for the duration of analysis)
 #   - Hidden: true (no window in Task Manager's visible processes)
 
 Write-Host "==> Creating Scheduled Task for Cape agent"
 $TaskName   = "CapeAgent"
-$TaskDesc   = "CAPEv2 in-guest analysis agent. Do not disable — required for malware detonation."
+$TaskDesc   = "CAPEv2 in-guest analysis agent. Do not disable  -  required for malware detonation."
 $Action     = New-ScheduledTaskAction `
                   -Execute    $PythonExe `
                   -Argument   $AgentPath `

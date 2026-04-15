@@ -5,8 +5,7 @@
 # -----------------------------------------------------------------------------
 # OVH API credentials
 # Create at: https://api.us.ovhcloud.com/createApp/
-# Required rights: /dedicated/server/* (READ/WRITE), /ip/* (READ/WRITE),
-#                  /me/sshKey/* (READ/WRITE)
+# Required rights: /dedicated/server/* (READ/WRITE), /ip/* (READ/WRITE)
 # Store in terraform.tfvars — never commit to git.
 # -----------------------------------------------------------------------------
 
@@ -40,7 +39,7 @@ variable "server_name" {
 variable "name_prefix" {
   type        = string
   default     = "malware-sandbox"
-  description = "Prefix applied to named resources (SSH key, etc.)"
+  description = "Prefix applied to named resources"
 }
 
 variable "hostname" {

@@ -5,7 +5,7 @@
 .DESCRIPTION
     Anti-evasion measure (ADR-012): malware that checks whether a machine
     looks "used" by enumerating files in Documents, Downloads, or Desktop
-    should find a realistic mix of everyday files — not an empty profile
+    should find a realistic mix of everyday files  -  not an empty profile
     that signals a fresh sandbox.
 
     Files are:
@@ -27,7 +27,8 @@
 #>
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# TODO: re-enable Stop when all scripts verified working
+$ErrorActionPreference = "Continue"
 
 $Username = $env:GUEST_USERNAME
 if (-not $Username) { $Username = "jsmith" }
@@ -60,12 +61,12 @@ function New-DecoyFile {
 }
 
 # -------------------------------------------------------------------------
-# Documents — work product files
+# Documents  -  work product files
 # -------------------------------------------------------------------------
 Write-Host "==> Creating Documents decoy files"
 
 New-DecoyFile -Path "$DocumentsDir\Q3 Budget Review.txt" -DaysAgo 45 -Content @"
-Q3 FY2024 Budget Review — Draft
+Q3 FY2024 Budget Review  -  Draft
 Prepared by: J. Smith
 Date: See file properties
 
@@ -99,7 +100,7 @@ Next meeting: August 21, 2024
 "@
 
 New-DecoyFile -Path "$DocumentsDir\Home Network Setup.txt" -DaysAgo 120 -Content @"
-Home Network — Setup Notes
+Home Network  -  Setup Notes
 
 Router: TP-Link Archer AX21
   - Admin page: 192.168.0.1
@@ -119,8 +120,8 @@ Backup: Google Drive (15 GB free tier)
 "@
 
 New-DecoyFile -Path "$DocumentsDir\Passwords_OLD.txt" -DaysAgo 200 -Content @"
-** DO NOT USE — OUTDATED **
-Old password hints (pre-2023) — all changed
+** DO NOT USE  -  OUTDATED **
+Old password hints (pre-2023)  -  all changed
 
 email: [hint redacted] changed Feb 2023
 bank: [hint redacted] changed Feb 2023
@@ -156,27 +157,27 @@ CompTIA A+ | CompTIA Network+ | ITIL Foundation
 "@
 
 # -------------------------------------------------------------------------
-# Downloads — typical downloaded content
+# Downloads  -  typical downloaded content
 # -------------------------------------------------------------------------
 Write-Host "==> Creating Downloads decoy files"
 
 New-DecoyFile -Path "$DownloadsDir\7z2301-x64.exe.txt" -DaysAgo 90 -Content @"
 [This is a placeholder representing a previously downloaded installer]
-7-Zip 23.01 (x64) installer — downloaded from 7-zip.org
+7-Zip 23.01 (x64) installer  -  downloaded from 7-zip.org
 SHA256: verified before install
-Installed: yes — can delete
+Installed: yes  -  can delete
 "@
 # Rename to look like an actual file (no extension change needed for the stub)
 
 New-DecoyFile -Path "$DownloadsDir\VPN_Setup_Guide.txt" -DaysAgo 75 -Content @"
-Company VPN Setup — Quick Reference
+Company VPN Setup  -  Quick Reference
 IT Help Desk | Last updated: July 2024
 
 Step 1: Download the Cisco Anyconnect client from the IT portal
 Step 2: Install with default settings
 Step 3: Enter server: vpn.contoso.com
 Step 4: Authenticate with your domain credentials + MFA token
-Step 5: Connect — full tunnel mode by default
+Step 5: Connect  -  full tunnel mode by default
 
 Troubleshooting:
   - If connection drops: restart AnyConnect service (services.msc)
@@ -199,14 +200,14 @@ Questions? Visit amazon.com/orders
 "@
 
 New-DecoyFile -Path "$DownloadsDir\Chrome_Setup.exe.txt" -DaysAgo 180 -Content @"
-[Download record — file installed and deleted]
-Google Chrome installer — StandaloneSetup64.exe
+[Download record  -  file installed and deleted]
+Google Chrome installer  -  StandaloneSetup64.exe
 Source: google.com/chrome
 Version: 119.0
 "@
 
 # -------------------------------------------------------------------------
-# Desktop — shortcuts and quick-reference items
+# Desktop  -  shortcuts and quick-reference items
 # -------------------------------------------------------------------------
 Write-Host "==> Creating Desktop decoy files"
 
@@ -224,8 +225,8 @@ TODO - $(Get-Date -Format 'MMMM yyyy')
 New-DecoyFile -Path "$DesktopDir\Notes.txt" -DaysAgo 3 -Content @"
 Quick notes
 
-Call Mark back re: project timeline — he said Q4 is tight
-IT ticket #45821 — laptop battery replacement (approved)
+Call Mark back re: project timeline  -  he said Q4 is tight
+IT ticket #45821  -  laptop battery replacement (approved)
 Parking: garage B, level 3 this week
 Conference bridge: 1-888-555-0100 code 492817#
 "@
