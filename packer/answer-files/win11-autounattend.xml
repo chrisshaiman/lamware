@@ -85,6 +85,11 @@
           <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
           <Description>Bypass RAM requirement check</Description>
         </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+          <Description>Bypass network requirement in OOBE (Win11 22H2+)</Description>
+        </RunSynchronousCommand>
       </RunSynchronous>
 
       <!-- Disk layout: UEFI/GPT (required by Windows 11)
@@ -184,6 +189,19 @@
       <RegisteredOwner>John Smith</RegisteredOwner>
     </component>
 
+    <!-- Pre-answer "How would you like to set up this device?" — select local/workgroup
+         to skip the Enterprise domain-join prompt during OOBE -->
+    <component name="Microsoft-Windows-UnattendedJoin"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Identification>
+        <JoinWorkgroup>WORKGROUP</JoinWorkgroup>
+      </Identification>
+    </component>
+
     <!-- Skip auto-activation for evaluation ISO -->
     <component name="Microsoft-Windows-Security-SPP-UX"
                processorArchitecture="amd64"
@@ -268,71 +286,101 @@
       <!-- FirstLogonCommands — get WinRM into a state where Packer can connect -->
       <FirstLogonCommands>
 
-        <!-- 1. Enable the built-in Administrator account -->
+        <!-- Suppress Win11 privacy consent screens (location, diagnostics,
+             inking, ad ID, tailored experiences). These registry keys prevent
+             the OOBE privacy flow from prompting the user. -->
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
+          <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Privacy" /v TailoredExperiencesWithDiagnosticDataEnabled /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Disable tailored experiences privacy prompt</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy" /v HasAccepted /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Decline online speech recognition</Description>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>cmd /c reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" /v Enabled /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Disable advertising ID</Description>
+        </SynchronousCommand>
+
+        <!-- 1. Enable the built-in Administrator account -->
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
           <CommandLine>cmd /c net user Administrator /active:yes</CommandLine>
           <Description>Enable built-in Administrator</Description>
         </SynchronousCommand>
 
         <!-- 2. Set PowerShell execution policy -->
         <SynchronousCommand wcm:action="add">
-          <Order>2</Order>
+          <Order>5</Order>
           <CommandLine>cmd /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force -Scope LocalMachine"</CommandLine>
           <Description>Set PowerShell execution policy</Description>
         </SynchronousCommand>
 
         <!-- 3. Configure WinRM for Packer -->
         <SynchronousCommand wcm:action="add">
-          <Order>3</Order>
+          <Order>6</Order>
           <CommandLine>cmd /c winrm quickconfig -q</CommandLine>
           <Description>WinRM quickconfig</Description>
         </SynchronousCommand>
 
         <SynchronousCommand wcm:action="add">
-          <Order>4</Order>
+          <Order>7</Order>
           <CommandLine>cmd /c winrm set winrm/config/service @{AllowUnencrypted="true"}</CommandLine>
           <Description>WinRM allow unencrypted</Description>
         </SynchronousCommand>
 
         <SynchronousCommand wcm:action="add">
-          <Order>5</Order>
+          <Order>8</Order>
           <CommandLine>cmd /c winrm set winrm/config/service/auth @{Basic="true"}</CommandLine>
           <Description>WinRM enable basic auth</Description>
         </SynchronousCommand>
 
         <SynchronousCommand wcm:action="add">
-          <Order>6</Order>
+          <Order>9</Order>
           <CommandLine>cmd /c winrm set winrm/config/listener?Address=*+Transport=HTTP @{Port="5985"}</CommandLine>
           <Description>WinRM HTTP listener on 5985</Description>
         </SynchronousCommand>
 
         <!-- 4. Open WinRM port in Windows Firewall -->
         <SynchronousCommand wcm:action="add">
-          <Order>7</Order>
+          <Order>10</Order>
           <CommandLine>cmd /c netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in localport=5985 protocol=tcp action=allow</CommandLine>
           <Description>Firewall: allow WinRM HTTP</Description>
         </SynchronousCommand>
 
         <!-- 5. Open Cape agent port (8000) -->
         <SynchronousCommand wcm:action="add">
-          <Order>8</Order>
+          <Order>11</Order>
           <CommandLine>cmd /c netsh advfirewall firewall add rule name="CapeAgent" dir=in localport=8000 protocol=tcp action=allow</CommandLine>
           <Description>Firewall: allow Cape agent port 8000</Description>
         </SynchronousCommand>
 
         <!-- 6. Disable Windows Update — evaluation guests are ephemeral -->
         <SynchronousCommand wcm:action="add">
-          <Order>9</Order>
+          <Order>12</Order>
           <CommandLine>cmd /c sc config wuauserv start= disabled</CommandLine>
           <Description>Disable Windows Update service</Description>
         </SynchronousCommand>
 
         <!-- 7. Start WinRM service so Packer can connect -->
         <SynchronousCommand wcm:action="add">
-          <Order>10</Order>
+          <Order>13</Order>
           <CommandLine>cmd /c net start WinRM</CommandLine>
           <Description>Start WinRM service</Description>
+        </SynchronousCommand>
+
+        <!-- 11. Verify WinRM is listening — log result for troubleshooting.
+             If WinRM failed to start, this gives us a clear signal in the
+             event log rather than Packer timing out with no context. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>14</Order>
+          <CommandLine>cmd /c powershell -Command "Start-Sleep -Seconds 5; Test-WSMan -ErrorAction SilentlyContinue | Out-File C:\winrm-verify.txt; if ($?) { Write-Host 'WinRM: OK' } else { Write-Host 'WinRM: FAILED' }"</CommandLine>
+          <Description>Verify WinRM is accepting connections</Description>
         </SynchronousCommand>
 
       </FirstLogonCommands>
