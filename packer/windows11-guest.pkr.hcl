@@ -277,9 +277,12 @@ source "qemu" "windows11_guest" {
     # Suppress e1000 PXE ROM to prevent OVMF network boot loops
     ["-global", "e1000.rombar=0"],
     # CDROM on ide.1 (same built-in ICH9 as HDD on ide.0).
-    # bootindex=0 for El Torito boot. boot-helper.sh ejects the CDROM after
-    # WinPE loads to prevent the reboot loop (cdboot_noprompt.efi).
-    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0,bootindex=0"],
+    # No bootindex — OVMF won't auto-boot from CDROM. Instead, boot_command
+    # types the boot path at the UEFI shell for the initial boot. After Setup
+    # installs and writes a Windows Boot Manager entry to efivars, subsequent
+    # reboots boot from the HDD automatically. This eliminates the CDROM
+    # reboot loop without needing a fragile size-based CDROM eject.
+    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0"],
     ["-drive", "file=${var.win11_iso_path},media=cdrom,id=cdrom0,readonly=on,if=none"],
   ]
 
@@ -297,21 +300,27 @@ source "qemu" "windows11_guest" {
   #   5. boot_command sends Enter to catch the prompt
   #   6. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
   #
-  # OVMF boots the CDROM directly via bootindex=0. The CDROM boot loader shows
-  # "Press any key to boot from CD or DVD..." with a ~5 second timeout.
-  # boot_command just needs to press Enter during that window.
+  # With no bootindex on the CDROM, OVMF drops to the UEFI shell on first boot.
+  # boot_command waits for the shell, then types the CDROM boot path.
+  # After Windows Setup installs, it writes a Windows Boot Manager entry to
+  # efivars — subsequent reboots boot from HDD automatically (no CDROM eject
+  # needed, no reboot loop).
   #
-  # The prompt appears ~3-5s after QEMU starts. With boot_wait=3s, Packer
-  # sends Enter at 3s, 6s, 9s, 12s — one will catch the prompt.
-  # If none catch it (shell fallback), the Enters are harmless Shell> prompts.
+  # Timing: OVMF takes ~10-15s to enumerate devices and show the shell.
+  # startup.nsh on the floppy has FS0:\EFI\BOOT\bootx64.efi but auto-execution
+  # is unreliable, so we type the command explicitly as a fallback.
+  # After the CDROM boots, "Press any key" has a ~5s timeout.
   #
-  # boot-helper.sh handles CDROM eject (prevents reboot loop) and screendumps.
+  # boot-helper.sh handles screendumps only (no CDROM eject needed).
   #
   # Do NOT connect VNC until "Waiting for WinRM" appears in the build log —
   # Packer needs exclusive VNC access during boot_command.
-  boot_wait    = "3s"
+  boot_wait    = "15s"
   boot_command = [
-    "<enter><wait3><enter><wait3><enter><wait3><enter>"
+    # First try: press Enter in case "Press any key" or startup.nsh ran
+    "<enter><wait5>",
+    # If at Shell>, type the CDROM boot path and press Enter for "Press any key"
+    "FS0:\\EFI\\BOOT\\bootx64.efi<enter><wait8><enter><wait3><enter>"
   ]
 
   # --- WinRM communicator ---
