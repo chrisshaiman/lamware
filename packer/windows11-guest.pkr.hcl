@@ -51,6 +51,14 @@
 #   Ansible roles/cape/ imports it and creates clean-w11 + office-w11 snapshots.
 #   See docs/STATUS.md for the full workflow.
 #
+# Troubleshooting:
+#   To watch the VM's display in real-time (boot, Setup, OOBE), set headless=false:
+#     packer build -var headless=false -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
+#   This opens a QEMU window via WSLg (Windows 11 ships WSLg by default).
+#   Much faster than VNC for debugging boot or installer issues.
+#   Do NOT connect a separate VNC client while Packer is typing boot_command —
+#   wait until "Waiting for WinRM" appears in the build log.
+#
 # Evaluation ISO notes (ADR-009):
 #   - 90-day evaluation period — rebuild when it expires
 #   - ImageIndex 1 is the only edition in the eval ISO (Enterprise Evaluation)
@@ -137,7 +145,7 @@ variable "cpus" {
 
 variable "headless" {
   type        = bool
-  description = "Run without display. Set false to debug the install via VNC."
+  description = "Run without display. Set false to show QEMU window for debugging (see Troubleshooting below)."
   default     = true
 }
 
@@ -195,23 +203,16 @@ variable "ovmf_vars" {
   description = "Path to OVMF_VARS_4M.fd (empty UEFI firmware variables) on the build host."
   # Use the EMPTY vars file (not .ms.fd).
   #
-  # OVMF_VARS_4M.ms.fd has pre-enrolled Secure Boot keys AND pre-built NVRAM
-  # boot entries (SATA HDD, PXE IPv4, PXE IPv6, HTTP Boot). Our machine has no
-  # AHCI/SATA device (disk is ICH9 IDE, ISO is USB XHCI), so the SATA entries
-  # fail fast, then OVMF falls through to PXE/HTTP — causing a boot loop.
-  #
-  # OVMF_VARS_4M.fd is empty: no boot entries of any kind. OVMF drops directly
-  # to the UEFI interactive shell, which is exactly what boot_command expects —
-  # it types FS1: then EFI\BOOT\bootx64.efi to launch WinPE from the USB ISO.
-  # After Windows Setup runs, it writes its own UEFI boot entry to efivars.fd
-  # and subsequent reboots boot directly into Windows.
+  # OVMF_VARS_4M.fd is empty: no boot entries, no Secure Boot keys. Boot order
+  # is controlled entirely by QEMU bootindex args (CDROM=0, HDD=1). After
+  # Windows Setup runs, it writes its own UEFI boot entry to efivars.fd.
   #
   # Secure Boot: empty vars = OVMF "Setup Mode" (not enforced). autounattend.xml
   # includes BypassSecureBootCheck as belt-and-suspenders. No key enrollment needed.
   #
   # IMPORTANT: make win11-image copies a fresh OVMF_VARS_4M.fd to efivars.fd
   # before each build so stale NVRAM entries from failed builds never carry over.
-  default     = "/usr/share/OVMF/OVMF_VARS_4M.ms.fd"
+  default     = "/usr/share/OVMF/OVMF_VARS_4M.fd"
 }
 
 # =============================================================================
@@ -269,20 +270,20 @@ source "qemu" "windows11_guest" {
     ["-drive", "if=pflash,format=raw,file=${var.efivars_path}"],
     # Hard disk — IDE on the built-in ICH9 controller. Packer creates the
     # qcow2 but doesn't attach it when qemuargs is present.
-    ["-drive", "file=${var.output_directory}/windows11-guest.qcow2,if=ide,format=qcow2"],
-    # QEMU monitor socket for boot-helper.sh screendump and CDROM eject
+    # bootindex=1: OVMF tries HDD after CDROM (bootindex=0) times out.
+    ["-device", "ide-hd,bus=ide.0,unit=0,drive=hdd0,bootindex=1"],
+    ["-drive", "file=${var.output_directory}/windows11-guest.qcow2,id=hdd0,format=qcow2,if=none"],
+    # QEMU monitor socket — useful for manual debugging (screendumps, etc.)
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
     # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
     ["-fda", var.autounattend_img_path],
     # Suppress e1000 PXE ROM to prevent OVMF network boot loops
     ["-global", "e1000.rombar=0"],
     # CDROM on ide.1 (same built-in ICH9 as HDD on ide.0).
-    # No bootindex — OVMF won't auto-boot from CDROM. Instead, boot_command
-    # types the boot path at the UEFI shell for the initial boot. After Setup
-    # installs and writes a Windows Boot Manager entry to efivars, subsequent
-    # reboots boot from the HDD automatically. This eliminates the CDROM
-    # reboot loop without needing a fragile size-based CDROM eject.
-    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0"],
+    # bootindex=0 → OVMF boots CDROM first (no UEFI Shell needed).
+    # bootindex=1 on HDD → after "Press any key" times out on subsequent
+    # reboots, OVMF falls through to HDD where Windows Boot Manager lives.
+    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0,bootindex=0"],
     ["-drive", "file=${var.win11_iso_path},media=cdrom,id=cdrom0,readonly=on,if=none"],
   ]
 
@@ -290,37 +291,27 @@ source "qemu" "windows11_guest" {
   vtpm = true
 
   # --- Boot ---
-  # Packer attaches the ISO as -cdrom (ide index=2) on the built-in ICH9 AHCI.
-  # OVMF may boot the CDROM directly or drop to the UEFI shell.
-  # Boot flow with OVMF (empty NVRAM vars):
-  #   1. OVMF enumerates devices → no boot entries → drops to UEFI shell (~3-5s)
-  #   2. Shell auto-executes startup.nsh from floppy after 1s countdown
-  #   3. startup.nsh runs: FS0:\EFI\BOOT\bootx64.efi (CDROM boot loader)
-  #   4. "Press any key to boot from CD or DVD..." prompt (~7-10s from boot)
-  #   5. boot_command sends Enter to catch the prompt
-  #   6. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
+  # With bootindex=0 on the CDROM, OVMF boots from CDROM directly — no
+  # UEFI Shell, no startup.nsh needed.
   #
-  # With no bootindex on the CDROM, OVMF drops to the UEFI shell on first boot.
-  # boot_command waits for the shell, then types the CDROM boot path.
-  # After Windows Setup installs, it writes a Windows Boot Manager entry to
-  # efivars — subsequent reboots boot from HDD automatically (no CDROM eject
-  # needed, no reboot loop).
+  # Boot flow:
+  #   1. OVMF boots from CDROM (bootindex=0) → bootx64.efi loads (~5-8s)
+  #   2. "Press any key to boot from CD or DVD..." appears (~5s timeout)
+  #   3. boot_command sends Enter via VNC to catch the prompt
+  #   4. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
   #
-  # Timing: OVMF takes ~10-15s to enumerate devices and show the shell.
-  # startup.nsh on the floppy has FS0:\EFI\BOOT\bootx64.efi but auto-execution
-  # is unreliable, so we type the command explicitly as a fallback.
-  # After the CDROM boots, "Press any key" has a ~5s timeout.
+  # Subsequent reboots: "Press any key" times out (no VNC input) → OVMF
+  # falls through to the Windows Boot Manager entry that Setup wrote to
+  # efivars → Windows continues setup from HDD. No CDROM eject needed.
   #
-  # boot-helper.sh handles screendumps only (no CDROM eject needed).
-  #
-  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log —
-  # Packer needs exclusive VNC access during boot_command.
-  boot_wait    = "15s"
+  boot_wait    = "1s"
   boot_command = [
-    # First try: press Enter in case "Press any key" or startup.nsh ran
-    "<enter><wait5>",
-    # If at Shell>, type the CDROM boot path and press Enter for "Press any key"
-    "FS0:\\EFI\\BOOT\\bootx64.efi<enter><wait8><enter><wait3><enter>"
+    # Rapid Enters to catch "Press any key to boot from CD or DVD..."
+    # With bootindex=0, the prompt appears very quickly after boot.
+    # Enters every 1s from 1-15s covers the entire window.
+    "<enter><wait1><enter><wait1><enter><wait1><enter><wait1><enter>",
+    "<wait1><enter><wait1><enter><wait1><enter><wait1><enter><wait1><enter>",
+    "<wait1><enter><wait1><enter><wait1><enter><wait1><enter><wait1><enter>"
   ]
 
   # --- WinRM communicator ---
