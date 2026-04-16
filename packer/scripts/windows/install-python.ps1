@@ -29,7 +29,7 @@ if (-not $PythonVersion) {
     exit 1
 }
 if (-not $PythonChecksum) {
-    Write-Error "PYTHON_CHECKSUM is not set. Find the SHA-256 hash on the Python release page alongside 'Windows installer (64-bit)' for the version you're installing."
+    Write-Error "PYTHON_CHECKSUM is not set. Find the SHA-256 hash on the Python release page alongside 'Windows installer (32-bit)' for the version you're installing."
     exit 1
 }
 
@@ -38,8 +38,9 @@ Write-Host "==> install-python: version=$PythonVersion"
 # -------------------------------------------------------------------------
 # Build download URL
 # -------------------------------------------------------------------------
-# python.org URL pattern: python-3.11.9-amd64.exe
-$InstallerName = "python-$PythonVersion-amd64.exe"
+# python.org URL pattern: python-3.12.10.exe (x86 — Cape agent requires 32-bit Python
+# for capemon DLL injection into analyzed processes)
+$InstallerName = "python-$PythonVersion.exe"
 $Url           = "https://www.python.org/ftp/python/$PythonVersion/$InstallerName"
 $TmpPath       = "C:\Windows\Temp\$InstallerName"
 $InstallDir    = "C:\Python3"

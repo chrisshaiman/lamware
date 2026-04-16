@@ -163,7 +163,7 @@ variable "python_version" {
 
 variable "python_checksum" {
   type        = string
-  description = "SHA-256 hash of the Python Windows amd64 installer. Must match python_version."
+  description = "SHA-256 hash of the Python Windows x86 installer. Must match python_version."
 }
 
 variable "cape_agent_commit" {
