@@ -149,9 +149,6 @@ autounattend-floppy:
 	@mcopy -i $(AUTOUNATTEND_IMG) \
 		$(PACKER_DIR)/answer-files/win11-autounattend.xml \
 		::/autounattend.xml
-	@mcopy -i $(AUTOUNATTEND_IMG) \
-		$(PACKER_DIR)/answer-files/startup.nsh \
-		::/startup.nsh
 	@echo "==> $(AUTOUNATTEND_IMG) ready."
 
 # -----------------------------------------------------------------------------
@@ -160,9 +157,9 @@ autounattend-floppy:
 # Build is fully unattended — WinPE finds A:\autounattend.xml automatically.
 # Expect 45-90 minutes. Run inside tmux/screen.
 #
-# Boot flow: OVMF drops to UEFI shell (USB not ready in nested KVM) →
-# boot-helper.sh types FS0:\EFI\BOOT\bootx64.efi via QEMU monitor sendkey →
-# WinPE boots, finds autounattend.xml on A: → unattended install → WinRM up.
+# Boot flow: OVMF boots CDROM (bootindex=0) → Packer boot_command sends Enter
+# for "Press any key" → WinPE boots, finds autounattend.xml on A: → unattended
+# install → WinRM up. Subsequent reboots: CDROM times out → HDD (bootindex=1).
 # -----------------------------------------------------------------------------
 
 win11-image: autounattend-floppy
@@ -171,19 +168,8 @@ win11-image: autounattend-floppy
 		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
 	@[ -f $(OVMF_VARS_TEMPLATE) ] || \
 		(echo "ERROR: OVMF VARS not found at $(OVMF_VARS_TEMPLATE). Run: sudo apt-get install ovmf" && exit 1)
-	@command -v socat >/dev/null 2>&1 || \
-		(echo "ERROR: socat not found. Run: sudo apt-get install socat" && exit 1)
-	@[ -n "$(QEMU_MONITOR_SOCK)" ] || \
-		(echo "ERROR: QEMU_MONITOR_SOCK not set. Add it to .env (must match -monitor path in HCL qemuargs)." && exit 1)
 	@echo "==> Copying fresh OVMF VARS to $(EFIVARS_PATH) (clears stale NVRAM boot entries)..."
 	@cp $(OVMF_VARS_TEMPLATE) $(EFIVARS_PATH)
-	@echo "==> Starting boot helper (sends keystrokes via QEMU monitor at $(QEMU_MONITOR_SOCK))..."
-	@chmod +x $(PACKER_DIR)/scripts/boot-helper.sh
-	@[ -n "$(WIN11_ISO_PATH)" ] || \
-		(echo "ERROR: WIN11_ISO_PATH not set. Add it to .env (must match win11_iso_path in pkrvars)." && exit 1)
-	@[ -n "$(WIN11_OUTPUT_DIR)" ] || \
-		(echo "ERROR: WIN11_OUTPUT_DIR not set. Add it to .env (must match output_directory in pkrvars)." && exit 1)
-	@$(PACKER_DIR)/scripts/boot-helper.sh $(QEMU_MONITOR_SOCK) $(WIN11_ISO_PATH) $(WIN11_OUTPUT_DIR) &
 	@cd $(PACKER_DIR) && \
 		packer init windows11-guest.pkr.hcl && \
 		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl

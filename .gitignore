@@ -14,6 +14,7 @@ terraform.tfvars
 packer/output/
 packer/packer_cache/
 packer/packer.auto.pkrvars.hcl
+packer/scripts/boot-helper.sh
 
 # Ansible
 ansible/inventory/hosts
