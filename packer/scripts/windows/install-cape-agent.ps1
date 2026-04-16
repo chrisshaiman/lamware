@@ -19,7 +19,8 @@
     running before Cape sends its first command (Cape connects immediately
     after the guest boots from snapshot).
 
-    Port 8000 is already allowed in the Windows Firewall by autounattend.xml.
+    Port 8000 firewall rule is created here (not in autounattend.xml) to ensure
+    it survives all Windows setup phases and reboots.
 
     Design decision: cape-agent.py (ADR-010). capemon DLL injection is deferred
     until CPUID/timing evasion is observed in the wild requiring kernel-level hooks.
@@ -153,5 +154,19 @@ if (-not $task) {
     exit 1
 }
 Write-Host "==> Task state: $($task.State)"
+
+# -------------------------------------------------------------------------
+# 7. Ensure Windows Firewall allows inbound TCP 8000
+# -------------------------------------------------------------------------
+# autounattend.xml creates this rule during OOBE, but it can be lost during
+# later setup phases. Creating it here guarantees it exists in the final image.
+$fwRuleName = "CapeAgent"
+$existing = netsh advfirewall firewall show rule name=$fwRuleName 2>$null
+if ($existing -match "No rules match") {
+    Write-Host "==> Creating firewall rule for port 8000"
+    netsh advfirewall firewall add rule name=$fwRuleName dir=in protocol=tcp localport=8000 action=allow | Out-Null
+} else {
+    Write-Host "==> Firewall rule '$fwRuleName' already exists"
+}
 
 Write-Host "==> install-cape-agent complete"
