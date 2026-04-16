@@ -62,70 +62,42 @@ if [ ! -S "$SOCK" ]; then
   exit 1
 fi
 
-# --- Primary path: bootindex=0 on SATA CDROM ---
-# OVMF boots the ISO directly. bootmgr shows "Press any key to boot from CD
-# or DVD..." after ~10-12s. Send Enter to confirm.
-echo "boot-helper: socket found. Waiting 12s for 'Press any key' prompt..."
-sleep 12
-send_key ret
-echo "boot-helper: sent Enter for 'Press any key' prompt."
-
-# --- Fallback: UEFI shell (if bootindex didn't work) ---
-# Wait a bit, then send the full shell boot command in case we landed at Shell>.
-# If WinPE is already loading (primary path worked), these keystrokes are harmless
-# because WinPE doesn't have a text input prompt during early boot.
-sleep 15
-echo "boot-helper: sending fallback shell boot command..."
-send_key ret  # dismiss startup.nsh countdown or get fresh Shell> prompt
-sleep 2
-send_string 'FS1:\EFI\BOOT\bootx64.efi'
-sleep 0.2
-send_key ret
-
-# Handle "Press any key" if the fallback triggered it
-sleep 3
-send_key ret
-
-echo "boot-helper: boot commands sent. WinPE should be loading."
-
-# --- Eject + re-insert CDROM to prevent reboot loop ---
-# The ISO uses cdboot_noprompt.efi — boots WinPE immediately on every reboot
-# without any "Press any key" timeout. bootindex=0 makes OVMF try the CDROM
-# first, so WinPE reboots into itself endlessly (~20s cycles).
+# --- Boot keystrokes are handled by Packer boot_command (via VNC) ---
 #
-# Fix: poll the qcow2 disk image until Windows Setup starts writing to it
-# (>20MB = partitioning/file copy underway), then eject the CDROM to break
-# the boot loop and re-insert so WinPE can still read install.wim.
-# A fixed sleep doesn't work — nested KVM timing is unpredictable.
-echo "boot-helper: waiting for Windows Setup to write to disk (polling ${QCOW2})..."
-WAITED=0
-MAX_WAIT=1800  # 30 min — if nothing by then, Setup failed
-while [ "$WAITED" -lt "$MAX_WAIT" ]; do
-  if [ -f "$QCOW2" ]; then
-    SIZE=$(stat -c%s "$QCOW2" 2>/dev/null || echo 0)
-    SIZE_MB=$((SIZE / 1048576))
-    if [ "$SIZE_MB" -gt 20 ]; then
-      echo "boot-helper: qcow2 is ${SIZE_MB}MB — Setup is writing. Proceeding with eject."
-      break
-    fi
+# Boot flow with OVMF (empty NVRAM vars):
+#   1. OVMF enumerates devices → no boot entries → drops to UEFI Interactive Shell
+#   2. Shell auto-executes startup.nsh from the floppy (A:) after 1s countdown
+#   3. startup.nsh runs: FS0:\EFI\BOOT\bootx64.efi (the CDROM boot loader)
+#   4. "Press any key to boot from CD or DVD..." prompt appears
+#   5. Packer's boot_command sends Enter at multiple intervals to catch the prompt
+#   6. WinPE loads → autounattend.xml on A: takes over
+#
+# boot-helper.sh only handles:
+#   - CDROM eject/re-insert (prevents reboot loop after WinPE starts Setup)
+#   - Periodic screendumps for OOBE diagnostics
+
+echo "boot-helper: socket found. Packer boot_command handles boot keystrokes."
+echo "boot-helper: No CDROM eject needed — CDROM has no bootindex, so OVMF boots"
+echo "boot-helper: from HDD after Windows Setup writes a boot entry to efivars."
+
+# --- Periodic screendumps for OOBE diagnostics ---
+# Capture a screenshot every 60s so we can see where OOBE is (or where it stalled).
+# Stops after 90 minutes or when the monitor socket disappears (QEMU shut down).
+DUMP_DIR="${OUTPUT_DIR}/screendumps"
+mkdir -p "$DUMP_DIR"
+echo "boot-helper: starting screendump capture to ${DUMP_DIR}/ (every 60s, up to 90 min)..."
+
+DUMP_WAITED=0
+DUMP_MAX=5400  # 90 min
+while [ "$DUMP_WAITED" -lt "$DUMP_MAX" ]; do
+  if [ ! -S "$SOCK" ]; then
+    echo "boot-helper: monitor socket gone — QEMU shut down. Stopping screendumps."
+    break
   fi
-  sleep 10
-  WAITED=$((WAITED + 10))
-  if [ $((WAITED % 60)) -eq 0 ]; then
-    SIZE_MB=$((${SIZE:-0} / 1048576))
-    echo "boot-helper: waiting... (${WAITED}s, qcow2: ${SIZE_MB}MB)"
-  fi
+  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+  echo "screendump ${DUMP_DIR}/screen-${TIMESTAMP}.ppm" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null || true
+  sleep 60
+  DUMP_WAITED=$((DUMP_WAITED + 60))
 done
 
-if [ "$WAITED" -ge "$MAX_WAIT" ]; then
-  echo "boot-helper: WARNING — qcow2 never grew past 20MB after ${MAX_WAIT}s. Setup may have failed." >&2
-  echo "boot-helper: skipping CDROM eject. Check VNC for errors." >&2
-  exit 0
-fi
-
-echo "boot-helper: ejecting CDROM to break reboot loop..."
-echo "eject cdrom0" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
-sleep 2
-echo "boot-helper: re-inserting ISO so WinPE can access install.wim..."
-echo "change cdrom0 ${ISO_PATH}" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
-echo "boot-helper: CDROM cycled. install.wim accessible, reboot loop broken."
+echo "boot-helper: screendump capture finished. Check ${DUMP_DIR}/ for OOBE progress images."

@@ -190,8 +190,8 @@ Order #117-8234521-9841004
 Placed: [see email]
 
 Items:
-  1x Logitech M720 Triathlon Mouse - $49.99
-  1x USB-C Hub 7-in-1              - $32.99
+  1x Logitech M720 Triathlon Mouse - `$49.99
+  1x USB-C Hub 7-in-1              - `$32.99
 
 Shipping: FREE
 Estimated delivery: 2 business days

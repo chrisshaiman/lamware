@@ -250,27 +250,39 @@ source "qemu" "windows11_guest" {
 
   # --- Minimal qemuargs — only what Packer can't configure natively ---
   #
-  # Packer handles: disk (ide index=0), ISO CDROM (ide index=2), pflash (OVMF),
-  # network (e1000 + WinRM port forward), VNC, memory, SMP, TPM.
+  # IMPORTANT: When qemuargs is present, Packer's QEMU plugin (v1.1.4) drops
+  # ALL auto-generated drives — pflash (OVMF), disk, and CDROM. We MUST
+  # include them all explicitly here. Without pflash: SeaBIOS instead of UEFI.
+  # Without disk: WinPE crashes immediately (no target disk found).
+  #
+  # Packer still handles: network (e1000 + WinRM port forward), VNC, memory,
+  # SMP, TPM.
   # Both disk and CDROM land on the SAME built-in ICH9 AHCI controller
   # (different ports), which is critical — a separate AHCI controller splits
   # CDROM partitions and breaks cdboot.efi (RH BZ#1443345).
-  #
-  # We only override: CPU model, VGA, monitor socket, floppy, PXE suppression.
   qemuargs = [
     ["-cpu", "host"],
     ["-vga", "std"],
-    # QEMU monitor socket for boot-helper.sh sendkey and screendump
+    # OVMF UEFI firmware — pflash drives for UEFI boot (required by Win11).
+    # Code is read-only, vars is writable (stores UEFI boot entries).
+    ["-drive", "if=pflash,format=raw,readonly=on,file=${var.ovmf_code}"],
+    ["-drive", "if=pflash,format=raw,file=${var.efivars_path}"],
+    # Hard disk — IDE on the built-in ICH9 controller. Packer creates the
+    # qcow2 but doesn't attach it when qemuargs is present.
+    ["-drive", "file=${var.output_directory}/windows11-guest.qcow2,if=ide,format=qcow2"],
+    # QEMU monitor socket for boot-helper.sh screendump and CDROM eject
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
     # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
     ["-fda", var.autounattend_img_path],
     # Suppress e1000 PXE ROM to prevent OVMF network boot loops
     ["-global", "e1000.rombar=0"],
-    # CDROM on ide.1 (same built-in ICH9 as Packer's HDD on ide.0).
-    # bootindex=0 for El Torito boot. boot-helper.sh ejects the CDROM after
-    # WinPE loads to prevent the reboot loop (cdboot_noprompt.efi).
-    # Including the ISO path here tells Packer to skip its own CDROM attachment.
-    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0,bootindex=0"],
+    # CDROM on ide.1 (same built-in ICH9 as HDD on ide.0).
+    # No bootindex — OVMF won't auto-boot from CDROM. Instead, boot_command
+    # types the boot path at the UEFI shell for the initial boot. After Setup
+    # installs and writes a Windows Boot Manager entry to efivars, subsequent
+    # reboots boot from the HDD automatically. This eliminates the CDROM
+    # reboot loop without needing a fragile size-based CDROM eject.
+    ["-device", "ide-cd,bus=ide.1,unit=0,drive=cdrom0"],
     ["-drive", "file=${var.win11_iso_path},media=cdrom,id=cdrom0,readonly=on,if=none"],
   ]
 
@@ -280,19 +292,36 @@ source "qemu" "windows11_guest" {
   # --- Boot ---
   # Packer attaches the ISO as -cdrom (ide index=2) on the built-in ICH9 AHCI.
   # OVMF may boot the CDROM directly or drop to the UEFI shell.
-  # boot-helper.sh (started by Makefile in background) handles both cases:
-  #   - Sends Enter for "Press any key to boot from CD" if OVMF boots the ISO
-  #   - Types the shell boot command as fallback if OVMF drops to shell
-  # Once WinPE loads, autounattend.xml on A: (floppy) drives unattended install.
+  # Boot flow with OVMF (empty NVRAM vars):
+  #   1. OVMF enumerates devices → no boot entries → drops to UEFI shell (~3-5s)
+  #   2. Shell auto-executes startup.nsh from floppy after 1s countdown
+  #   3. startup.nsh runs: FS0:\EFI\BOOT\bootx64.efi (CDROM boot loader)
+  #   4. "Press any key to boot from CD or DVD..." prompt (~7-10s from boot)
+  #   5. boot_command sends Enter to catch the prompt
+  #   6. WinPE loads → autounattend.xml on A: (floppy) drives unattended install
   #
-  # boot-helper.sh runs in the background (started by Makefile). It waits for the
-  # QEMU monitor socket, then sends Enter to catch the "Press any key" prompt.
-  # Fallback: if bootindex fails, it types the full shell boot command.
+  # With no bootindex on the CDROM, OVMF drops to the UEFI shell on first boot.
+  # boot_command waits for the shell, then types the CDROM boot path.
+  # After Windows Setup installs, it writes a Windows Boot Manager entry to
+  # efivars — subsequent reboots boot from HDD automatically (no CDROM eject
+  # needed, no reboot loop).
   #
-  # Packer still briefly connects to VNC (even with empty boot_command).
-  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log.
-  boot_wait    = "30s"
-  boot_command = []
+  # Timing: OVMF takes ~10-15s to enumerate devices and show the shell.
+  # startup.nsh on the floppy has FS0:\EFI\BOOT\bootx64.efi but auto-execution
+  # is unreliable, so we type the command explicitly as a fallback.
+  # After the CDROM boots, "Press any key" has a ~5s timeout.
+  #
+  # boot-helper.sh handles screendumps only (no CDROM eject needed).
+  #
+  # Do NOT connect VNC until "Waiting for WinRM" appears in the build log —
+  # Packer needs exclusive VNC access during boot_command.
+  boot_wait    = "15s"
+  boot_command = [
+    # First try: press Enter in case "Press any key" or startup.nsh ran
+    "<enter><wait5>",
+    # If at Shell>, type the CDROM boot path and press Enter for "Press any key"
+    "FS0:\\EFI\\BOOT\\bootx64.efi<enter><wait8><enter><wait3><enter>"
+  ]
 
   # --- WinRM communicator ---
   communicator   = "winrm"
@@ -303,7 +332,11 @@ source "qemu" "windows11_guest" {
   winrm_use_ssl  = false
 
   # Graceful shutdown after provisioning
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1"
+  # Disable Administrator account (no longer needed after provisioning), then
+  # shut down. Must be in shutdown_command, not cleanup.ps1 — cleanup runs
+  # over WinRM as Administrator, so disabling the account there kills the
+  # WinRM session before Packer can send the shutdown command.
+  shutdown_command = "powershell -Command \"Disable-LocalUser -Name Administrator\"; shutdown /s /t 5 /f /d p:4:1"
   shutdown_timeout = "10m"
 }
 
