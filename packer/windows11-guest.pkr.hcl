@@ -332,7 +332,11 @@ source "qemu" "windows11_guest" {
   winrm_use_ssl  = false
 
   # Graceful shutdown after provisioning
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1"
+  # Disable Administrator account (no longer needed after provisioning), then
+  # shut down. Must be in shutdown_command, not cleanup.ps1 — cleanup runs
+  # over WinRM as Administrator, so disabling the account there kills the
+  # WinRM session before Packer can send the shutdown command.
+  shutdown_command = "powershell -Command \"Disable-LocalUser -Name Administrator\"; shutdown /s /t 5 /f /d p:4:1"
   shutdown_timeout = "10m"
 }
 

@@ -72,11 +72,13 @@ Write-Host "  Event logs cleared"
 # -------------------------------------------------------------------------
 # 3. Disable built-in Administrator account
 # -------------------------------------------------------------------------
-# The Packer WinRM session is complete; Administrator is no longer needed.
-# The guest user (created by create-user.ps1) is a local admin and has
-# autologon configured.
-Write-Host "==> Disabling built-in Administrator account"
-Disable-LocalUser -Name "Administrator"
+# DO NOT disable Administrator here — Packer still needs the WinRM session
+# (running as Administrator) to send the shutdown command after this script.
+# Disabling it kills the WinRM connection and Packer considers the build
+# failed. Instead, the shutdown_command in the HCL disables the account
+# as part of the shutdown sequence:
+#   powershell -Command "Disable-LocalUser -Name Administrator"; shutdown /s /t 5 /f /d p:4:1
+Write-Host "==> Skipping Administrator disable (handled by Packer shutdown_command)"
 
 # -------------------------------------------------------------------------
 # 4. Remove PBAdmin build account (created during manual install)
