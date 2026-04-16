@@ -172,8 +172,77 @@
   <!-- =========================================================
        PASS 3: specialize — runs after OS files are copied,
        before first boot. Sets machine-level identity.
+
+       Defender disable: The specialize pass runs before Tamper
+       Protection is fully active. Disabling the WinDefend service
+       and setting GP keys here is the only reliable programmatic
+       method on Win11 25H2+. The disable-defender.ps1 provisioner
+       adds belt-and-suspenders exclusions after Packer connects.
        ========================================================= -->
   <settings pass="specialize">
+
+    <!-- Disable Windows Defender before Tamper Protection activates -->
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <RunSynchronous>
+        <!-- Disable WinDefend service (Start=4 = Disabled) -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add "HKLM\SYSTEM\CurrentControlSet\Services\WinDefend" /v Start /t REG_DWORD /d 4 /f</Path>
+          <Description>Disable WinDefend service before Tamper Protection activates</Description>
+        </RunSynchronousCommand>
+        <!-- Disable Defender via Group Policy keys -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiSpyware /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable antispyware</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender" /v DisableAntiVirus /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable antivirus</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable real-time monitoring</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableBehaviorMonitoring /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable behavior monitoring</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableOnAccessProtection /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable on-access protection</Description>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>7</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableScanOnRealtimeEnable /t REG_DWORD /d 1 /f</Path>
+          <Description>GP: disable scan on realtime enable</Description>
+        </RunSynchronousCommand>
+        <!-- Disable SmartScreen -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>8</Order>
+          <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer" /v SmartScreenEnabled /t REG_SZ /d Off /f</Path>
+          <Description>Disable SmartScreen</Description>
+        </RunSynchronousCommand>
+        <!-- Add C:\ exclusion via registry — prevents Defender from blocking
+             Packer provisioner scripts and ensures samples are never quarantined.
+             Exclusion paths are stored as REG_DWORD values under this key where
+             the value name is the path and data is 0. -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>9</Order>
+          <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths" /v "C:\" /t REG_DWORD /d 0 /f</Path>
+          <Description>Defender exclusion: entire C:\ drive</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
 
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"

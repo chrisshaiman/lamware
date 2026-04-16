@@ -283,35 +283,40 @@ analysis modules are Enterprise-only.
 
 ---
 
-## ADR-010: Cape agent mode — cape-agent.py (Python in-guest)
+## ADR-010: Cape agent mode — cape-agent.py with capemon
 
-**Status:** Decided
+**Status:** Revised 2026-04-15 (supersedes original cape-agent-only decision)
 
 **Context:**
-Cape supports two in-guest agent modes: the traditional Python-based `cape-agent.py`
-(runs as a persistent process inside the guest) and capemon DLL injection (Cape injects
-capemon.dll into spawned malware processes at runtime, no persistent agent process).
-The choice affects both setup complexity and detection resistance against evasion-aware
-malware.
+Cape supports two complementary in-guest components: `cape-agent.py` (a Python HTTP
+server that receives commands from the Cape host — upload sample, execute, collect
+results) and capemon (DLLs injected into analyzed processes at runtime for deep API
+call hooking, memory dumping, and crypto key extraction). The original decision deferred
+capemon until evasion was observed in practice.
+
+During local testing of the Win11 guest image, two issues were discovered:
+1. Python 3.14 (x64) was installed, but cape-agent.py requires Python x86 (32-bit)
+   because capemon injects 32-bit DLLs into target processes
+2. The `cgi` stdlib module (imported by agent.py) was removed in Python 3.13
+
+Both issues are resolved by installing Python 3.12.x x86 — which also enables capemon
+with no additional guest-side work. The capemon DLLs are part of the Cape host
+installation and are pushed to the guest at analysis time by the Cape machinery.
 
 **Decision:**
-Use `cape-agent.py` for the initial deployment. Evaluate migrating to capemon DLL
-injection once evasion behaviour is observed in practice.
-
-Rationale: cape-agent.py is the default Cape path with the most community documentation
-and tested configurations. The primary anti-evasion investment for this lab is ACPI/DSDT
-table patching (already implemented) and network simulation — these provide more value
-against the realistic sample population than agent-mode selection. Detection-aware malware
-sophisticated enough to enumerate Python installations or probe the agent port is a small
-fraction of early-stage sample volume.
+Use `cape-agent.py` with capemon enabled. Install Python 3.12.x x86 (32-bit) in the
+guest image. Pin to 3.12.x to retain the `cgi` stdlib module required by agent.py
+(removed in 3.13). The host-side Cape installation (via `cape2.sh`) already includes
+the capemon DLLs and analyzer package — no host changes required.
 
 **Consequences:**
-- Python must be installed in the guest image (included in the Win10 Packer build)
-- Agent process is visible in the guest process list before detonation — a potential
-  evasion signal for advanced samples
-- Migrating to capemon injection later requires changes to the guest Packer image
-  and Cape configuration but no changes to the host Ansible roles or AWS infrastructure
-- Migration trigger: evasion observed in practice — tracked in docs/STATUS.md future scope
+- Python 3.12.x x86 installed in guest image (`install-python.ps1` uses x86 installer)
+- Python version must stay on 3.12.x until upstream agent.py removes the `cgi` dependency
+- capemon provides full Windows API call tracing, memory dump triggers, crypto key
+  extraction, and anti-evasion counterfeit returns — significantly richer analysis output
+- Agent process is still visible in the guest process list (inherent to cape-agent.py)
+- Firewall rule for port 8000 is created by `install-cape-agent.ps1` provisioner
+  (autounattend.xml rule was found missing after Windows setup — belt-and-suspenders)
 
 ---
 
