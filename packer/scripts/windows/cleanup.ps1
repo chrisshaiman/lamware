@@ -145,21 +145,15 @@ Get-ScheduledTask -TaskName "CreateProfile_*" -ErrorAction SilentlyContinue |
 # -------------------------------------------------------------------------
 # 8. Disable WinRM
 # -------------------------------------------------------------------------
-# WinRM was enabled during the Packer build phase so provisioner scripts
-# could run. The final guest image does not need it  -  Cape communicates
-# with the guest via the cape-agent.py scheduled task on port 8000, not WinRM.
-# Leaving WinRM enabled (port 5985, basic auth, unencrypted) is unnecessary
-# attack surface on the detonation bridge during analysis.
-Write-Host "==> Disabling WinRM"
-try {
-    Stop-Service -Name WinRM -Force -ErrorAction SilentlyContinue
-    Set-Service  -Name WinRM -StartupType Disabled
-    # Remove the firewall rules added by autounattend.xml FirstLogonCommands
-    netsh advfirewall firewall delete rule name="WinRM-HTTP" | Out-Null
-    Write-Host "  WinRM stopped, disabled, and firewall rule removed"
-} catch {
-    Write-Host "  WinRM disable raised an error (non-fatal): $_"
-}
+# DO NOT stop or disable WinRM here — Packer is using it to run this script.
+# Stopping WinRM kills the session and Packer treats it as a build failure
+# (exit code 16001). Instead, configure WinRM to disable on next boot via
+# the shutdown_command, or accept that WinRM will be disabled when the
+# Administrator account is disabled (no valid auth = effectively disabled).
+Write-Host "==> Skipping WinRM disable (Packer still using it; disabled with Administrator account)"
+# Remove the firewall rule now — this doesn't kill the active session
+netsh advfirewall firewall delete rule name="WinRM-HTTP" 2>$null | Out-Null
+Write-Host "  WinRM firewall rule removed"
 
 # -------------------------------------------------------------------------
 # 9. Sync and final status
