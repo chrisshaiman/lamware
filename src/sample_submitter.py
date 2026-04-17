@@ -9,9 +9,9 @@ before the client finishes uploading the sample):
     → validate + sanitize request body
     → generate task_id (UUID4)
     → construct S3 key: samples/{sha256}/{task_id}/{filename}
-    → issue pre-signed S3 PUT URL with job metadata embedded in the signature
-      (task_id, sha256, tags — client MUST send x-amz-meta-* headers)
-    → return {task_id, upload_url, expires_in, s3_key}
+    → issue pre-signed S3 POST policy with job metadata embedded
+      (task_id, sha256, tags — included as form fields)
+    → return {task_id, upload_url, upload_fields, expires_in, s3_key}
 
   Phase 2 — S3 ObjectCreated on samples/{sha256}/{task_id}/{filename}
     → read job metadata from the uploaded object (task_id, sha256, tags)
@@ -39,6 +39,7 @@ import re
 import uuid
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
@@ -52,7 +53,11 @@ MAX_FILENAME_LENGTH = 255
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 # Initialise clients at module level — reused across warm Lambda invocations
-_s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"))
+_s3 = boto3.client(
+    "s3",
+    region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"),
+    config=Config(signature_version="s3v4"),
+)
 _sqs = boto3.client("sqs", region_name=os.environ.get("AWS_REGION_NAME", "us-east-1"))
 
 
@@ -95,12 +100,12 @@ def _handle_api_request(event: dict, context: object) -> dict:
     s3_key = f"samples/{sha256}/{task_id}/{filename}"
 
     try:
-        upload_url = _presigned_put_url(
+        post_data = _presigned_post(
             os.environ["SAMPLES_BUCKET"], s3_key, task_id, sha256, tags
         )
     except ClientError:
-        logger.exception("Failed to generate pre-signed URL", extra={"s3_key": s3_key})
-        return _error(500, "Failed to generate upload URL")
+        logger.exception("Failed to generate pre-signed POST", extra={"s3_key": s3_key})
+        return _error(500, "Failed to generate upload credentials")
 
     logger.info(
         "Sample submission accepted — awaiting upload",
@@ -112,7 +117,8 @@ def _handle_api_request(event: dict, context: object) -> dict:
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps({
             "task_id": task_id,
-            "upload_url": upload_url,
+            "upload_url": post_data["url"],
+            "upload_fields": post_data["fields"],
             "expires_in": PRESIGNED_URL_TTL_SECONDS,
             "s3_key": s3_key,
         }),
@@ -126,8 +132,9 @@ def _handle_api_request(event: dict, context: object) -> dict:
 def _handle_s3_event(event: dict, context: object) -> None:
     """
     S3 ObjectCreated path. Fired when a sample lands in the samples/ prefix.
-    Reads job metadata from the S3 object (embedded by the presigned URL), then
-    enqueues the SQS analysis job. Guaranteed to run only after upload completes.
+    Reads job metadata from the S3 object (embedded by the presigned POST),
+    then enqueues the SQS analysis job. Guaranteed to run only after upload
+    completes.
     """
     logger.info("sample_submitter: S3 event", extra={"request_id": context.aws_request_id})
 
@@ -234,27 +241,33 @@ def _validate(body: dict) -> tuple[str, str, list[str]]:
     return filename, sha256, tags
 
 
-def _presigned_put_url(
+def _presigned_post(
     bucket: str, key: str, task_id: str, sha256: str, tags: list[str]
-) -> str:
+) -> dict:
     """
-    Generate a pre-signed S3 PUT URL with job metadata embedded in the signature.
+    Generate a pre-signed POST policy for S3 upload.
 
-    The Metadata dict is included in the signature — the client MUST send the
-    corresponding x-amz-meta-* headers or S3 will reject the PUT with a 403.
-    This guarantees the metadata is always present when the S3 event fires.
+    Returns a dict with 'url' and 'fields' that the client uses to construct
+    a multipart/form-data POST. This approach handles Object Lock (GOVERNANCE
+    mode) correctly — S3 computes the checksum server-side for POST uploads.
+
+    Job metadata is embedded in the policy as x-amz-meta-* conditions, so it
+    is always present when the S3 ObjectCreated event fires Phase 2.
     """
-    return _s3.generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": bucket,
-            "Key": key,
-            "Metadata": {
-                "task-id": task_id,
-                "sha256": sha256,
-                "tags": json.dumps(tags),
-            },
+    return _s3.generate_presigned_post(
+        Bucket=bucket,
+        Key=key,
+        Fields={
+            "x-amz-meta-task-id": task_id,
+            "x-amz-meta-sha256": sha256,
+            "x-amz-meta-tags": json.dumps(tags),
         },
+        Conditions=[
+            {"x-amz-meta-task-id": task_id},
+            {"x-amz-meta-sha256": sha256},
+            {"x-amz-meta-tags": json.dumps(tags)},
+            ["content-length-range", 1, 100 * 1024 * 1024],  # 1 byte to 100 MB
+        ],
         ExpiresIn=PRESIGNED_URL_TTL_SECONDS,
     )
 

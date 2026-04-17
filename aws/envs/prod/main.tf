@@ -449,13 +449,22 @@ resource "aws_vpc_security_group_egress_rule" "lambda_to_rds" {
   referenced_security_group_id = module.rds.rds_sg_id
 }
 
-resource "aws_vpc_security_group_egress_rule" "lambda_to_endpoints" {
+resource "aws_vpc_security_group_egress_rule" "lambda_to_interface_endpoints" {
   security_group_id = module.lambda.security_group_id
-  description       = "HTTPS to VPC endpoints (S3, SQS, Secrets Manager) - no internet route in this VPC"
+  description       = "HTTPS to Interface VPC endpoints (SQS, Secrets Manager) - ENIs use VPC-internal IPs"
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
   cidr_ipv4         = var.vpc_cidr
+}
+
+resource "aws_vpc_security_group_egress_rule" "lambda_to_s3_gateway" {
+  security_group_id = module.lambda.security_group_id
+  description       = "HTTPS to S3 via Gateway endpoint - S3 uses public IPs routed through the gateway"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  prefix_list_id    = module.vpc.s3_prefix_list_id
 }
 
 # =============================================================================
