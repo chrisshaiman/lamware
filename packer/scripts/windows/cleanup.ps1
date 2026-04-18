@@ -167,3 +167,4 @@ try {
 }
 
 Write-Host "==> cleanup complete  -  image ready for qcow2 export"
+exit 0

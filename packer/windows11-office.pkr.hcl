@@ -1,13 +1,13 @@
 # =============================================================================
 # packer/windows11-office.pkr.hcl
-# Extends the windows11-guest.qcow2 base image with LibreOffice for
+# Extends the windows11-base.qcow2 builder image with LibreOffice for
 # Office document detonation (ADR-013).
 #
 # What this builds:
-#   Takes windows11-guest.qcow2 as input, boots it, installs LibreOffice,
+#   Takes windows11-base.qcow2 as input, boots it, installs LibreOffice,
 #   configures macro security to allow all macros (required for detonation),
-#   registers LibreOffice as the default handler for Office formats, and
-#   exports windows11-office.qcow2.
+#   registers LibreOffice as the default handler for Office formats,
+#   runs cleanup, and exports windows11-office.qcow2.
 #
 # Why LibreOffice (ADR-013):
 #   - No Microsoft account or license key required
@@ -20,15 +20,14 @@
 #   and swtpm configuration are passed through.
 #
 # WinRM credentials:
-#   Connects as the guest user (var.guest_username / var.guest_password)
-#   because cleanup.ps1 in the base build disables the Administrator account.
+#   Connects as Administrator — the base image keeps Administrator and WinRM
+#   enabled for layered builds. Cleanup disables both at the end.
 #
 # Prerequisites:
-#   - windows11-guest.qcow2 must exist (built by windows11-guest.pkr.hcl)
+#   - windows11-base.qcow2 must exist (built by windows11-base.pkr.hcl)
 #   - packer.auto.pkrvars.hcl with:
-#       win11_base_image_path     = "output/windows11-guest.qcow2"
+#       win11_base_image_path     = "/path/to/windows11-base.qcow2"
 #       win11_base_image_checksum = "sha256:<checksum>"
-#       guest_password            = "Password123!"   # must match base build
 #
 # Build:
 #   cd packer/
@@ -61,7 +60,7 @@ packer {
 
 variable "win11_base_image_path" {
   type        = string
-  description = "Path to the windows11-guest.qcow2 base image (output of windows11-guest.pkr.hcl)."
+  description = "Path to the windows11-base.qcow2 builder image."
 }
 
 variable "win11_base_image_checksum" {
@@ -69,17 +68,14 @@ variable "win11_base_image_checksum" {
   description = "SHA-256 checksum of the base image, prefixed with 'sha256:'."
 }
 
-variable "guest_username" {
-  type        = string
-  description = "Guest user account name (must match the value used in the base build)."
-  default     = "jsmith"
+variable "winrm_password" {
+  type      = string
+  sensitive = true
 }
 
-variable "guest_password" {
-  type        = string
-  sensitive   = true
-  description = "Password for the guest user account (must match the base build)."
-  default     = "Password123!"
+variable "guest_username" {
+  type    = string
+  default = "jsmith"
 }
 
 variable "libreoffice_version" {
@@ -162,23 +158,25 @@ source "qemu" "windows11_office" {
     ["-vga", "std"],
   ]
 
-  # vtpm = true — Packer manages swtpm lifecycle. See windows11-guest.pkr.hcl
+  # vtpm = true — Packer manages swtpm lifecycle. See windows11-base.pkr.hcl
   # for explanation of why explicit TPM qemuargs must NOT be added alongside this.
   vtpm = true
 
-  # Boot: the base image auto-logs on as the guest user.
-  boot_wait    = "5s"
+  # Base image has WinRM enabled and auto-logs in as Administrator.
+  # Short boot wait — no first-boot delay, WinRM is already configured.
+  boot_wait    = "60s"
   boot_command = ["<enter>"]
 
   # --- WinRM communicator ---
   communicator   = "winrm"
-  winrm_username = var.guest_username
-  winrm_password = var.guest_password
-  winrm_timeout  = "30m"
+  winrm_username = "Administrator"
+  winrm_password = var.winrm_password
+  winrm_timeout  = "15m"
   winrm_port     = 5985
   winrm_use_ssl  = false
 
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1"
+  # Disable Administrator after cleanup
+  shutdown_command = "powershell -Command \"Disable-LocalUser -Name Administrator\"; shutdown /s /t 5 /f /d p:4:1"
   shutdown_timeout = "5m"
 }
 

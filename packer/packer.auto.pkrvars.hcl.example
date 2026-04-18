@@ -61,12 +61,13 @@ libreoffice_version  = "26.2.2"
 libreoffice_checksum = "<sha256-of-msi>"
 
 # =============================================================================
-# Windows 11 office image — set after windows11-guest.pkr.hcl build completes
-# Run: sha256sum <output_directory>/windows11-guest.qcow2
+# Windows 11 layered images — set after windows11-base.pkr.hcl build completes
+# Run: sha256sum <output_directory>/windows11-base.qcow2
+# Used by both windows11-guest.pkr.hcl and windows11-office.pkr.hcl
 # =============================================================================
 
-# win11_base_image_path     = "/home/<user>/packer-output/windows11-guest.qcow2"
-# win11_base_image_checksum = "sha256:<sha256-of-guest-qcow2>"
+# win11_base_image_path     = "/home/<user>/packer-output/windows11-base.qcow2"
+# win11_base_image_checksum = "sha256:<sha256-of-base-qcow2>"
 
 # =============================================================================
 # Build display — set false to see QEMU window for debugging
