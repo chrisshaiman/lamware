@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# roles/sample-feeder/tasks/main.yml
+# Deploys the MalwareBazaar sample feeder CLI tool.
+#
+# The feeder is an interactive CLI tool — not a daemon. The operator SSHs
+# in via WireGuard and runs it manually with filters to review and submit
+# samples to Cape.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create sample-feeder install directory
+  ansible.builtin.file:
+    path: "{{ sample_feeder_dir }}"
+    state: directory
+    owner: "{{ sample_feeder_user }}"
+    group: "{{ sample_feeder_user }}"
+    mode: "0750"
+
+# -------------------------------------------------------------------------
+# Fetch Cape API key from Secrets Manager on control node
+# -------------------------------------------------------------------------
+
+- name: Fetch Cape API key from Secrets Manager
+  ansible.builtin.command: >
+    aws secretsmanager get-secret-value
+    --secret-id {{ secret_arn_cape }}
+    --query SecretString
+    --output text
+    --region {{ secrets_manager_region }}
+  delegate_to: localhost
+  register: cape_api_secret_raw
+  changed_when: false
+  failed_when: cape_api_secret_raw.rc != 0 or cape_api_secret_raw.stdout | length == 0
+  no_log: true
+
+- name: Parse Cape API key
+  ansible.builtin.set_fact:
+    cape_api_key: "{{ (cape_api_secret_raw.stdout | from_json).api_key }}"
+  no_log: true
+
+# -------------------------------------------------------------------------
+# Deploy CLI tool and config
+# -------------------------------------------------------------------------
+
+- name: Deploy sample_feeder.py
+  ansible.builtin.template:
+    src: sample_feeder.py.j2
+    dest: "{{ sample_feeder_dir }}/sample_feeder.py"
+    owner: "{{ sample_feeder_user }}"
+    group: "{{ sample_feeder_user }}"
+    mode: "0750"
+
+- name: Write sample-feeder config
+  ansible.builtin.template:
+    src: sample-feeder.conf.j2
+    dest: "{{ sample_feeder_dir }}/config.json"
+    owner: "{{ sample_feeder_user }}"
+    group: "{{ sample_feeder_user }}"
+    mode: "0600"
+  no_log: true
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ sample_feeder_dir }}/sample_feeder.py"
+    dest: /usr/local/bin/sample-feeder
+    state: link

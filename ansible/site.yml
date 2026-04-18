@@ -57,3 +57,7 @@
     # 6. SQS agent — polls SQS, submits to Cape, syncs reports to S3
     #    (absorbs the previously planned s3-sync role — see ADR-003)
     - role: sqs-agent
+
+    # 7. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    - role: sample-feeder
+      tags: [sample-feeder]

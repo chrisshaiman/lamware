@@ -436,3 +436,42 @@ there is evidence LibreOffice is the limiting factor.
   profiles with the correct snapshot names
 - Tag-based routing is already supported by the SQS job schema — no infrastructure changes
 - Additional profiles (browser, PDF reader) deferred until sample volume justifies them
+
+---
+
+## ADR-015: MalwareBazaar sample feeder (interactive CLI)
+
+**Status:** Accepted 2026-04-17
+
+**Context:** The sandbox needs real malware samples for testing, demonstration,
+and ongoing analysis. MalwareBazaar (abuse.ch) provides a free, public API with
+community-tagged samples — no membership or vetting required.
+
+**Decision:** Deploy an interactive CLI tool on the bare metal host that queries
+MalwareBazaar and submits samples to Cape's local API. The operator reviews
+matches and explicitly confirms before any sample is downloaded or submitted.
+Human in the loop for initial deployment. The tool is designed to support a
+non-interactive mode (via `--yes` flag) for future scheduled ingestion once
+the operator is comfortable with the pipeline.
+
+**Rationale:**
+- Human review in interactive mode prevents blindly ingesting samples that could
+  crash Cape, exhaust analysis slots, or behave unexpectedly during initial use
+- Running on the sandbox host avoids downloading malware to developer machines
+- Direct Cape API submission is simpler than routing through the AWS pipeline
+- State file tracks submitted hashes to surface duplicates in the preview
+- CLI with --dry-run allows safe exploration of available samples
+- MalwareBazaar is free, open, community-curated — ideal for research use
+- Automation mode (future) can be wired to a systemd timer using the same tool
+  and config — no separate daemon or pipeline needed
+
+**Deferred:** Automated scheduled ingestion via systemd timer. The tool supports
+`--auto` and `--no-confirm` flags for this use case but the timer unit is not
+deployed until the operator has validated the interactive workflow end-to-end.
+
+**Consequences:**
+- Operator must SSH into the host (via WireGuard) to run the tool in interactive mode
+- Cape API key stored in config file (mode 0600, deployed by Ansible)
+- Samples exist on disk momentarily in /tmp — cleaned up after submission
+- Automation path is available by adding a systemd timer unit pointing to the same
+  script with `--auto --tag <filter>` args — no code changes required
