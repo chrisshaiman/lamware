@@ -1,0 +1,21 @@
+---
+# roles/sample-feeder/defaults/main.yml
+# Tunable defaults — override in vars/main.yml or via --extra-vars.
+
+# MalwareBazaar API endpoint
+sample_feeder_api_url: "https://mb-api.abuse.ch/api/v1/"
+
+# Default maximum samples per query (operator can override with --limit)
+sample_feeder_default_limit: 10
+
+# Maximum sample size to download (bytes). Samples larger than this are skipped.
+sample_feeder_max_size_bytes: 268435456  # 256 MB
+
+# Run as this user (same as Cape/sqs-agent)
+sample_feeder_user: cape
+
+# Installation directory
+sample_feeder_dir: /opt/sample-feeder
+
+# State file — tracks which sha256 hashes have already been submitted
+sample_feeder_state_file: /opt/sample-feeder/seen_hashes.json
