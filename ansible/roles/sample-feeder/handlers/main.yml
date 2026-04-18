@@ -1,0 +1,4 @@
+---
+# roles/sample-feeder/handlers/main.yml
+# No services to restart — sample-feeder is a CLI tool, not a daemon.
+# Handler exists for Ansible role structure consistency.
