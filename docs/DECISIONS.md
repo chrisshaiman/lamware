@@ -86,7 +86,7 @@ written to S3 as before. Lambda never initiates connections to the bare metal ho
 
 ## ADR-004: WireGuard scope limited to admin access only
 
-**Status:** Decided
+**Status:** Revised 2026-04-18
 
 **Context:**
 WireGuard was initially scoped as the connectivity layer between AWS Lambda and the
@@ -98,10 +98,21 @@ WireGuard serves admin access only: operator laptop → bare metal host. This pr
 encrypted management access and access to Cape's web UI (bound to `wg0`). Lambda
 has no WireGuard path and does not require it.
 
+**Revision (2026-04-18) — key management:**
+WireGuard keys are no longer stored in AWS Secrets Manager. The server keypair is
+generated on the host by the Ansible wireguard role (private key never leaves the server).
+The operator's laptop public key is set in `ansible/vars/main.yml` → `wireguard_peer_pubkey`.
+After Ansible runs, the host's public key is printed for the operator to configure their
+laptop. This eliminates the `wireguard-keys` Secrets Manager secret and the associated
+Terraform resources. Rationale: storing VPN private keys in the same AWS account the VPN
+protects is a circular trust dependency.
+
 **Consequences:**
 - `roles/wireguard/` Ansible role is simpler — single peer (operator laptop)
 - No WireGuard client config needed on Lambda or in the AWS VPC
 - Cape web UI remains accessible only over WireGuard, as required by security constraints
+- Server private key never transits the network or resides in a cloud service
+- One fewer Secrets Manager secret ($0.40/month saved)
 
 ---
 

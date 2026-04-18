@@ -323,24 +323,6 @@ resource "aws_secretsmanager_secret_version" "dsdt" {
   }
 }
 
-# WireGuard keys — generated locally by operator, stored here for Ansible
-resource "aws_secretsmanager_secret" "wireguard" {
-  name        = "${var.name_prefix}/wireguard-keys"
-  description = "WireGuard keypair for admin VPN — set manually before running Ansible"
-  kms_key_id  = aws_kms_key.main.id
-}
-
-resource "aws_secretsmanager_secret_version" "wireguard" {
-  secret_id = aws_secretsmanager_secret.wireguard.id
-  secret_string = jsonencode({
-    private_key = "PLACEHOLDER — run: wg genkey | tee private.key | wg pubkey"
-    public_key  = "PLACEHOLDER"
-  })
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-}
 
 # =============================================================================
 # Modules — instantiated in dependency order

@@ -2,20 +2,15 @@
 # =============================================================================
 # roles/wireguard/tasks/main.yml
 # Configures WireGuard for admin-only management access (ADR-004).
-# Pulls private key and peer public key from AWS Secrets Manager on the
-# Ansible control node, then writes the config to the remote host.
+# Generates the server keypair on the host (private key never leaves the
+# server) and configures the operator's public key as the only peer.
 #
-# Secret format (secret_arn_wireguard):
-#   {
-#     "private_key": "<server WireGuard private key>",
-#     "peer_public_key": "<operator laptop WireGuard public key>"
-#   }
+# Operator public key is set in ansible/vars/main.yml → wireguard_peer_pubkey.
+# Generate your laptop keypair with:
+#   wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
 #
-# To generate keys for first-time setup:
-#   wg genkey | tee server_private.key | wg pubkey > server_public.key
-#   wg genkey | tee client_private.key | wg pubkey > client_public.key
-# Store server_private.key and client_public.key in secret_arn_wireguard.
-# The client config uses client_private.key and server_public.key.
+# After Ansible runs, the host's public key is printed as a debug message.
+# Copy it into your laptop's WireGuard peer config.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -27,26 +22,56 @@
     state: present
     update_cache: false
 
-# Pull keys from Secrets Manager on the control node (operator's machine)
-# so the secret never touches the Ansible controller's environment variables
-# and is not logged unless no_log is bypassed.
-- name: Fetch WireGuard keys from Secrets Manager
-  ansible.builtin.command: >
-    aws secretsmanager get-secret-value
-    --secret-id {{ secret_arn_wireguard }}
-    --query SecretString
-    --output text
-    --region {{ secrets_manager_region }}
-  delegate_to: localhost
-  register: wireguard_secret_raw
-  changed_when: false
-  failed_when: wireguard_secret_raw.rc != 0 or wireguard_secret_raw.stdout | length == 0
+# Generate host keypair if it doesn't exist. The private key never leaves
+# the server — no Secrets Manager, no control node, no transit.
+- name: Check for existing WireGuard private key
+  ansible.builtin.stat:
+    path: /etc/wireguard/private.key
+  register: wg_privkey_stat
+
+- name: Generate WireGuard keypair
+  when: not wg_privkey_stat.stat.exists
+  block:
+    - name: Generate private key
+      ansible.builtin.shell: wg genkey
+      register: wg_genkey
+      changed_when: true
+      no_log: true
+
+    - name: Write private key
+      ansible.builtin.copy:
+        content: "{{ wg_genkey.stdout }}"
+        dest: /etc/wireguard/private.key
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Derive and write public key
+      ansible.builtin.shell: cat /etc/wireguard/private.key | wg pubkey
+      register: wg_pubkey_new
+      changed_when: false
+      no_log: true
+
+    - name: Write public key
+      ansible.builtin.copy:
+        content: "{{ wg_pubkey_new.stdout }}"
+        dest: /etc/wireguard/public.key
+        owner: root
+        group: root
+        mode: "0644"
+
+# Read existing keys for use in the template
+- name: Read private key
+  ansible.builtin.slurp:
+    src: /etc/wireguard/private.key
+  register: wg_privkey_slurp
   no_log: true
 
-- name: Parse WireGuard secret JSON
-  ansible.builtin.set_fact:
-    wireguard_secret: "{{ wireguard_secret_raw.stdout | from_json }}"
-  no_log: true
+- name: Read public key
+  ansible.builtin.slurp:
+    src: /etc/wireguard/public.key
+  register: wg_pubkey_slurp
 
 - name: Write wg0.conf
   ansible.builtin.template:
@@ -54,10 +79,10 @@
     dest: /etc/wireguard/wg0.conf
     owner: root
     group: root
-    mode: "0600"  # WireGuard refuses to start if config is world-readable
+    mode: "0600"
   vars:
-    wireguard_private_key: "{{ wireguard_secret.private_key }}"
-    wireguard_peer_pubkey: "{{ wireguard_secret.peer_public_key }}"
+    wireguard_private_key: "{{ wg_privkey_slurp.content | b64decode | trim }}"
+    wireguard_peer_pubkey: "{{ wireguard_peer_pubkey }}"
   no_log: true
   notify: Restart WireGuard
 
@@ -73,3 +98,10 @@
   register: wg_status
   changed_when: false
   failed_when: wg_status.rc != 0
+
+# Print the host's public key so the operator can configure their laptop
+- name: Display host WireGuard public key
+  ansible.builtin.debug:
+    msg: >-
+      HOST PUBLIC KEY (copy to your laptop's WireGuard peer config):
+      {{ wg_pubkey_slurp.content | b64decode | trim }}
