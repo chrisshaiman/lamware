@@ -133,7 +133,7 @@ source "qemu" "windows11_office" {
   disk_image   = true
 
   # --- Output ---
-  output_directory = "${path.root}/output"
+  output_directory = "${path.root}/output-office"
   vm_name          = "windows11-office.qcow2"
   format           = "qcow2"
   disk_size        = var.disk_size
