@@ -450,9 +450,9 @@ community-tagged samples — no membership or vetting required.
 **Decision:** Deploy an interactive CLI tool on the bare metal host that queries
 MalwareBazaar and submits samples to Cape's local API. The operator reviews
 matches and explicitly confirms before any sample is downloaded or submitted.
-Interactive mode is the initial deployment target; the tool is designed to also
-support a non-interactive automation mode (via `--auto` / `--no-confirm` flags)
-for future scheduled ingestion once the operator is comfortable with the pipeline.
+Human in the loop for initial deployment. The tool is designed to support a
+non-interactive mode (via `--yes` flag) for future scheduled ingestion once
+the operator is comfortable with the pipeline.
 
 **Rationale:**
 - Human review in interactive mode prevents blindly ingesting samples that could
