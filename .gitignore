@@ -13,6 +13,7 @@ terraform.tfvars
 # Packer
 packer/output/
 packer/output-guest/
+packer/output-office/
 packer/packer_cache/
 packer/packer.auto.pkrvars.hcl
 packer/scripts/boot-helper.sh
