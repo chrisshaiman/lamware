@@ -22,6 +22,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import zipfile
@@ -147,15 +148,25 @@ def download_sample(api_url: str, sha256: str) -> bytes:
     return resp.content
 
 
-def extract_sample(zip_bytes: bytes) -> tuple[str, bytes]:
-    """Extract sample from password-protected zip. Returns (filename, content)."""
+def extract_sample(zip_bytes: bytes, max_size: int) -> tuple[str, bytes]:
+    """Extract sample from password-protected zip. Returns (sanitized filename, content).
+
+    Guards against zip slip (path traversal in filenames) and zip bombs
+    (decompressed size exceeding max_size).
+    """
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
         if not names:
             raise ValueError("Empty zip file")
-        filename = names[0]
-        content = zf.read(filename, pwd=ZIP_PASSWORD)
-    return filename, content
+        info = zf.getinfo(names[0])
+        if info.file_size > max_size:
+            raise ValueError(
+                f"Decompressed size {info.file_size} exceeds limit {max_size}"
+            )
+        content = zf.read(names[0], pwd=ZIP_PASSWORD)
+    # Sanitize filename: strip path components, restrict to safe characters
+    safe_name = re.sub(r"[^\w.\-]", "_", Path(names[0]).name) or "sample.bin"
+    return safe_name, content
 
 # ---------------------------------------------------------------------------
 # Parsing and display
@@ -321,12 +332,13 @@ def main() -> None:
     submitted = 0
     for sample in new_samples:
         sha256 = sample["sha256"]
+        tmp_path = None
         print(f"\n  [{submitted + 1}/{len(new_samples)}] {sample['filename']} ({sample['signature']})")
 
         try:
             print(f"    Downloading {sha256[:16]}...")
             zip_bytes = download_sample(api_url, sha256)
-            extracted_name, content = extract_sample(zip_bytes)
+            extracted_name, content = extract_sample(zip_bytes, cfg["max_size_bytes"])
 
             with tempfile.NamedTemporaryFile(
                 prefix="feeder_", suffix=f"_{extracted_name}", delete=False
@@ -347,7 +359,7 @@ def main() -> None:
             print(f"    FAILED: {exc}", file=sys.stderr)
 
         finally:
-            if "tmp_path" in locals() and tmp_path.exists():
+            if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
 
     save_seen_hashes(seen, state_file)
