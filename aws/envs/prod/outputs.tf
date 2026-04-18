@@ -28,11 +28,6 @@ output "dsdt_secret_arn" {
   description = "Secrets Manager ARN for DSDT values — populate manually before running Ansible"
 }
 
-output "wireguard_secret_arn" {
-  value       = aws_secretsmanager_secret.wireguard.arn
-  description = "Secrets Manager ARN for WireGuard keys — populate manually before running Ansible"
-}
-
 output "cape_api_secret_arn" {
   value       = aws_secretsmanager_secret.cape_api_key.arn
   description = "Secrets Manager ARN for Cape API key — populate after Cape is deployed"

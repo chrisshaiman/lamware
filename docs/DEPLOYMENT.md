@@ -248,7 +248,6 @@ Record these values — you'll need them in Phase 4 and Phase 7:
 | Output | Where used |
 |--------|-----------|
 | `baremetal_agent_secret_arn` | `ansible/vars/main.yml` → `secret_arn_baremetal` |
-| `wireguard_secret_arn` | `ansible/vars/main.yml` → `secret_arn_wireguard` |
 | `cape_api_secret_arn` | `ansible/vars/main.yml` → `secret_arn_cape` |
 | `dsdt_secret_arn` | Reference only — updated in Phase 6 |
 | `api_endpoint` | Note for sample submission clients |
@@ -262,36 +261,20 @@ You must populate them with real values before Ansible can run.
 
 ### 4a. WireGuard keys
 
-Generate the server keypair:
+Generate your laptop's WireGuard keypair:
 
 ```bash
-wg genkey | tee ~/.ssh/wg_server.key | wg pubkey > ~/.ssh/wg_server.pub
-chmod 600 ~/.ssh/wg_server.key
-
-# Generate the client keypair (for your laptop's WireGuard config)
-wg genkey | tee ~/.ssh/wg_client.key | wg pubkey > ~/.ssh/wg_client.pub
-chmod 600 ~/.ssh/wg_client.key
-
-cat ~/.ssh/wg_server.key   # server private key — goes into the secret
-cat ~/.ssh/wg_server.pub   # server public key  — goes into the secret
-cat ~/.ssh/wg_client.pub   # client public key  — goes into the secret
+wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
+chmod 600 ~/wg-private.key
 ```
 
-Update the WireGuard secret (use the `wireguard_secret_arn` output from Phase 3):
+Paste the contents of `~/wg-public.key` into `ansible/vars/main.yml` → `wireguard_peer_pubkey`.
 
-```bash
-aws secretsmanager put-secret-value \
-  --secret-id "<wireguard_secret_arn>" \
-  --secret-string "{
-    \"private_key\": \"$(cat ~/.ssh/wg_server.key)\",
-    \"public_key\":  \"$(cat ~/.ssh/wg_server.pub)\",
-    \"peer_pubkey\": \"$(cat ~/.ssh/wg_client.pub)\"
-  }"
-```
+The server keypair is generated automatically on the host by the Ansible wireguard role.
+The server's private key never leaves the host. After Ansible runs, the host's public key
+is printed as a debug message — copy it into your laptop's WireGuard config.
 
-Save the client keys securely — you'll need them to configure WireGuard on your laptop
-after Phase 7. The server public key and the server's WireGuard IP (`10.200.0.1`) will
-go into the client config.
+Back up `~/wg-private.key` to your password manager (e.g., LastPass Secure Note).
 
 ### 4b. Cape API key
 
@@ -322,9 +305,9 @@ Fill in the three ARNs you recorded in Phase 3:
 
 ```yaml
 # ansible/vars/main.yml
-secret_arn_baremetal: "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
-secret_arn_wireguard: "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
+secret_arn_baremetal:  "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
 secret_arn_cape:      "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
+wireguard_peer_pubkey: "<contents of ~/wg-public.key>"
 ```
 
 Also fill in the S3 bucket names:
@@ -500,11 +483,11 @@ Create your local WireGuard config using the keys from Phase 4a:
 ```ini
 # /etc/wireguard/wg-sandbox.conf  (or use WireGuard app on macOS/Windows)
 [Interface]
-PrivateKey = <contents of ~/.ssh/wg_client.key>
+PrivateKey = <contents of ~/wg-private.key>
 Address    = 10.200.0.2/32
 
 [Peer]
-PublicKey  = <contents of ~/.ssh/wg_server.pub>
+PublicKey  = <host public key printed by Ansible>
 Endpoint   = <server-ip>:51820
 AllowedIPs = 10.200.0.1/32
 ```
