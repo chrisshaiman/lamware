@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
+.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -25,13 +25,13 @@ ANSIBLE_DIR     := ansible
 OVH_DIR         := ovh
 AWS_DIR         := aws/envs/$(AWS_ENV)
 
-# OVMF firmware vars template — must match ovmf_vars default in windows11-guest.pkr.hcl.
+# OVMF firmware vars template — must match ovmf_vars default in windows11-base.pkr.hcl.
 # Empty VARS (not .ms.fd): no pre-built PXE/HTTP boot entries, OVMF drops to
 # UEFI shell so boot_command can type the ISO path. Override in .env if needed.
 OVMF_VARS_TEMPLATE ?= /usr/share/OVMF/OVMF_VARS_4M.fd
 # Path for the writable OVMF VARS file — must be OUTSIDE the packer output directory.
 # packer -force deletes the output directory before QEMU starts; keeping efivars.fd
-# here ensures it survives that cleanup. Must match efivars_path in windows11-guest.pkr.hcl.
+# here ensures it survives that cleanup. Must match efivars_path in windows11-base.pkr.hcl.
 EFIVARS_PATH       ?= /tmp/packer-win11-efivars.fd
 
 # Load .env if it exists (local secrets, not committed)
@@ -50,7 +50,10 @@ help:
 	@echo "  make configure-backend    Populate shared/backend-aws.hcl from bootstrap outputs"
 	@echo "  make lambda               Zip Lambda handler source into src/*.zip"
 	@echo "  make autounattend-floppy  Create autounattend floppy image for Windows 11 builds (run once per XML change)"
-	@echo "  make win11-image          Build Windows 11 guest image (runs autounattend-floppy first)"
+	@echo "  make win11-base           Build Windows 11 base image (WinRM enabled, no cleanup)"
+	@echo "  make win11-guest          Build clean guest from base (cleanup only)"
+	@echo "  make win11-office         Build office guest from base (LibreOffice + cleanup)"
+	@echo "  make win11-image          Build all Win11 images (base + guest + office)"
 	@echo "  make image                Build Ubuntu sandbox base image"
 	@echo "  make infra-ovh            Provision OVH bare metal"
 	@echo "  make infra-aws            Provision AWS supporting infra (run make lambda first)"
@@ -63,7 +66,7 @@ help:
 	@echo "    1. cd aws/bootstrap && terraform init && terraform apply"
 	@echo "    2. make configure-backend"
 	@echo "    3. make lambda && make infra-aws"
-	@echo "    4. make autounattend-floppy && make win11-image && make infra-ovh && make configure"
+	@echo "    4. make win11-image && make infra-ovh && make configure"
 	@echo ""
 	@echo "  AWS_ENV=prod              AWS environment (prod | staging)"
 	@echo ""
@@ -152,18 +155,13 @@ autounattend-floppy:
 	@echo "==> $(AUTOUNATTEND_IMG) ready."
 
 # -----------------------------------------------------------------------------
-# win11-image — build Windows 11 guest image
-# Runs autounattend-floppy first to ensure the floppy is current.
-# Build is fully unattended — WinPE finds A:\autounattend.xml automatically.
+# win11-base — build Windows 11 base builder image (WinRM enabled, no cleanup)
+# This is the foundation for win11-guest and win11-office.
 # Expect 45-90 minutes. Run inside tmux/screen.
-#
-# Boot flow: OVMF boots CDROM (bootindex=0) → Packer boot_command sends Enter
-# for "Press any key" → WinPE boots, finds autounattend.xml on A: → unattended
-# install → WinRM up. Subsequent reboots: CDROM times out → HDD (bootindex=1).
 # -----------------------------------------------------------------------------
 
-win11-image: autounattend-floppy
-	@echo "==> Building Windows 11 guest image..."
+win11-base: autounattend-floppy
+	@echo "==> Building Windows 11 base image..."
 	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
 		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
 	@[ -f $(OVMF_VARS_TEMPLATE) ] || \
@@ -171,9 +169,38 @@ win11-image: autounattend-floppy
 	@echo "==> Copying fresh OVMF VARS to $(EFIVARS_PATH) (clears stale NVRAM boot entries)..."
 	@cp $(OVMF_VARS_TEMPLATE) $(EFIVARS_PATH)
 	@cd $(PACKER_DIR) && \
+		packer init windows11-base.pkr.hcl && \
+		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-base.pkr.hcl
+	@echo "==> Windows 11 base image complete. Now run: make win11-guest and/or make win11-office"
+
+# win11-guest — production "clean" image (runs cleanup on base)
+# Expect ~5 minutes.
+# -----------------------------------------------------------------------------
+
+win11-guest:
+	@echo "==> Building Windows 11 guest (clean) image from base..."
+	@cd $(PACKER_DIR) && \
 		packer init windows11-guest.pkr.hcl && \
-		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
-	@echo "==> Windows 11 guest image complete. Output: check output_directory in packer.auto.pkrvars.hcl"
+		packer build -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
+	@echo "==> Windows 11 guest image complete."
+
+# win11-office — production "office" image (LibreOffice + cleanup on base)
+# Expect ~15 minutes.
+# -----------------------------------------------------------------------------
+
+win11-office:
+	@echo "==> Building Windows 11 office image from base..."
+	@cd $(PACKER_DIR) && \
+		packer init windows11-office.pkr.hcl && \
+		packer build -var-file=packer.auto.pkrvars.hcl windows11-office.pkr.hcl
+	@echo "==> Windows 11 office image complete."
+
+# win11-image — build all Windows 11 images (base → guest + office)
+# Convenience target. Run inside tmux/screen.
+# -----------------------------------------------------------------------------
+
+win11-image: win11-base win11-guest win11-office
+	@echo "==> All Windows 11 images complete."
 
 # -----------------------------------------------------------------------------
 # Packer — build hardened base image
