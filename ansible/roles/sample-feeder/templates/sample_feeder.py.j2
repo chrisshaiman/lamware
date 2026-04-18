@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+sample_feeder.py — MalwareBazaar sample ingestion CLI for the malware sandbox.
+
+Interactive tool for querying MalwareBazaar, reviewing matches, and submitting
+approved samples to Cape's local REST API. Human in the loop for every submission.
+
+Usage:
+    sample-feeder --family AgentTesla --limit 3
+    sample-feeder --tag stealer --file-type exe
+    sample-feeder --sha256 abc123...
+    sample-feeder --recent 24 --limit 5
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import argparse
+import io
+import json
+import logging
+import os
+import sys
+import tempfile
+import zipfile
+from pathlib import Path
+
+import requests
+
+# ---------------------------------------------------------------------------
+# Configuration — loaded from config file, overridable by env vars
+# ---------------------------------------------------------------------------
+
+CONFIG_FILE = os.environ.get("SAMPLE_FEEDER_CONFIG", "{{ sample_feeder_dir }}/config.json")
+
+def load_config() -> dict:
+    """Load configuration from the config file."""
+    defaults = {
+        "bazaar_api_url": "{{ sample_feeder_api_url }}",
+        "cape_api_url": "http://127.0.0.1:8000/apiv2",
+        "cape_api_key": "",
+        "max_size_bytes": {{ sample_feeder_max_size_bytes }},
+        "default_limit": {{ sample_feeder_default_limit }},
+        "state_file": "{{ sample_feeder_state_file }}",
+    }
+    if Path(CONFIG_FILE).exists():
+        with open(CONFIG_FILE) as f:
+            defaults.update(json.load(f))
+    return defaults
+
+ZIP_PASSWORD = b"infected"  # MalwareBazaar standard zip password
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("sample-feeder")
+
+# ---------------------------------------------------------------------------
+# State management
+# ---------------------------------------------------------------------------
+
+def load_seen_hashes(state_file: str) -> set:
+    """Load previously submitted SHA256 hashes from the state file."""
+    if not Path(state_file).exists():
+        return set()
+    with open(state_file) as f:
+        return set(json.load(f))
+
+
+def save_seen_hashes(hashes: set, state_file: str) -> None:
+    """Persist submitted hashes. Keep only the most recent 10000."""
+    trimmed = sorted(hashes)[-10000:]
+    with open(state_file, "w") as f:
+        json.dump(trimmed, f)
+
+# ---------------------------------------------------------------------------
+# MalwareBazaar API
+# ---------------------------------------------------------------------------
+
+def query_by_family(api_url: str, family: str, limit: int) -> list[dict]:
+    """Query MalwareBazaar for samples by malware family/signature."""
+    resp = requests.post(api_url, data={
+        "query": "get_siginfo", "signature": family, "limit": limit,
+    }, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("query_status") != "ok":
+        return []
+    return result.get("data", [])
+
+
+def query_by_tag(api_url: str, tag: str, limit: int) -> list[dict]:
+    """Query MalwareBazaar for samples by tag."""
+    resp = requests.post(api_url, data={
+        "query": "get_taginfo", "tag": tag, "limit": limit,
+    }, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("query_status") != "ok":
+        return []
+    return result.get("data", [])
+
+
+def query_recent(api_url: str, hours: int) -> list[dict]:
+    """Query MalwareBazaar for samples seen in the last N hours."""
+    resp = requests.post(api_url, data={
+        "query": "get_recent", "selector": hours,
+    }, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("query_status") != "ok":
+        return []
+    return result.get("data", [])
+
+
+def query_by_hash(api_url: str, sha256: str) -> list[dict]:
+    """Query MalwareBazaar for a specific sample by SHA256."""
+    resp = requests.post(api_url, data={
+        "query": "get_info", "hash": sha256,
+    }, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("query_status") != "ok":
+        return []
+    data = result.get("data")
+    if isinstance(data, dict):
+        return [data]
+    return data or []
+
+
+def download_sample(api_url: str, sha256: str) -> bytes:
+    """Download a sample zip from MalwareBazaar."""
+    resp = requests.post(api_url, data={
+        "query": "get_file", "sha256_hash": sha256,
+    }, timeout=60)
+    resp.raise_for_status()
+    if resp.headers.get("Content-Type", "").startswith("application/json"):
+        raise ValueError(f"Download error: {resp.json()}")
+    return resp.content
+
+
+def extract_sample(zip_bytes: bytes) -> tuple[str, bytes]:
+    """Extract sample from password-protected zip. Returns (filename, content)."""
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        names = zf.namelist()
+        if not names:
+            raise ValueError("Empty zip file")
+        filename = names[0]
+        content = zf.read(filename, pwd=ZIP_PASSWORD)
+    return filename, content
+
+# ---------------------------------------------------------------------------
+# Parsing and display
+# ---------------------------------------------------------------------------
+
+def parse_entry(entry: dict) -> dict:
+    """Extract fields from a MalwareBazaar API response entry."""
+    sha256 = entry.get("sha256_hash", "")
+    if not sha256 or len(sha256) != 64:
+        raise ValueError(f"Invalid sha256: {sha256!r}")
+    return {
+        "sha256": sha256.lower(),
+        "filename": entry.get("file_name", "unknown"),
+        "file_type": entry.get("file_type", "unknown"),
+        "file_size": entry.get("file_size", 0),
+        "signature": entry.get("signature") or "unknown",
+        "tags": [t for t in (entry.get("tags") or []) if isinstance(t, str)],
+        "first_seen": entry.get("first_seen", ""),
+    }
+
+
+def print_preview(samples: list[dict], seen: set) -> None:
+    """Print a table of samples for operator review."""
+    print(f"\n{'#':<4} {'SHA256':<20} {'Filename':<30} {'Family':<20} {'Size':>10} {'Tags':<20} {'Status'}")
+    print("-" * 130)
+    for i, s in enumerate(samples, 1):
+        tags = ",".join(s["tags"][:3]) or "-"
+        size = f"{s['file_size'] / 1024:.1f} KB"
+        status = "SKIP (already submitted)" if s["sha256"] in seen else "NEW"
+        print(f"{i:<4} {s['sha256'][:16]}...  {s['filename']:<30s} {s['signature']:<20s} {size:>10s} {tags:<20s} {status}")
+    print()
+
+# ---------------------------------------------------------------------------
+# Cape submission
+# ---------------------------------------------------------------------------
+
+def submit_to_cape(cape_api_url: str, cape_api_key: str, sample_path: Path,
+                   filename: str, tags: list[str]) -> int:
+    """Submit a sample to Cape's local API. Returns the Cape task ID."""
+    url = f"{cape_api_url}/tasks/create/file/"
+    headers = {"Authorization": f"Bearer {cape_api_key}"} if cape_api_key else {}
+    with sample_path.open("rb") as fh:
+        resp = requests.post(
+            url,
+            files={"file": (filename, fh)},
+            data={"tags": ",".join(tags)},
+            headers=headers,
+            timeout=30,
+        )
+    resp.raise_for_status()
+    return resp.json()["data"]["task_ids"][0]
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="sample-feeder",
+        description="Query MalwareBazaar for malware samples and submit to Cape for analysis.",
+    )
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--family", help="Query by malware family (e.g., AgentTesla, QakBot)")
+    source.add_argument("--tag", help="Query by MalwareBazaar tag (e.g., stealer, exe, Emotet)")
+    source.add_argument("--sha256", help="Fetch a specific sample by SHA256 hash")
+    source.add_argument("--recent", type=int, metavar="HOURS",
+                        help="Query samples seen in the last N hours")
+
+    p.add_argument("--limit", type=int, default=None,
+                   help="Maximum samples to show (default: from config)")
+    p.add_argument("--file-type", dest="file_type",
+                   help="Filter by file type (exe, dll, doc, etc.)")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Skip confirmation prompt (use with caution)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Query and preview only — do not download or submit")
+    return p
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    cfg = load_config()
+
+    limit = args.limit or cfg["default_limit"]
+    api_url = cfg["bazaar_api_url"]
+    state_file = cfg["state_file"]
+    seen = load_seen_hashes(state_file)
+
+    # Verify Cape is reachable (unless dry-run)
+    if not args.dry_run:
+        if not cfg["cape_api_key"]:
+            print("ERROR: cape_api_key not set in config. Run Ansible to deploy config.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            resp = requests.get(
+                f"{cfg['cape_api_url']}/cuckoo/status/",
+                headers={"Authorization": f"Bearer {cfg['cape_api_key']}"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"ERROR: Cape API unreachable: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Query MalwareBazaar
+    print("Querying MalwareBazaar...")
+    if args.family:
+        entries = query_by_family(api_url, args.family, limit * 3)
+    elif args.tag:
+        entries = query_by_tag(api_url, args.tag, limit * 3)
+    elif args.sha256:
+        entries = query_by_hash(api_url, args.sha256)
+    elif args.recent:
+        entries = query_recent(api_url, args.recent)
+    else:
+        entries = []
+
+    if not entries:
+        print("No samples found.")
+        return
+
+    # Parse and filter
+    samples = []
+    for entry in entries:
+        try:
+            parsed = parse_entry(entry)
+        except ValueError:
+            continue
+        if args.file_type and parsed["file_type"] != args.file_type:
+            continue
+        if parsed["file_size"] > cfg["max_size_bytes"]:
+            continue
+        samples.append(parsed)
+        if len(samples) >= limit:
+            break
+
+    if not samples:
+        print("No samples matched your filters.")
+        return
+
+    # Preview
+    new_samples = [s for s in samples if s["sha256"] not in seen]
+    print_preview(samples, seen)
+    print(f"  {len(samples)} total, {len(new_samples)} new, {len(samples) - len(new_samples)} already submitted")
+
+    if not new_samples:
+        print("\nNo new samples to submit.")
+        return
+
+    if args.dry_run:
+        print("\n--dry-run: skipping download and submission.")
+        return
+
+    # Confirm
+    if not args.yes:
+        answer = input(f"\nSubmit {len(new_samples)} new sample(s) to Cape? [y/N] ").strip().lower()
+        if answer != "y":
+            print("Aborted.")
+            return
+
+    # Download and submit
+    submitted = 0
+    for sample in new_samples:
+        sha256 = sample["sha256"]
+        print(f"\n  [{submitted + 1}/{len(new_samples)}] {sample['filename']} ({sample['signature']})")
+
+        try:
+            print(f"    Downloading {sha256[:16]}...")
+            zip_bytes = download_sample(api_url, sha256)
+            extracted_name, content = extract_sample(zip_bytes)
+
+            with tempfile.NamedTemporaryFile(
+                prefix="feeder_", suffix=f"_{extracted_name}", delete=False
+            ) as tmp:
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+
+            print(f"    Submitting to Cape...")
+            cape_task_id = submit_to_cape(
+                cfg["cape_api_url"], cfg["cape_api_key"],
+                tmp_path, extracted_name, sample["tags"],
+            )
+            print(f"    Submitted: Cape task {cape_task_id}")
+            seen.add(sha256)
+            submitted += 1
+
+        except Exception as exc:
+            print(f"    FAILED: {exc}", file=sys.stderr)
+
+        finally:
+            if "tmp_path" in locals() and tmp_path.exists():
+                tmp_path.unlink()
+
+    save_seen_hashes(seen, state_file)
+    print(f"\nDone: {submitted}/{len(new_samples)} samples submitted to Cape.")
+
+
+if __name__ == "__main__":
+    main()
