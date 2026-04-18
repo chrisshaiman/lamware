@@ -23,15 +23,15 @@
           - s3_bucket_samples | length > 0
           - s3_bucket_reports | length > 0
           - secret_arn_baremetal | length > 0
-          - secret_arn_wireguard | length > 0
           - secret_arn_cape | length > 0
+          - wireguard_peer_pubkey | length > 0
         fail_msg: |
           One or more required variables are empty. Populate ansible/vars/main.yml:
-            s3_bucket_samples  — terraform -chdir=aws/envs/prod output -raw samples_bucket_name
-            s3_bucket_reports  — terraform -chdir=aws/envs/prod output -raw reports_bucket_name
-            secret_arn_baremetal — terraform -chdir=aws/envs/prod output -raw baremetal_agent_secret_arn
-            secret_arn_wireguard — ARN of the WireGuard keys secret in Secrets Manager
+            s3_bucket_samples    — terraform -chdir=aws/envs/prod output -raw samples_bucket_name
+            s3_bucket_reports    — terraform -chdir=aws/envs/prod output -raw reports_bucket_name
+            secret_arn_baremetal  — terraform -chdir=aws/envs/prod output -raw baremetal_agent_secret_arn
             secret_arn_cape      — ARN of the Cape API key secret in Secrets Manager
+            wireguard_peer_pubkey — your laptop's WireGuard public key (wg pubkey < ~/wg-private.key)
 
   roles:
     # 1. OS hardening — CIS-aligned baseline (konstruktoid)
