@@ -31,8 +31,10 @@ management_interface: eth0
 wireguard_interface: wg0
 wireguard_address: 10.200.0.1/24
 wireguard_port: 51820
-# wireguard_private_key: pulled from Secrets Manager
-# wireguard_peer_pubkey: pulled from Secrets Manager
+# Operator laptop's WireGuard public key — generate with:
+#   wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
+# Host keypair is generated on the server by Ansible (never leaves the host).
+wireguard_peer_pubkey: ""
 
 # -----------------------------------------------------------------------------
 # Cape
@@ -72,7 +74,6 @@ wireguard_peer_address: 10.200.0.2/32
 # -----------------------------------------------------------------------------
 secrets_manager_region: us-east-1
 secret_arn_baremetal: ""      # fill from: terraform output -raw baremetal_agent_secret_arn
-secret_arn_wireguard: ""      # fill after manually creating WireGuard keys secret in AWS
 secret_arn_cape: ""           # fill after manually creating Cape API key secret in AWS
 
 # -----------------------------------------------------------------------------

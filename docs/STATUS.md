@@ -47,7 +47,7 @@ malware-sandbox-infra/
 │       ├── inetsim/               ✓ complete (install, bind to virbr-det, DNS/HTTP/HTTPS/SMTP/FTP, systemd ordering)
 │       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services,
 │       │                                      routing.conf, guest-domain.xml, kvm.conf stanzas)
-│       ├── wireguard/             ✓ complete (server config from Secrets Manager, wg-quick)
+│       ├── wireguard/             ✓ complete (keypair generated on host, peer pubkey from vars, wg-quick)
 │       └── sqs-agent/             ✓ complete (systemd service: SQS poll → Cape → S3 report upload)
 │
 ├── ovh/
@@ -126,14 +126,13 @@ Code is complete. Nothing has been deployed yet. Work through these in order.
       - `baremetal_agent_secret_arn` → `ansible/vars/main.yml`
       - API Gateway invoke URL → note for client use
 
-- [ ] **WireGuard keys** — generate server + client keypair, create AWS secret.
+- [ ] **WireGuard keys** — generate your laptop keypair.
       ```
-      wg genkey | tee server.key | wg pubkey > server.pub
-      wg genkey | tee client.key | wg pubkey > client.pub
+      wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
       ```
-      Store `{ "private_key": "<server.key>", "peer_pubkey": "<client.pub>" }` in a new
-      Secrets Manager secret; record the ARN in `ansible/vars/main.yml` → `secret_arn_wireguard`.
-      Generate client WireGuard config from `client.key` + `server.pub` + server WireGuard IP.
+      Paste the contents of `~/wg-public.key` into `ansible/vars/main.yml` → `wireguard_peer_pubkey`.
+      The server keypair is generated on the host automatically by the Ansible wireguard role.
+      After Ansible runs, the host's public key is printed — copy it into your laptop's WireGuard config.
 
 - [ ] **Cape API key** — generate a random key, create AWS secret.
       ```
@@ -145,7 +144,7 @@ Code is complete. Nothing has been deployed yet. Work through these in order.
 
 - [ ] **`ansible/vars/main.yml`** — fill in all ARNs and bucket names from Terraform outputs.
       Fields: `s3_bucket_samples`, `s3_bucket_reports`, `secret_arn_baremetal`,
-      `secret_arn_wireguard`, `secret_arn_cape`.
+      `secret_arn_cape`, `wireguard_peer_pubkey`.
 
 - [ ] **OVH bare metal provisioning** — provision server, apply firewall, install Ubuntu 24.04.
       ```
@@ -213,10 +212,11 @@ The README should link to it.
         `baremetal_agent_secret_arn`, `api_invoke_url` → fill into `ansible/vars/main.yml`
 
 - [x] **Phase 3 — Secrets setup**
-      Two secrets must be created manually (outside Terraform) because they contain
-      information only available after provisioning or key generation.
-      - **WireGuard**: generate server + client keypair; create Secrets Manager secret;
-        record ARN → `ansible/vars/main.yml` → `secret_arn_wireguard`
+      One secret must be created manually (outside Terraform) because it contains
+      information only available after provisioning.
+      - **WireGuard**: generate laptop keypair locally; paste public key into
+        `ansible/vars/main.yml` → `wireguard_peer_pubkey`. Server keypair generated
+        on the host by Ansible (private key never leaves the server).
       - **Cape API key + DSDT**: generate API key now (random hex); DSDT captured later
         in Phase 5 after bare metal OS install; create the secret once both values exist;
         record ARN → `ansible/vars/main.yml` → `secret_arn_cape`
@@ -377,7 +377,7 @@ Issues identified during deep review of Packer guest builds, Ansible roles, and 
 - `ansible/roles/hardening/` — wraps konstruktoid.hardening with production settings (key-only SSH)
 - `ansible/roles/kvm/` — libvirt enabled, hugepages configured, cape user groups, default network disabled
 - `ansible/roles/networking/` — virbr-det libvirt isolated network, iptables air-gap DROP rules, netfilter-persistent
-- `ansible/roles/wireguard/` — wg0 server config from Secrets Manager, wg-quick@wg0 service
+- `ansible/roles/wireguard/` — generates host keypair, configures peer from vars, wg-quick@wg0 service
 - `ansible/roles/cape/` — DSDT patch via kvm-qemu.sh, cape2.sh, cape.conf/api.conf/kvm.conf, systemd services
 - `ansible/roles/sqs-agent/` — systemd service polling SQS, submitting to Cape, uploading reports to S3
 

@@ -149,7 +149,7 @@ this is the primary reason bare metal is required.
 | Detonation network | Isolated KVM bridge (`virbr-det`) | Air-gapped, no NAT, iptables DROP to `eth0` |
 | Network simulation | FakeNet-NG | Logs C2 callbacks without real outbound traffic |
 | Remote state | S3 + DynamoDB | Standard AWS Terraform backend pattern |
-| Secrets | AWS Secrets Manager | DSDT values, Cape API key, DB password, WireGuard keys |
+| Secrets | AWS Secrets Manager | DSDT values, Cape API key, DB password |
 | Sample storage | S3 with object lock | Integrity guarantee, GOVERNANCE mode 90-day retention |
 | Lambda→Cape connectivity | SQS async job queue | Bare metal polls SQS; no EC2 WireGuard gateway; bare metal initiates all outbound |
 | WireGuard scope | Admin access only | Operator laptop → host management; Lambda has no WireGuard path |
