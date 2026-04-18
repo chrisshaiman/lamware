@@ -1,0 +1,75 @@
+# packer.auto.pkrvars.hcl — Packer variable overrides
+# Copy to packer.auto.pkrvars.hcl and fill in values before building.
+# The .hcl file is gitignored — contains local paths and credentials.
+
+# =============================================================================
+# Paths — use WSL-native paths to avoid NTFS locking issues
+# =============================================================================
+
+# Windows 11 guest output directory
+output_directory = "/home/<user>/packer-output"
+
+# Ubuntu sandbox host output directory
+ubuntu_output_directory = "/home/<user>/packer-output-ubuntu"
+
+# Autounattend floppy — create with: make autounattend-floppy
+autounattend_img_path = "/mnt/c/<path-to-repo>/packer/output/autounattend.img"
+
+# =============================================================================
+# Windows 11 Enterprise Evaluation ISO
+# Download from: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
+# =============================================================================
+
+win11_iso_path     = "/home/<user>/win11.iso"
+win11_iso_checksum = "sha256:<sha256-of-iso>"
+
+# =============================================================================
+# Build credentials
+# winrm_password: must match AdministratorPassword in win11-autounattend.xml
+# guest_password: password for the anti-evasion local user (jsmith)
+# ssh_password:   must match hashed password in packer/http/user-data
+# =============================================================================
+
+winrm_password = "<your-build-password>"
+guest_password = "<your-guest-password>"
+ssh_password   = "<your-ssh-password>"
+
+# =============================================================================
+# Python 3.12.x x86 — Cape agent requires 32-bit Python for capemon DLL injection.
+# cgi module (needed by agent.py) was removed in 3.13, so stay on 3.12.x.
+# Download from: https://www.python.org/downloads/
+# Checksum: SHA256 of the x86 installer (python-<version>.exe, NOT amd64)
+# =============================================================================
+
+python_version  = "3.12.10"
+python_checksum = "<sha256-of-x86-installer>"
+
+# =============================================================================
+# CAPEv2 agent.py — pinned commit
+# https://github.com/kevoreilly/CAPEv2/tree/master/agent
+# =============================================================================
+
+cape_agent_commit = "<commit-hash>"
+cape_agent_sha256 = "<sha256-of-agent.py-at-that-commit>"
+
+# =============================================================================
+# LibreOffice — Windows x86-64 MSI
+# Download from: https://www.libreoffice.org/download/download-libreoffice/
+# =============================================================================
+
+libreoffice_version  = "26.2.2"
+libreoffice_checksum = "<sha256-of-msi>"
+
+# =============================================================================
+# Windows 11 office image — set after windows11-guest.pkr.hcl build completes
+# Run: sha256sum <output_directory>/windows11-guest.qcow2
+# =============================================================================
+
+# win11_base_image_path     = "/home/<user>/packer-output/windows11-guest.qcow2"
+# win11_base_image_checksum = "sha256:<sha256-of-guest-qcow2>"
+
+# =============================================================================
+# Build display — set false to see QEMU window for debugging
+# =============================================================================
+
+# headless = false
