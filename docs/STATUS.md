@@ -939,13 +939,29 @@ in the next round of implementation work.
 - RDS backup/restore runbook
 - VPC Flow Log alerting — low value given tight SGs; CloudTrail is higher signal for this threat model
 - Reports bucket expiration rule (~2 years) — cost hygiene; object lock not warranted (reports are re-generatable)
-- Static analysis agent (Ghidra headless / Binary Ninja API)
-- Memory forensics agent (Volatility 3 post-detonation)
+- Analysis pipeline enrichment (spec approved: `docs/superpowers/specs/2026-04-19-analysis-pipeline-enrichment-design.md`)
+  - Stage 1: Triage — YARA (community + custom rules), ssdeep, FLOSS, file type, smart routing
+  - Stage 2: Dynamic — Cape (exists), always with memory=1
+  - Stage 3: Memory forensics — Volatility 3 (spec: `2026-04-19-volatility3-integration-design.md`)
+  - Stage 4: Static deep-dive — Ghidra headless on unpacked payloads from Cape
+  - New Ansible roles: `triage`, `volatility`, `ghidra`
+  - sqs-agent orchestrates all stages, merges results into single report JSON
+  - Input sources: SQS (API Gateway) and sample-feeder CLI (MalwareBazaar)
+- Custom Volatility plugins — stock plugins only for v1; custom plugins when analysis patterns emerge
+- Custom Ghidra scripts — stock analysis only for v1; config extractors, protocol parsers later
+- Cross-stage orchestration — Volatility shellcode extract → Ghidra disassembly, YARA family match → custom Ghidra config extractor; requires decision engine ("agent orchestration layer")
+- Memory dump / Ghidra project archival to S3 — not v1; all artifacts re-generable from preserved samples
+- Real-time analysis during detonation — VMI/Drakvuf or live Volatility snapshots; high effort, revisit if malware self-cleanup is observed
+- MITRE ATT&CK mapping of analysis findings
+- Automated YARA rule updates — manual or cron for v1
+- Web UI for browsing enriched analysis results — use Cape UI + S3 reports for v1
+- Report processor parsing of Volatility/Ghidra output into RDS — defer until real output is available
 - Agent orchestration layer (Step Functions or separate service)
-- Windows guest Packer image (Cape detonation VM) — starting with Windows 10 22H2; evaluate adding Windows 11 once Win10 lab is stable and producing real sample volume
+- Windows 10 guest Packer image — on hold pending ISO sourcing (Win10 eval ISO removed by Microsoft); Win11 images built and deployed
 - Windows guest image rotation runbook — evaluation ISO expires every 90 days; document the rebuild-and-redeploy procedure (Packer rebuild → replace libvirt base image → restore clean snapshot) before first guest is deployed
 - Cape injected agent (capemon DLL) — currently using cape-agent.py; evaluate capemon injection once evasion is observed in practice (see ADR-010)
 - Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
+- Molecule tests for Ansible roles — container-based role testing for CI validation
 - Alternative bare metal provider module (Vultr/Latitude.sh) if OVH proves unworkable

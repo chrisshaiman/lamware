@@ -6,9 +6,10 @@
 
 roles:
   - name: konstruktoid.hardening
-    version: ">=2.9.0"
+    src: https://github.com/konstruktoid/ansible-role-hardening
+    version: v4.4.1
 
 collections:
   # ini_file module (used by cape role for conf edits)
   - name: community.general
-    version: ">=8.0.0"
+    version: "12.5.0"

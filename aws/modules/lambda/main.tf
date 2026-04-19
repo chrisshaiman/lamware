@@ -78,7 +78,7 @@ resource "aws_iam_role_policy" "lambda_s3" {
       },
       {
         # Scope to the two secrets Lambda actually needs — db credentials and Cape
-        # API key. Wildcard would also expose WireGuard keys and DSDT values.
+        # API key. Wildcard would also expose other project secrets.
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [var.db_secret_arn, var.cape_api_secret_arn]

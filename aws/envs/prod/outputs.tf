@@ -23,11 +23,6 @@ output "baremetal_agent_secret_arn" {
   description = "Secrets Manager ARN for bare metal agent credentials — pass to Ansible as extra var"
 }
 
-output "dsdt_secret_arn" {
-  value       = aws_secretsmanager_secret.dsdt.arn
-  description = "Secrets Manager ARN for DSDT values — populate manually before running Ansible"
-}
-
 output "cape_api_secret_arn" {
   value       = aws_secretsmanager_secret.cape_api_key.arn
   description = "Secrets Manager ARN for Cape API key — populate after Cape is deployed"
