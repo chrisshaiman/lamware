@@ -130,6 +130,7 @@
   block:
     - name: Temporarily allow exec on /tmp (needed for QEMU/libvirt build)
       ansible.builtin.command: mount -o remount,exec /tmp
+      changed_when: true
 
     - name: Run kvm-qemu.sh (builds patched QEMU — may take 30-60 min)
       ansible.builtin.shell: |
@@ -139,9 +140,11 @@
         touch /opt/.cape-kvm-qemu-installed
       args:
         executable: /bin/bash
+      changed_when: true
   always:
     - name: Restore noexec on /tmp
       ansible.builtin.command: mount -o remount,noexec /tmp
+      changed_when: true
 
 # -------------------------------------------------------------------------
 # Restore libvirt packages — kvm-qemu.sh and cape2.sh remove/replace system
@@ -226,6 +229,7 @@
   args:
     executable: /bin/bash
   when: not cape_service_file.stat.exists
+  changed_when: true
 
 - name: Install Cape Python dependencies as cape user
   ansible.builtin.shell: |

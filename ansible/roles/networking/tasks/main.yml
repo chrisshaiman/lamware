@@ -240,7 +240,7 @@
 - name: "Check INPUT rule — virbr-det HTTPS (443)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 443 -j ACCEPT
-  register: networkingnetworking_inp_https
+  register: networking_inp_https
   changed_when: false
   failed_when: false
 
@@ -254,7 +254,7 @@
     action: insert
     rule_num: 4
     comment: "INetSim: guest HTTPS"
-  when: networkingnetworking_inp_https.rc != 0
+  when: networking_inp_https.rc != 0
 
 - name: "Check INPUT rule — virbr-det SMTP (25)"
   ansible.builtin.command: >
