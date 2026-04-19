@@ -306,23 +306,6 @@ resource "aws_secretsmanager_secret_version" "cape_api_key" {
   }
 }
 
-# DSDT values — set manually or by Ansible after bare metal host boots
-# Hardware-specific; cannot be known at Terraform apply time
-resource "aws_secretsmanager_secret" "dsdt" {
-  name        = "${var.name_prefix}/dsdt-values"
-  description = "ACPI DSDT values for Cape sandbox evasion bypass — hardware-specific, set by Ansible"
-  kms_key_id  = aws_kms_key.main.id
-}
-
-resource "aws_secretsmanager_secret_version" "dsdt" {
-  secret_id     = aws_secretsmanager_secret.dsdt.id
-  secret_string = jsonencode({ dsdt_string = "PLACEHOLDER — set by Ansible after first boot" })
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-}
-
 
 # =============================================================================
 # Modules — instantiated in dependency order

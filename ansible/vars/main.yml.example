@@ -1,8 +1,8 @@
 ---
 # =============================================================================
 # vars/main.yml — All tuneable variables
-# Sensitive values (dsdt_string, cape_api_key, etc.) should be pulled
-# from AWS Secrets Manager at runtime, not stored here.
+# Sensitive values (cape_api_key, etc.) are pulled from AWS Secrets Manager
+# at runtime, not stored here. DSDT is captured directly from host firmware.
 # Use ansible-vault or pass via --extra-vars for local overrides.
 # =============================================================================
 
@@ -44,9 +44,8 @@ cape_install_dir: /opt/CAPEv2
 cape_result_ip: "{{ detonation_gateway }}"
 cape_interface: "{{ detonation_bridge }}"
 
-# DSDT string — hardware-specific, pulled from Secrets Manager at runtime
-# This is what defeats VM fingerprinting. Must match the actual host hardware.
-# cape_dsdt_string: pulled from Secrets Manager
+# DSDT string — captured automatically by the Cape Ansible role from host firmware.
+# No manual steps needed.
 
 # -----------------------------------------------------------------------------
 # AWS / S3
