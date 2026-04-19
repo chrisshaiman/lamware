@@ -83,6 +83,7 @@
     version: aa66fbd329052408a9599cf954a5cf72d8b1d61d
     depth: 1
     force: true
+  become: true
   become_user: "{{ cape_user }}"
 
 - name: Ensure cape owns its install directory

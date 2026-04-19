@@ -47,8 +47,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ansible-lint
-        run: pip install ansible-lint
+      - name: Install ansible-lint and dependencies
+        run: |
+          pip install ansible-lint
+          ansible-galaxy install -r ansible/requirements.yml
+          ansible-galaxy collection install ansible.posix community.general
 
       - name: Run ansible-lint
         run: ansible-lint ansible/site.yml
