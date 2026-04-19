@@ -41,14 +41,12 @@
   <!-- vCPU count: 2 (ADR-012) -->
   <vcpu placement='static'>{{ item.vcpus | default(cape_guest_vcpus) }}</vcpu>
 
-  <!-- -----------------------------------------------------------------------
-       CPU: host-passthrough + hypervisor bit disabled
+  <!-- CPU: host-passthrough + hypervisor bit disabled.
        host-passthrough: guest CPUID reflects the real host CPU brand, family,
-       model, and feature flags — indistinguishable from bare metal.
+       model, and feature flags, indistinguishable from bare metal.
        hypervisor feature disabled: removes the CPUID bit that KVM sets in
        leaf 0x40000000 to signal "you are running in a VM". Malware that calls
-       CPUID and checks ECX bit 31 (hypervisor present) will see it cleared.
-       ----------------------------------------------------------------------- -->
+       CPUID and checks ECX bit 31 (hypervisor present) will see it cleared. -->
   <cpu mode='host-passthrough' check='none'>
     <topology sockets='1' dies='1'
               cores='{{ item.vcpus | default(cape_guest_vcpus) }}'
@@ -103,11 +101,11 @@
     <disk type='file' device='disk'>
       <driver name='qemu' type='qcow2' cache='none' io='native'/>
       <source file='{{ item.disk_path }}'/>
-      <target dev='hda' bus='ide'/>
+      <target dev='sda' bus='sata'/>
     </disk>
 
-    <!-- IDE controller (required when using bus='ide') -->
-    <controller type='ide' index='0'/>
+    <!-- SATA controller (q35 machine type; IDE not supported) -->
+    <controller type='sata' index='0'/>
 
     <!-- Network interface: e1000 on the detonation bridge.
          MAC is per-machine so DHCP assignments are stable across snapshots.

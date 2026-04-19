@@ -36,28 +36,36 @@
   roles:
     # 1. OS hardening — CIS-aligned baseline (konstruktoid)
     - role: hardening
+      tags: [hardening]
 
-    # 2. Networking — detonation bridge + iptables air-gap + INetSim INPUT rules
+    # 2. KVM/QEMU/libvirt — must run before networking (virsh needed for bridge)
+    - role: kvm
+      tags: [kvm]
+
+    # 3. Networking — detonation bridge + iptables air-gap + INetSim INPUT rules
+    #    Requires libvirt (virsh) from KVM role.
     - role: networking
+      tags: [networking]
 
-    # 3. INetSim — host-side network simulator for guest VM traffic (ADR-011)
+    # 4. INetSim — host-side network simulator for guest VM traffic (ADR-011)
     #    Must run after networking (needs virbr-det bridge IP to exist).
     #    Must run before cape (cape routing.conf references inetsim_server).
     - role: inetsim
+      tags: [inetsim]
 
-    # 4. KVM/QEMU/libvirt
-    - role: kvm
-
-    # 4. WireGuard VPN
+    # 5. WireGuard VPN
     - role: wireguard
+      tags: [wireguard]
 
-    # 5. CAPEv2 — runs kvm-qemu.sh (DSDT patching) then cape2.sh
+    # 6. CAPEv2 — runs kvm-qemu.sh (DSDT patching) then cape2.sh
     - role: cape
+      tags: [cape]
 
-    # 6. SQS agent — polls SQS, submits to Cape, syncs reports to S3
+    # 7. SQS agent — polls SQS, submits to Cape, syncs reports to S3
     #    (absorbs the previously planned s3-sync role — see ADR-003)
     - role: sqs-agent
+      tags: [sqs-agent]
 
-    # 7. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 8. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
