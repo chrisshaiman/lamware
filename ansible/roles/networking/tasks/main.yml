@@ -35,25 +35,28 @@
 
 - name: Check if detonation libvirt network is defined
   ansible.builtin.command: virsh net-info detonation
-  register: virsh_detonation_info
+  register: networking_virsh_info
   changed_when: false
   failed_when: false
 
 - name: Define detonation libvirt network
   ansible.builtin.command: virsh net-define /tmp/detonation-network.xml
-  when: virsh_detonation_info.rc != 0
+  when: networking_virsh_info.rc != 0
+  changed_when: true
 
 - name: Start detonation libvirt network
   ansible.builtin.command: virsh net-start detonation
   when: >
-    virsh_detonation_info.rc != 0 or
-    'Active:         yes' not in virsh_detonation_info.stdout
+    networking_virsh_info.rc != 0 or
+    'Active:         yes' not in networking_virsh_info.stdout
+  changed_when: true
 
 - name: Set detonation network to autostart
   ansible.builtin.command: virsh net-autostart detonation
   when: >
-    virsh_detonation_info.rc != 0 or
-    'Autostart:      yes' not in virsh_detonation_info.stdout
+    networking_virsh_info.rc != 0 or
+    'Autostart:      yes' not in networking_virsh_info.stdout
+  changed_when: true
 
 - name: Remove temp network XML
   ansible.builtin.file:
@@ -69,7 +72,7 @@
 - name: Check air-gap rule — virbr-det → eth0
   ansible.builtin.command: >
     iptables -C FORWARD -i {{ detonation_bridge }} -o {{ management_interface }} -j DROP
-  register: rule_eth0_check
+  register: networking_rule_eth0_check
   changed_when: false
   failed_when: false
 
@@ -82,12 +85,12 @@
     action: insert
     rule_num: 1
     comment: "Cape detonation air-gap: no VM internet egress"
-  when: rule_eth0_check.rc != 0
+  when: networking_rule_eth0_check.rc != 0
 
 - name: Check air-gap rule — virbr-det → wg0
   ansible.builtin.command: >
     iptables -C FORWARD -i {{ detonation_bridge }} -o wg0 -j DROP
-  register: rule_wg0_check
+  register: networking_rule_wg0_check
   changed_when: false
   failed_when: false
 
@@ -100,7 +103,7 @@
     action: insert
     rule_num: 2
     comment: "Cape detonation air-gap: no VM access to management VPN"
-  when: rule_wg0_check.rc != 0
+  when: networking_rule_wg0_check.rc != 0
 
 # -------------------------------------------------------------------------
 # ip6tables air-gap rules — mirror the IPv4 DROP rules for IPv6
@@ -112,7 +115,7 @@
 - name: Check ip6tables air-gap rule — virbr-det → eth0
   ansible.builtin.command: >
     ip6tables -C FORWARD -i {{ detonation_bridge }} -o {{ management_interface }} -j DROP
-  register: rule6_eth0_check
+  register: networking_rule6_eth0_check
   changed_when: false
   failed_when: false
 
@@ -126,12 +129,12 @@
     action: insert
     rule_num: 1
     comment: "Cape detonation air-gap (IPv6): no VM internet egress"
-  when: rule6_eth0_check.rc != 0
+  when: networking_rule6_eth0_check.rc != 0
 
 - name: Check ip6tables air-gap rule — virbr-det → wg0
   ansible.builtin.command: >
     ip6tables -C FORWARD -i {{ detonation_bridge }} -o wg0 -j DROP
-  register: rule6_wg0_check
+  register: networking_rule6_wg0_check
   changed_when: false
   failed_when: false
 
@@ -145,7 +148,7 @@
     action: insert
     rule_num: 2
     comment: "Cape detonation air-gap (IPv6): no VM access to management VPN"
-  when: rule6_wg0_check.rc != 0
+  when: networking_rule6_wg0_check.rc != 0
 
 - name: Enable IPv4 forwarding (required for libvirt bridge DHCP and resultserver)
   ansible.posix.sysctl:
@@ -180,7 +183,7 @@
 - name: "Check INPUT rule — virbr-det DNS UDP (53)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p udp --dport 53 -j ACCEPT
-  register: _inp_dns_udp
+  register: networking_inp_dns_udp
   changed_when: false
   failed_when: false
 
@@ -194,12 +197,12 @@
     action: insert
     rule_num: 1
     comment: "INetSim: guest DNS (UDP)"
-  when: _inp_dns_udp.rc != 0
+  when: networking_inp_dns_udp.rc != 0
 
 - name: "Check INPUT rule — virbr-det DNS TCP (53)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 53 -j ACCEPT
-  register: _inp_dns_tcp
+  register: networking_inp_dns_tcp
   changed_when: false
   failed_when: false
 
@@ -213,12 +216,12 @@
     action: insert
     rule_num: 2
     comment: "INetSim: guest DNS (TCP)"
-  when: _inp_dns_tcp.rc != 0
+  when: networking_inp_dns_tcp.rc != 0
 
 - name: "Check INPUT rule — virbr-det HTTP (80)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 80 -j ACCEPT
-  register: _inp_http
+  register: networking_inp_http
   changed_when: false
   failed_when: false
 
@@ -232,12 +235,12 @@
     action: insert
     rule_num: 3
     comment: "INetSim: guest HTTP"
-  when: _inp_http.rc != 0
+  when: networking_inp_http.rc != 0
 
 - name: "Check INPUT rule — virbr-det HTTPS (443)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 443 -j ACCEPT
-  register: _inp_https
+  register: networkingnetworking_inp_https
   changed_when: false
   failed_when: false
 
@@ -251,12 +254,12 @@
     action: insert
     rule_num: 4
     comment: "INetSim: guest HTTPS"
-  when: _inp_https.rc != 0
+  when: networkingnetworking_inp_https.rc != 0
 
 - name: "Check INPUT rule — virbr-det SMTP (25)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 25 -j ACCEPT
-  register: _inp_smtp
+  register: networking_inp_smtp
   changed_when: false
   failed_when: false
 
@@ -270,12 +273,12 @@
     action: insert
     rule_num: 5
     comment: "INetSim: guest SMTP"
-  when: _inp_smtp.rc != 0
+  when: networking_inp_smtp.rc != 0
 
 - name: "Check INPUT rule — virbr-det FTP (21)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 21 -j ACCEPT
-  register: _inp_ftp
+  register: networking_inp_ftp
   changed_when: false
   failed_when: false
 
@@ -289,12 +292,12 @@
     action: insert
     rule_num: 6
     comment: "INetSim: guest FTP"
-  when: _inp_ftp.rc != 0
+  when: networking_inp_ftp.rc != 0
 
 - name: "Check INPUT rule — virbr-det Cape resultserver ({{ cape_resultserver_port }})"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport {{ cape_resultserver_port }} -j ACCEPT
-  register: _inp_resultserver
+  register: networking_inp_resultserver
   changed_when: false
   failed_when: false
 
@@ -308,7 +311,7 @@
     action: insert
     rule_num: 7
     comment: "Cape: guest resultserver"
-  when: _inp_resultserver.rc != 0
+  when: networking_inp_resultserver.rc != 0
 
 - name: Save iptables rules (persist across reboots)
   ansible.builtin.command: netfilter-persistent save

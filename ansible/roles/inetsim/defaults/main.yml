@@ -20,4 +20,4 @@ inetsim_dns_default_ttl: 300
 # Where INetSim writes per-session connection reports.
 # Useful for manual inspection; Cape's own network capture is the primary evidence.
 inetsim_report_dir: /var/log/inetsim/reports
-inetsim_log_dir:    /var/log/inetsim
+inetsim_log_dir: /var/log/inetsim
