@@ -102,7 +102,7 @@
 - name: Check if kvm-qemu.sh has already run
   ansible.builtin.stat:
     path: /opt/.cape-kvm-qemu-installed
-  register: kvm_qemu_stamp
+  register: cape_kvm_qemu_stamp
 
 - name: Write kvm-config.sh with hardware-specific brand names
   ansible.builtin.copy:
@@ -123,10 +123,10 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0755"
-  when: not kvm_qemu_stamp.stat.exists
+  when: not cape_kvm_qemu_stamp.stat.exists
 
 - name: Build patched QEMU with /tmp exec (restored on failure)
-  when: not kvm_qemu_stamp.stat.exists
+  when: not cape_kvm_qemu_stamp.stat.exists
   block:
     - name: Temporarily allow exec on /tmp (needed for QEMU/libvirt build)
       ansible.builtin.command: mount -o remount,exec /tmp
