@@ -31,6 +31,7 @@
     --output text
     --region {{ secrets_manager_region }}
   delegate_to: localhost
+  become: false
   register: cape_api_secret_raw
   changed_when: false
   failed_when: cape_api_secret_raw.rc != 0 or cape_api_secret_raw.stdout | length == 0

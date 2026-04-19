@@ -82,7 +82,6 @@
     mode: "0600"
   vars:
     wireguard_private_key: "{{ wg_privkey_slurp.content | b64decode | trim }}"
-    wireguard_peer_pubkey: "{{ wireguard_peer_pubkey }}"
   no_log: true
   notify: Restart WireGuard
 
