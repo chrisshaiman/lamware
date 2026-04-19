@@ -1,20 +1,6 @@
 # .ansible-lint — configuration for ansible-lint
 # See: https://ansible.readthedocs.io/projects/lint/configuring/
 
-# Skip rules that require bulk renames across all existing roles.
-# These are valid style improvements but should be their own PR.
 skip_list:
-  # Variable naming convention (role prefix) — 19 violations across all roles.
-  # Renaming all registered vars is a separate cleanup task.
-  - var-naming
-  # command-instead-of-module for mount — we use command for remount
-  # because the mount module doesn't support remount operations.
+  # mount remount has no Ansible module equivalent
   - command-instead-of-module
-
-# Warn instead of fail on these
-warn_list:
-  - no-changed-when
-  - command-instead-of-shell
-  - risky-shell-pipe
-  - yaml
-  - partial-become
