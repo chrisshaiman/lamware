@@ -1,28 +1,19 @@
 <!--
-  guest-domain.xml.j2 — libvirt domain definition for a Cape Windows 10 guest VM.
+  guest-domain.xml.j2 libvirt domain for Cape Windows 11 guest VMs.
   Rendered once per entry in cape_guests (see ansible/vars/main.yml).
 
-  Key anti-evasion decisions (ADR-012):
-    - CPU mode: host-passthrough — exposes real CPU topology and microarch to
-      the guest so CPUID-based fingerprinting tools (e.g., Pafish, al-khaser)
-      see a real processor, not a KVM virtual CPU.
-    - hypervisor feature disabled — prevents malware from detecting KVM via
-      CPUID leaf 0x40000000 (the "KVM" hypervisor signature bit).
-    - 2 vCPUs, 4096 MB RAM, no ballooning during analysis — matches the
-      baked-in values from the Packer build (ADR-012).
-    - VGA video 16 MB VRAM — supports 1920x1080 resolution (ADR-012).
-    - Clock: localtime, catchup timer — matches normal workstation behavior.
+  Windows 11 requirements:
+    UEFI boot via OVMF firmware (pflash loader + per-VM nvram copy).
+    TPM 2.0 via swtpm emulator (Windows 11 refuses to boot without TPM).
 
-  Network: guest NIC connects to {{ detonation_bridge }} (virbr-det). All
-  traffic is intercepted by INetSim on the host (ADR-011). The bridge has
-  no route to the internet or management plane.
+  Anti-evasion (ADR-012):
+    CPU host-passthrough with hypervisor bit disabled.
+    TPM present (real machines have TPMs, VMs often don't).
+    2 vCPUs, 4096 MB RAM, 1920x1080 resolution.
 
-  Display: VNC on 127.0.0.1, autoport. Cape connects via VNC for screenshot
-  capture and interactive analysis. Never expose VNC externally.
-
-  on_reboot = destroy: if malware reboots the guest, the libvirt domain is
-  destroyed rather than restarted. Cape detects the domain exit and ends the
-  analysis cleanly.
+  Network: guest NIC on {{ detonation_bridge }} (virbr-det, air-gapped).
+  Display: VNC on 127.0.0.1 (Cape screenshot capture).
+  Lifecycle: on_reboot=destroy (malware reboot ends analysis).
 
   Managed by Ansible. Do not edit manually.
   Author: Christopher Shaiman
@@ -54,14 +45,18 @@
     <feature policy='disable' name='hypervisor'/>
   </cpu>
 
-  <!-- OS: x86_64, q35 machine type (same chipset used in the Packer build),
-       boot from hard disk only. CD-ROM boot is not needed at analysis time. -->
+  <!-- OS: UEFI boot via OVMF firmware (required by Windows 11).
+       pflash loader is read-only shared firmware code.
+       nvram is a per-VM writable copy for UEFI variables (boot order, keys).
+       Secure Boot: OVMF supports it but we run in Setup Mode (no enforcement)
+       since Packer built the image without Secure Boot keys enrolled. -->
   <os>
     <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
+    <nvram template='/usr/share/OVMF/OVMF_VARS_4M.fd'>/var/lib/libvirt/qemu/nvram/{{ item.name }}_VARS.fd</nvram>
     <boot dev='hd'/>
   </os>
 
-  <!-- Standard PC features — required for Windows 10 boot -->
   <features>
     <acpi/>
     <apic/>
@@ -95,7 +90,7 @@
          Path is set by cape_qemu_binary (default: /usr/bin/qemu-system-x86_64). -->
     <emulator>{{ cape_qemu_binary }}</emulator>
 
-    <!-- System disk: qcow2 backing file, IDE bus.
+    <!-- System disk: qcow2 on SATA bus (q35 machine type).
          Cape restores the named snapshot before each analysis, so the disk
          always starts from the clean post-Packer state. -->
     <disk type='file' device='disk'>
@@ -137,9 +132,14 @@
     <input type='tablet' bus='usb'/>
     <input type='keyboard' bus='ps2'/>
 
-    <!-- Memory balloon: virtio model present (QEMU requires it) but
-         Cape does not resize guest memory during analysis.
-         Do not remove — causes QEMU startup errors on some versions. -->
+    <!-- TPM 2.0 via swtpm emulator (required by Windows 11).
+         Real hardware has TPMs; their absence is a VM detection signal.
+         swtpm lifecycle is managed by libvirt (creates/destroys per domain). -->
+    <tpm model='tpm-crb'>
+      <backend type='emulator' version='2.0'/>
+    </tpm>
+
+    <!-- Memory balloon disabled. Cape does not resize guest memory. -->
     <memballoon model='none'/>
 
   </devices>
