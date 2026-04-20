@@ -959,6 +959,7 @@ in the next round of implementation work.
 - Agent orchestration layer (Step Functions or separate service)
 - Windows 10 guest Packer image — on hold pending ISO sourcing (Win10 eval ISO removed by Microsoft); Win11 images built and deployed
 - Windows guest image rotation runbook — evaluation ISO expires every 90 days; document the rebuild-and-redeploy procedure (Packer rebuild → replace libvirt base image → restore clean snapshot) before first guest is deployed
+- Cape agent Python 3.13+ upgrade — currently on 3.12 with cgi monkey-patch; upgrade to 3.13+ once CAPEv2 PR #2786 (cgi removal) is merged upstream. Drop monkey-patch from install-cape-agent.ps1 and pin to new agent commit
 - Cape injected agent (capemon DLL) — currently using cape-agent.py; evaluate capemon injection once evasion is observed in practice (see ADR-010)
 - Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
