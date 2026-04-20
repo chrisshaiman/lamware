@@ -75,6 +75,14 @@
     name: git
     state: present
 
+- name: Create CAPEv2 install directory
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
 - name: Clone CAPEv2 repository
   ansible.builtin.git:
     repo: https://github.com/kevoreilly/CAPEv2.git
@@ -147,6 +155,18 @@
       changed_when: true
 
 # -------------------------------------------------------------------------
+# Install patched QEMU binary — kvm-qemu.sh builds to /tmp but doesn't
+# install to /usr/bin. Copy it and fix permissions.
+# -------------------------------------------------------------------------
+
+- name: Install patched QEMU binary to /usr/bin
+  ansible.builtin.copy:
+    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
+    dest: /usr/bin/qemu-system-x86_64
+    mode: "0755"
+    remote_src: true
+
+# -------------------------------------------------------------------------
 # Restore libvirt packages — kvm-qemu.sh and cape2.sh remove/replace system
 # QEMU and libvirt packages. Reinstall what we need for virsh and libvirtd.
 # -------------------------------------------------------------------------
@@ -200,11 +220,13 @@
     group: tss
     mode: "0755"
 
-- name: Fix Cape poetry directory permissions
+- name: Fix libvirt directory permissions (cape installer sets 700)
   ansible.builtin.file:
-    path: /etc/poetry
+    path: "{{ item }}"
     mode: "0755"
-    recurse: true
+  loop:
+    - /var/lib/libvirt
+    - /var/lib/libvirt/images
 
 - name: Ensure libvirtd is running after reinstall
   ansible.builtin.systemd:
@@ -230,6 +252,12 @@
     executable: /bin/bash
   when: not cape_service_file.stat.exists
   changed_when: true
+
+- name: Fix Cape poetry directory permissions (cape2.sh sets 700)
+  ansible.builtin.file:
+    path: /etc/poetry
+    mode: "0755"
+    recurse: true
 
 - name: Install Cape Python dependencies as cape user
   ansible.builtin.shell: |
@@ -401,6 +429,13 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0755"
+
+- name: Set guest image ownership for libvirt access
+  ansible.builtin.shell: chown libvirt-qemu:kvm {{ cape_guest_image_dir }}/windows11-*.qcow2
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
 
 - name: Ensure OVMF nvram directory exists
   ansible.builtin.file:
