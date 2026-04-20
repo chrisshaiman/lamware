@@ -981,5 +981,9 @@ in the next round of implementation work.
 - Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
+- Secrets management migration — replace AWS Secrets Manager `delegate_to: localhost` (fragile SSO sessions) with Ansible Vault for static secrets. HashiCorp Vault if multi-host or dynamic credentials needed later
+- PostgreSQL migration to OVH — move from RDS (~$15-25/mo) to local PostgreSQL on Docker. Eliminates WireGuard latency for report writes, saves cost. Requires self-managed backups (pg_dump cron)
+- SQS → Redis migration — Cape already runs Redis internally. Replace SQS polling agent with Redis queue on the host. Simplifies architecture, removes AWS dependency for job queue
+- AWS scope reduction — keep S3 (Object Lock for evidence integrity) and API Gateway (public-facing separation from analysis host). Move PostgreSQL, secrets, and job queue to OVH. Evaluate dropping Lambda in favor of a lightweight submission service on the host behind API Gateway
 - Molecule tests for Ansible roles — container-based role testing for CI validation
 - Alternative bare metal provider module (Vultr/Latitude.sh) if OVH proves unworkable
