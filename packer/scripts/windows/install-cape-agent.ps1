@@ -93,7 +93,33 @@ if ($actualHash -ne $AgentChecksum.ToLower()) {
 Write-Host "==> agent.py hash verified: $actualHash"
 
 # -------------------------------------------------------------------------
-# 4. Verify agent.py is valid Python syntax
+# 4. Patch cgi.FieldStorage bug (Python 3.12 text/binary tempfile mismatch)
+# -------------------------------------------------------------------------
+# Python 3.12's cgi.FieldStorage.make_file() opens tempfiles in text mode
+# for non-file fields, but read_binary() writes bytes to it, causing
+# TypeError. This patch forces binary mode for all tempfiles.
+# See: https://github.com/python/cpython/issues/100145
+# The cgi module is removed in 3.13; cape-agent will need a rewrite then.
+$PatchCode = @'
+
+# --- Python 3.12 cgi.FieldStorage binary mode fix ---
+import cgi as _cgi
+import tempfile as _tempfile
+_orig_make_file = _cgi.FieldStorage.make_file
+def _patched_make_file(self):
+    return _tempfile.TemporaryFile("wb+")
+_cgi.FieldStorage.make_file = _patched_make_file
+# --- end fix ---
+
+'@
+$AgentContent = Get-Content -Path $AgentPath -Raw
+# Insert patch after the imports (before the first class/function definition)
+$AgentContent = $AgentContent -replace '(import time\r?\n)', "`$1$PatchCode"
+Set-Content -Path $AgentPath -Value $AgentContent -NoNewline
+Write-Host "==> Patched cgi.FieldStorage for Python 3.12 compatibility"
+
+# -------------------------------------------------------------------------
+# 5. Verify agent.py is valid Python syntax
 # -------------------------------------------------------------------------
 $checkResult = & $PythonExe -m py_compile $AgentPath 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -103,7 +129,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "==> agent.py syntax OK"
 
 # -------------------------------------------------------------------------
-# 5. Create a Scheduled Task to start agent.py at boot (SYSTEM account)
+# 6. Create a Scheduled Task to start agent.py at boot (SYSTEM account)
 # -------------------------------------------------------------------------
 # Using the Scheduled Task API rather than a registry Run key so that the
 # agent starts before any user session begins (important for Cape to connect
@@ -146,7 +172,7 @@ Register-ScheduledTask `
 Write-Host "==> Scheduled Task '$TaskName' registered"
 
 # -------------------------------------------------------------------------
-# 6. Verify the task was registered correctly
+# 7. Verify the task was registered correctly
 # -------------------------------------------------------------------------
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if (-not $task) {
@@ -156,7 +182,7 @@ if (-not $task) {
 Write-Host "==> Task state: $($task.State)"
 
 # -------------------------------------------------------------------------
-# 7. Ensure Windows Firewall allows inbound TCP 8000
+# 8. Ensure Windows Firewall allows inbound TCP 8000
 # -------------------------------------------------------------------------
 # autounattend.xml creates this rule during OOBE, but it can be lost during
 # later setup phases. Creating it here guarantees it exists in the final image.
