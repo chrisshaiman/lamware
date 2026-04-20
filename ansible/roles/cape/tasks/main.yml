@@ -160,14 +160,48 @@
     executable: /bin/bash
   changed_when: false
 
-- name: Reinstall libvirt packages after Cape installer
+- name: Reinstall libvirt and QEMU ROM packages after Cape installer
   ansible.builtin.apt:
     name:
       - libvirt-daemon-system
       - libvirt-clients
+      - libvirt-dev
       - qemu-utils
+      - qemu-system-data
+      - seabios
+      - ipxe-qemu
     state: present
     update_cache: true
+
+- name: Fix QEMU data directory permissions (Cape installer sets 700)
+  ansible.builtin.file:
+    path: /usr/share/qemu
+    mode: "0755"
+
+- name: Symlink seabios VGA ROM to QEMU data directory
+  ansible.builtin.file:
+    src: /usr/share/seabios/vgabios-stdvga.bin
+    dest: /usr/share/qemu/vgabios-stdvga.bin
+    state: link
+
+- name: Symlink iPXE e1000 EFI ROM to QEMU data directory
+  ansible.builtin.file:
+    src: /usr/lib/ipxe/qemu/efi-e1000.rom
+    dest: /usr/share/qemu/efi-e1000.rom
+    state: link
+
+- name: Fix swtpm state directory ownership
+  ansible.builtin.file:
+    path: /var/lib/swtpm-localca
+    owner: tss
+    group: tss
+    mode: "0755"
+
+- name: Fix Cape poetry directory permissions
+  ansible.builtin.file:
+    path: /etc/poetry
+    mode: "0755"
+    recurse: true
 
 - name: Ensure libvirtd is running after reinstall
   ansible.builtin.systemd:
@@ -192,6 +226,17 @@
   args:
     executable: /bin/bash
   when: not cape_service_file.stat.exists
+
+- name: Install Cape Python dependencies as cape user
+  ansible.builtin.shell: |
+    cd {{ cape_install_dir }}
+    /etc/poetry/bin/poetry install --no-root
+    /etc/poetry/bin/poetry run pip install libvirt-python
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
 
 # -------------------------------------------------------------------------
 # Cape configuration — always applied (idempotent ini_file edits)
@@ -351,6 +396,14 @@
     state: directory
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Ensure OVMF nvram directory exists
+  ansible.builtin.file:
+    path: /var/lib/libvirt/qemu/nvram
+    state: directory
+    owner: libvirt-qemu
+    group: kvm
     mode: "0755"
 
 - name: Deploy guest libvirt domain XML
