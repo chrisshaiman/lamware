@@ -17,6 +17,7 @@
     name:
       - qemu-kvm
       - qemu-utils
+      - qemu-system-data
       - libvirt-daemon-system
       - libvirt-clients
       - virtinst
@@ -28,6 +29,8 @@
       - ovmf
       - swtpm
       - swtpm-tools
+      - seabios
+      - ipxe-qemu
     state: present
     update_cache: false
 
@@ -74,17 +77,19 @@
 # detonation network instead.
 - name: Check if default libvirt network is active
   ansible.builtin.command: virsh net-info default
-  register: virsh_default_info
+  register: kvm_virsh_default_info
   changed_when: false
   failed_when: false
 
 - name: Destroy default libvirt network if active
   ansible.builtin.command: virsh net-destroy default
   when: >
-    virsh_default_info.rc == 0 and
-    'Active:         yes' in virsh_default_info.stdout
+    kvm_virsh_default_info.rc == 0 and
+    'Active:         yes' in kvm_virsh_default_info.stdout
+  changed_when: true
 
 - name: Undefine default libvirt network
   ansible.builtin.command: virsh net-undefine default
-  when: virsh_default_info.rc == 0
+  when: kvm_virsh_default_info.rc == 0
+  changed_when: true
   failed_when: false

@@ -27,20 +27,20 @@
 - name: Check for existing WireGuard private key
   ansible.builtin.stat:
     path: /etc/wireguard/private.key
-  register: wg_privkey_stat
+  register: wireguard_privkey_stat
 
 - name: Generate WireGuard keypair
-  when: not wg_privkey_stat.stat.exists
+  when: not wireguard_privkey_stat.stat.exists
   block:
     - name: Generate private key
-      ansible.builtin.shell: wg genkey
-      register: wg_genkey
+      ansible.builtin.command: wg genkey
+      register: wireguard_genkey
       changed_when: true
       no_log: true
 
     - name: Write private key
       ansible.builtin.copy:
-        content: "{{ wg_genkey.stdout }}"
+        content: "{{ wireguard_genkey.stdout }}"
         dest: /etc/wireguard/private.key
         owner: root
         group: root
@@ -48,14 +48,16 @@
       no_log: true
 
     - name: Derive and write public key
-      ansible.builtin.shell: cat /etc/wireguard/private.key | wg pubkey
-      register: wg_pubkey_new
+      ansible.builtin.shell: set -o pipefail && cat /etc/wireguard/private.key | wg pubkey
+      args:
+        executable: /bin/bash
+      register: wireguard_pubkey_new
       changed_when: false
       no_log: true
 
     - name: Write public key
       ansible.builtin.copy:
-        content: "{{ wg_pubkey_new.stdout }}"
+        content: "{{ wireguard_pubkey_new.stdout }}"
         dest: /etc/wireguard/public.key
         owner: root
         group: root
@@ -65,13 +67,13 @@
 - name: Read private key
   ansible.builtin.slurp:
     src: /etc/wireguard/private.key
-  register: wg_privkey_slurp
+  register: wireguard_privkey_slurp
   no_log: true
 
 - name: Read public key
   ansible.builtin.slurp:
     src: /etc/wireguard/public.key
-  register: wg_pubkey_slurp
+  register: wireguard_pubkey_slurp
 
 - name: Write wg0.conf
   ansible.builtin.template:
@@ -81,7 +83,7 @@
     group: root
     mode: "0600"
   vars:
-    wireguard_private_key: "{{ wg_privkey_slurp.content | b64decode | trim }}"
+    wireguard_private_key: "{{ wireguard_privkey_slurp.content | b64decode | trim }}"
   no_log: true
   notify: Restart WireGuard
 
@@ -94,13 +96,13 @@
 
 - name: Verify wg0 interface is up
   ansible.builtin.command: wg show wg0
-  register: wg_status
+  register: wireguard_status
   changed_when: false
-  failed_when: wg_status.rc != 0
+  failed_when: wireguard_status.rc != 0
 
 # Print the host's public key so the operator can configure their laptop
 - name: Display host WireGuard public key
   ansible.builtin.debug:
     msg: >-
       HOST PUBLIC KEY (copy to your laptop's WireGuard peer config):
-      {{ wg_pubkey_slurp.content | b64decode | trim }}
+      {{ wireguard_pubkey_slurp.content | b64decode | trim }}
