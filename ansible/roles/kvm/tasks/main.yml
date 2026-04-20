@@ -17,6 +17,7 @@
     name:
       - qemu-kvm
       - qemu-utils
+      - qemu-system-data
       - libvirt-daemon-system
       - libvirt-clients
       - virtinst
@@ -28,6 +29,8 @@
       - ovmf
       - swtpm
       - swtpm-tools
+      - seabios
+      - ipxe-qemu
     state: present
     update_cache: false
 
