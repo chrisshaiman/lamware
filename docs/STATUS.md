@@ -459,16 +459,33 @@ Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-
 
 Once Ansible has defined the libvirt domains and the qcow2 images are on the host:
 
-```
-# Start the VM, verify cape-agent.py is listening, then shut it down cleanly
-virsh start clean && sleep 60 && virsh shutdown clean
+```bash
+# Start the VM, verify cape-agent.py is listening
+virsh start clean && sleep 60
+curl -s http://192.168.100.10:8000/  # should return CAPE Agent JSON
 
-# Take the snapshot (disk-only = fast, no memory state needed)
-virsh snapshot-create-as clean  clean  --disk-only --atomic
-virsh snapshot-create-as office office --disk-only --atomic
+# Take external snapshot WITH memory state (required for UEFI/pflash VMs).
+# Cape's check_snapshot_state requires state="running" — internal snapshots
+# and disk-only snapshots are incompatible with UEFI/OVMF firmware.
+virsh snapshot-create-as clean clean \
+  --memspec file=/var/lib/libvirt/images/clean.memsnap,snapshot=external \
+  --diskspec sda,file=/var/lib/libvirt/images/clean.overlay.qcow2,snapshot=external
+
+# Repeat for office
+virsh start office && sleep 60
+curl -s http://192.168.100.11:8000/
+virsh snapshot-create-as office office \
+  --memspec file=/var/lib/libvirt/images/office.memsnap,snapshot=external \
+  --diskspec sda,file=/var/lib/libvirt/images/office.overlay.qcow2,snapshot=external
+
+# Shut down after snapshotting
+virsh shutdown clean && virsh shutdown office
 ```
 
 Cape restores from these snapshots at the start of each analysis run.
+The `--memspec` flag saves the VM's memory state so Cape sees `state=running`
+in the snapshot metadata. Without it, UEFI VMs produce `disk-snapshot` state
+which Cape rejects.
 
 ### Packer build — required variables before first build
 
