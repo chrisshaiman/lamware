@@ -19,6 +19,17 @@
     group: "{{ sample_feeder_user }}"
     mode: "0750"
 
+- name: Install pyzipper for AES-encrypted MalwareBazaar zips
+  ansible.builtin.pip:
+    name: pyzipper
+    state: present
+
+- name: Fix pip package permissions for cape user
+  ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 # -------------------------------------------------------------------------
 # Fetch Cape API key from Secrets Manager on control node
 # -------------------------------------------------------------------------
