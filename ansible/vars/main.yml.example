@@ -76,6 +76,12 @@ secret_arn_baremetal: ""      # fill from: terraform output -raw baremetal_agent
 secret_arn_cape: ""           # fill after manually creating Cape API key secret in AWS
 
 # -----------------------------------------------------------------------------
+# MalwareBazaar API — free auth key from https://auth.abuse.ch/
+# Required for sample-feeder CLI to query and download samples.
+# -----------------------------------------------------------------------------
+bazaar_auth_key: ""           # register at https://auth.abuse.ch/ (free)
+
+# -----------------------------------------------------------------------------
 # Cape guest VM definitions (ADR-012, ADR-013)
 # Each entry defines one libvirt domain and one kvm.conf machine stanza.
 # The `name` field is both the libvirt domain name and the kvm.conf section.
