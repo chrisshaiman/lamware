@@ -155,18 +155,6 @@
       changed_when: true
 
 # -------------------------------------------------------------------------
-# Install patched QEMU binary — kvm-qemu.sh builds to /tmp but doesn't
-# install to /usr/bin. Copy it and fix permissions.
-# -------------------------------------------------------------------------
-
-- name: Install patched QEMU binary to /usr/bin
-  ansible.builtin.copy:
-    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
-    dest: /usr/bin/qemu-system-x86_64
-    mode: "0755"
-    remote_src: true
-
-# -------------------------------------------------------------------------
 # Restore libvirt packages — kvm-qemu.sh and cape2.sh remove/replace system
 # QEMU and libvirt packages. Reinstall what we need for virsh and libvirtd.
 # -------------------------------------------------------------------------
@@ -176,6 +164,30 @@
   args:
     executable: /bin/bash
   changed_when: false
+
+- name: Add MongoDB GPG key
+  ansible.builtin.shell: curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+  args:
+    executable: /bin/bash
+    creates: /usr/share/keyrings/mongodb-server-8.0.gpg
+
+- name: Add MongoDB 8.0 repository
+  ansible.builtin.copy:
+    content: "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse\n"
+    dest: /etc/apt/sources.list.d/mongodb-org-8.0.list
+    mode: "0644"
+
+- name: Install MongoDB
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: present
+    update_cache: true
+
+- name: Enable and start MongoDB
+  ansible.builtin.systemd:
+    name: mongod
+    state: started
+    enabled: true
 
 - name: Remove stale Cape libvirt libraries from /usr/local
   ansible.builtin.shell: rm -f /usr/local/lib/x86_64-linux-gnu/libvirt* && ldconfig
@@ -212,6 +224,13 @@
     src: /usr/lib/ipxe/qemu/efi-e1000.rom
     dest: /usr/share/qemu/efi-e1000.rom
     state: link
+
+- name: Install patched QEMU binary (after apt reinstall to avoid overwrite)
+  ansible.builtin.copy:
+    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
+    dest: /usr/bin/qemu-system-x86_64
+    mode: "0755"
+    remote_src: true
 
 - name: Fix swtpm state directory ownership
   ansible.builtin.file:
@@ -290,7 +309,16 @@
 
 # Resultserver must listen on the detonation bridge gateway so VMs can
 # reach it. VMs have no route to eth0 or wg0.
-- name: Set Cape resultserver IP to detonation gateway
+# Cape reads resultserver config from cuckoo.conf (not cape.conf).
+- name: Set resultserver IP in cuckoo.conf
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/cuckoo.conf"
+    section: resultserver
+    option: ip
+    value: "{{ cape_result_ip }}"
+    mode: "0640"
+
+- name: Set resultserver IP in cape.conf
   community.general.ini_file:
     path: "{{ cape_install_dir }}/conf/cape.conf"
     section: resultserver
