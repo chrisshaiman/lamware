@@ -25,7 +25,13 @@ import os
 import re
 import sys
 import tempfile
-import zipfile
+try:
+    from pyzipper import AESZipFile as _ZipOpener  # AES-encrypted zips
+except (ImportError, AttributeError):
+    try:
+        from pyzipper import ZipFile as _ZipOpener
+    except (ImportError, AttributeError):
+        from zipfile import ZipFile as _ZipOpener
 from pathlib import Path
 
 import requests
@@ -86,11 +92,18 @@ def save_seen_hashes(hashes: set, state_file: str) -> None:
 # MalwareBazaar API
 # ---------------------------------------------------------------------------
 
-def query_by_family(api_url: str, family: str, limit: int) -> list[dict]:
+def bazaar_headers(cfg: dict) -> dict:
+    """Build request headers for MalwareBazaar API (Auth-Key required)."""
+    key = cfg.get("bazaar_auth_key", "")
+    return {"Auth-Key": key} if key else {}
+
+
+def query_by_family(api_url: str, family: str, limit: int,
+                    headers: dict | None = None) -> list[dict]:
     """Query MalwareBazaar for samples by malware family/signature."""
     resp = requests.post(api_url, data={
         "query": "get_siginfo", "signature": family, "limit": limit,
-    }, timeout=30)
+    }, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     result = resp.json()
     if result.get("query_status") != "ok":
@@ -98,11 +111,12 @@ def query_by_family(api_url: str, family: str, limit: int) -> list[dict]:
     return result.get("data", [])
 
 
-def query_by_tag(api_url: str, tag: str, limit: int) -> list[dict]:
+def query_by_tag(api_url: str, tag: str, limit: int,
+                 headers: dict | None = None) -> list[dict]:
     """Query MalwareBazaar for samples by tag."""
     resp = requests.post(api_url, data={
         "query": "get_taginfo", "tag": tag, "limit": limit,
-    }, timeout=30)
+    }, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     result = resp.json()
     if result.get("query_status") != "ok":
@@ -110,11 +124,12 @@ def query_by_tag(api_url: str, tag: str, limit: int) -> list[dict]:
     return result.get("data", [])
 
 
-def query_recent(api_url: str, hours: int) -> list[dict]:
+def query_recent(api_url: str, hours: int,
+                 headers: dict | None = None) -> list[dict]:
     """Query MalwareBazaar for samples seen in the last N hours."""
     resp = requests.post(api_url, data={
         "query": "get_recent", "selector": hours,
-    }, timeout=30)
+    }, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     result = resp.json()
     if result.get("query_status") != "ok":
@@ -122,11 +137,12 @@ def query_recent(api_url: str, hours: int) -> list[dict]:
     return result.get("data", [])
 
 
-def query_by_hash(api_url: str, sha256: str) -> list[dict]:
+def query_by_hash(api_url: str, sha256: str,
+                  headers: dict | None = None) -> list[dict]:
     """Query MalwareBazaar for a specific sample by SHA256."""
     resp = requests.post(api_url, data={
         "query": "get_info", "hash": sha256,
-    }, timeout=30)
+    }, headers=headers or {}, timeout=30)
     resp.raise_for_status()
     result = resp.json()
     if result.get("query_status") != "ok":
@@ -137,14 +153,21 @@ def query_by_hash(api_url: str, sha256: str) -> list[dict]:
     return data or []
 
 
-def download_sample(api_url: str, sha256: str) -> bytes:
+def download_sample(api_url: str, sha256: str,
+                    headers: dict | None = None) -> bytes:
     """Download a sample zip from MalwareBazaar."""
     resp = requests.post(api_url, data={
         "query": "get_file", "sha256_hash": sha256,
-    }, timeout=60)
+    }, headers=headers or {}, timeout=60)
     resp.raise_for_status()
-    if resp.headers.get("Content-Type", "").startswith("application/json"):
-        raise ValueError(f"Download error: {resp.json()}")
+    # MalwareBazaar sometimes returns application/json Content-Type for zip files.
+    # Check actual content: zip files start with PK magic bytes.
+    if not resp.content[:2] == b"PK":
+        try:
+            err = resp.json()
+            raise ValueError(f"Download error: {err}")
+        except (ValueError, Exception):
+            raise ValueError(f"Download returned non-zip content ({len(resp.content)} bytes)")
     return resp.content
 
 
@@ -154,7 +177,7 @@ def extract_sample(zip_bytes: bytes, max_size: int) -> tuple[str, bytes]:
     Guards against zip slip (path traversal in filenames) and zip bombs
     (decompressed size exceeding max_size).
     """
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+    with _ZipOpener(io.BytesIO(zip_bytes)) as zf:
         names = zf.namelist()
         if not names:
             raise ValueError("Empty zip file")
@@ -203,21 +226,55 @@ def print_preview(samples: list[dict], seen: set) -> None:
 # Cape submission
 # ---------------------------------------------------------------------------
 
+def cape_auth_headers(cape_api_key: str) -> dict:
+    """Build Cape API auth headers. Skip auth for placeholder/disabled keys."""
+    if not cape_api_key or cape_api_key.startswith("PLACEHOLDER") or cape_api_key == "disabled":
+        return {}
+    return {"Authorization": f"Bearer {cape_api_key}"}
+
+
+def derive_cape_tags(filename: str) -> list[str]:
+    """Derive Cape routing tags from the sample filename/extension.
+
+    MalwareBazaar tags (family names, file types) are metadata — not Cape
+    routing tags. Cape uses tags to select the right VM:
+      - x64: 64-bit Windows executable (default)
+      - office: document that needs LibreOffice for macro detonation
+    """
+    ext = Path(filename).suffix.lower()
+    office_exts = {".doc", ".docx", ".docm", ".xls", ".xlsx", ".xlsm",
+                   ".ppt", ".pptx", ".odt", ".ods", ".odp"}
+    if ext in office_exts:
+        return ["x64", "office"]
+    return ["x64"]
+
+
 def submit_to_cape(cape_api_url: str, cape_api_key: str, sample_path: Path,
-                   filename: str, tags: list[str]) -> int:
-    """Submit a sample to Cape's local API. Returns the Cape task ID."""
+                   filename: str, bazaar_tags: list[str]) -> int:
+    """Submit a sample to Cape's local API. Returns the Cape task ID.
+
+    bazaar_tags are stored as the Cape 'custom' field for reference.
+    Cape routing tags are derived from the filename extension.
+    """
     url = f"{cape_api_url}/tasks/create/file/"
-    headers = {"Authorization": f"Bearer {cape_api_key}"} if cape_api_key else {}
+    headers = cape_auth_headers(cape_api_key)
+    cape_tags = derive_cape_tags(filename)
     with sample_path.open("rb") as fh:
         resp = requests.post(
             url,
             files={"file": (filename, fh)},
-            data={"tags": ",".join(tags)},
+            data={
+                "tags": ",".join(cape_tags),
+                "custom": f"bazaar_tags={','.join(bazaar_tags)}",
+            },
             headers=headers,
             timeout=30,
         )
     resp.raise_for_status()
-    return resp.json()["data"]["task_ids"][0]
+    result = resp.json()
+    if result.get("error"):
+        raise ValueError(f"Cape submission error: {result.get('error_value', result)}")
+    return result["data"]["task_ids"][0]
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -258,30 +315,27 @@ def main() -> None:
 
     # Verify Cape is reachable (unless dry-run)
     if not args.dry_run:
-        if not cfg["cape_api_key"]:
-            print("ERROR: cape_api_key not set in config. Run Ansible to deploy config.", file=sys.stderr)
-            sys.exit(1)
         try:
             resp = requests.get(
-                f"{cfg['cape_api_url']}/cuckoo/status/",
-                headers={"Authorization": f"Bearer {cfg['cape_api_key']}"},
+                f"{cfg['cape_api_url']}/",
+                headers=cape_auth_headers(cfg.get("cape_api_key", "")),
                 timeout=10,
             )
-            resp.raise_for_status()
         except requests.RequestException as exc:
             print(f"ERROR: Cape API unreachable: {exc}", file=sys.stderr)
             sys.exit(1)
 
     # Query MalwareBazaar
     print("Querying MalwareBazaar...")
+    bz_headers = bazaar_headers(cfg)
     if args.family:
-        entries = query_by_family(api_url, args.family, limit * 3)
+        entries = query_by_family(api_url, args.family, limit * 3, bz_headers)
     elif args.tag:
-        entries = query_by_tag(api_url, args.tag, limit * 3)
+        entries = query_by_tag(api_url, args.tag, limit * 3, bz_headers)
     elif args.sha256:
-        entries = query_by_hash(api_url, args.sha256)
+        entries = query_by_hash(api_url, args.sha256, bz_headers)
     elif args.recent:
-        entries = query_recent(api_url, args.recent)
+        entries = query_recent(api_url, args.recent, bz_headers)
     else:
         entries = []
 
@@ -337,7 +391,7 @@ def main() -> None:
 
         try:
             print(f"    Downloading {sha256[:16]}...")
-            zip_bytes = download_sample(api_url, sha256)
+            zip_bytes = download_sample(api_url, sha256, bz_headers)
             extracted_name, content = extract_sample(zip_bytes, cfg["max_size_bytes"])
 
             with tempfile.NamedTemporaryFile(
