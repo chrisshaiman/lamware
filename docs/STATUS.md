@@ -460,9 +460,13 @@ Design decisions resolved (see docs/DECISIONS.md ADR-009, ADR-010, ADR-011, ADR-
 Once Ansible has defined the libvirt domains and the qcow2 images are on the host:
 
 ```bash
-# Start the VM, verify cape-agent.py is listening
-virsh start clean && sleep 60
-curl -s http://192.168.100.10:8000/  # should return CAPE Agent JSON
+# Start the VM and wait for cape-agent (first boot takes ~2.5 min)
+virsh start clean
+for i in $(seq 1 18); do
+  curl -s --connect-timeout 3 http://192.168.100.10:8000/ && break
+  echo "Waiting for agent... ($((i*10))s)"
+  sleep 10
+done
 
 # Take external snapshot WITH memory state (required for UEFI/pflash VMs).
 # Cape's check_snapshot_state requires state="running" — internal snapshots
@@ -472,8 +476,12 @@ virsh snapshot-create-as clean clean \
   --diskspec sda,file=/var/lib/libvirt/images/clean.overlay.qcow2,snapshot=external
 
 # Repeat for office
-virsh start office && sleep 60
-curl -s http://192.168.100.11:8000/
+virsh start office
+for i in $(seq 1 18); do
+  curl -s --connect-timeout 3 http://192.168.100.11:8000/ && break
+  echo "Waiting for agent... ($((i*10))s)"
+  sleep 10
+done
 virsh snapshot-create-as office office \
   --memspec file=/var/lib/libvirt/images/office.memsnap,snapshot=external \
   --diskspec sda,file=/var/lib/libvirt/images/office.overlay.qcow2,snapshot=external
