@@ -166,7 +166,7 @@
   changed_when: false
 
 - name: Add MongoDB GPG key
-  ansible.builtin.shell: curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+  ansible.builtin.shell: set -o pipefail && curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
   args:
     executable: /bin/bash
     creates: /usr/share/keyrings/mongodb-server-8.0.gpg
