@@ -989,9 +989,16 @@ in the next round of implementation work.
 - Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
+- QEMU build optimization — kvm-qemu.sh installs ~500 build-time dev packages (Xen, Spice, Bluetooth, Ceph, GTK headers) on the production host. Compile in a build container or CI pipeline instead, deploy only the binary + runtime deps. Reduces attack surface and deploy time significantly
 - Secrets management migration — replace AWS Secrets Manager `delegate_to: localhost` (fragile SSO sessions) with Ansible Vault for static secrets. HashiCorp Vault if multi-host or dynamic credentials needed later
 - PostgreSQL migration to OVH — move from RDS (~$15-25/mo) to local PostgreSQL on Docker. Eliminates WireGuard latency for report writes, saves cost. Requires self-managed backups (pg_dump cron)
 - SQS → Redis migration — Cape already runs Redis internally. Replace SQS polling agent with Redis queue on the host. Simplifies architecture, removes AWS dependency for job queue
 - AWS scope reduction — keep S3 (Object Lock for evidence integrity) and API Gateway (public-facing separation from analysis host). Move PostgreSQL, secrets, and job queue to OVH. Evaluate dropping Lambda in favor of a lightweight submission service on the host behind API Gateway
+- Bare metal integrity monitoring from AWS — detect sandbox escape or host compromise from an independent observer:
+  - CloudWatch heartbeat: host pushes "healthy" metric every 5 min; missing data triggers alarm
+  - CloudWatch canary: periodic SSH checks (iptables intact, expected processes, QEMU binary hash, open ports)
+  - AIDE/rkhunter scan results shipped to S3 for external baseline comparison
+  - CloudTrail alarms on unexpected STS AssumeRole patterns (new IPs, bulk access)
+  - S3 access anomaly detection (unusual download patterns from reports bucket)
 - Molecule tests for Ansible roles — container-based role testing for CI validation
 - Alternative bare metal provider module (Vultr/Latitude.sh) if OVH proves unworkable
