@@ -290,6 +290,18 @@
   when: not cape_service_file.stat.exists
   changed_when: true
 
+- name: Restore patched QEMU binary (cape2.sh apt-get may overwrite it)
+  ansible.builtin.copy:
+    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
+    dest: /usr/bin/qemu-system-x86_64
+    mode: "0755"
+    remote_src: true
+
+- name: Restart libvirtd after QEMU binary restore
+  ansible.builtin.systemd:
+    name: libvirtd
+    state: restarted
+
 - name: Remove broken apt repos re-added by cape2.sh
   ansible.builtin.shell: |
     rm -f /etc/apt/sources.list.d/mongodb*.list
@@ -299,6 +311,13 @@
   args:
     executable: /bin/bash
   changed_when: false
+
+- name: Fix CAPEv2 directory ownership after cape2.sh
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    recurse: true
 
 - name: Fix Cape poetry directory permissions (cape2.sh sets 700)
   ansible.builtin.file:

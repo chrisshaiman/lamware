@@ -23,6 +23,7 @@
   ansible.builtin.pip:
     name: pyzipper
     state: present
+    break_system_packages: true
 
 - name: Fix pip package permissions for cape user
   ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
