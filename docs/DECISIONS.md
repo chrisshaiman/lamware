@@ -206,13 +206,13 @@ some are hardware-specific, some need to be re-runnable.
   snapshot. Run once per OS version or major dependency change.
 - **Terraform**: Cloud resource provisioning (server, network, firewall, floating IP).
   Minimal cloud-init — SSH key injection only.
-- **Ansible**: All runtime configuration. Idempotent, SSH-only, pulls secrets from
-  Secrets Manager at runtime. Handles DSDT patching via `kvm-qemu.sh`.
+- **Ansible**: All runtime configuration. Idempotent, SSH-only, secrets from Ansible
+  Vault. Handles DSDT patching via `kvm-qemu.sh`.
 
 Hardware-specific steps (DSDT patching) are Ansible-only. Never baked into Packer image.
 
 **Consequences:**
-- DSDT values must be in Secrets Manager before `make configure` runs
+- DSDT values are captured from host firmware at configure time
 - Packer image is provider-agnostic (qcow2 output, convertible to OVH snapshot)
 - Host rebuilds skip the slow Packer step if the snapshot is current
 - `make configure` can be re-run safely after any config change
@@ -475,3 +475,40 @@ deployed until the operator has validated the interactive workflow end-to-end.
 - Samples exist on disk momentarily in /tmp — cleaned up after submission
 - Automation path is available by adding a systemd timer unit pointing to the same
   script with `--auto --tag <filter>` args — no code changes required
+
+---
+
+## ADR-016: Migrate secrets to Ansible Vault, remove AWS data plane
+
+**Status:** Accepted 2026-04-24
+
+**Context:**
+The original architecture used AWS as a full data plane: Secrets Manager for secrets,
+SQS for job queuing, Lambda + API Gateway for sample submission, RDS for IOC storage,
+S3 for samples and reports. In practice, the only AWS service actively used was Secrets
+Manager — and it caused repeated deployment failures due to SSO session expiry during
+long Ansible runs. The SQS agent never worked (Cape API unreachable without WireGuard),
+Lambda/API Gateway were never used (sample ingestion goes through the sample-feeder CLI),
+and RDS was never populated.
+
+Monthly AWS cost was ~$43 for infrastructure that provided no active value. The
+MalwareBazaar sample-feeder CLI (ADR-015) replaced the Lambda/SQS submission pipeline,
+and Cape stores analysis results locally.
+
+**Decision:**
+- Replace AWS Secrets Manager with **Ansible Vault** (`ansible/vars/secrets.yml`,
+  gitignored, encrypted with `ansible-vault encrypt`)
+- Remove the `sqs-agent` role from `site.yml` (dead without SQS)
+- AWS Terraform code (`aws/`) is retained in the repo for reference but is not
+  deployed or maintained. It can be deleted in a future cleanup.
+- S3 with Object Lock remains an option for evidence archival if needed later —
+  it can be deployed as a standalone bucket with no other AWS infra.
+
+**Consequences:**
+- No AWS credentials required to run Ansible — eliminates SSO session expiry problem
+- Secrets are in `vars/secrets.yml` (gitignored), encrypted at rest via `ansible-vault`
+- Playbook invocation changes: `ansible-playbook site.yml --ask-vault-pass`
+- Monthly cost drops from ~$135 (OVH + AWS) to ~$92 (OVH only)
+- No structured IOC database (RDS) — defer until analysis volume justifies it
+- No API-driven sample submission — operator uses sample-feeder CLI directly
+- S3 evidence archival is a standalone future addition if chain-of-custody is needed
