@@ -437,6 +437,7 @@
 
 - name: Ensure Cape PostgreSQL database exists
   ansible.builtin.shell: |
+    set -o pipefail
     sudo -u postgres psql -lqt | grep -qw cape || sudo -u postgres createdb -O cape cape
   args:
     executable: /bin/bash
