@@ -29,6 +29,8 @@ shared/backend-aws.hcl
 !shared/backend-aws.hcl.example
 ansible/vars/main.yml
 !ansible/vars/main.yml.example
+ansible/vars/secrets.yml
+!ansible/vars/secrets.yml.example
 packer/http/user-data
 !packer/http/user-data.example
 
