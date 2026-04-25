@@ -101,4 +101,20 @@ Set-ItemProperty -Path $ssPath -Name "EnableSmartScreen" -Value 0 -Type DWord
 Write-Host "==> Setting timezone to Eastern Standard Time"
 Set-TimeZone -Id "Eastern Standard Time"
 
+# -------------------------------------------------------------------------
+# 7. Disable Windows Firewall — all profiles
+# -------------------------------------------------------------------------
+# The sandbox guest needs all ports accessible from the host (cape-agent on
+# 8000, resultserver callbacks). Windows classifies the detonation bridge
+# as "Public" (most restrictive) because it has no gateway/DNS that matches
+# a known network. Disabling the firewall on all profiles ensures the agent
+# is reachable regardless of how Windows classifies the network.
+Write-Host "==> Disabling Windows Firewall (all profiles)"
+netsh advfirewall set allprofiles state off
+
+# Also set via registry for persistence across profile changes
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile" -Name "EnableFirewall" -Value 0
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile" -Name "EnableFirewall" -Value 0
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile" -Name "EnableFirewall" -Value 0
+
 Write-Host "==> configure-system complete (restart required for hostname change)"
