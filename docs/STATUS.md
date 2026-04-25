@@ -16,16 +16,18 @@ malware-sandbox-infra/
 ├── Makefile                       ✓ complete
 │
 ├── docs/
-│   ├── DECISIONS.md               ✓ ADR log
+│   ├── DECISIONS.md               ✓ ADR log (through ADR-016)
 │   ├── SECURITY_CONSTRAINTS.md    ✓ non-negotiables with rationale
+│   ├── COST_ESTIMATE.md           ✓ monthly cost breakdown
 │   └── STATUS.md                  ✓ this file
 │
 ├── packer/
-│   ├── ubuntu-sandbox.pkr.hcl     ✓ complete
-│   ├── windows10-guest.pkr.hcl    ✓ complete (Win10 22H2 eval, Python, cape-agent, anti-evasion)
-│   ├── windows10-office.pkr.hcl   ✓ complete (boots from base, adds LibreOffice, macro security LOW)
+│   ├── windows11-base.pkr.hcl     ✓ complete (Win11 Enterprise eval, UEFI/TPM, Python, cape-agent)
+│   ├── windows11-guest.pkr.hcl    ✓ complete (boots from base, runs cleanup, disables WinRM)
+│   ├── windows11-office.pkr.hcl   ✓ complete (boots from base, adds LibreOffice, macro security LOW)
+│   ├── ubuntu-sandbox.pkr.hcl     ✓ complete (hardened Ubuntu 24.04 base)
 │   ├── answer-files/
-│   │   └── autounattend.xml       ✓ complete (unattended Win10 install, WinRM, eval ISO)
+│   │   └── autounattend.xml       ✓ complete (unattended Win11 install, WinRM, eval ISO)
 │   ├── scripts/windows/           ✓ complete (8 PowerShell provisioner scripts)
 │   ├── ansible/
 │   │   └── hardening.yml          ✓ complete (konstruktoid.hardening playbook)
@@ -34,64 +36,35 @@ malware-sandbox-infra/
 │       └── user-data              ✓ complete (placeholder hash — run make packer-setup)
 │
 ├── ansible/
-│   ├── site.yml                   ✓ complete
+│   ├── site.yml                   ✓ complete (10 roles in order)
 │   ├── requirements.yml           ✓ complete (konstruktoid.hardening, community.general)
 │   ├── inventory/
 │   │   └── hosts.example          ✓ exists
 │   ├── vars/
-│   │   ├── main.yml               ✓ complete (non-sensitive config, gitignored)
-│   │   └── secrets.yml            ✓ complete (cape_api_key + bazaar_auth_key, gitignored)
+│   │   ├── main.yml               ✓ non-sensitive config (gitignored)
+│   │   ├── secrets.yml            ✓ cape_api_key + bazaar_auth_key (gitignored, vault-encrypted)
+│   │   └── secrets.yml.example    ✓ committed template
 │   └── roles/
-│       ├── hardening/             ✓ complete (wraps konstruktoid.hardening, production settings)
-│       ├── kvm/                   ✓ complete (libvirt, hugepages, groups, disable default net)
-│       ├── networking/            ✓ complete (virbr-det libvirt network, iptables air-gap + INetSim INPUT rules)
-│       ├── inetsim/               ✓ complete (install, bind to virbr-det, DNS/HTTP/HTTPS/SMTP/FTP, systemd ordering)
-│       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services,
-│       │                                      routing.conf, guest-domain.xml, kvm.conf stanzas)
-│       ├── wireguard/             ✓ complete (keypair generated on host, peer pubkey from vars, wg-quick)
-│       └── sqs-agent/             ✗ removed from site.yml (was SQS poll → Cape; replaced by sample-feeder)
+│       ├── hardening/             ✓ wraps konstruktoid.hardening (CIS baseline)
+│       ├── kvm/                   ✓ libvirt, hugepages, groups, disable default net
+│       ├── networking/            ✓ virbr-det bridge, iptables air-gap, INetSim INPUT rules
+│       ├── inetsim/               ✓ DNS/HTTP/HTTPS/SMTP/FTP simulation on virbr-det
+│       ├── wireguard/             ✓ keypair on host, peer from vars, wg-quick
+│       ├── qemu-patched/          ✓ DSDT-patched QEMU build, cape user/repo, libvirt repair
+│       ├── mongodb/               ✓ standalone MongoDB 8.0 (GPG, repo, install, systemd)
+│       ├── cape/                  ✓ cape2.sh installer, config, token auth, ordered services
+│       ├── cape-guests/           ✓ guest VM images, libvirt domains, automated snapshots
+│       └── sample-feeder/         ✓ MalwareBazaar CLI for interactive sample ingestion
 │
 ├── ovh/
-│   ├── main.tf                    ✓ complete (firewall, SSH key, OS install)
+│   ├── main.tf                    ✓ complete (firewall, SSH key, OS reinstall, provider v2)
 │   ├── variables.tf               ✓ complete
 │   ├── outputs.tf                 ✓ complete
 │   └── terraform.tfvars.example   ✓ complete
 │
-├── aws/
-│   ├── bootstrap/
-│   │   ├── main.tf                ✓ complete
-│   │   ├── variables.tf           ✓ complete
-│   │   └── outputs.tf             ✓ complete
-│   ├── modules/
-│   │   ├── vpc/                   ✓ complete (subnets, NAT, flow logs)
-│   │   ├── s3/                    ✓ complete (buckets, object lock, KMS, lifecycle)
-│   │   ├── rds/                   ✓ complete (PostgreSQL, private subnet, encrypted)
-│   │   ├── lambda/
-│   │   │   ├── main.tf            ✓ complete
-│   │   │   ├── variables.tf       ✓ complete
-│   │   │   └── outputs.tf         ✓ complete
-│   │   ├── sqs/
-│   │   │   ├── main.tf            ✓ complete
-│   │   │   ├── variables.tf       ✓ complete
-│   │   │   └── outputs.tf         ✓ complete
-│   │   └── api/
-│   │       ├── main.tf            ✓ complete
-│   │       ├── variables.tf       ✓ complete
-│   │       └── outputs.tf         ✓ complete
-│   └── envs/
-│       └── prod/
-│           ├── main.tf            ✓ complete
-│           ├── variables.tf       ✓ complete
-│           ├── outputs.tf         ✓ complete
-│           └── terraform.tfvars.example ✓ complete
+├── aws/                           ✗ not deployed — retained for reference (ADR-016)
 │
-├── shared/
-│   └── backend-aws.hcl            ~ placeholder values, needs real bucket name
-│
-└── src/
-    ├── report_processor.py        ~ stub (deployable, no real logic yet — needs real Cape report JSON)
-    └── sample_submitter.py        ✓ complete
-    # run `make lambda` to build src/*.zip before terraform apply
+└── src/                           ✗ not deployed — Lambda handlers (retained for reference)
 ```
 
 **Legend:** ✓ complete · ~ stub/partial · ✗ not built · ! needs fix
@@ -145,103 +118,66 @@ removal rationale.
 
 ---
 
-## Documentation (2026-04-03)
+## Deployment phases (simplified 2026-04-25)
 
-**`docs/DEPLOYMENT.md`** — written. Single document covering all 10 deployment phases.
-The README should link to it.
+AWS removed (ADR-016). Full deploy is now 5 phases.
 
-### `docs/DEPLOYMENT.md` — phase checklist
+### Phase 1 — OVH bare metal provisioning
 
-- [x] **Phase 0 — Prerequisites**
-      Everything that must be in place before any `terraform` or `ansible` command runs.
-      - Accounts: OVHcloud US account, AWS account (dedicated — not shared with other infra)
-      - Tools and minimum versions: Terraform ≥ 1.6, Ansible ≥ 2.14, Packer ≥ 1.10,
-        AWS CLI v2, WireGuard tools (`wg`, `wg-quick`), Python 3.11+ (local, for Lambda build),
-        `make`, `acpica-tools` (for DSDT capture on the bare metal host after OS install)
-      - AWS credentials configured (`aws configure` or profile) with AdministratorAccess
-        on the sandbox account
-      - OVHcloud API credentials: `OVH_ENDPOINT`, `OVH_APPLICATION_KEY`,
-        `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY`
-      - Windows 10 22H2 Enterprise evaluation ISO downloaded locally
-        (link to official Microsoft evaluation download page)
+```bash
+cd ovh
+cp terraform.tfvars.example terraform.tfvars  # fill in OVH API creds, admin CIDR, SSH key
+terraform init && terraform apply             # ~12 min for OS install
+ssh sandbox                                   # verify access
+```
 
-- [x] **Phase 1 — AWS bootstrap**
-      One-time: creates the S3 state bucket and DynamoDB lock table with local state.
-      - Copy `aws/bootstrap/terraform.tfvars.example` → `terraform.tfvars`, fill in
-        `name_prefix` and `aws_region`
-      - `terraform init && terraform apply`
-      - Record `state_bucket_name` output → fill into `shared/backend-aws.hcl`
+### Phase 2 — Secrets setup (one-time)
 
-- [x] **Phase 2 — AWS infrastructure**
-      Provisions VPC, S3, RDS, SQS, Lambda, API Gateway, KMS, Secrets Manager, CloudTrail.
-      - `make lambda` — build Lambda ZIPs before plan (plan will error without them)
-      - Copy `aws/envs/prod/terraform.tfvars.example` → `terraform.tfvars`; fill in
-        `samples_bucket_name`, `reports_bucket_name` (globally unique — include account ID),
-        `budget_alert_emails`
-      - `terraform init -backend-config=../../shared/backend-aws.hcl`
-      - `terraform plan -out=tfplan && terraform apply tfplan`
-      - Record outputs: `samples_bucket_name`, `reports_bucket_name`,
-        `baremetal_agent_secret_arn`, `api_invoke_url` → fill into `ansible/vars/main.yml`
+```bash
+# WireGuard keypair
+wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
+# Paste public key into ansible/vars/main.yml → wireguard_peer_pubkey
 
-- [x] **Phase 3 — Secrets setup**
-      One secret must be created manually (outside Terraform) because it contains
-      information only available after provisioning.
-      - **WireGuard**: generate laptop keypair locally; paste public key into
-        `ansible/vars/main.yml` → `wireguard_peer_pubkey`. Server keypair generated
-        on the host by Ansible (private key never leaves the server).
-      - **Cape API key + DSDT**: generate API key now (random hex); DSDT captured later
-        in Phase 5 after bare metal OS install; create the secret once both values exist;
-        record ARN → `ansible/vars/main.yml` → `secret_arn_cape`
-      - Exact commands for key generation, secret creation via AWS CLI
+# Vault secrets
+cp ansible/vars/secrets.yml.example ansible/vars/secrets.yml
+# Fill in cape_api_key and bazaar_auth_key
+ansible-vault encrypt ansible/vars/secrets.yml
+```
 
-- [ ] **Phase 4 — OVH bare metal provisioning**
-      Provisions the server, applies OVH robot firewall (SSH + WireGuard allowlist),
-      registers SSH key, installs Ubuntu 24.04.
-      - Copy `ovh/terraform.tfvars.example` → `terraform.tfvars`; fill in OVH credentials,
-        admin CIDR (your IP), SSH public key
-      - `terraform init && terraform apply`
-      - Wait for OS install to complete (~15 min); record server IP
-      - Update `ansible/inventory/hosts` with the server IP
-      - Verify SSH access: `ssh root@<server-ip>`
+### Phase 3 — Packer guest images + upload
 
-- [ ] **Phase 5 — DSDT capture (bare metal, post-OS-install)**
-      Must be done on the physical host before running Ansible — value is hardware-specific.
-      ```
-      apt install -y acpica-tools
-      acpidump -b && iasl -d dsdt.dat
-      ```
-      Extract the DSDT hex string; update the Cape Secrets Manager secret with it.
+Build Windows 11 guest images locally in WSL, upload to host.
 
-- [ ] **Phase 6 — Ansible configuration**
-      Configures KVM, CAPEv2, INetSim, WireGuard, and the SQS polling agent on the host.
-      - Install Galaxy requirements: `ansible-galaxy install -r ansible/requirements.yml`
-      - `ansible-playbook -i ansible/inventory/hosts ansible/site.yml`
-      - Note: `kvm-qemu.sh` (DSDT-patched QEMU build) takes 30–60 min — expected
-      - Verify services: `systemctl status cape cape-web cape-processor inetsim wg-quick@wg0`
+```bash
+cd packer
+make image                                              # ~2-3 hours
+scp output-guest/windows11-guest.qcow2  sandbox:/home/ubuntu/
+scp output/windows11-office.qcow2       sandbox:/home/ubuntu/
+```
 
-- [ ] **Phase 7 — Packer guest image builds**
-      Builds the Windows 10 base image and the LibreOffice office image.
-      Prerequisite: `packer/packer.auto.pkrvars.hcl` populated (see "required variables"
-      checklist in the Packer section of this file).
-      - `make image` — builds both images sequentially (~2–3 hours total)
-      - SCP both qcow2 files to the bare metal host:
-        ```
-        scp packer/output/windows10-guest.qcow2  root@<host>:/var/lib/libvirt/images/
-        scp packer/output/windows10-office.qcow2 root@<host>:/var/lib/libvirt/images/
-        ```
-      - Re-run Ansible to define libvirt domains: `ansible-playbook ... ansible/site.yml`
+Ansible stages images from `/home/ubuntu/` to `/var/lib/libvirt/images/` automatically.
 
-- [ ] **Phase 8 — Libvirt snapshots**
-      Manual steps on the bare metal host after images are in place and domains are defined.
-      See "Snapshot workflow" section in this file.
+### Phase 4 — Ansible configuration
 
-- [ ] **Phase 9 — Smoke test**
-      Verify the full pipeline end to end before treating the system as operational.
-      - Submit a known-benign sample via the API (e.g., `calc.exe` or a simple `hello.exe`)
-      - Verify it appears in the SQS queue, is picked up by sqs-agent, detonated by Cape,
-        and the report lands in S3
-      - Check Cape web UI (via WireGuard) for the analysis report
-      - Suggested test sample: EICAR test file (detected but harmless)
+```bash
+cd ansible
+ansible-galaxy install -r requirements.yml
+ansible-playbook -i inventory/hosts site.yml --ask-vault-pass
+```
+
+Roles: hardening → kvm → networking → inetsim → wireguard → qemu-patched →
+mongodb → cape → cape-guests → sample-feeder.
+
+`qemu-patched` is the slowest (~30-60 min). Snapshots are automated by `cape-guests`.
+
+### Phase 5 — Smoke test
+
+```bash
+ssh sandbox
+sudo -u cape sample-feeder  # submit a sample from MalwareBazaar
+```
+
+Verify in Cape web UI via WireGuard at `http://10.200.0.1:8000`.
 
 ---
 
