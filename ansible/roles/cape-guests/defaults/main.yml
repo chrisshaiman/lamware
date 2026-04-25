@@ -1,0 +1,12 @@
+---
+# roles/cape-guests/defaults/main.yml
+# Default values for Cape guest VM configuration.
+# Override in ansible/vars/main.yml or via --extra-vars.
+
+# Directory where guest qcow2 images are stored on the bare metal host.
+cape_guest_image_dir: /var/lib/libvirt/images
+
+# Default guest VM resources (ADR-012).
+# Override per-guest in the cape_guests list in vars/main.yml.
+cape_guest_memory_kb: 4194304   # 4096 MB
+cape_guest_vcpus: 2

@@ -54,10 +54,22 @@
     - role: wireguard
       tags: [wireguard]
 
-    # 6. CAPEv2 — runs kvm-qemu.sh (DSDT patching) then cape2.sh
+    # 6. DSDT-patched QEMU binary + cape user/repo setup
+    - role: qemu-patched
+      tags: [qemu-patched]
+
+    # 7. MongoDB 8.0 — standalone, required by Cape
+    - role: mongodb
+      tags: [mongodb]
+
+    # 8. CAPEv2 — cape2.sh installer + config + services
     - role: cape
       tags: [cape]
 
-    # 7. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 9. Guest VMs — libvirt domains + snapshots
+    - role: cape-guests
+      tags: [cape-guests]
+
+    # 10. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
