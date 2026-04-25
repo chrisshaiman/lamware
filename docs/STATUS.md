@@ -868,34 +868,37 @@ in the next round of implementation work.
 
 ## Future scope (not started, not prioritised)
 
-- RDS ingress rule: move from composition layer into RDS module (accept `allowed_security_group_ids` variable)
-- CloudWatch dashboard: Lambda errors, SQS depth, RDS connections, S3 request rates
-- RDS backup/restore runbook
-- VPC Flow Log alerting — low value given tight SGs; CloudTrail is higher signal for this threat model
-- Reports bucket expiration rule (~2 years) — cost hygiene; object lock not warranted (reports are re-generatable)
-- Analysis pipeline enrichment (spec approved: `docs/superpowers/specs/2026-04-19-analysis-pipeline-enrichment-design.md`)
+### Cape automation
+- Cape API key automation — automate Django migrations, superuser creation, and `drf_create_token` in the `cape` role. Currently manual: `cd /opt/CAPEv2/web && poetry run python3 manage.py migrate && manage.py drf_create_token cape`. Token must be saved back to `ansible/vars/secrets.yml`
+- Molecule tests for Ansible roles — container-based role testing for CI validation
+
+### Analysis pipeline enrichment
+- Spec approved: `docs/superpowers/specs/2026-04-19-analysis-pipeline-enrichment-design.md`
   - Stage 1: Triage — YARA (community + custom rules), ssdeep, FLOSS, file type, smart routing
   - Stage 2: Dynamic — Cape (exists), always with memory=1
   - Stage 3: Memory forensics — Volatility 3 (spec: `2026-04-19-volatility3-integration-design.md`)
   - Stage 4: Static deep-dive — Ghidra headless on unpacked payloads from Cape
   - New Ansible roles: `triage`, `volatility`, `ghidra`
-  - sqs-agent orchestrates all stages, merges results into single report JSON
-  - Input sources: SQS (API Gateway) and sample-feeder CLI (MalwareBazaar)
 - Custom Volatility plugins — stock plugins only for v1; custom plugins when analysis patterns emerge
 - Custom Ghidra scripts — stock analysis only for v1; config extractors, protocol parsers later
-- Cross-stage orchestration — Volatility shellcode extract → Ghidra disassembly, YARA family match → custom Ghidra config extractor; requires decision engine ("agent orchestration layer")
-- Memory dump / Ghidra project archival to S3 — not v1; all artifacts re-generable from preserved samples
-- Real-time analysis during detonation — VMI/Drakvuf or live Volatility snapshots; high effort, revisit if malware self-cleanup is observed
+- Cross-stage orchestration — Volatility shellcode extract → Ghidra disassembly, YARA family match → custom Ghidra config extractor
 - MITRE ATT&CK mapping of analysis findings
 - Automated YARA rule updates — manual or cron for v1
-- Web UI for browsing enriched analysis results — use Cape UI + S3 reports for v1
-- Report processor parsing of Volatility/Ghidra output into RDS — defer until real output is available
-- Agent orchestration layer (Step Functions or separate service)
+
+### Guest VM management
 - Windows 10 guest Packer image — on hold pending ISO sourcing (Win10 eval ISO removed by Microsoft); Win11 images built and deployed
-- Windows guest image rotation runbook — evaluation ISO expires every 90 days; document the rebuild-and-redeploy procedure (Packer rebuild → replace libvirt base image → restore clean snapshot) before first guest is deployed
-- Cape agent Python 3.13+ upgrade — currently on 3.12 with cgi monkey-patch; upgrade to 3.13+ once CAPEv2 PR #2786 (cgi removal) is merged upstream. Drop monkey-patch from install-cape-agent.ps1 and pin to new agent commit
-- Cape injected agent (capemon DLL) — currently using cape-agent.py; evaluate capemon injection once evasion is observed in practice (see ADR-010)
-- Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples, build a third snapshot with Microsoft Office evaluation installed; requires Microsoft account for ISO download (see ADR-013)
+- Windows guest image rotation runbook — evaluation ISO expires every 90 days; document rebuild-and-redeploy procedure
+- Cape agent Python 3.13+ upgrade — currently on 3.12 with cgi monkey-patch; upgrade once CAPEv2 PR #2786 (cgi removal) is merged upstream
+- Cape injected agent (capemon DLL) — evaluate capemon injection once evasion is observed in practice (see ADR-010)
+- Microsoft Office guest profile — if LibreOffice macro compatibility proves insufficient for VBA-heavy samples (see ADR-013)
+- Guest user activity simulation — mouse movement, file opens to defeat activity-check evasion; revisit if dormancy-on-idle observed
+
+### Infrastructure
+- S3 evidence archival — standalone S3 bucket with Object Lock for tamper-proof sample/report preservation. Deploy only if chain-of-custody requirements emerge
+- OVH KS-5 evaluation — $20/mo (Xeon E3-1270 v6, 4c/8t, 32GB) as cheaper alternative to RISE-2
+- Bare metal integrity monitoring — Keylime/TPM attestation on OVH host
+- Real-time analysis during detonation — VMI/Drakvuf or live Volatility snapshots; high effort
+- QEMU build optimization — compile in CI container, deploy only binary + runtime deps
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
 - QEMU build optimization — kvm-qemu.sh installs ~500 build-time dev packages (Xen, Spice, Bluetooth, Ceph, GTK headers) on the production host. Compile in a build container or CI pipeline instead, deploy only the binary + runtime deps. Reduces attack surface and deploy time significantly
