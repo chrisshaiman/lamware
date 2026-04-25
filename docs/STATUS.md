@@ -39,7 +39,8 @@ malware-sandbox-infra/
 │   ├── inventory/
 │   │   └── hosts.example          ✓ exists
 │   ├── vars/
-│   │   └── main.yml               ✓ complete (fill in ARNs + bucket names post-deploy)
+│   │   ├── main.yml               ✓ complete (non-sensitive config, gitignored)
+│   │   └── secrets.yml            ✓ complete (cape_api_key + bazaar_auth_key, gitignored)
 │   └── roles/
 │       ├── hardening/             ✓ complete (wraps konstruktoid.hardening, production settings)
 │       ├── kvm/                   ✓ complete (libvirt, hugepages, groups, disable default net)
@@ -48,7 +49,7 @@ malware-sandbox-infra/
 │       ├── cape/                  ✓ complete (DSDT patch, kvm-qemu.sh, cape2.sh, config, services,
 │       │                                      routing.conf, guest-domain.xml, kvm.conf stanzas)
 │       ├── wireguard/             ✓ complete (keypair generated on host, peer pubkey from vars, wg-quick)
-│       └── sqs-agent/             ✓ complete (systemd service: SQS poll → Cape → S3 report upload)
+│       └── sqs-agent/             ✗ removed from site.yml (was SQS poll → Cape; replaced by sample-feeder)
 │
 ├── ovh/
 │   ├── main.tf                    ✓ complete (firewall, SSH key, OS install)
@@ -97,79 +98,50 @@ malware-sandbox-infra/
 
 ---
 
-## Deployment status (2026-04-03)
+## Deployment status (2026-04-24)
 
-Code is complete. Nothing has been deployed yet. Work through these in order.
+Fully automated deployment validated 2026-04-23. SalatStealer detonated successfully
+from fresh Ubuntu install through automated Ansible playbook. See ADR-016 for AWS
+removal rationale.
 
-### Pre-deployment checklist
+### Deployment checklist
 
-- [ ] **`shared/backend-aws.hcl`** — fill in real S3 state bucket name.
-      Run `terraform -chdir=aws/bootstrap apply` first (local state), then copy the
-      `state_bucket_name` output into `shared/backend-aws.hcl`.
-      *File:* `shared/backend-aws.hcl`
-
-- [ ] **AWS bootstrap** — create Terraform state bucket + DynamoDB lock table.
-      ```
-      cd aws/bootstrap && terraform init && terraform apply
-      ```
-      One-time. Uses local state (no remote backend needed for bootstrap itself).
-
-- [ ] **AWS prod Terraform plan + apply** — provision VPC, S3, RDS, Lambda, SQS, API Gateway,
-      KMS, Secrets Manager, CloudTrail.
-      ```
-      cd aws/envs/prod && terraform init -backend-config=../../shared/backend-aws.hcl
-      terraform plan -out=tfplan
-      terraform apply tfplan
-      ```
-      Outputs needed for the next steps:
-      - `samples_bucket_name`, `reports_bucket_name` → `ansible/vars/main.yml`
-      - `baremetal_agent_secret_arn` → `ansible/vars/main.yml`
-      - API Gateway invoke URL → note for client use
-
-- [ ] **WireGuard keys** — generate your laptop keypair.
+- [x] **WireGuard keys** — generate your laptop keypair.
       ```
       wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
       ```
       Paste the contents of `~/wg-public.key` into `ansible/vars/main.yml` → `wireguard_peer_pubkey`.
-      The server keypair is generated on the host automatically by the Ansible wireguard role.
-      After Ansible runs, the host's public key is printed — copy it into your laptop's WireGuard config.
 
-- [ ] **Cape API key** — generate a random key, create AWS secret.
+- [x] **Secrets** — copy `ansible/vars/secrets.yml.example` to `secrets.yml`, fill in values.
       ```
-      python3 -c "import secrets; print(secrets.token_hex(32))"
+      cp ansible/vars/secrets.yml.example ansible/vars/secrets.yml
+      # Edit secrets.yml: set cape_api_key and bazaar_auth_key
+      ansible-vault encrypt ansible/vars/secrets.yml
       ```
-      Store `{ "dsdt_string": "<hex>", "api_key": "<key>" }` in a new Secrets Manager secret;
-      record the ARN in `ansible/vars/main.yml` → `secret_arn_cape`.
-      DSDT string: run `acpidump -b && iasl -d dsdt.dat` on the bare metal host after OS install.
 
-- [ ] **`ansible/vars/main.yml`** — fill in all ARNs and bucket names from Terraform outputs.
-      Fields: `s3_bucket_samples`, `s3_bucket_reports`, `secret_arn_baremetal`,
-      `secret_arn_cape`, `wireguard_peer_pubkey`.
-
-- [ ] **OVH bare metal provisioning** — provision server, apply firewall, install Ubuntu 24.04.
+- [x] **OVH bare metal provisioning** — provision server, apply firewall, install Ubuntu 24.04.
       ```
       cd ovh && terraform init && terraform apply
       ```
       Then update `ansible/inventory/hosts` with the server IP.
 
-- [ ] **Ansible** — configure bare metal host (KVM, Cape, INetSim, WireGuard, sqs-agent).
-      ```
-      ansible-galaxy install -r ansible/requirements.yml
-      ansible-playbook -i ansible/inventory/hosts ansible/site.yml
-      ```
-
-- [ ] **Packer guest builds** — build Windows guest images.
+- [x] **Packer guest builds** — build Windows 11 guest images locally in WSL.
       Populate `packer/packer.auto.pkrvars.hcl` first (see checklist below).
       ```
       make image
       ```
-      Then `scp` the two qcow2 files to `/var/lib/libvirt/images/` on the bare metal host.
+      Then `scp` the two qcow2 files to `/home/ubuntu/` on the bare metal host.
+      Ansible stages them to `/var/lib/libvirt/images/` automatically.
 
-- [ ] **Libvirt snapshots** — take clean + office snapshots (manual, after Ansible defines domains).
-      See snapshot workflow in the "Next build" section below.
+- [x] **Ansible** — configure bare metal host (KVM, Cape, INetSim, WireGuard, sample-feeder).
+      ```
+      ansible-galaxy install -r ansible/requirements.yml
+      ansible-playbook -i ansible/inventory/hosts ansible/site.yml --ask-vault-pass
+      ```
+      Snapshots are created automatically during the playbook run.
 
-- [ ] **`src/report_processor.py`** — implement report ingestion logic once Cape is running
-      and real analysis JSON is available. Currently a deployable stub.
+- [ ] **Cape API key** — generate a real key from Cape web UI and update `secrets.yml`.
+      Currently using a placeholder value.
 
 ---
 
@@ -362,24 +334,25 @@ Issues identified during deep review of Packer guest builds, Ansible roles, and 
 
 ## Done (fully implemented)
 
-- `aws/modules/vpc/` — VPC, subnets, NAT gateway, flow logs
-- `aws/modules/s3/` — samples + reports buckets, object lock, KMS, lifecycle, S3 event notification
-- `aws/modules/rds/` — PostgreSQL, private subnet, Performance Insights, encrypted
-- `aws/modules/lambda/` — report_processor + sample_submitter functions, IAM, SQS permissions, VPC endpoint, variables, outputs
-- `aws/modules/sqs/` — job queue, DLQ, bare metal IAM user + policy, credentials in Secrets Manager
-- `aws/bootstrap/` — S3 state bucket + DynamoDB lock table; runs once with local state
-- `aws/modules/api/` — HTTP API Gateway v2, POST /submit route, IAM auth, throttling, access logs
-- `aws/envs/prod/` — composition layer wiring all modules; KMS key, Secrets Manager secrets, cross-module rules
 - `Makefile` — `make image`, `make infra`, `make configure` entry points
 - `ovh/` — OVH bare metal module: robot firewall (SSH + WireGuard allowlist), SSH key registration, Ubuntu 24.04 OS install
-- `packer/ubuntu-sandbox.pkr.hcl` — hardened Ubuntu 24.04 image: KVM packages, CAPEv2 clone + deps, AWS CLI, konstruktoid hardening, qcow2 output
-- `src/sample_submitter.py` — Lambda handler: validates submission, issues pre-signed S3 URL, enqueues SQS job
+- `packer/ubuntu-sandbox.pkr.hcl` — hardened Ubuntu 24.04 image: KVM packages, CAPEv2 clone + deps, konstruktoid hardening, qcow2 output
+- `packer/windows11-guest.pkr.hcl` — Windows 11 Enterprise eval, Python 3.12, cape-agent, anti-evasion, UEFI/TPM
+- `packer/windows11-office.pkr.hcl` — Windows 11 + LibreOffice, macro security LOW, file associations
 - `ansible/roles/hardening/` — wraps konstruktoid.hardening with production settings (key-only SSH)
 - `ansible/roles/kvm/` — libvirt enabled, hugepages configured, cape user groups, default network disabled
 - `ansible/roles/networking/` — virbr-det libvirt isolated network, iptables air-gap DROP rules, netfilter-persistent
+- `ansible/roles/inetsim/` — network simulation for guest VM traffic (DNS, HTTP, HTTPS, SMTP, FTP)
 - `ansible/roles/wireguard/` — generates host keypair, configures peer from vars, wg-quick@wg0 service
-- `ansible/roles/cape/` — DSDT patch via kvm-qemu.sh, cape2.sh, cape.conf/api.conf/kvm.conf, systemd services
-- `ansible/roles/sqs-agent/` — systemd service polling SQS, submitting to Cape, uploading reports to S3
+- `ansible/roles/cape/` — DSDT patch via kvm-qemu.sh, cape2.sh, config, services, automated snapshots
+- `ansible/roles/sample-feeder/` — MalwareBazaar CLI tool for interactive sample ingestion
+
+### Not deployed (retained for reference)
+
+- `aws/` — full AWS data plane (VPC, S3, SQS, RDS, Lambda, API GW, KMS, Secrets Manager, CloudTrail). Removed per ADR-016. Code retained for potential S3-only re-deployment.
+- `ansible/roles/sqs-agent/` — SQS polling agent. Removed from site.yml per ADR-016.
+- `src/sample_submitter.py` — Lambda handler. No longer deployed.
+- `src/report_processor.py` — Lambda stub. Never implemented.
 
 ---
 
@@ -990,10 +963,7 @@ in the next round of implementation work.
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
 - QEMU build optimization — kvm-qemu.sh installs ~500 build-time dev packages (Xen, Spice, Bluetooth, Ceph, GTK headers) on the production host. Compile in a build container or CI pipeline instead, deploy only the binary + runtime deps. Reduces attack surface and deploy time significantly
-- Secrets management migration — replace AWS Secrets Manager `delegate_to: localhost` (fragile SSO sessions) with Ansible Vault for static secrets. HashiCorp Vault if multi-host or dynamic credentials needed later
-- PostgreSQL migration to OVH — move from RDS (~$15-25/mo) to local PostgreSQL on Docker. Eliminates WireGuard latency for report writes, saves cost. Requires self-managed backups (pg_dump cron)
-- SQS → Redis migration — Cape already runs Redis internally. Replace SQS polling agent with Redis queue on the host. Simplifies architecture, removes AWS dependency for job queue
-- AWS scope reduction — keep S3 (Object Lock for evidence integrity) and API Gateway (public-facing separation from analysis host). Move PostgreSQL, secrets, and job queue to OVH. Evaluate dropping Lambda in favor of a lightweight submission service on the host behind API Gateway
+- S3 evidence archival — standalone S3 bucket with Object Lock for tamper-proof sample/report preservation. Deploy only if chain-of-custody requirements emerge
 - Bare metal integrity monitoring from AWS — detect sandbox escape or host compromise from an independent observer:
   - CloudWatch heartbeat: host pushes "healthy" metric every 5 min; missing data triggers alarm
   - CloudWatch canary: periodic SSH checks (iptables intact, expected processes, QEMU binary hash, open ports)

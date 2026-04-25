@@ -15,23 +15,20 @@
 
   vars_files:
     - vars/main.yml
+    - vars/secrets.yml
 
   pre_tasks:
     - name: Validate required variables are populated
       ansible.builtin.assert:
         that:
-          - s3_bucket_samples | length > 0
-          - s3_bucket_reports | length > 0
-          - secret_arn_baremetal | length > 0
-          - secret_arn_cape | length > 0
           - wireguard_peer_pubkey | length > 0
+          - cape_api_key | length > 0
+          - bazaar_auth_key | length > 0
         fail_msg: |
-          One or more required variables are empty. Populate ansible/vars/main.yml:
-            s3_bucket_samples    — terraform -chdir=aws/envs/prod output -raw samples_bucket_name
-            s3_bucket_reports    — terraform -chdir=aws/envs/prod output -raw reports_bucket_name
-            secret_arn_baremetal  — terraform -chdir=aws/envs/prod output -raw baremetal_agent_secret_arn
-            secret_arn_cape      — ARN of the Cape API key secret in Secrets Manager
+          One or more required variables are empty:
             wireguard_peer_pubkey — your laptop's WireGuard public key (wg pubkey < ~/wg-private.key)
+            cape_api_key          — Cape API token (ansible/vars/secrets.yml)
+            bazaar_auth_key       — MalwareBazaar auth key (ansible/vars/secrets.yml)
 
   roles:
     # 1. OS hardening — CIS-aligned baseline (konstruktoid)
@@ -61,11 +58,6 @@
     - role: cape
       tags: [cape]
 
-    # 7. SQS agent — polls SQS, submits to Cape, syncs reports to S3
-    #    (absorbs the previously planned s3-sync role — see ADR-003)
-    - role: sqs-agent
-      tags: [sqs-agent]
-
-    # 8. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 7. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]

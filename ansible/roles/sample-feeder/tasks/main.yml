@@ -32,29 +32,6 @@
   changed_when: false
 
 # -------------------------------------------------------------------------
-# Fetch Cape API key from Secrets Manager on control node
-# -------------------------------------------------------------------------
-
-- name: Fetch Cape API key from Secrets Manager
-  ansible.builtin.command: >
-    aws secretsmanager get-secret-value
-    --secret-id {{ secret_arn_cape }}
-    --query SecretString
-    --output text
-    --region {{ secrets_manager_region }}
-  delegate_to: localhost
-  become: false
-  register: cape_api_secret_raw
-  changed_when: false
-  failed_when: cape_api_secret_raw.rc != 0 or cape_api_secret_raw.stdout | length == 0
-  no_log: true
-
-- name: Parse Cape API key
-  ansible.builtin.set_fact:
-    cape_api_key: "{{ (cape_api_secret_raw.stdout | from_json).api_key }}"
-  no_log: true
-
-# -------------------------------------------------------------------------
 # Deploy CLI tool and config
 # -------------------------------------------------------------------------
 
