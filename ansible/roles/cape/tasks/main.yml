@@ -10,7 +10,7 @@
 #   no external storage needed since this runs on bare metal.
 #
 # Execution order:
-#   1. Capture DSDT from host firmware + fetch API key from Secrets Manager
+#   1. Capture DSDT from host firmware
 #   2. Create cape system user
 #   3. Run kvm-qemu.sh with DSDT value substituted (builds patched QEMU)
 #   4. Run cape2.sh (installs Cape services)
@@ -24,29 +24,6 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
-
-# -------------------------------------------------------------------------
-# Cape API key — from Secrets Manager
-# -------------------------------------------------------------------------
-
-- name: Fetch Cape API key from Secrets Manager
-  ansible.builtin.command: >
-    aws secretsmanager get-secret-value
-    --secret-id {{ secret_arn_cape }}
-    --query SecretString
-    --output text
-    --region {{ secrets_manager_region }}
-  delegate_to: localhost
-  become: false
-  register: cape_secret_raw
-  changed_when: false
-  failed_when: cape_secret_raw.rc != 0 or cape_secret_raw.stdout | length == 0
-  no_log: true
-
-- name: Parse Cape secret JSON
-  ansible.builtin.set_fact:
-    cape_secret: "{{ cape_secret_raw.stdout | from_json }}"
-  no_log: true
 
 # -------------------------------------------------------------------------
 # Cape user
@@ -405,7 +382,7 @@
     path: "{{ cape_install_dir }}/conf/api.conf"
     section: api
     option: api_token
-    value: "{{ cape_secret.api_key }}"
+    value: "{{ cape_api_key }}"
     mode: "0640"
   no_log: true
 

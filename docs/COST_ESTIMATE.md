@@ -10,35 +10,28 @@ Actual costs vary with sample volume, analysis frequency, and data transfer.
 
 | Layer | Est. Monthly |
 |---|---|
-| AWS supporting infra | ~$43 |
 | OVH bare metal (RISE-2 + 64GB upgrade) | ~$92 |
-| **Total** | **~$135/month** |
+| AWS (optional — S3 evidence archival only) | ~$5 |
+| **Total (without AWS)** | **~$92/month** |
+| **Total (with S3 archival)** | **~$97/month** |
 
-Recommended: RISE-2 with 64GB RAM upgrade (~$135/month total).
-One-time setup fee: $80 (waived with 12-month commitment).
+AWS data plane (Lambda, SQS, RDS, API Gateway, VPC endpoints, Secrets Manager) has been
+removed — see ADR-016. Secrets are managed locally via Ansible Vault. S3 with Object Lock
+is retained as an optional standalone component for evidence archival if chain-of-custody
+is needed.
 
 ---
 
-## AWS — Component Breakdown
+## AWS — Optional S3 Evidence Archival
 
 | Component | Configuration | Est. Monthly | Notes |
 |---|---|---|---|
-| S3 — samples bucket | ~100GB, Standard storage | ~$3 | Scales with corpus size |
+| S3 — samples bucket | ~100GB, Standard storage | ~$3 | Object Lock GOVERNANCE mode |
 | S3 — reports bucket | ~50GB, Standard storage | ~$2 | Cape JSON reports; compressible |
-| RDS PostgreSQL | db.t4g.micro, 20GB gp3, single-AZ | ~$14 | Upgrade to t4g.small (~$25) if query load increases |
-| Lambda | ~1k invocations/day | ~$2 | Likely near free tier at low volume |
-| API Gateway (HTTP API) | ~1k req/day | <$1 | HTTP API is ~70% cheaper than REST API |
-| NAT Gateway | Removed — replaced by VPC endpoints | $0 | See ADR-006 |
-| VPC Interface Endpoints | SQS + Secrets Manager (2x) | ~$14 | ~$7/endpoint/month |
-| SQS | Standard queue, low volume | <$1 | Within free tier (1M req/month) |
-| KMS | 1 CMK + API calls | ~$1 | Single key used across S3, RDS, Lambda logs |
-| Secrets Manager | ~6 secrets | ~$2 | DSDT, Cape key, DB password, WireGuard keys |
-| Secrets Manager rotation | RDS rotation Lambda (SAR) | ~$0 | 1 invocation/month; within Lambda free tier |
-| CloudWatch Logs | Lambda logs (30d retention) + VPC flow logs | ~$3 | |
-| CloudWatch alarm | DLQ depth alarm | ~$0 | First 10 alarms free per account |
-| AWS Budgets | Monthly spend alert | $0 | First 2 budgets per account always free |
-| DynamoDB | PAY_PER_REQUEST (TF state lock only) | <$1 | Negligible |
-| **AWS Total** | | **~$43/month** | |
+| **AWS Total** | | **~$5/month** | Only if deployed |
+
+All other AWS services (RDS, Lambda, SQS, API GW, VPC, KMS, Secrets Manager, CloudWatch,
+CloudTrail) are no longer deployed. Terraform code in `aws/` is retained for reference.
 
 ---
 
@@ -65,14 +58,15 @@ NVMe storage provides fast VM snapshot creation and restore.
 
 ## Cost Optimization Opportunities
 
-### RDS instance sizing
-db.t4g.micro (~$14/month) is sufficient for the IOC database at low-moderate volume.
-Only upgrade to t4g.small (~$25/month) if query latency becomes an issue.
-
-### S3 storage classes
+### S3 storage classes (if S3 archival is deployed)
 Reports older than 90 days can transition to S3 Glacier Instant Retrieval (~$0.004/GB)
-vs Standard (~$0.023/GB). Worth adding a lifecycle rule once the corpus grows.
-Lifecycle rules are already scaffolded in `aws/modules/s3/`.
+vs Standard (~$0.023/GB). Lifecycle rules are already scaffolded in `aws/modules/s3/`.
+
+### OVH KS-5 alternative
+KS-5 (Xeon E3-1270 v6, 4c/8t, 32GB, 2x450GB NVMe) at ~$20/month in Vint Hill VA
+could potentially run the sandbox or support services. Significantly cheaper but
+fewer cores and less RAM than RISE-2. Worth evaluating if budget is the primary
+constraint.
 
 ---
 
@@ -94,8 +88,7 @@ free for inbound). At typical malware analysis volumes this is negligible.
 
 | Component | Notes |
 |---|---|
-| Static analysis agent (Ghidra) | Likely Lambda or Fargate; cost TBD |
-| Memory forensics agent (Volatility 3) | Likely Lambda; cost TBD |
-| Agent orchestration | Step Functions ~$0.025/1k state transitions |
-| Windows guest Packer image | No additional infra cost — runs on existing bare metal |
+| Static analysis (Ghidra headless) | Runs on bare metal host; no additional infra cost |
+| Memory forensics (Volatility 3) | Runs on bare metal host; no additional infra cost |
+| Windows guest Packer image rotation | No additional infra cost — runs on existing bare metal |
 | OVH bandwidth overage | OVH includes generous bandwidth; unlikely to be a factor |

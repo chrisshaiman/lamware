@@ -48,31 +48,32 @@ WireGuard-only binding means you must be an authenticated VPN peer to reach it.
 
 ---
 
-## S3 buckets: no public access, HTTPS only, KMS encrypted
+## S3 buckets: no public access, HTTPS only, KMS encrypted (if deployed)
 
-**Rule:** Both S3 buckets (samples + reports) must have:
+> **Note:** AWS infrastructure is not currently deployed (see ADR-016). These rules
+> apply if S3 evidence archival is added in the future.
+
+**Rule:** S3 buckets holding malware samples or reports must have:
 - Block Public Access enabled at the bucket level
 - Bucket policy enforcing `aws:SecureTransport` (HTTPS only)
 - SSE-KMS encryption with a project-specific KMS key
 - No public ACLs or bucket policies granting `*` principal access
 
 **Why:** S3 buckets holding malware samples must not be publicly accessible under
-any circumstances. A misconfiguration (accidental public ACL, incorrect bucket policy)
-must not result in public exposure. Defense in depth: block at multiple layers.
-HTTPS-only prevents credential interception on any path that uses pre-signed URLs.
+any circumstances. Defense in depth: block at multiple layers.
 
 ---
 
-## RDS: private subnet only, no public endpoint
+## Secrets in Ansible Vault, never in plaintext committed files
 
-**Rule:** The RDS PostgreSQL instance must be deployed in private subnets with
-no public accessibility (`publicly_accessible = false`). No security group rule
-allows inbound 5432 from outside the VPC.
+**Rule:** All sensitive values (API keys, auth tokens) must be stored in
+`ansible/vars/secrets.yml` (gitignored) and encrypted at rest with `ansible-vault`.
+Never commit plaintext secrets to git. Never store secrets in `vars/main.yml`.
 
-**Why:** The analysis database holds normalized IOCs, behavioral indicators, and
-potentially sensitive attribution data. It must only be reachable from Lambda
-functions running inside the same VPC. Direct internet exposure of a database
-is never acceptable regardless of password strength.
+**Why:** Secrets committed to git history are effectively permanent — even if removed
+in a later commit, they remain in the history. Ansible Vault provides AES-256
+encryption at rest with a password only the operator knows. The gitignore pattern
+prevents accidental commits of the unencrypted file.
 
 ---
 
@@ -91,17 +92,16 @@ that from being exploitable.
 
 ---
 
-## Separate AWS account for this project
+## Separate AWS account for this project (if AWS is used)
+
+> **Note:** AWS infrastructure is not currently deployed (see ADR-016). This rule
+> applies if S3 evidence archival is added in the future.
 
 **Rule:** All AWS resources for this project must live in a dedicated AWS account,
 not shared with other personal or work infrastructure.
 
-**Why:** This project handles malware samples and runs analysis automation. If any
-Lambda function, IAM role, or S3 bucket is misconfigured, blast radius must be
-limited to this project's account only. Cross-account IAM mistakes (overly permissive
-roles, trust policy errors) cannot affect other infrastructure if the accounts are
-separate. AWS Organizations SCPs can also be used to enforce guardrails at the account
-level (e.g., deny regions outside US).
+**Why:** This project handles malware samples. If any S3 bucket or IAM role is
+misconfigured, blast radius must be limited to this project's account only.
 
 ---
 
