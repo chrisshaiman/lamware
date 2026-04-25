@@ -1,0 +1,9 @@
+---
+# roles/qemu-patched/defaults/main.yml
+# Override in ansible/vars/main.yml or via --extra-vars.
+
+# Hardware brand names for DSDT anti-evasion.
+# Values from: dmidecode -s system-manufacturer / bios-vendor
+# Short brand names (e.g. "GIGABYTE"), NOT full DSDT hex dump.
+cape_hw_brand: "GIGABYTE"
+cape_hw_bios_vendor: "GIGABYTE"

@@ -1,0 +1,209 @@
+---
+# =============================================================================
+# roles/qemu-patched/tasks/main.yml
+# Builds a DSDT-patched QEMU binary from CAPEv2's kvm-qemu.sh installer
+# and repairs the libvirt packages it damages.
+#
+# This role is slow on first run (30-60 min QEMU compilation) but
+# stamp-guarded — subsequent runs skip the build.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Cape user
+# -------------------------------------------------------------------------
+
+- name: Ensure libvirt and kvm groups exist
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - libvirt
+    - kvm
+
+- name: Create cape system user
+  ansible.builtin.user:
+    name: "{{ cape_user }}"
+    system: true
+    shell: /bin/bash
+    home: "/home/{{ cape_user }}"
+    create_home: true
+    groups: libvirt,kvm
+    append: true
+
+- name: Install git
+  ansible.builtin.apt:
+    name: git
+    state: present
+
+- name: Create CAPEv2 install directory
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Clone CAPEv2 repository
+  ansible.builtin.git:
+    repo: https://github.com/kevoreilly/CAPEv2.git
+    dest: "{{ cape_install_dir }}"
+    # Pinned 2026-04-19. force: true needed because cape2.sh modifies repo files.
+    version: aa66fbd329052408a9599cf954a5cf72d8b1d61d
+    depth: 1
+    force: true
+  become: true
+  become_user: "{{ cape_user }}"
+
+- name: Ensure cape owns its install directory
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    recurse: true
+
+# -------------------------------------------------------------------------
+# kvm-qemu.sh — builds DSDT-patched QEMU binary (slow; runs once)
+# The script has a <WOOT> placeholder for the DSDT hex string.
+# A stamp file prevents re-running after a successful build.
+# -------------------------------------------------------------------------
+
+- name: Check if kvm-qemu.sh has already run
+  ansible.builtin.stat:
+    path: /opt/.cape-kvm-qemu-installed
+  register: cape_kvm_qemu_stamp
+
+- name: Write kvm-config.sh with hardware-specific brand names
+  ansible.builtin.copy:
+    content: |
+      # kvm-config.sh — sourced by kvm-qemu.sh to replace QEMU identifiers
+      # with real hardware brand names from this host.
+      # Values from: dmidecode -s system-manufacturer / bios-vendor
+      PEN_REPLACER='{{ cape_hw_brand | default("GIGABYTE") }}'
+      SCSI_REPLACER='{{ cape_hw_brand | default("GIGABYTE") }}'
+      ATAPI_REPLACER='{{ cape_hw_brand | default("GIGABYTE") }}'
+      MICRODRIVE_REPLACER='{{ cape_hw_brand | default("GIGABYTE") }}'
+      BOCHS_BLOCK_REPLACER='{{ cape_hw_brand | default("GIGABYTE") }}'
+      BOCHS_BLOCK_REPLACER2='{{ cape_hw_brand | default("GIGABYTE") }}'
+      BOCHS_BLOCK_REPLACER3='{{ cape_hw_brand | default("GIGABYTE") }}'
+      BXPC_REPLACER='{{ cape_hw_bios_vendor | default("GIGABYTE") }}'
+      BOCHS_SEABIOS_BLOCK_REPLACER='{{ cape_hw_bios_vendor | default("GIGABYTE") }}'
+    dest: "{{ cape_install_dir }}/installer/kvm-config.sh"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+  when: not cape_kvm_qemu_stamp.stat.exists
+
+- name: Build patched QEMU with /tmp exec (restored on failure)
+  when: not cape_kvm_qemu_stamp.stat.exists
+  block:
+    - name: Temporarily allow exec on /tmp (needed for QEMU/libvirt build)
+      ansible.builtin.command: mount -o remount,exec /tmp
+      changed_when: true
+
+    - name: Run kvm-qemu.sh (builds patched QEMU — may take 30-60 min)
+      ansible.builtin.shell: |
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        export NEEDRESTART_MODE=a
+        cd {{ cape_install_dir }}/installer
+        bash kvm-qemu.sh all {{ cape_user }}
+        touch /opt/.cape-kvm-qemu-installed
+      args:
+        executable: /bin/bash
+      changed_when: true
+  always:
+    - name: Restore noexec on /tmp
+      ansible.builtin.command: mount -o remount,noexec /tmp
+      changed_when: true
+
+# -------------------------------------------------------------------------
+# Restore libvirt packages — kvm-qemu.sh and cape2.sh remove/replace system
+# QEMU and libvirt packages. Reinstall what we need for virsh and libvirtd.
+# -------------------------------------------------------------------------
+
+- name: Remove broken apt repos and keys added by Cape installer
+  ansible.builtin.shell: |
+    rm -f /etc/apt/sources.list.d/mongodb*.list
+    rm -f /etc/apt/sources.list.d/tor*.list
+    rm -f /etc/apt/sources.list.d/pgdg*.list
+    rm -f /etc/apt/keyrings/mongo.gpg
+    rm -f /usr/share/keyrings/mongodb-server-8.0.gpg
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Remove stale Cape libvirt libraries from /usr/local
+  ansible.builtin.shell: |
+    rm -f /usr/local/lib/x86_64-linux-gnu/libvirt*
+    ldconfig
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Reinstall libvirt and QEMU ROM packages after Cape installer
+  ansible.builtin.apt:
+    name:
+      - libvirt-daemon-system
+      - libvirt-clients
+      - libvirt-dev
+      - qemu-utils
+      - qemu-system-data
+      - seabios
+      - ipxe-qemu
+    state: present
+    update_cache: true
+
+- name: Fix QEMU data directory permissions (Cape installer sets 700)
+  ansible.builtin.file:
+    path: /usr/share/qemu
+    mode: "0755"
+
+- name: Symlink seabios VGA ROM to QEMU data directory
+  ansible.builtin.file:
+    src: /usr/share/seabios/vgabios-stdvga.bin
+    dest: /usr/share/qemu/vgabios-stdvga.bin
+    state: link
+
+- name: Symlink iPXE e1000 EFI ROM to QEMU data directory
+  ansible.builtin.file:
+    src: /usr/lib/ipxe/qemu/efi-e1000.rom
+    dest: /usr/share/qemu/efi-e1000.rom
+    state: link
+
+- name: Install patched QEMU binary (after apt reinstall to avoid overwrite)
+  ansible.builtin.copy:
+    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
+    dest: /usr/bin/qemu-system-x86_64
+    mode: "0755"
+    remote_src: true
+
+- name: Restart libvirtd to pick up patched QEMU machine types
+  ansible.builtin.systemd:
+    name: libvirtd
+    state: restarted
+    daemon_reload: true
+
+- name: Fix swtpm state directory ownership
+  ansible.builtin.file:
+    path: /var/lib/swtpm-localca
+    owner: tss
+    group: tss
+    mode: "0755"
+
+- name: Fix libvirt directory permissions (cape installer sets 700)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: "0755"
+  loop:
+    - /var/lib/libvirt
+    - /var/lib/libvirt/images
+
+- name: Ensure libvirtd is running after reinstall
+  ansible.builtin.systemd:
+    name: libvirtd
+    state: started
+    enabled: true
+    daemon_reload: true
