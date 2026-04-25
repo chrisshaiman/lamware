@@ -898,7 +898,8 @@ in the next round of implementation work.
 - OVH KS-5 evaluation — $20/mo (Xeon E3-1270 v6, 4c/8t, 32GB) as cheaper alternative to RISE-2
 - Bare metal integrity monitoring — Keylime/TPM attestation on OVH host
 - Real-time analysis during detonation — VMI/Drakvuf or live Volatility snapshots; high effort
-- QEMU build optimization — compile in CI container, deploy only binary + runtime deps
+- QEMU build caching — after first successful kvm-qemu.sh build, save the patched binary to a persistent location with a hardware brand stamp. On subsequent deploys, skip the 30+ min build if the cached binary matches current hardware. Rebuild only when hardware platform changes (e.g., RISE-2 → KS-5). Could also pre-build in WSL or CI container per platform
+- QEMU build optimization — compile in CI container instead of on production host, deploy only binary + runtime deps. Reduces attack surface (no dev packages on prod) and deploy time
 - Guest user activity simulation — mouse movement, file opens, simulated idle behavior to defeat activity-check evasion; high effort, marginal payoff for most samples; revisit if dormancy-on-idle is observed frequently in practice (see ADR-012)
 - Guest network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low priority, revisit if OUI-based detection is observed (see ADR-012)
 - QEMU build optimization — kvm-qemu.sh installs ~500 build-time dev packages (Xen, Spice, Bluetooth, Ceph, GTK headers) on the production host. Compile in a build container or CI pipeline instead, deploy only the binary + runtime deps. Reduces attack surface and deploy time significantly
