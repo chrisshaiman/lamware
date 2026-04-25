@@ -20,16 +20,12 @@ terraform {
   required_providers {
     ovh = {
       source  = "ovh/ovh"
-      version = "~> 0.44"
+      version = "~> 2.0"
     }
   }
 
-  backend "s3" {
-    # Connection details (bucket, region, dynamodb_table) come from
-    # shared/backend-aws.hcl via: terraform init -backend-config=../shared/backend-aws.hcl
-    # Key is set here to avoid clobbering the AWS prod state.
-    key = "prod/ovh/terraform.tfstate"
-  }
+  # Local state — AWS S3 backend removed (ADR-016)
+  backend "local" {}
 }
 
 provider "ovh" {
@@ -65,7 +61,6 @@ data "ovh_dedicated_server" "sandbox" {
 resource "ovh_ip_firewall" "sandbox" {
   ip             = "${data.ovh_dedicated_server.sandbox.ip}/32"
   ip_on_firewall = data.ovh_dedicated_server.sandbox.ip
-  enabled        = true
 }
 
 # Allow SSH from each admin CIDR (sequences 0–9)
@@ -111,20 +106,13 @@ resource "ovh_ip_firewall_rule" "allow_wireguard" {
 # when the installer completes and reboots.
 # =============================================================================
 
-resource "ovh_dedicated_server_install_task" "os" {
-  service_name  = data.ovh_dedicated_server.sandbox.service_name
-  template_name = var.os_template
+resource "ovh_dedicated_server_reinstall_task" "os" {
+  service_name = data.ovh_dedicated_server.sandbox.service_name
+  os            = var.os_template
 
-  details {
-    custom_hostname = var.hostname
-    no_raid         = var.no_raid
-  }
-
-  # ovh_me_ssh_key was removed in provider 0.44.0 — SSH key is injected
-  # directly at install time via user_metadata instead.
-  user_metadata {
-    key   = "sshKey"
-    value = var.ssh_public_key
+  customizations {
+    hostname = var.hostname
+    ssh_key  = var.ssh_public_key
   }
 
   timeouts {
