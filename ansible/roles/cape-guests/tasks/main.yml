@@ -1,0 +1,164 @@
+---
+# =============================================================================
+# roles/cape-guests/tasks/main.yml
+# Deploys guest VM images, defines libvirt domains, and takes snapshots
+# for Cape analysis.
+#
+# Depends on: cape (Cape services must be installed and configured)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Guest VM libvirt domain definitions
+# -------------------------------------------------------------------------
+
+- name: Ensure guest image directory exists
+  ansible.builtin.file:
+    path: "{{ cape_guest_image_dir }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Move guest images from upload staging to images directory
+  ansible.builtin.shell: |
+    moved=0
+    for img in /home/ubuntu/windows11-*.qcow2; do
+      [ -f "$img" ] && mv "$img" {{ cape_guest_image_dir }}/ && echo "moved $img" && moved=1
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  register: cape_image_move
+  changed_when: "'moved' in cape_image_move.stdout"
+
+- name: Wait for guest images to be present
+  ansible.builtin.wait_for:
+    path: "{{ item.disk_path }}"
+    timeout: 600
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Set guest image ownership for libvirt access
+  ansible.builtin.shell: chown libvirt-qemu:kvm {{ cape_guest_image_dir }}/windows11-*.qcow2
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Ensure OVMF nvram directory exists
+  ansible.builtin.file:
+    path: /var/lib/libvirt/qemu/nvram
+    state: directory
+    owner: libvirt-qemu
+    group: kvm
+    mode: "0755"
+
+- name: Deploy guest libvirt domain XML
+  ansible.builtin.template:
+    src: guest-domain.xml.j2
+    dest: "/tmp/cape-guest-{{ item.name }}.xml"
+    mode: "0600"
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Define guest libvirt domains (virsh define)
+  ansible.builtin.command:
+    cmd: virsh define /tmp/cape-guest-{{ item.name }}.xml
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+
+- name: Remove temporary domain XML files
+  ansible.builtin.file:
+    path: "/tmp/cape-guest-{{ item.name }}.xml"
+    state: absent
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# -------------------------------------------------------------------------
+# Guest VM snapshots — required before Cape can start analysis
+# -------------------------------------------------------------------------
+
+- name: Check if snapshots already exist
+  ansible.builtin.command: virsh snapshot-list {{ item.name }} --name
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cape_snapshot_check
+  changed_when: false
+  failed_when: false
+
+- name: Take guest VM snapshots (if not already snapshotted)
+  when: cape_snapshot_check.results | selectattr('stdout', 'equalto', '') | list | length > 0
+  block:
+    - name: Start guest VMs for snapshotting
+      ansible.builtin.command: virsh start {{ item.item.name }}
+      loop: "{{ cape_snapshot_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.stdout == ""
+      changed_when: true
+
+    - name: Wait for cape-agent to respond on each guest
+      ansible.builtin.uri:
+        url: "http://{{ item.item.ip }}:8000/"
+        timeout: 5
+      loop: "{{ cape_snapshot_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.stdout == ""
+      retries: 36
+      delay: 5
+      register: cape_agent_check
+      until: cape_agent_check is success
+
+    - name: Take external snapshot with memory state
+      ansible.builtin.command: >
+        virsh snapshot-create-as {{ item.item.name }} {{ item.item.snapshot }}
+        --memspec file={{ cape_guest_image_dir }}/{{ item.item.name }}.memsnap,snapshot=external
+        --diskspec sda,file={{ cape_guest_image_dir }}/{{ item.item.name }}.overlay.qcow2,snapshot=external
+      loop: "{{ cape_snapshot_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.stdout == ""
+      changed_when: true
+
+    - name: Shut down guest VMs after snapshotting
+      ansible.builtin.command: virsh shutdown {{ item.item.name }}
+      loop: "{{ cape_snapshot_check.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: item.stdout == ""
+      changed_when: true
+
+    - name: Wait for VMs to shut down
+      ansible.builtin.pause:
+        seconds: 15
+
+# -------------------------------------------------------------------------
+# Restart Cape services after snapshots exist
+# -------------------------------------------------------------------------
+
+- name: Start Cape core service (initializes DB schema)
+  ansible.builtin.systemd:
+    name: cape
+    state: restarted
+
+- name: Wait for Cape to initialize
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Start Cape web and processor
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - cape-web
+    - cape-processor
