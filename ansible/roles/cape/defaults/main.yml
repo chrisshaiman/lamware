@@ -1,23 +1,6 @@
 ---
 # roles/cape/defaults/main.yml
-# Default values for Cape guest VM configuration.
-# Override in ansible/vars/main.yml or via --extra-vars.
 
-# Path to the QEMU binary. kvm-qemu.sh patches ACPI DSDT strings into the
-# build and (on most distributions) installs to this path, replacing the
-# package-installed binary. Verify after running kvm-qemu.sh:
-#   file /usr/bin/qemu-system-x86_64
 cape_qemu_binary: /usr/bin/qemu-system-x86_64
-
-# Directory where guest qcow2 images are stored on the bare metal host.
-# Images are copied here after the Packer build and before Ansible runs
-# the domain-define tasks.
 cape_guest_image_dir: /var/lib/libvirt/images
-
-# Default guest VM resources (ADR-012).
-# Override per-guest in the cape_guests list in vars/main.yml.
-cape_guest_memory_kb: 4194304   # 4096 MB
-cape_guest_vcpus: 2
-
-# Cape resultserver port (default upstream value)
 cape_resultserver_port: 2042
