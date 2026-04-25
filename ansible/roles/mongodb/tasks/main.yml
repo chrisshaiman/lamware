@@ -1,0 +1,45 @@
+---
+# =============================================================================
+# roles/mongodb/tasks/main.yml
+# Installs and configures MongoDB 8.0 as a standalone service.
+# No Cape-specific logic — reusable for any service needing MongoDB.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Remove conflicting MongoDB keyrings
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/keyrings/mongo.gpg
+    - /usr/share/keyrings/mongodb-server-8.0.gpg
+
+- name: Add MongoDB 8.0 GPG key
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+      | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+    chmod 644 /usr/share/keyrings/mongodb-server-8.0.gpg
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Add MongoDB 8.0 repository
+  ansible.builtin.copy:
+    content: "deb [signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse\n"
+    dest: /etc/apt/sources.list.d/mongodb-org-8.0.list
+    mode: "0644"
+
+- name: Install MongoDB
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: present
+    update_cache: true
+
+- name: Enable and start MongoDB
+  ansible.builtin.systemd:
+    name: mongod
+    state: started
+    enabled: true
