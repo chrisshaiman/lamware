@@ -87,6 +87,7 @@
   ansible.builtin.command:
     cmd: >
       podman build
+      --network=host
       -t localhost/triage:latest
       -f {{ triage_install_dir }}/build/Containerfile
       {{ triage_install_dir }}/build
