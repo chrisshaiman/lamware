@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# roles/pipeline/tasks/main.yml
+# Deploys the pipeline orchestrator script, reports directory, and cleanup cron.
+#
+# Depends on: triage (containerized triage must be available)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install requests for pipeline orchestrator
+  ansible.builtin.pip:
+    name: requests
+    state: present
+    break_system_packages: true
+
+- name: Fix pip package permissions for cape user
+  ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Create pipeline directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ pipeline_install_dir }}"
+    - "{{ pipeline_reports_dir }}"
+
+- name: Deploy run-pipeline.py
+  ansible.builtin.template:
+    src: run-pipeline.py.j2
+    dest: "{{ pipeline_install_dir }}/run-pipeline.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Deploy pipeline wrapper script
+  ansible.builtin.template:
+    src: run-pipeline-wrapper.sh.j2
+    dest: "{{ pipeline_install_dir }}/run-pipeline"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ pipeline_install_dir }}/run-pipeline"
+    dest: /usr/local/bin/run-pipeline
+    state: link
+
+- name: Deploy cleanup cron script
+  ansible.builtin.template:
+    src: pipeline-cleanup.sh.j2
+    dest: "{{ pipeline_install_dir }}/cleanup.sh"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Allow cape user to use crontab (hardening restricts via cron.allow)
+  ansible.builtin.lineinfile:
+    path: /etc/cron.allow
+    line: "{{ cape_user }}"
+    create: true
+    mode: "0600"
+
+- name: Schedule daily report cleanup
+  ansible.builtin.cron:
+    name: "pipeline-report-cleanup"
+    user: "{{ cape_user }}"
+    hour: "3"
+    minute: "0"
+    job: "{{ pipeline_install_dir }}/cleanup.sh"

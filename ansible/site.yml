@@ -78,6 +78,10 @@
     - role: triage
       tags: [triage]
 
-    # 12. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 12. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
+    - role: pipeline
+      tags: [pipeline]
+
+    # 13. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]

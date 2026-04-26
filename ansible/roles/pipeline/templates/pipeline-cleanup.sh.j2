@@ -1,0 +1,12 @@
+#!/bin/bash
+# =============================================================================
+# pipeline-cleanup — daily cron job to purge old pipeline reports
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+find {{ pipeline_reports_dir }} -maxdepth 1 -mindepth 1 -type d \
+  -mtime +{{ pipeline_report_retention_days }} \
+  -exec rm -rf {} +
