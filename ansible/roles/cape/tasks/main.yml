@@ -16,7 +16,7 @@
 
 - name: Check if cape2.sh has already run
   ansible.builtin.stat:
-    path: /etc/systemd/system/cape.service
+    path: /lib/systemd/system/cape.service
   register: cape_service_file
 
 - name: Run cape2.sh (installs Cape systemd services)
