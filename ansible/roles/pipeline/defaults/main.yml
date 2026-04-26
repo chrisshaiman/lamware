@@ -16,10 +16,14 @@ pipeline_report_retention_days: 7
 pipeline_volatility_triggers:
   - injection_createremotethread
   - injection_ntqueueapcthread
+  - injection_write_process
+  - injection_rwx
   - process_hollowing
   - reflective_dll_loading
   - shellcode_execution
   - api_unhooking
+  - antisandbox_unhook
+  - creates_suspended_process
   - packed_binary
   - creates_service
   - modifies_runkey
@@ -32,10 +36,14 @@ pipeline_volatility_extra_plugins:
     triggers:
       - injection_createremotethread
       - injection_ntqueueapcthread
+      - injection_write_process
+      - injection_rwx
       - process_hollowing
       - reflective_dll_loading
       - shellcode_execution
       - api_unhooking
+      - antisandbox_unhook
+      - creates_suspended_process
     plugins:
       - windows.handles
       - windows.vadinfo
