@@ -47,7 +47,7 @@ VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
 
 # Standard Volatility plugins (always run when triggered)
 VOLATILITY_STANDARD_PLUGINS = [
-    "windows.pslist",
+    "windows.psscan",
     "windows.pstree",
     "windows.malfind",
     "windows.cmdline",
