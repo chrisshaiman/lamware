@@ -1,0 +1,35 @@
+---
+# =============================================================================
+# roles/podman/tasks/main.yml
+# Installs Podman (rootless, daemonless container runtime) for running
+# analysis tool stages in isolated containers.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install Podman
+  ansible.builtin.apt:
+    name:
+      - podman
+      - uidmap
+      - slirp4netns
+      - fuse-overlayfs
+    state: present
+    update_cache: true
+
+- name: Ensure cape user has subuid/subgid ranges for rootless Podman
+  ansible.builtin.lineinfile:
+    path: "{{ item.file }}"
+    line: "{{ cape_user }}:100000:65536"
+    create: true
+    mode: "0644"
+  loop:
+    - { file: /etc/subuid }
+    - { file: /etc/subgid }
+
+- name: Verify Podman works for cape user
+  ansible.builtin.command: podman info --format {% raw %}'{{.Host.OCIRuntime.Name}}'{% endraw %}
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: false
