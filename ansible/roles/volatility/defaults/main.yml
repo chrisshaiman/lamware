@@ -7,7 +7,7 @@ volatility_output_dir: /opt/volatility3/output
 volatility_symbols_dir: /opt/volatility3/symbols
 
 # Volatility 3 version (PyPI)
-volatility_version: "2.28.1"
+volatility_version: "2.27.0"
 
 # Container resource limits — memory dumps are large (2-4 GB),
 # Volatility needs significant RAM to parse them
