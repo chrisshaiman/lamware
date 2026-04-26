@@ -45,6 +45,17 @@
     - { key: user.max_user_namespaces, value: "15000" }
     - { key: kernel.unprivileged_userns_clone, value: "1" }
 
+# Ubuntu 24.04 ships restrictive AppArmor profiles for podman and crun
+# that block shared library loading. Disable them — container isolation
+# is provided by our own --cap-drop=ALL, --network=none, --read-only flags.
+- name: Disable AppArmor profiles for podman and crun
+  ansible.builtin.command: aa-disable {{ item }}
+  loop:
+    - podman
+    - crun
+  changed_when: true
+  failed_when: false
+
 # konstruktoid hardening strips execute bit from shared libraries (644).
 # Podman and crun need executable .so files to load. Fix only the specific
 # libraries required by podman, crun, and their dependencies.
