@@ -79,6 +79,68 @@ def derive_tags_from_triage(triage_result: dict) -> list[str]:
     return tags
 
 
+def derive_package_from_triage(triage_result: dict) -> str:
+    """Derive Cape analysis package from triage file type detection.
+
+    Cape uses the 'package' field to select the right analysis module.
+    Without it, Cape falls back to filename extension — which fails when
+    the sample has no extension (e.g., 'binary').
+    """
+    triage = triage_result.get("triage", {})
+    file_type = triage.get("file_type", "").lower()
+    file_mime = triage.get("file_mime", "").lower()
+
+    # PE executables
+    if "pe32" in file_type or file_mime == "application/x-dosexec":
+        if "dll" in file_type:
+            return "dll"
+        return "exe"
+
+    # Scripts
+    if any(kw in file_type for kw in ["powershell", "ps1"]):
+        return "ps1"
+    if "python" in file_type:
+        return "python"
+    if "batch" in file_type or "dos batch" in file_type:
+        return "bat"
+    if "vbscript" in file_type or file_mime == "text/vbscript":
+        return "vbs"
+    if "javascript" in file_type or file_mime == "application/javascript":
+        return "js"
+
+    # Documents
+    if any(kw in file_type for kw in ["word", "document", "openxml"]):
+        return "doc"
+    if any(kw in file_type for kw in ["excel", "spreadsheet"]):
+        return "xls"
+    if "pdf" in file_type or file_mime == "application/pdf":
+        return "pdf"
+    if "rtf" in file_type:
+        return "doc"
+
+    # Archives
+    if "zip" in file_type or file_mime == "application/zip":
+        return "zip"
+    if "rar" in file_type:
+        return "rar"
+
+    # .NET / Java
+    if "msil" in file_type or ".net" in file_type:
+        return "exe"
+    if "java" in file_type or file_mime == "application/java-archive":
+        return "jar"
+
+    # If triage detected it as ASCII text, check YARA for hints
+    if "ascii text" in file_type or "text/plain" in file_mime:
+        yara_matches = triage.get("yara_matches", [])
+        rule_names = [m.get("rule", "").lower() for m in yara_matches]
+        if any("base64" in r or "powershell" in r for r in rule_names):
+            return "ps1"
+
+    # Unknown — let Cape auto-detect
+    return ""
+
+
 # -------------------------------------------------------------------------
 # Stage 2: Cape dynamic analysis (always)
 # -------------------------------------------------------------------------
@@ -90,18 +152,22 @@ def cape_headers() -> dict:
     return {"Authorization": f"Token {CAPE_API_KEY}"}
 
 
-def submit_to_cape(sample_path: Path, tags: list[str], custom: str = "") -> int:
+def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
+                   custom: str = "") -> int:
     """Submit sample to Cape API. Returns task ID."""
     url = f"{CAPE_API_URL}/tasks/create/file/"
+    data = {
+        "tags": ",".join(tags),
+        "memory": "1",
+        "custom": custom,
+    }
+    if package:
+        data["package"] = package
     with sample_path.open("rb") as fh:
         resp = requests.post(
             url,
             files={"file": (sample_path.name, fh)},
-            data={
-                "tags": ",".join(tags),
-                "memory": "1",
-                "custom": custom,
-            },
+            data=data,
             headers=cape_headers(),
             timeout=30,
         )
@@ -207,14 +273,18 @@ def run_pipeline(sample_path: Path, task_id: str) -> dict:
     triage_result = run_triage(sample_path, output_dir)
     report.update(triage_result)
     cape_tags = derive_tags_from_triage(triage_result)
+    cape_package = derive_package_from_triage(triage_result)
     print(f"  Tags: {cape_tags}")
+    if cape_package:
+        print(f"  Package: {cape_package}")
 
-    # Stage 2: Cape (always, with triage-informed tags)
-    print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, memory=1")
+    # Stage 2: Cape (always, with triage-informed tags and package)
+    print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
     try:
         cape_task_id = submit_to_cape(
             sample_path,
             tags=cape_tags,
+            package=cape_package,
             custom=f"pipeline_task_id={task_id}",
         )
         print(f"  Cape task ID: {cape_task_id}")
