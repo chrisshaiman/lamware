@@ -35,7 +35,7 @@
 - name: Check if Windows symbols are already downloaded
   ansible.builtin.stat:
     path: "{{ volatility_symbols_dir }}/windows"
-  register: vol_symbols_check
+  register: volatility_symbols_check
 
 - name: Download Windows ISF symbol tables
   ansible.builtin.get_url:
@@ -44,7 +44,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0644"
-  when: not vol_symbols_check.stat.exists
+  when: not volatility_symbols_check.stat.exists
 
 - name: Extract Windows ISF symbol tables
   ansible.builtin.unarchive:
@@ -53,7 +53,7 @@
     remote_src: true
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
-  when: not vol_symbols_check.stat.exists
+  when: not volatility_symbols_check.stat.exists
 
 - name: Remove symbol zip after extraction
   ansible.builtin.file:
