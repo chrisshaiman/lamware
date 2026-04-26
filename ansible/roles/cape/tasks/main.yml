@@ -264,6 +264,7 @@
 
 - name: Generate Cape API token
   ansible.builtin.shell: |
+    set -o pipefail
     cd {{ cape_install_dir }}/web
     /etc/poetry/venv/bin/poetry run python3 manage.py drf_create_token {{ cape_user }} 2>/dev/null \
       | grep -oP 'Generated token \K\S+'
