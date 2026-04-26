@@ -49,6 +49,12 @@ commercialized, a commercial Volatility license must be obtained.
 
 Reference: https://github.com/volatilityfoundation/volatility3/blob/develop/LICENSE.txt
 
+**Alternative:** [MemProcFS](https://github.com/ufrisk/MemProcFS) (AGPL v3) is
+an actively maintained open-source alternative that mounts memory dumps as a
+virtual filesystem. No commercial licensing restrictions. Smaller plugin
+ecosystem than Volatility but growing. Evaluate as a migration path if
+Volatility licensing becomes a constraint.
+
 ### YARA-Rules/rules — GPL v2
 
 The YARA-Rules community rule set is licensed under GPL v2. These rules are
