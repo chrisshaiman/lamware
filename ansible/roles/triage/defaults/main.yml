@@ -1,0 +1,21 @@
+---
+# roles/triage/defaults/main.yml
+
+# Triage install directory on the host
+triage_install_dir: /opt/triage
+triage_output_dir: /opt/triage/output
+triage_rules_dir: /opt/triage/rules
+
+# Container resource limits
+triage_container_memory: "4g"
+triage_container_cpus: "2"
+triage_container_timeout: "300"
+
+# YARA community rule repositories (cloned by Ansible)
+triage_yara_repos:
+  - name: yara-rules
+    url: https://github.com/Yara-Rules/rules.git
+    version: master
+  - name: reversinglabs
+    url: https://github.com/reversinglabs/reversinglabs-yara-rules.git
+    version: develop
