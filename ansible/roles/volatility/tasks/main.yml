@@ -1,0 +1,111 @@
+---
+# =============================================================================
+# roles/volatility/tasks/main.yml
+# Builds the Volatility 3 container image and downloads ISF symbol tables.
+#
+# Volatility runs inside a rootless Podman container with no network access
+# and all capabilities dropped. Memory dumps are mounted read-only.
+#
+# Depends on: podman role (container runtime must be installed)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Host directories
+# -------------------------------------------------------------------------
+
+- name: Create volatility directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ volatility_install_dir }}"
+    - "{{ volatility_output_dir }}"
+    - "{{ volatility_symbols_dir }}"
+
+# -------------------------------------------------------------------------
+# ISF symbol tables — required for Windows memory analysis
+# -------------------------------------------------------------------------
+
+- name: Check if Windows symbols are already downloaded
+  ansible.builtin.stat:
+    path: "{{ volatility_symbols_dir }}/windows"
+  register: volatility_symbols_check
+
+- name: Download Windows ISF symbol tables
+  ansible.builtin.get_url:
+    url: "{{ volatility_isf_url }}"
+    dest: "{{ volatility_install_dir }}/windows-symbols.zip"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+  when: not volatility_symbols_check.stat.exists
+
+- name: Extract Windows ISF symbol tables
+  ansible.builtin.unarchive:
+    src: "{{ volatility_install_dir }}/windows-symbols.zip"
+    dest: "{{ volatility_symbols_dir }}/"
+    remote_src: true
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+  when: not volatility_symbols_check.stat.exists
+
+- name: Remove symbol zip after extraction
+  ansible.builtin.file:
+    path: "{{ volatility_install_dir }}/windows-symbols.zip"
+    state: absent
+
+# -------------------------------------------------------------------------
+# Container image build
+# -------------------------------------------------------------------------
+
+- name: Create container build directory
+  ansible.builtin.file:
+    path: "{{ volatility_install_dir }}/build"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ volatility_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Build volatility3 container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/volatility3:latest
+      -f {{ volatility_install_dir }}/build/Containerfile
+      {{ volatility_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+# -------------------------------------------------------------------------
+# Host-side wrapper script
+# -------------------------------------------------------------------------
+
+- name: Deploy volatility wrapper script
+  ansible.builtin.template:
+    src: run-volatility-wrapper.sh.j2
+    dest: "{{ volatility_install_dir }}/run-volatility"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ volatility_install_dir }}/run-volatility"
+    dest: /usr/local/bin/run-volatility
+    state: link
