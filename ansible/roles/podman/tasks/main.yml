@@ -28,6 +28,11 @@
     - { file: /etc/subuid }
     - { file: /etc/subgid }
 
+- name: Fix libsubid permissions for rootless Podman (hardening restricts shared libs)
+  ansible.builtin.file:
+    path: /usr/lib/x86_64-linux-gnu/libsubid.so.4.0.0
+    mode: "0755"
+
 - name: Verify Podman works for cape user
   ansible.builtin.command: podman info --format {% raw %}'{{.Host.OCIRuntime.Name}}'{% endraw %}
   become: true
