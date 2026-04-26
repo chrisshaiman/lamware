@@ -230,7 +230,7 @@ def cape_auth_headers(cape_api_key: str) -> dict:
     """Build Cape API auth headers. Skip auth for placeholder/disabled keys."""
     if not cape_api_key or cape_api_key.startswith("PLACEHOLDER") or cape_api_key == "disabled":
         return {}
-    return {"Authorization": f"Bearer {cape_api_key}"}
+    return {"Authorization": f"Token {cape_api_key}"}
 
 
 def derive_cape_tags(filename: str) -> list[str]:
