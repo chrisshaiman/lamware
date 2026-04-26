@@ -152,10 +152,34 @@ def cape_headers() -> dict:
     return {"Authorization": f"Token {CAPE_API_KEY}"}
 
 
+def derive_filename(sample_path: Path, package: str, original_name: str = "") -> str:
+    """Derive a meaningful filename for Cape submission.
+
+    Priority: original_name (from sample-feeder) > sample_path name with
+    triage-derived extension > sample_path name as-is.
+    """
+    if original_name:
+        return original_name
+    name = sample_path.name
+    if "." not in name and package:
+        # No extension — append one from the detected package
+        ext_map = {
+            "exe": ".exe", "dll": ".dll", "ps1": ".ps1", "bat": ".bat",
+            "vbs": ".vbs", "js": ".js", "doc": ".doc", "xls": ".xls",
+            "pdf": ".pdf", "zip": ".zip", "rar": ".rar", "jar": ".jar",
+            "python": ".py",
+        }
+        ext = ext_map.get(package, "")
+        if ext:
+            name = f"{name}{ext}"
+    return name
+
+
 def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
-                   custom: str = "") -> int:
+                   filename: str = "", custom: str = "") -> int:
     """Submit sample to Cape API. Returns task ID."""
     url = f"{CAPE_API_URL}/tasks/create/file/"
+    submit_name = filename or sample_path.name
     data = {
         "tags": ",".join(tags),
         "memory": "1",
@@ -166,7 +190,7 @@ def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
     with sample_path.open("rb") as fh:
         resp = requests.post(
             url,
-            files={"file": (sample_path.name, fh)},
+            files={"file": (submit_name, fh)},
             data=data,
             headers=cape_headers(),
             timeout=30,
@@ -256,12 +280,12 @@ def write_report(task_id: str, report: dict, reports_dir: Path) -> Path:
 # Main pipeline
 # -------------------------------------------------------------------------
 
-def run_pipeline(sample_path: Path, task_id: str) -> dict:
+def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> dict:
     """Execute the four-stage analysis pipeline."""
     report = {
         "task_id": task_id,
         "sample": str(sample_path),
-        "sample_name": sample_path.name,
+        "sample_name": original_name or sample_path.name,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -269,22 +293,25 @@ def run_pipeline(sample_path: Path, task_id: str) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Stage 1: Triage (always)
-    print(f"\n[Stage 1] Triage: {sample_path.name}")
+    print(f"\n[Stage 1] Triage: {report['sample_name']}")
     triage_result = run_triage(sample_path, output_dir)
     report.update(triage_result)
     cape_tags = derive_tags_from_triage(triage_result)
     cape_package = derive_package_from_triage(triage_result)
+    cape_filename = derive_filename(sample_path, cape_package, original_name)
     print(f"  Tags: {cape_tags}")
     if cape_package:
         print(f"  Package: {cape_package}")
+    print(f"  Filename: {cape_filename}")
 
-    # Stage 2: Cape (always, with triage-informed tags and package)
+    # Stage 2: Cape (always, with triage-informed tags, package, and filename)
     print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
     try:
         cape_task_id = submit_to_cape(
             sample_path,
             tags=cape_tags,
             package=cape_package,
+            filename=cape_filename,
             custom=f"pipeline_task_id={task_id}",
         )
         print(f"  Cape task ID: {cape_task_id}")
@@ -332,6 +359,8 @@ def main():
     parser.add_argument("sample", type=Path, help="Path to the malware sample")
     parser.add_argument("--task-id", default=None,
                         help="Pipeline task ID (auto-generated if not set)")
+    parser.add_argument("--filename", default="",
+                        help="Original filename (used for Cape submission and reporting)")
     args = parser.parse_args()
 
     if not args.sample.exists():
@@ -339,7 +368,7 @@ def main():
         sys.exit(1)
 
     task_id = args.task_id or uuid.uuid4().hex[:12]
-    report = run_pipeline(args.sample, task_id)
+    report = run_pipeline(args.sample, task_id, original_name=args.filename)
 
     # Print summary
     triage = report.get("triage", {})
