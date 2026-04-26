@@ -17,7 +17,6 @@ if [ $# -lt 1 ]; then
 fi
 
 SAMPLE_PATH="$(realpath "$1")"
-SAMPLE_DIR="$(dirname "$SAMPLE_PATH")"
 SAMPLE_NAME="$(basename "$SAMPLE_PATH")"
 OUTPUT_DIR="${2:-{{ triage_output_dir }}}"
 
@@ -28,6 +27,12 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# Copy sample to a temporary directory so only the single file is mounted
+# into the container — prevents access to other files in the sample's directory.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
+
 exec podman run --rm \
     --network=none \
     --read-only \
@@ -36,8 +41,9 @@ exec podman run --rm \
     --memory={{ triage_container_memory }} \
     --cpus={{ triage_container_cpus }} \
     --timeout={{ triage_container_timeout }} \
-    --tmpfs /tmp \
-    -v "$SAMPLE_DIR:/sample:ro" \
+    --tmpfs /tmp:size=512m \
+    --user 65534:65534 \
+    -v "$WORK_DIR:/sample:ro" \
     -v "{{ triage_rules_dir }}:/rules:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/triage:latest \
