@@ -4,6 +4,12 @@
 # Installs Podman (rootless, daemonless container runtime) for running
 # analysis tool stages in isolated containers.
 #
+# The konstruktoid hardening role disables several features that rootless
+# Podman needs. This role re-enables them in a targeted way:
+#   - user.max_user_namespaces (disabled by hardening)
+#   - libsubid.so permissions (restricted to 644 by hardening)
+#   - vfs storage driver (overlay fails with hardened mount options)
+#
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
@@ -14,7 +20,6 @@
       - podman
       - uidmap
       - slirp4netns
-      - fuse-overlayfs
     state: present
     update_cache: true
 
@@ -28,13 +33,67 @@
     - { file: /etc/subuid }
     - { file: /etc/subgid }
 
-- name: Fix libsubid permissions for rootless Podman (hardening restricts shared libs)
+# konstruktoid hardening disables unprivileged user namespaces.
+# Podman needs them for rootless container operation.
+- name: Enable unprivileged user namespaces for rootless Podman
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-podman.conf
+    reload: true
+  loop:
+    - { key: user.max_user_namespaces, value: "15000" }
+    - { key: kernel.unprivileged_userns_clone, value: "1" }
+
+# konstruktoid hardening sets shared libraries to 644.
+# libsubid.so needs to be executable for Podman to load it.
+- name: Fix libsubid permissions for rootless Podman
   ansible.builtin.file:
     path: /usr/lib/x86_64-linux-gnu/libsubid.so.4.0.0
     mode: "0755"
 
+# Ensure the libsubid symlink points to the real library (not a stale copy)
+- name: Fix libsubid symlink
+  ansible.builtin.file:
+    src: libsubid.so.4.0.0
+    dest: /usr/lib/x86_64-linux-gnu/libsubid.so.4
+    state: link
+    force: true
+
+# overlay storage driver fails with hardened mount options on /home.
+# vfs is slower but works without special mount permissions.
+- name: Ensure containers config directory exists
+  ansible.builtin.file:
+    path: "/home/{{ cape_user }}/.config/containers"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+# overlay storage driver fails with hardened mount options on /home.
+# vfs is slower but works without special mount permissions.
+- name: Configure Podman to use vfs storage driver
+  ansible.builtin.copy:
+    content: |
+      [storage]
+      driver = "vfs"
+    dest: "/home/{{ cape_user }}/.config/containers/storage.conf"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Clean stale overlay storage (switch to vfs)
+  ansible.builtin.file:
+    path: "/home/{{ cape_user }}/.local/share/containers/storage"
+    state: absent
+
 - name: Verify Podman works for cape user
-  ansible.builtin.command: podman info --format {% raw %}'{{.Host.OCIRuntime.Name}}'{% endraw %}
+  ansible.builtin.shell: |
+    podman version --format {% raw %}'{{.Client.Version}}'{% endraw %}
+  args:
+    executable: /bin/bash
   become: true
   become_user: "{{ cape_user }}"
   changed_when: false
+  register: podman_verify
+  failed_when: podman_verify.rc != 0
