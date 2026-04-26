@@ -304,18 +304,21 @@ def determine_extra_plugins(cape_data: dict) -> list[str]:
 
 def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path) -> dict:
     """Run a single Volatility plugin. Returns parsed JSON or error."""
+    # malfind and vadinfo scan every memory region — need longer timeout
+    # on 4GB+ dumps these can take 10-15 minutes
+    plugin_timeout = 600
     try:
         result = subprocess.run(
             [VOLATILITY_CMD, str(dump_path), plugin, str(output_dir)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=plugin_timeout,
         )
         if result.returncode != 0:
             return {"error": result.stderr[:200]}
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return {"error": f"timeout (300s)"}
+        return {"error": f"timeout ({plugin_timeout}s)"}
     except json.JSONDecodeError:
         # Volatility JSON output may have extra lines — try to extract
         lines = result.stdout.strip().split("\n")
