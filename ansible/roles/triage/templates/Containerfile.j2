@@ -3,20 +3,12 @@
 FROM docker.io/library/python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libfuzzy-dev \
     libmagic1 \
     file \
-    build-essential \
-    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir setuptools
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
-
-# Remove build tools after pip install (reduces image size + attack surface)
-RUN apt-get purge -y build-essential && apt-get autoremove -y
 
 COPY run-triage.py /opt/triage/run-triage.py
 RUN chmod +x /opt/triage/run-triage.py

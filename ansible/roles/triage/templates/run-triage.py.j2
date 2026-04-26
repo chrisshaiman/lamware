@@ -20,7 +20,7 @@ from pathlib import Path
 
 import magic
 import pefile
-import ssdeep
+import ppdeep as ssdeep
 import yara
 
 
@@ -114,7 +114,8 @@ def run_yara(path: Path, rules_dir: str = "/rules") -> list[dict]:
 def run_ssdeep(path: Path) -> str:
     """Compute ssdeep fuzzy hash."""
     try:
-        return ssdeep.hash_from_file(str(path))
+        with open(path, "rb") as f:
+            return ssdeep.hash(f.read())
     except Exception:
         return ""
 
