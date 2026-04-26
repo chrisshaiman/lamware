@@ -1,0 +1,29 @@
+---
+# roles/pipeline/defaults/main.yml
+
+# Pipeline install directory
+pipeline_install_dir: /opt/pipeline
+pipeline_reports_dir: /opt/pipeline/reports
+
+# Cape API polling
+pipeline_cape_poll_interval: 30   # seconds between status checks
+pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
+
+# Report retention (days) — cron job purges older reports
+pipeline_report_retention_days: 7
+
+# Volatility trigger signatures — Cape signature names that trigger Stage 3
+# These are checked against Cape's behavioral signature output.
+# Stub list — will be populated when Volatility container is deployed.
+pipeline_volatility_triggers:
+  - injection_createremotethread
+  - injection_ntqueueapcthread
+  - process_hollowing
+  - reflective_dll_loading
+  - shellcode_execution
+  - api_unhooking
+  - packed_binary
+  - creates_service
+  - modifies_runkey
+  - scheduled_task_creation
+  - rootkit_ssdt_hook
