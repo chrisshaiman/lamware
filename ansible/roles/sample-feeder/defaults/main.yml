@@ -19,3 +19,6 @@ sample_feeder_dir: /opt/sample-feeder
 
 # State file — tracks which sha256 hashes have already been submitted
 sample_feeder_state_file: /opt/sample-feeder/seen_hashes.json
+
+# Pipeline orchestrator command — sample-feeder calls this instead of Cape API directly
+sample_feeder_pipeline_cmd: /usr/local/bin/run-pipeline

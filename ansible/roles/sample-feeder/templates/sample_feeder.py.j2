@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import tempfile
 try:
@@ -400,12 +401,25 @@ def main() -> None:
                 tmp.write(content)
                 tmp_path = Path(tmp.name)
 
-            print(f"    Submitting to Cape...")
-            cape_task_id = submit_to_cape(
-                cfg["cape_api_url"], cfg["cape_api_key"],
-                tmp_path, extracted_name, sample["tags"],
-            )
-            print(f"    Submitted: Cape task {cape_task_id}")
+            print(f"    Running pipeline...")
+            pipeline_cmd = cfg.get("pipeline_cmd", "")
+            if pipeline_cmd and Path(pipeline_cmd).exists():
+                pipe_result = subprocess.run(
+                    [pipeline_cmd, str(tmp_path)],
+                    capture_output=False,
+                    timeout=1500,
+                )
+                if pipe_result.returncode != 0:
+                    raise RuntimeError(f"Pipeline exited with code {pipe_result.returncode}")
+                print(f"    Pipeline complete")
+            else:
+                # Fallback: submit directly to Cape if pipeline is not installed
+                print(f"    Pipeline not found, submitting directly to Cape...")
+                cape_task_id = submit_to_cape(
+                    cfg["cape_api_url"], cfg["cape_api_key"],
+                    tmp_path, extracted_name, sample["tags"],
+                )
+                print(f"    Submitted: Cape task {cape_task_id}")
             seen.add(sha256)
             submitted += 1
 
