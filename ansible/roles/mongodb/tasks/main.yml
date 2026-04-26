@@ -8,13 +8,16 @@
 # License: Apache 2.0
 # =============================================================================
 
-- name: Remove conflicting MongoDB keyrings
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /etc/apt/keyrings/mongo.gpg
-    - /usr/share/keyrings/mongodb-server-8.0.gpg
+- name: Remove broken repos and keyrings left by Cape installer
+  ansible.builtin.shell: |
+    rm -f /etc/apt/keyrings/mongo.gpg
+    rm -f /usr/share/keyrings/mongodb-server-8.0.gpg
+    rm -f /etc/apt/sources.list.d/mongodb*.list
+    rm -f /etc/apt/sources.list.d/tor*.list
+    rm -f /etc/apt/sources.list.d/pgdg*.list
+  args:
+    executable: /bin/bash
+  changed_when: false
 
 - name: Add MongoDB 8.0 GPG key
   ansible.builtin.shell: |
@@ -40,6 +43,10 @@
 
 - name: Enable and start MongoDB
   ansible.builtin.systemd:
-    name: mongod
+    name: "{{ item }}"
     state: started
     enabled: true
+  loop:
+    - mongod
+    - mongodb
+  failed_when: false
