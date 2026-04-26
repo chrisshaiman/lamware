@@ -228,6 +228,59 @@
     - cape-processor
 
 # -------------------------------------------------------------------------
+# Django setup — migrations, superuser, API token
+# Cape's web UI uses Django. The auth tables must exist before token auth
+# can work. These tasks are idempotent — migrate is safe to re-run, and
+# the user/token creation checks for existence before creating.
+# -------------------------------------------------------------------------
+
+- name: Run Django database migrations
+  ansible.builtin.shell: |
+    cd {{ cape_install_dir }}/web
+    /etc/poetry/venv/bin/poetry run python3 manage.py migrate --noinput
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: false
+
+- name: Create Django superuser for Cape API
+  ansible.builtin.shell: |
+    cd {{ cape_install_dir }}/web
+    /etc/poetry/venv/bin/poetry run python3 manage.py shell -c "
+    from django.contrib.auth.models import User
+    if not User.objects.filter(username='{{ cape_user }}').exists():
+        User.objects.create_superuser('{{ cape_user }}', '{{ cape_user }}@localhost', '{{ cape_user }}')
+        print('created')
+    else:
+        print('exists')
+    "
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ cape_user }}"
+  register: cape_django_user
+  changed_when: "'created' in cape_django_user.stdout"
+
+- name: Generate Cape API token
+  ansible.builtin.shell: |
+    cd {{ cape_install_dir }}/web
+    /etc/poetry/venv/bin/poetry run python3 manage.py drf_create_token {{ cape_user }} 2>/dev/null \
+      | grep -oP 'Generated token \K\S+'
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ cape_user }}"
+  register: cape_api_token
+  changed_when: cape_api_token.stdout | length > 0
+  failed_when: false
+
+- name: Display Cape API token (save to secrets.yml if new)
+  ansible.builtin.debug:
+    msg: "Cape API token: {{ cape_api_token.stdout }}"
+  when: cape_api_token.stdout | length > 0
+
+# -------------------------------------------------------------------------
 # routing.conf — network simulation via INetSim (ADR-011)
 # Tells Cape to route all guest traffic to INetSim on the detonation
 # bridge gateway rather than passing through to the internet.
