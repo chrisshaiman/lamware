@@ -1,0 +1,50 @@
+#!/bin/bash
+# =============================================================================
+# run-triage — host-side wrapper for the containerized triage tool
+# Invokes the triage container with full isolation.
+#
+# Usage: run-triage <sample_path> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-triage <sample_path> [output_dir]" >&2
+    exit 1
+fi
+
+SAMPLE_PATH="$(realpath "$1")"
+SAMPLE_NAME="$(basename "$SAMPLE_PATH")"
+OUTPUT_DIR="${2:-{{ triage_output_dir }}}"
+
+if [ ! -f "$SAMPLE_PATH" ]; then
+    echo "Error: file not found: $SAMPLE_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# Copy sample to a temporary directory so only the single file is mounted
+# into the container — prevents access to other files in the sample's directory.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ triage_container_memory }} \
+    --cpus={{ triage_container_cpus }} \
+    --timeout={{ triage_container_timeout }} \
+    --tmpfs /tmp:size=512m \
+    --user 65534:65534 \
+    -v "$WORK_DIR:/sample:ro" \
+    -v "{{ triage_rules_dir }}:/rules:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/triage:latest \
+    "/sample/$SAMPLE_NAME"

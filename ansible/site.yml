@@ -70,6 +70,14 @@
     - role: cape-guests
       tags: [cape-guests]
 
-    # 10. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 10. Podman — container runtime for analysis tool stages
+    - role: podman
+      tags: [podman]
+
+    # 11. Triage — containerized YARA/ssdeep/FLOSS analysis
+    - role: triage
+      tags: [triage]
+
+    # 12. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
