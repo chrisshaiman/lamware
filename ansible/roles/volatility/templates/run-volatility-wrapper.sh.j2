@@ -21,6 +21,8 @@ if [ $# -lt 2 ]; then
 fi
 
 DUMP_PATH="$(realpath "$1")"
+DUMP_DIR="$(dirname "$DUMP_PATH")"
+DUMP_NAME="$(basename "$DUMP_PATH")"
 PLUGIN="$2"
 OUTPUT_DIR="${3:-{{ volatility_output_dir }}}"
 
@@ -31,11 +33,9 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Copy dump to temp dir so only the single file is mounted
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
-cp "$DUMP_PATH" "$WORK_DIR/memdump.raw"
-
+# Container is read-only with targeted writable tmpfs mounts for
+# Volatility's cache and temp files. Memory dump directory mounted
+# directly (read-only) — no copy, since dumps are multi-GB.
 exec podman run --rm \
     --network=none \
     --read-only \
@@ -44,13 +44,16 @@ exec podman run --rm \
     --memory={{ volatility_container_memory }} \
     --cpus={{ volatility_container_cpus }} \
     --timeout={{ volatility_container_timeout }} \
-    --tmpfs /tmp:size=1g \
-    --user 65534:65534 \
-    -v "$WORK_DIR:/dump:ro" \
+    --tmpfs /tmp:size=2g \
+    --tmpfs /root:size=100m \
+    --tmpfs /home:size=100m \
+    --tmpfs /var/cache:size=100m \
+    --tmpfs /usr/local/lib/python3.12/site-packages/volatility3/framework/plugins:size=50m \
+    -v "$DUMP_DIR:/dump:ro" \
     -v "{{ volatility_symbols_dir }}:/symbols:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/volatility3:latest \
-    -f /dump/memdump.raw \
+    -f "/dump/$DUMP_NAME" \
     -s /symbols \
     --output json \
     "$PLUGIN"
