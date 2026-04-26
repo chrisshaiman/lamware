@@ -55,5 +55,5 @@ exec podman run --rm \
     localhost/volatility3:latest \
     -f "/dump/$DUMP_NAME" \
     -s /symbols \
-    --output json \
+    -r json \
     "$PLUGIN"
