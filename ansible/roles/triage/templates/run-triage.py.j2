@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+Triage analysis script — runs inside a Podman container.
+Analyzes a malware sample with YARA, ssdeep, FLOSS, file type, and entropy.
+Outputs JSON to stdout. Full FLOSS dump written to /output/ if mounted.
+
+Usage: python3 run-triage.py /sample/filename.exe
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import hashlib
+import json
+import math
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import magic
+import pefile
+import ppdeep as ssdeep
+import yara
+
+
+def file_hashes(path: Path) -> dict:
+    """Compute MD5, SHA1, SHA256 of a file."""
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            md5.update(chunk)
+            sha1.update(chunk)
+            sha256.update(chunk)
+    return {
+        "md5": md5.hexdigest(),
+        "sha1": sha1.hexdigest(),
+        "sha256": sha256.hexdigest(),
+    }
+
+
+def file_entropy(path: Path) -> float:
+    """Calculate Shannon entropy of the file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not data:
+        return 0.0
+    freq = [0] * 256
+    for byte in data:
+        freq[byte] += 1
+    length = len(data)
+    entropy = 0.0
+    for count in freq:
+        if count:
+            p = count / length
+            entropy -= p * math.log2(p)
+    return round(entropy, 2)
+
+
+def section_entropies(path: Path) -> list[dict]:
+    """Calculate per-section entropy for PE files."""
+    try:
+        pe = pefile.PE(str(path))
+    except pefile.PEFormatError:
+        return []
+    sections = []
+    for section in pe.sections:
+        name = section.Name.rstrip(b"\x00").decode("utf-8", errors="replace")
+        data = section.get_data()
+        if not data:
+            ent = 0.0
+        else:
+            freq = [0] * 256
+            for byte in data:
+                freq[byte] += 1
+            length = len(data)
+            ent = 0.0
+            for count in freq:
+                if count:
+                    p = count / length
+                    ent -= p * math.log2(p)
+        sections.append({
+            "name": name,
+            "entropy": round(ent, 2),
+            "size": len(data),
+        })
+    return sections
+
+
+def run_yara(path: Path, rules_dir: str = "/rules") -> list[dict]:
+    """Scan file against all YARA rules in the rules directory."""
+    matches = []
+    rules_path = Path(rules_dir)
+    if not rules_path.exists():
+        return matches
+    for rule_file in sorted(rules_path.rglob("*.yar")) + sorted(rules_path.rglob("*.yara")):
+        try:
+            rules = yara.compile(filepath=str(rule_file))
+            for match in rules.match(str(path)):
+                source = rule_file.parent.name or "unknown"
+                matches.append({
+                    "rule": match.rule,
+                    "source": source,
+                    "tags": list(match.tags),
+                    "meta": {k: str(v) for k, v in match.meta.items()},
+                })
+        except yara.Error:
+            continue
+    return matches
+
+
+def run_ssdeep(path: Path) -> str:
+    """Compute ssdeep fuzzy hash."""
+    try:
+        with open(path, "rb") as f:
+            return ssdeep.hash(f.read())
+    except Exception:
+        return ""
+
+
+def run_floss(path: Path, output_dir: str = "/output") -> dict:
+    """Run FLOSS for string extraction. Save full dump to output dir."""
+    result = {
+        "static_strings": 0,
+        "decoded_strings": 0,
+        "interesting": [],
+    }
+    try:
+        proc = subprocess.run(
+            ["floss", "--json", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            return result
+        floss_data = json.loads(proc.stdout)
+
+        # Save full dump
+        output_path = Path(output_dir)
+        if output_path.exists():
+            with open(output_path / "floss_full.json", "w") as f:
+                json.dump(floss_data, f, indent=2)
+
+        # Extract summary
+        static = floss_data.get("strings", {}).get("static_strings", [])
+        decoded = floss_data.get("strings", {}).get("decoded_strings", [])
+        result["static_strings"] = len(static)
+        result["decoded_strings"] = len(decoded)
+
+        # Find interesting strings (URLs, IPs, commands, registry keys)
+        interesting_patterns = [
+            "http://", "https://", "ftp://",
+            "cmd.exe", "powershell", "wscript", "cscript",
+            "SOFTWARE\\", "CurrentVersion\\Run",
+            "HKEY_", ".onion", "bitcoin",
+        ]
+        all_strings = [s.get("string", "") for s in static + decoded]
+        for s in all_strings:
+            for pattern in interesting_patterns:
+                if pattern.lower() in s.lower() and s not in result["interesting"]:
+                    result["interesting"].append(s)
+                    break
+        # Cap at 50 interesting strings
+        result["interesting"] = result["interesting"][:50]
+
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return result
+
+
+def derive_routing_tags(file_type: str, yara_matches: list[dict]) -> list[str]:
+    """Derive Cape routing tags from triage results."""
+    tags = []
+
+    # File type based routing
+    ft_lower = file_type.lower()
+    if any(kw in ft_lower for kw in ["word", "document", "openxml", "odt", "rtf"]):
+        tags.append("office")
+    elif any(kw in ft_lower for kw in ["excel", "spreadsheet", "xls"]):
+        tags.append("office")
+    elif any(kw in ft_lower for kw in ["powerpoint", "presentation", "ppt"]):
+        tags.append("office")
+
+    # YARA match based routing
+    for match in yara_matches:
+        match_tags = match.get("tags", [])
+        if "macro" in match_tags or "vba" in match_tags:
+            if "office" not in tags:
+                tags.append("office")
+
+    return tags
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: run-triage.py <sample_path>"}))
+        sys.exit(1)
+
+    sample_path = Path(sys.argv[1])
+    if not sample_path.exists():
+        print(json.dumps({"error": f"File not found: {sample_path}"}))
+        sys.exit(1)
+
+    file_type = magic.from_file(str(sample_path))
+    file_mime = magic.from_file(str(sample_path), mime=True)
+    hashes = file_hashes(sample_path)
+    entropy = file_entropy(sample_path)
+    sections = section_entropies(sample_path)
+    fuzzy_hash = run_ssdeep(sample_path)
+    yara_matches = run_yara(sample_path)
+    floss_result = run_floss(sample_path)
+    routing_tags = derive_routing_tags(file_type, yara_matches)
+
+    report = {
+        "triage": {
+            "file_type": file_type,
+            "file_mime": file_mime,
+            "file_size": sample_path.stat().st_size,
+            "hashes": hashes,
+            "ssdeep": fuzzy_hash,
+            "entropy": entropy,
+            "sections": sections,
+            "yara_matches": yara_matches,
+            "floss": floss_result,
+            "routing_tags_added": routing_tags,
+        }
+    }
+
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

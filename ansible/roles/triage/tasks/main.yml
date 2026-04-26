@@ -1,0 +1,132 @@
+---
+# =============================================================================
+# roles/triage/tasks/main.yml
+# Builds the triage container image and deploys YARA community rules.
+#
+# The triage tool runs inside a rootless Podman container with no network
+# access and all capabilities dropped — malware parser exploits cannot
+# compromise the host.
+#
+# Depends on: podman role (container runtime must be installed)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Host directories
+# -------------------------------------------------------------------------
+
+- name: Create triage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ triage_install_dir }}"
+    - "{{ triage_output_dir }}"
+    - "{{ triage_rules_dir }}"
+    - "{{ triage_rules_dir }}/custom"
+
+# -------------------------------------------------------------------------
+# YARA community rules
+# -------------------------------------------------------------------------
+
+- name: Clone YARA community rule repositories
+  ansible.builtin.git:
+    repo: "{{ item.url }}"
+    dest: "{{ triage_rules_dir }}/{{ item.name }}"
+    version: "{{ item.version }}"
+    depth: 1
+    force: true
+  become: true
+  become_user: "{{ cape_user }}"
+  loop: "{{ triage_yara_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# -------------------------------------------------------------------------
+# Container image build
+# -------------------------------------------------------------------------
+
+- name: Create container build directory
+  ansible.builtin.file:
+    path: "{{ triage_install_dir }}/build"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ triage_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy pip requirements
+  ansible.builtin.copy:
+    src: requirements.txt
+    dest: "{{ triage_install_dir }}/build/requirements.txt"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy run-triage.py into build context
+  ansible.builtin.template:
+    src: run-triage.py.j2
+    dest: "{{ triage_install_dir }}/build/run-triage.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build triage container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/triage:latest
+      -f {{ triage_install_dir }}/build/Containerfile
+      {{ triage_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+# -------------------------------------------------------------------------
+# Host-side wrapper script
+# -------------------------------------------------------------------------
+
+- name: Deploy triage wrapper script
+  ansible.builtin.template:
+    src: run-triage-wrapper.sh.j2
+    dest: "{{ triage_install_dir }}/run-triage"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ triage_install_dir }}/run-triage"
+    dest: /usr/local/bin/run-triage
+    state: link
+
+# -------------------------------------------------------------------------
+# Verify the container works
+# -------------------------------------------------------------------------
+
+- name: Smoke test triage container
+  ansible.builtin.shell: |
+    echo 'test' > /tmp/triage-test-sample.txt
+    {{ triage_install_dir }}/run-triage /tmp/triage-test-sample.txt /tmp/triage-test-output 2>&1
+    rm -f /tmp/triage-test-sample.txt
+    rm -rf /tmp/triage-test-output
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: false
+  register: triage_smoke_test
+  failed_when: "'triage' not in triage_smoke_test.stdout"

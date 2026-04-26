@@ -1,0 +1,5 @@
+yara-python==4.5.1
+ppdeep==20260221
+flare-floss==3.1.1
+pefile==2024.8.26
+python-magic==0.4.27
