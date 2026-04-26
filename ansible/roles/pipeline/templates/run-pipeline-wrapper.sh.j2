@@ -1,0 +1,13 @@
+#!/bin/bash
+# =============================================================================
+# run-pipeline — convenience wrapper
+# Passes sample path to the pipeline orchestrator script.
+#
+# Usage: run-pipeline <sample_path> [--task-id <id>]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+exec python3 {{ pipeline_install_dir }}/run-pipeline.py "$@"

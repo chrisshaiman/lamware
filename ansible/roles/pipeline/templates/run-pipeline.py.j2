@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""
+Pipeline orchestrator — runs the four-stage malware analysis pipeline.
+
+Stage 1: Triage (always) — containerized YARA/ssdeep/FLOSS via run-triage
+Stage 2: Dynamic (always) — submit to Cape API, poll until complete
+Stage 3: Memory forensics (triggered) — Volatility 3 (stub until sub-project 3)
+Stage 4: Static deep-dive (triggered) — Ghidra headless (stub until sub-project 4)
+
+Usage:
+  run-pipeline <sample_path>
+  run-pipeline <sample_path> --task-id <id>
+
+Output: /opt/pipeline/reports/<task_id>/report.json
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+
+
+# -------------------------------------------------------------------------
+# Configuration (injected by Ansible template)
+# -------------------------------------------------------------------------
+
+CAPE_API_URL = "{{ cape_api_url }}"
+CAPE_API_KEY = "{{ cape_api_key }}"
+TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
+REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
+CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
+CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
+
+# Volatility trigger signatures — Cape signature names that trigger Stage 3
+VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
+
+
+# -------------------------------------------------------------------------
+# Stage 1: Triage (always)
+# -------------------------------------------------------------------------
+
+def run_triage(sample_path: Path, output_dir: Path) -> dict:
+    """Run containerized triage analysis. Returns triage JSON."""
+    try:
+        result = subprocess.run(
+            [TRIAGE_CMD, str(sample_path), str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"  [!] Triage failed: {result.stderr[:200]}", file=sys.stderr)
+            return {"error": "triage failed", "stderr": result.stderr[:500]}
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        print("  [!] Triage timed out (300s)", file=sys.stderr)
+        return {"error": "triage timeout"}
+    except json.JSONDecodeError as e:
+        print(f"  [!] Triage output not valid JSON: {e}", file=sys.stderr)
+        return {"error": "invalid triage output"}
+
+
+def derive_tags_from_triage(triage_result: dict) -> list[str]:
+    """Extract Cape routing tags from triage results."""
+    triage = triage_result.get("triage", {})
+    tags = triage.get("routing_tags_added", [])
+    if "x64" not in tags:
+        tags.insert(0, "x64")
+    return tags
+
+
+# -------------------------------------------------------------------------
+# Stage 2: Cape dynamic analysis (always)
+# -------------------------------------------------------------------------
+
+def cape_headers() -> dict:
+    """Build Cape API auth headers."""
+    if not CAPE_API_KEY or CAPE_API_KEY.startswith("PLACEHOLDER"):
+        return {}
+    return {"Authorization": f"Token {CAPE_API_KEY}"}
+
+
+def submit_to_cape(sample_path: Path, tags: list[str], custom: str = "") -> int:
+    """Submit sample to Cape API. Returns task ID."""
+    url = f"{CAPE_API_URL}/tasks/create/file/"
+    with sample_path.open("rb") as fh:
+        resp = requests.post(
+            url,
+            files={"file": (sample_path.name, fh)},
+            data={
+                "tags": ",".join(tags),
+                "memory": "1",
+                "custom": custom,
+            },
+            headers=cape_headers(),
+            timeout=30,
+        )
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("error"):
+        raise ValueError(f"Cape submission error: {result.get('error_value', result)}")
+    return result["data"]["task_ids"][0]
+
+
+def poll_cape_task(task_id: int) -> dict:
+    """Poll Cape API until task is reported or timeout."""
+    url = f"{CAPE_API_URL}/tasks/view/{task_id}/"
+    start = time.time()
+    last_status = ""
+
+    while time.time() - start < CAPE_TIMEOUT:
+        try:
+            resp = requests.get(url, headers=cape_headers(), timeout=10)
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            status = data.get("status", "unknown")
+
+            if status != last_status:
+                elapsed = int(time.time() - start)
+                print(f"  Cape task {task_id}: {status} ({elapsed}s)")
+                last_status = status
+
+            if status == "reported":
+                return data
+
+        except requests.RequestException as e:
+            print(f"  [!] Cape API error: {e}", file=sys.stderr)
+
+        time.sleep(CAPE_POLL_INTERVAL)
+
+    print(f"  [!] Cape timeout after {CAPE_TIMEOUT}s", file=sys.stderr)
+    return {"status": "timeout", "id": task_id}
+
+
+# -------------------------------------------------------------------------
+# Stage 3: Volatility (stub — wired up in sub-project 3)
+# -------------------------------------------------------------------------
+
+def should_run_volatility(cape_data: dict) -> bool:
+    """Check if Cape signatures trigger Volatility analysis."""
+    if cape_data.get("status") != "reported":
+        return False
+    return False  # Stub: always false until sub-project 3
+
+
+def run_volatility(cape_data: dict, output_dir: Path) -> dict:
+    """Run Volatility 3 on the memory dump. Stub — returns not triggered."""
+    return {"triggered": False, "reason": "volatility container not yet deployed"}
+
+
+# -------------------------------------------------------------------------
+# Stage 4: Ghidra (stub — wired up in sub-project 4)
+# -------------------------------------------------------------------------
+
+def should_run_ghidra(cape_data: dict) -> bool:
+    """Check if Cape dropped payloads trigger Ghidra analysis."""
+    return False  # Stub: always false until sub-project 4
+
+
+def run_ghidra(cape_data: dict, output_dir: Path) -> dict:
+    """Run Ghidra headless on dropped PEs. Stub — returns not triggered."""
+    return {"triggered": False, "reason": "ghidra container not yet deployed"}
+
+
+# -------------------------------------------------------------------------
+# Report output
+# -------------------------------------------------------------------------
+
+def write_report(task_id: str, report: dict, reports_dir: Path) -> Path:
+    """Write merged report to disk."""
+    report_dir = reports_dir / task_id
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "report.json"
+    with report_path.open("w") as f:
+        json.dump(report, f, indent=2, default=str)
+    return report_path
+
+
+# -------------------------------------------------------------------------
+# Main pipeline
+# -------------------------------------------------------------------------
+
+def run_pipeline(sample_path: Path, task_id: str) -> dict:
+    """Execute the four-stage analysis pipeline."""
+    report = {
+        "task_id": task_id,
+        "sample": str(sample_path),
+        "sample_name": sample_path.name,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    output_dir = REPORTS_DIR / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Stage 1: Triage (always)
+    print(f"\n[Stage 1] Triage: {sample_path.name}")
+    triage_result = run_triage(sample_path, output_dir)
+    report.update(triage_result)
+    cape_tags = derive_tags_from_triage(triage_result)
+    print(f"  Tags: {cape_tags}")
+
+    # Stage 2: Cape (always, with triage-informed tags)
+    print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, memory=1")
+    try:
+        cape_task_id = submit_to_cape(
+            sample_path,
+            tags=cape_tags,
+            custom=f"pipeline_task_id={task_id}",
+        )
+        print(f"  Cape task ID: {cape_task_id}")
+        cape_data = poll_cape_task(cape_task_id)
+        report["cape"] = {
+            "task_id": cape_task_id,
+            "status": cape_data.get("status", "unknown"),
+        }
+    except Exception as e:
+        print(f"  [!] Cape submission failed: {e}", file=sys.stderr)
+        report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
+        cape_data = {}
+
+    # Stage 3: Volatility (triggered by Cape signatures)
+    print(f"\n[Stage 3] Volatility: checking triggers...")
+    if should_run_volatility(cape_data):
+        print("  Triggered — running Volatility 3")
+        report["volatility"] = run_volatility(cape_data, output_dir)
+    else:
+        print("  Not triggered (stub — awaiting sub-project 3)")
+        report["volatility"] = {"triggered": False}
+
+    # Stage 4: Ghidra (triggered by dropped payloads)
+    print(f"\n[Stage 4] Ghidra: checking triggers...")
+    if should_run_ghidra(cape_data):
+        print("  Triggered — running Ghidra headless")
+        report["ghidra"] = run_ghidra(cape_data, output_dir)
+    else:
+        print("  Not triggered (stub — awaiting sub-project 4)")
+        report["ghidra"] = {"triggered": False}
+
+    # Write merged report
+    report["completed_at"] = datetime.now(timezone.utc).isoformat()
+    report_path = write_report(task_id, report, REPORTS_DIR)
+    print(f"\n[Done] Report: {report_path}")
+
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="run-pipeline",
+        description="Run the four-stage malware analysis pipeline.",
+    )
+    parser.add_argument("sample", type=Path, help="Path to the malware sample")
+    parser.add_argument("--task-id", default=None,
+                        help="Pipeline task ID (auto-generated if not set)")
+    args = parser.parse_args()
+
+    if not args.sample.exists():
+        print(f"Error: file not found: {args.sample}", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = args.task_id or uuid.uuid4().hex[:12]
+    report = run_pipeline(args.sample, task_id)
+
+    # Print summary
+    triage = report.get("triage", {})
+    yara_count = len(triage.get("yara_matches", []))
+    cape_status = report.get("cape", {}).get("status", "n/a")
+    vol_triggered = report.get("volatility", {}).get("triggered", False)
+    ghidra_triggered = report.get("ghidra", {}).get("triggered", False)
+
+    print(f"\nSummary:")
+    print(f"  Triage:     {yara_count} YARA matches")
+    print(f"  Cape:       {cape_status}")
+    print(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
+    print(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
+
+
+if __name__ == "__main__":
+    main()
