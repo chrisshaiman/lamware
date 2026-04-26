@@ -872,18 +872,132 @@ in the next round of implementation work.
 - Cape API key automation — automate Django migrations, superuser creation, and `drf_create_token` in the `cape` role. Currently manual: `cd /opt/CAPEv2/web && poetry run python3 manage.py migrate && manage.py drf_create_token cape`. Token must be saved back to `ansible/vars/secrets.yml`
 - Molecule tests for Ansible roles — container-based role testing for CI validation
 
-### Analysis pipeline enrichment
-- Spec approved: `docs/superpowers/specs/2026-04-19-analysis-pipeline-enrichment-design.md`
-  - Stage 1: Triage — YARA (community + custom rules), ssdeep, FLOSS, file type, smart routing
-  - Stage 2: Dynamic — Cape (exists), always with memory=1
-  - Stage 3: Memory forensics — Volatility 3 (spec: `2026-04-19-volatility3-integration-design.md`)
-  - Stage 4: Static deep-dive — Ghidra headless on unpacked payloads from Cape
-  - New Ansible roles: `triage`, `volatility`, `ghidra`
-- Custom Volatility plugins — stock plugins only for v1; custom plugins when analysis patterns emerge
-- Custom Ghidra scripts — stock analysis only for v1; config extractors, protocol parsers later
-- Cross-stage orchestration — Volatility shellcode extract → Ghidra disassembly, YARA family match → custom Ghidra config extractor
-- MITRE ATT&CK mapping of analysis findings
-- Automated YARA rule updates — manual or cron for v1
+### Analysis pipeline — what's built
+
+The four-stage pipeline is operational. Each tool stage runs inside a rootless
+Podman container with `--network=none`, `--read-only`, `--cap-drop=ALL` for
+isolation from the host.
+
+- **Stage 1: Triage** (containerized, always runs) — YARA signature scanning
+  against community rule sets (Yara-Rules, ReversingLabs), ssdeep fuzzy hashing
+  for sample clustering, FLOSS obfuscated string extraction, file type detection
+  via libmagic, Shannon entropy analysis, PE section entropy. Results inform
+  Cape submission tags (smart routing — e.g., YARA macro match → office VM).
+  Output: JSON on stdout + FLOSS full dump to disk.
+
+- **Stage 2: Dynamic analysis** (Cape, always runs) — malware detonation in
+  Windows 11 guest VMs with `memory=1` (always dump RAM). Pipeline submits
+  with triage-derived tags and package type. Polls Cape API every 30s until
+  analysis completes (20 min timeout). Cape produces behavioral signatures,
+  network captures, dropped files, and memory dumps.
+
+- **Stage 3: Memory forensics** (containerized Volatility 3, triggered) —
+  automatically fires when Cape behavioral signatures indicate process
+  injection, hollowing, rootkit activity, or persistence mechanisms. Runs 6
+  standard plugins (psscan, pstree, malfind, cmdline, netscan, dlllist) plus
+  trigger-specific extras (handles, vadinfo for injection; registry.printkey
+  for persistence; ssdt, callbacks for rootkits). Memory dump (2-4 GB) deleted
+  immediately after processing.
+
+- **Stage 4: Static deep-dive** (Ghidra headless, stub) — not yet built.
+  Will analyze unpacked/dropped PE files from Cape output using Ghidra's
+  headless analyzer. Same containerized isolation pattern.
+
+- **Pipeline orchestrator** (`/opt/pipeline/run-pipeline.py`) — standalone
+  Python script that chains all stages sequentially, writes merged JSON report
+  to `/opt/pipeline/reports/<task_id>/report.json`. Daily cron purges reports
+  older than 7 days.
+
+### Analysis pipeline — next features (prioritized)
+
+**High value, low effort (1-2 sessions each):**
+
+- **LLM detonation agent integration** — `src/vm_agent_cape.py` is already
+  built and tested. It uses Claude's vision API to watch the VM via QEMU
+  monitor screenshots during Cape detonation. When it sees a UAC prompt, error
+  dialog, installer wizard, or credential harvester, it automatically clicks
+  through or enters fake credentials (from `src/fake_credentials.py` — Luhn-valid
+  test card numbers, contoso.com emails, SSA-invalid SSNs). This dramatically
+  improves detonation success for malware that requires user interaction.
+  **Integration needed:** add as an optional stage that runs in parallel with
+  Cape detonation; change S3 screenshot upload to local pipeline report directory;
+  find the QEMU monitor socket path for the active Cape analysis VM.
+
+- **Screenshots in merged report** — Cape already captures periodic screenshots
+  of the guest VM during analysis. Surface these in the merged pipeline report
+  by copying them from Cape's storage directory. Low effort, high value for
+  understanding what the malware did visually.
+
+- **Cape config extraction** — Cape already extracts C2 server addresses,
+  encryption keys, and configuration data for many known malware families
+  (AgentTesla, Emotet, QakBot, etc.). This data is in Cape's report JSON but
+  not surfaced in our merged pipeline report. Add a parsing step that pulls
+  the CAPE-specific config extraction results into the merged report.
+
+- **Automated PDF reports** — use WeasyPrint (already installed in WSL) to
+  render the merged JSON report as a formatted PDF. Useful for sharing analysis
+  results with colleagues or archiving. Template: markdown → HTML → WeasyPrint → PDF.
+
+- **MITRE ATT&CK mapping** — create a lookup table mapping Cape behavioral
+  signature names to MITRE ATT&CK technique IDs (e.g., `injection_createremotethread`
+  → T1055.003 Thread Execution Hijacking). Add the ATT&CK techniques to the
+  merged report. This is a static mapping exercise — no new analysis needed.
+
+- **Submission API** — a lightweight FastAPI endpoint running on the bare metal
+  host (behind WireGuard) that accepts file uploads and calls `run-pipeline`.
+  Enables programmatic sample submission from scripts, SOAR playbooks, or a
+  future web dashboard without SSH access.
+
+**Medium effort (multi-session):**
+
+- **Ghidra container** (sub-project 4) — containerized Ghidra headless analyzer
+  for static analysis of dropped/unpacked PE files from Cape output. Same
+  Podman isolation pattern as triage and Volatility. Triggered when Cape
+  signatures indicate unpacking, shellcode execution, or reflective loading.
+
+- **Web dashboard** — Flask or FastAPI web application that reads merged pipeline
+  report JSON files and renders them in a browser. Browse analyses, search by
+  hash/family/signature, view triage results alongside Cape behavioral analysis
+  and Volatility memory forensics output. Natural project to build once the
+  merged report format is validated against real-world data.
+
+- **Threat intelligence enrichment** — query external services (VirusTotal,
+  AbuseIPDB, Shodan, URLhaus) for IP addresses, domains, and hashes found
+  during triage and Cape analysis. Add enrichment results to the merged report.
+  Requires outbound internet access from the host (not from the analysis containers).
+
+- **Network traffic analysis** — add a pipeline stage that parses Cape's PCAP
+  capture with Suricata (IDS signatures) or Zeek (protocol analysis). Would
+  identify C2 protocols, data exfiltration patterns, and DNS tunneling that
+  Cape's behavioral engine might miss.
+
+- **Automated sample classification** — use YARA family rules or a lightweight
+  ML model to automatically tag samples as ransomware, stealer, RAT, loader,
+  etc. based on combined triage + Cape output. Enables filtering and prioritization
+  of analysis results.
+
+- **Sample correlation across analyses** — use ssdeep fuzzy hash similarity to
+  cluster related samples across different pipeline runs. Track C2 infrastructure
+  overlap (same IPs/domains appearing across different malware families).
+
+**Lower priority / higher effort:**
+
+- Custom Volatility plugins — stock plugins are sufficient for v1. Build custom
+  plugins when specific analysis patterns emerge from real-world use.
+- Custom Ghidra scripts — stock headless analysis for v1. Config extractors and
+  protocol parsers can be added once common patterns are identified.
+- Cross-stage orchestration — feed Volatility-extracted shellcode into Ghidra for
+  disassembly, or use YARA family match to select the right Ghidra config extractor.
+  Requires a decision engine that routes artifacts between stages based on findings.
+- Automated YARA rule updates — currently manual. Could add a cron job or systemd
+  timer that pulls updated rules from community repos on a schedule.
+- Container image scanning — run Trivy or Grype after building container images to
+  check for known vulnerabilities in installed packages.
+- Multi-OS guest support — add Linux guest VMs for analyzing Linux malware (ELF
+  binaries, shell scripts). High effort: different Cape configuration, different
+  Volatility symbol tables, different YARA rules. Containerized tool isolation
+  becomes even more important since Linux malware runs on the same architecture as
+  the host.
 
 ### Guest VM management
 - Windows 10 guest Packer image — on hold pending ISO sourcing (Win10 eval ISO removed by Microsoft); Win11 images built and deployed
