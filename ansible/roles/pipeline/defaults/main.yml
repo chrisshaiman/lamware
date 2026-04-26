@@ -13,17 +13,55 @@ pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
 pipeline_report_retention_days: 7
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
-# These are checked against Cape's behavioral signature output.
-# Stub list — will be populated when Volatility container is deployed.
 pipeline_volatility_triggers:
   - injection_createremotethread
   - injection_ntqueueapcthread
+  - injection_write_process
+  - injection_rwx
   - process_hollowing
   - reflective_dll_loading
   - shellcode_execution
   - api_unhooking
+  - antisandbox_unhook
+  - creates_suspended_process
   - packed_binary
   - creates_service
   - modifies_runkey
   - scheduled_task_creation
   - rootkit_ssdt_hook
+
+# Extra Volatility plugins mapped by trigger category
+pipeline_volatility_extra_plugins:
+  injection:
+    triggers:
+      - injection_createremotethread
+      - injection_ntqueueapcthread
+      - injection_write_process
+      - injection_rwx
+      - process_hollowing
+      - reflective_dll_loading
+      - shellcode_execution
+      - api_unhooking
+      - antisandbox_unhook
+      - creates_suspended_process
+    plugins:
+      - windows.handles
+      - windows.vadinfo
+  persistence:
+    triggers:
+      - creates_service
+      - modifies_runkey
+      - scheduled_task_creation
+    plugins:
+      - windows.registry.printkey
+  rootkit:
+    triggers:
+      - rootkit_ssdt_hook
+    plugins:
+      - windows.ssdt
+      - windows.callbacks
+  file_dropping:
+    triggers:
+      - packed_binary
+    plugins:
+      - windows.filescan

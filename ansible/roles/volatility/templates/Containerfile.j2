@@ -1,0 +1,19 @@
+# Volatility 3 memory forensics container
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    volatility3=={{ volatility_version }} \
+    pefile \
+    yara-python \
+    capstone
+
+# ISF symbol tables are mounted at runtime via volume at /symbols
+# Memory dump is mounted at /dump (read-only)
+# Output goes to /output (read-write volume)
+
+ENTRYPOINT ["vol"]
