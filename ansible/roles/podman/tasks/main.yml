@@ -56,24 +56,24 @@
   changed_when: true
   failed_when: false
 
-# konstruktoid hardening strips execute bit from shared libraries (644).
-# Podman and crun need executable .so files to load. Fix only the specific
-# libraries required by podman, crun, and their dependencies.
-- name: Fix shared library permissions for Podman and crun
-  ansible.builtin.file:
-    path: "{{ item }}"
-    mode: "0755"
-  loop:
-    - /lib/x86_64-linux-gnu/libsubid.so.4.0.0
-    - /lib/x86_64-linux-gnu/libsystemd.so.0.38.0
-    - /lib/x86_64-linux-gnu/libseccomp.so.2.5.5
-    - /lib/x86_64-linux-gnu/libyajl.so.2.1.0
-    - /lib/x86_64-linux-gnu/libcap.so.2.66
-    - /lib/x86_64-linux-gnu/libdevmapper.so.1.02.1
-    - /lib/x86_64-linux-gnu/libgpgme.so.11.27.0
-    - /lib/x86_64-linux-gnu/libgcrypt.so.20.4.3
-    - /lib/x86_64-linux-gnu/libudev.so.1.7.8
-  failed_when: false
+# konstruktoid hardening strips execute bit from all shared libraries (644).
+# Podman's toolchain (podman, crun, slirp4netns, conmon) and their transitive
+# dependencies all need executable .so files. Rather than chasing each library
+# individually, fix all .so files that podman's toolchain needs by resolving
+# the full dependency tree.
+- name: Fix shared library permissions for Podman toolchain
+  ansible.builtin.shell: |
+    for bin in /usr/bin/podman /usr/bin/crun /usr/bin/slirp4netns /usr/bin/conmon; do
+      [ -f "$bin" ] || continue
+      ldd "$bin" 2>/dev/null | grep -oP '=> \K/\S+' | while read lib; do
+        reallib=$(realpath "$lib" 2>/dev/null)
+        [ -f "$reallib" ] && chmod 755 "$reallib"
+      done
+    done
+    ldconfig
+  args:
+    executable: /bin/bash
+  changed_when: true
 
 # overlay storage driver fails with hardened mount options on /home.
 # vfs is slower but works without special mount permissions.
