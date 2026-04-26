@@ -405,7 +405,7 @@ def main() -> None:
             pipeline_cmd = cfg.get("pipeline_cmd", "")
             if pipeline_cmd and Path(pipeline_cmd).exists():
                 pipe_result = subprocess.run(
-                    [pipeline_cmd, str(tmp_path)],
+                    [pipeline_cmd, str(tmp_path), "--filename", extracted_name],
                     capture_output=False,
                     timeout=1500,
                 )
