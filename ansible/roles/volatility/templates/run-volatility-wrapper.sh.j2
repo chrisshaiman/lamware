@@ -1,0 +1,56 @@
+#!/bin/bash
+# =============================================================================
+# run-volatility — host-side wrapper for containerized Volatility 3
+# Runs a single Volatility plugin against a memory dump inside a Podman
+# container with full isolation.
+#
+# Usage: run-volatility <dump_path> <plugin> [output_dir]
+#
+# Example:
+#   run-volatility /tmp/memdump.raw windows.pslist /tmp/vol-output
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+    echo "Usage: run-volatility <dump_path> <plugin> [output_dir]" >&2
+    exit 1
+fi
+
+DUMP_PATH="$(realpath "$1")"
+PLUGIN="$2"
+OUTPUT_DIR="${3:-{{ volatility_output_dir }}}"
+
+if [ ! -f "$DUMP_PATH" ]; then
+    echo "Error: dump not found: $DUMP_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# Copy dump to temp dir so only the single file is mounted
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+cp "$DUMP_PATH" "$WORK_DIR/memdump.raw"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ volatility_container_memory }} \
+    --cpus={{ volatility_container_cpus }} \
+    --timeout={{ volatility_container_timeout }} \
+    --tmpfs /tmp:size=1g \
+    --user 65534:65534 \
+    -v "$WORK_DIR:/dump:ro" \
+    -v "{{ volatility_symbols_dir }}:/symbols:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/volatility3:latest \
+    -f /dump/memdump.raw \
+    -s /symbols \
+    --output json \
+    "$PLUGIN"
