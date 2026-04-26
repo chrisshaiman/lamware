@@ -78,10 +78,14 @@
     - role: triage
       tags: [triage]
 
-    # 12. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
+    # 12. Volatility 3 — containerized memory forensics
+    - role: volatility
+      tags: [volatility]
+
+    # 13. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
     - role: pipeline
       tags: [pipeline]
 
-    # 13. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 14. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]

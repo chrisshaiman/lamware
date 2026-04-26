@@ -37,12 +37,26 @@ import requests
 CAPE_API_URL = "{{ cape_api_url }}"
 CAPE_API_KEY = "{{ cape_api_key }}"
 TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
+VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
 REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
 CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
 CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
+
+# Standard Volatility plugins (always run when triggered)
+VOLATILITY_STANDARD_PLUGINS = [
+    "windows.pslist",
+    "windows.pstree",
+    "windows.malfind",
+    "windows.cmdline",
+    "windows.netscan",
+    "windows.dlllist",
+]
+
+# Extra plugins mapped by trigger category
+VOLATILITY_EXTRA_PLUGINS = {{ pipeline_volatility_extra_plugins | default({}) | to_json }}
 
 
 # -------------------------------------------------------------------------
@@ -233,19 +247,125 @@ def poll_cape_task(task_id: int) -> dict:
 
 
 # -------------------------------------------------------------------------
-# Stage 3: Volatility (stub — wired up in sub-project 3)
+# Stage 3: Volatility memory forensics
 # -------------------------------------------------------------------------
+
+def get_cape_signatures(cape_data: dict) -> list[str]:
+    """Extract signature names from Cape task data."""
+    # Cape stores signatures in the full report, not the task view.
+    # Check the storage path for the report JSON.
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return []
+    report_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/reports/report.json")
+    if not report_path.exists():
+        return []
+    try:
+        with report_path.open() as f:
+            report = json.load(f)
+        return [s.get("name", "") for s in report.get("signatures", [])]
+    except (json.JSONDecodeError, KeyError):
+        return []
+
 
 def should_run_volatility(cape_data: dict) -> bool:
     """Check if Cape signatures trigger Volatility analysis."""
     if cape_data.get("status") != "reported":
         return False
-    return False  # Stub: always false until sub-project 3
+    if not Path(VOLATILITY_CMD).exists():
+        return False
+    sigs = get_cape_signatures(cape_data)
+    return any(sig in VOLATILITY_TRIGGERS for sig in sigs)
+
+
+def get_memory_dump_path(cape_data: dict) -> Path | None:
+    """Find the memory dump from Cape's analysis storage."""
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return None
+    # Cape stores memory dumps at storage/analyses/<id>/memory.dmp
+    dump_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/memory.dmp")
+    if dump_path.exists():
+        return dump_path
+    return None
+
+
+def determine_extra_plugins(cape_data: dict) -> list[str]:
+    """Determine which extra Volatility plugins to run based on triggers."""
+    sigs = get_cape_signatures(cape_data)
+    extras = set()
+    for category, config in VOLATILITY_EXTRA_PLUGINS.items():
+        triggers = config.get("triggers", [])
+        plugins = config.get("plugins", [])
+        if any(sig in triggers for sig in sigs):
+            extras.update(plugins)
+    return sorted(extras)
+
+
+def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path) -> dict:
+    """Run a single Volatility plugin. Returns parsed JSON or error."""
+    try:
+        result = subprocess.run(
+            [VOLATILITY_CMD, str(dump_path), plugin, str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:200]}
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return {"error": f"timeout (300s)"}
+    except json.JSONDecodeError:
+        # Volatility JSON output may have extra lines — try to extract
+        lines = result.stdout.strip().split("\n")
+        for line in lines:
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        return {"error": "invalid JSON output", "raw": result.stdout[:500]}
 
 
 def run_volatility(cape_data: dict, output_dir: Path) -> dict:
-    """Run Volatility 3 on the memory dump. Stub — returns not triggered."""
-    return {"triggered": False, "reason": "volatility container not yet deployed"}
+    """Run Volatility 3 plugins on the memory dump."""
+    dump_path = get_memory_dump_path(cape_data)
+    if not dump_path:
+        return {"triggered": True, "error": "memory dump not found"}
+
+    sigs = get_cape_signatures(cape_data)
+    trigger_sigs = [s for s in sigs if s in VOLATILITY_TRIGGERS]
+    extra_plugins = determine_extra_plugins(cape_data)
+    all_plugins = VOLATILITY_STANDARD_PLUGINS + extra_plugins
+
+    result = {
+        "triggered": True,
+        "trigger_signatures": trigger_sigs,
+        "plugins_run": [p.replace("windows.", "") for p in all_plugins],
+        "plugins": {},
+        "summary": {
+            "injected_processes": 0,
+            "suspicious_connections": 0,
+        },
+    }
+
+    for plugin in all_plugins:
+        short_name = plugin.replace("windows.", "")
+        print(f"    Running {plugin}...")
+        plugin_output = run_single_plugin(dump_path, plugin, output_dir)
+        result["plugins"][short_name] = plugin_output
+
+        # Build summary from key plugins
+        if short_name == "malfind" and isinstance(plugin_output, list):
+            result["summary"]["injected_processes"] = len(plugin_output)
+        elif short_name == "netscan" and isinstance(plugin_output, list):
+            result["summary"]["suspicious_connections"] = len(plugin_output)
+
+    # Clean up memory dump immediately after processing
+    print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
+    dump_path.unlink(missing_ok=True)
+
+    return result
 
 
 # -------------------------------------------------------------------------
