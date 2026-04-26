@@ -7,8 +7,12 @@
 # The konstruktoid hardening role disables several features that rootless
 # Podman needs. This role re-enables them in a targeted way:
 #   - user.max_user_namespaces (disabled by hardening)
-#   - libsubid.so permissions (restricted to 644 by hardening)
+#   - AppArmor profiles for podman/crun (block library loading on hardened hosts)
 #   - vfs storage driver (overlay fails with hardened mount options)
+#
+# Container isolation is provided by run-time flags (--cap-drop=ALL,
+# --network=none, --read-only, --security-opt=no-new-privileges) rather
+# than AppArmor profiles.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -55,25 +59,6 @@
     - crun
   changed_when: true
   failed_when: false
-
-# konstruktoid hardening strips execute bit from all shared libraries (644).
-# Podman's toolchain (podman, crun, slirp4netns, conmon) and their transitive
-# dependencies all need executable .so files. Rather than chasing each library
-# individually, fix all .so files that podman's toolchain needs by resolving
-# the full dependency tree.
-- name: Fix shared library permissions for Podman toolchain
-  ansible.builtin.shell: |
-    for bin in /usr/bin/podman /usr/bin/crun /usr/bin/slirp4netns /usr/bin/conmon; do
-      [ -f "$bin" ] || continue
-      ldd "$bin" 2>/dev/null | grep -oP '=> \K/\S+' | while read lib; do
-        reallib=$(realpath "$lib" 2>/dev/null)
-        [ -f "$reallib" ] && chmod 755 "$reallib"
-      done
-    done
-    ldconfig
-  args:
-    executable: /bin/bash
-  changed_when: true
 
 # overlay storage driver fails with hardened mount options on /home.
 # vfs is slower but works without special mount permissions.
