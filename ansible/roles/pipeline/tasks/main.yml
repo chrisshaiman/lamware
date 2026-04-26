@@ -62,6 +62,13 @@
     group: "{{ cape_user }}"
     mode: "0750"
 
+- name: Allow cape user to use crontab (hardening restricts via cron.allow)
+  ansible.builtin.lineinfile:
+    path: /etc/cron.allow
+    line: "{{ cape_user }}"
+    create: true
+    mode: "0600"
+
 - name: Schedule daily report cleanup
   ansible.builtin.cron:
     name: "pipeline-report-cleanup"
