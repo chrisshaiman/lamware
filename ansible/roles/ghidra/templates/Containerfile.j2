@@ -20,8 +20,13 @@ COPY run-ghidra.py /opt/run-ghidra.py
 COPY ExportAnalysis.py /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.py
 RUN chmod +x /opt/run-ghidra.py
 
+# Bake Java and home directory config into image so Ghidra finds JDK
+# without interactive prompts, and nobody user has a writable home
+ENV JAVA_HOME=/opt/java/openjdk
+ENV HOME=/tmp
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
 # Sample PE is mounted at /sample (read-only)
 # Output goes to /output (read-write volume)
-# Ghidra project temp dir at /projects (tmpfs)
 
 ENTRYPOINT ["python3", "/opt/run-ghidra.py"]
