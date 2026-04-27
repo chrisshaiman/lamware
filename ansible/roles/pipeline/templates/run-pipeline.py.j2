@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Pipeline orchestrator — runs the four-stage malware analysis pipeline.
+Pipeline orchestrator — runs the five-stage malware analysis pipeline.
 
 Stage 1: Triage (always) — containerized YARA/ssdeep/FLOSS via run-triage
 Stage 2: Dynamic (always) — submit to Cape API, poll until complete
-Stage 3: Memory forensics (triggered) — Volatility 3 (stub until sub-project 3)
+Stage 3: Memory forensics (triggered) — Volatility 3
 Stage 4: Static deep-dive (triggered) — Ghidra headless on dropped PEs
+Stage 4.5: LLM interpretation (optional) — agentic Claude analysis of Ghidra output
 
 Usage:
   run-pipeline <sample_path>
@@ -20,6 +21,7 @@ License: Apache 2.0
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -39,9 +41,33 @@ CAPE_API_KEY = "{{ cape_api_key }}"
 TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
 VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
 GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
+INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
+INTERPRET_ENABLED = {{ (interpret_enabled | default(true)) | to_json }}
+INTERPRET_TIMEOUT = {{ interpret_timeout | default(300) }}
+INTERPRET_CONFIG = {
+    "model": "{{ interpret_model | default('claude-sonnet-4-6') }}",
+    "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
+    "escalation_model": "{{ interpret_escalation_model | default('claude-opus-4-6') }}",
+    "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
+    "max_tool_calls": {{ interpret_max_tool_calls | default(10) }},
+    "max_imports": {{ interpret_max_imports | default(200) }},
+    "max_strings": {{ interpret_max_strings | default(100) }},
+    "max_string_length": {{ interpret_max_string_length | default(500) }},
+}
 REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
 CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
 CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
+
+# Tool argument validation — regex whitelist per tool
+TOOL_ARG_VALIDATORS = {
+    "decompile_function": {"name": r"^.{1,200}$"},
+    "get_xrefs_to": {"name": r"^.{1,200}$"},
+    "get_xrefs_from": {"name": r"^.{1,200}$"},
+    "get_strings_at": {"address": r"^0x[0-9a-fA-F]{1,16}$", "range": r"^[0-9]{1,6}$"},
+    "list_functions": {"filter": r"^[A-Za-z0-9_*?]{0,100}$"},
+    "get_data_at": {"address": r"^0x[0-9a-fA-F]{1,16}$", "length": r"^[0-9]{1,5}$"},
+}
+PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
@@ -517,6 +543,191 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path) -> dict:
 
 
 # -------------------------------------------------------------------------
+# Stage 4.5: LLM Interpretation (agentic loop)
+#
+# The orchestrator brokers JSON lines between two containers:
+#   - interpret container (--network=host) holds the Claude conversation
+#   - Ghidra tool container (--network=none) executes per-query
+#
+# Tool arguments are validated via regex whitelist before reaching Ghidra.
+# -------------------------------------------------------------------------
+
+def validate_tool_args(tool_name: str, args: dict) -> str | None:
+    """Validate tool arguments against regex whitelist. Returns error or None."""
+    validators = TOOL_ARG_VALIDATORS.get(tool_name)
+    if validators is None:
+        return f"Unknown tool: {tool_name}"
+    for arg_name, arg_value in args.items():
+        pattern = validators.get(arg_name)
+        if pattern is None:
+            continue
+        if not re.match(pattern, str(arg_value)):
+            return f"Invalid {arg_name}: must match {pattern}"
+    if "range" in args:
+        try:
+            if int(args["range"]) > 4096:
+                return "range must be <= 4096"
+        except (ValueError, TypeError):
+            return "range must be numeric"
+    if "length" in args:
+        try:
+            if int(args["length"]) > 65536:
+                return "length must be <= 65536"
+        except (ValueError, TypeError):
+            return "length must be numeric"
+    return None
+
+
+def run_ghidra_tool(project_dir: str, program_name: str,
+                    tool_name: str, tool_args: dict) -> dict:
+    """Execute a single Ghidra tool call in a container."""
+    try:
+        result = subprocess.run(
+            [GHIDRA_CMD, "--tool", project_dir, program_name,
+             tool_name, json.dumps(tool_args)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:200]}
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return {"error": "Ghidra tool timeout (120s)"}
+    except json.JSONDecodeError:
+        return {"error": "Invalid JSON from Ghidra tool",
+                "raw": result.stdout[:500] if result else ""}
+
+
+def check_prompt_influence(analysis: dict) -> bool:
+    """Check if LLM response shows signs of prompt injection influence."""
+    text = json.dumps(analysis).lower()
+    return any(kw in text for kw in PROMPT_INFLUENCE_KEYWORDS)
+
+
+def run_interpret(ghidra_result: dict, output_dir: Path) -> dict:
+    """Run the agentic LLM interpretation loop.
+
+    Starts the interpret container (long-running, stdin/stdout pipes),
+    sends Ghidra data, brokers tool calls to Ghidra containers, and
+    collects the final analysis.
+    """
+    if not INTERPRET_ENABLED:
+        return {"enabled": False, "reason": "disabled_by_config"}
+    if not Path(INTERPRET_CMD).exists():
+        return {"enabled": False, "reason": "interpret_cmd_not_found"}
+
+    project_dir = ghidra_result.get("project_dir", "")
+    program_name = ghidra_result.get("program_name", "")
+
+    start_time = time.time()
+
+    # Start interpret container (long-running, communicates via stdin/stdout)
+    try:
+        proc = subprocess.Popen(
+            [INTERPRET_CMD],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as e:
+        return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
+
+    # Send init message
+    init_msg = json.dumps({
+        "type": "init",
+        "ghidra_data": ghidra_result,
+        "config": INTERPRET_CONFIG,
+    })
+    proc.stdin.write(init_msg + "\n")
+    proc.stdin.flush()
+
+    # Audit log
+    audit_dir = output_dir / "llm_audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    tool_call_log = []
+
+    try:
+        while True:
+            # Check timeout
+            elapsed = time.time() - start_time
+            if elapsed > INTERPRET_TIMEOUT:
+                proc.stdin.write(json.dumps({"type": "force_final", "reason": "timeout"}) + "\n")
+                proc.stdin.flush()
+
+            # Read response from interpret container
+            line = proc.stdout.readline().strip()
+            if not line:
+                break
+
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = msg.get("type")
+
+            if msg_type == "final":
+                analysis = msg.get("analysis", {})
+                duration = time.time() - start_time
+                influenced = check_prompt_influence(analysis) if analysis else False
+
+                result = {
+                    "enabled": True,
+                    "provider": "anthropic",
+                    "model_initial": INTERPRET_CONFIG["model"],
+                    "model_final": msg.get("model_used", INTERPRET_CONFIG["model"]),
+                    "escalated": msg.get("model_used", "") != INTERPRET_CONFIG["model"],
+                    "tool_calls_used": msg.get("tool_calls_used", 0),
+                    "duration_seconds": round(duration, 1),
+                    "possible_prompt_influence": influenced,
+                    "analysis": analysis,
+                    "audit": {"tool_call_log": str(audit_dir / "tool_calls.json")},
+                }
+
+                # Save audit log
+                with (audit_dir / "tool_calls.json").open("w") as f:
+                    json.dump(tool_call_log, f, indent=2)
+
+                return result
+
+            elif msg_type == "tool_call":
+                tool_name = msg.get("tool", "")
+                tool_args = msg.get("args", {})
+                print(f"    Tool call: {tool_name}({json.dumps(tool_args)[:80]})")
+
+                # Validate arguments
+                error = validate_tool_args(tool_name, tool_args)
+                if error:
+                    print(f"    [!] Validation failed: {error}")
+                    response = {"type": "tool_error", "tool": tool_name, "error": error}
+                    tool_call_log.append({"tool": tool_name, "args": tool_args, "error": error})
+                else:
+                    # Execute Ghidra tool in container
+                    tool_result = run_ghidra_tool(project_dir, program_name, tool_name, tool_args)
+                    response = {"type": "tool_result", "tool": tool_name, "result": tool_result}
+                    tool_call_log.append({"tool": tool_name, "args": tool_args, "result": tool_result})
+
+                proc.stdin.write(json.dumps(response) + "\n")
+                proc.stdin.flush()
+
+            elif msg_type == "status":
+                print(f"    LLM: {msg.get('message', '')}")
+
+    except Exception as e:
+        return {"enabled": True, "error": f"Interpret loop error: {e}"}
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+    return {"enabled": True, "error": "Interpret container exited without final result"}
+
+
+# -------------------------------------------------------------------------
 # Report output
 # -------------------------------------------------------------------------
 
@@ -590,12 +801,37 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 4: Ghidra (triggered by dropped payloads)
     print(f"\n[Stage 4] Ghidra: checking triggers...")
-    if should_run_ghidra(cape_data):
+    if should_run_ghidra(cape_data, sample_path):
         print("  Triggered — running Ghidra headless")
-        report["ghidra"] = run_ghidra(cape_data, output_dir)
+        report["ghidra"] = run_ghidra(cape_data, output_dir, sample_path)
     else:
-        print("  Not triggered (stub — awaiting sub-project 4)")
+        print("  Not triggered")
         report["ghidra"] = {"triggered": False}
+
+    # Stage 4.5: LLM Interpretation (agentic, after Ghidra)
+    ghidra_data = report.get("ghidra", {})
+    analyzed_files = ghidra_data.get("analyzed_files", [])
+    successful = [f for f in analyzed_files if f.get("analysis_success")]
+
+    if successful:
+        print(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
+        report["llm_interpretation"] = run_interpret(successful[0], output_dir)
+        interp = report["llm_interpretation"]
+        if interp.get("enabled") and interp.get("analysis"):
+            calls = interp.get("tool_calls_used", 0)
+            influenced = interp.get("possible_prompt_influence", False)
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            print(f"  Family guess: {family}")
+            print(f"  Tool calls: {calls}, Influence flag: {influenced}")
+        elif interp.get("error"):
+            print(f"  [!] Error: {interp['error']}")
+    else:
+        if INTERPRET_ENABLED and ghidra_data.get("triggered"):
+            print(f"\n[Stage 4.5] LLM Interpretation: skipped (no successful Ghidra analysis)")
+            report["llm_interpretation"] = {"enabled": True, "reason": "no_ghidra_data"}
+        else:
+            report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
+                                            "reason": "ghidra_not_triggered"}
 
     # Write merged report
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -631,11 +867,15 @@ def main():
     vol_triggered = report.get("volatility", {}).get("triggered", False)
     ghidra_triggered = report.get("ghidra", {}).get("triggered", False)
 
+    llm_enabled = report.get("llm_interpretation", {}).get("enabled", False)
+    llm_family = report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess", "n/a")
+
     print(f"\nSummary:")
     print(f"  Triage:     {yara_count} YARA matches")
     print(f"  Cape:       {cape_status}")
     print(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
     print(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
+    print(f"  LLM:        {llm_family if llm_enabled else 'disabled'}")
 
 
 if __name__ == "__main__":
