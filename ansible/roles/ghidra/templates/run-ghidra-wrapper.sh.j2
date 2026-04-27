@@ -31,6 +31,7 @@ mkdir -p "$OUTPUT_DIR"
 # Copy sample to temp dir — only the single file is mounted
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
 chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
