@@ -5,7 +5,7 @@ Pipeline orchestrator — runs the four-stage malware analysis pipeline.
 Stage 1: Triage (always) — containerized YARA/ssdeep/FLOSS via run-triage
 Stage 2: Dynamic (always) — submit to Cape API, poll until complete
 Stage 3: Memory forensics (triggered) — Volatility 3 (stub until sub-project 3)
-Stage 4: Static deep-dive (triggered) — Ghidra headless (stub until sub-project 4)
+Stage 4: Static deep-dive (triggered) — Ghidra headless on dropped PEs
 
 Usage:
   run-pipeline <sample_path>
@@ -374,6 +374,14 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
 
 # -------------------------------------------------------------------------
 # Stage 4: Ghidra headless static analysis
+#
+# SECURITY: When Ghidra output is later sent to an LLM for interpretation,
+# all strings/code from the binary are adversary-controlled. The LLM
+# interpretation layer (future) must:
+#   1. Treat all decompiled code as untrusted (UNTRUSTED_CODE delimiters)
+#   2. Never let LLM output modify verdicts or trigger pipeline actions
+#   3. Log raw prompts and responses for audit
+#   4. Use triage/Cape/Volatility for maliciousness — Ghidra+LLM for understanding
 # -------------------------------------------------------------------------
 
 # Cape signatures that indicate dropped/unpacked payloads worth analyzing
