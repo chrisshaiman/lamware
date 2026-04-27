@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# roles/interpret/tasks/main.yml
+# Builds the LLM interpretation container image.
+#
+# Runs a Claude API conversation agent inside a rootless Podman container
+# with network access (required for API calls) but all capabilities dropped.
+# Communicates with the orchestrator via stdin/stdout JSON lines.
+#
+# Depends on: podman role (container runtime must be installed)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Host directories
+# -------------------------------------------------------------------------
+
+- name: Create interpret directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ interpret_install_dir }}"
+    - "{{ interpret_install_dir }}/build"
+
+# -------------------------------------------------------------------------
+# Container image build
+# -------------------------------------------------------------------------
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ interpret_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy requirements.txt into build context
+  ansible.builtin.template:
+    src: requirements.txt.j2
+    dest: "{{ interpret_install_dir }}/build/requirements.txt"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy interpret-ghidra.py into build context
+  ansible.builtin.template:
+    src: interpret-ghidra.py.j2
+    dest: "{{ interpret_install_dir }}/build/interpret-ghidra.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build interpret container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/interpret:latest
+      -f {{ interpret_install_dir }}/build/Containerfile
+      {{ interpret_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+# -------------------------------------------------------------------------
+# Host-side wrapper script
+# -------------------------------------------------------------------------
+
+- name: Deploy interpret wrapper script
+  ansible.builtin.template:
+    src: run-interpret-wrapper.sh.j2
+    dest: "{{ interpret_install_dir }}/run-interpret"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ interpret_install_dir }}/run-interpret"
+    dest: /usr/local/bin/run-interpret
+    state: link

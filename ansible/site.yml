@@ -86,10 +86,14 @@
     - role: ghidra
       tags: [ghidra]
 
-    # 14. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
+    # 14. LLM interpretation — agentic Claude analysis of Ghidra output
+    - role: interpret
+      tags: [interpret]
+
+    # 15. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
     - role: pipeline
       tags: [pipeline]
 
-    # 14. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 16. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]

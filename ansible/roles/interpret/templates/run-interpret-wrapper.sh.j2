@@ -1,0 +1,27 @@
+#!/bin/bash
+# =============================================================================
+# run-interpret — host-side wrapper for LLM interpretation container
+# Long-running container that communicates via stdin/stdout JSON lines.
+#
+# Usage: echo '{"type":"init",...}' | run-interpret
+#        (then continue reading/writing JSON lines)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+exec podman run --rm -i \
+    --network=host \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ interpret_container_memory }} \
+    --cpus={{ interpret_container_cpus }} \
+    --timeout={{ interpret_container_timeout }} \
+    --tmpfs /tmp:size=100m \
+    --tmpfs /nonexistent:size=10m \
+    --user 65534:65534 \
+    -e ANTHROPIC_API_KEY="{{ anthropic_api_key }}" \
+    localhost/interpret:latest

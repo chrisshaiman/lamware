@@ -1,0 +1,17 @@
+# LLM interpretation container
+# Holds Claude API conversation for agentic malware RE.
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/python:3.12-slim
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+COPY interpret-ghidra.py /opt/interpret-ghidra.py
+RUN chmod +x /opt/interpret-ghidra.py
+
+# nobody user — matches other pipeline containers
+RUN mkdir -p /nonexistent && chmod 777 /nonexistent
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/interpret-ghidra.py"]

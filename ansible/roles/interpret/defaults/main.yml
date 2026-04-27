@@ -1,0 +1,36 @@
+---
+# roles/interpret/defaults/main.yml
+
+# Feature toggle
+interpret_enabled: true
+
+# Provider (future: "local" for ollama/vllm)
+interpret_provider: "anthropic"
+
+# Model selection
+interpret_model: "claude-sonnet-4-6-20250514"
+
+# Escalation
+interpret_escalation_threshold: 5
+interpret_escalation_model: "claude-opus-4-6-20250514"
+
+# Token budgets
+interpret_max_output_tokens: 2048
+interpret_context_compression_tokens: 30000
+
+# Agentic loop limits
+interpret_max_tool_calls: 10
+interpret_timeout: 300
+
+# Input caps
+interpret_max_imports: 200
+interpret_max_strings: 100
+interpret_max_string_length: 500
+
+# Container resources
+interpret_container_memory: "512m"
+interpret_container_cpus: "1"
+interpret_container_timeout: "360"
+
+# Install directory
+interpret_install_dir: /opt/interpret
