@@ -45,6 +45,8 @@ exec podman run --rm \
     --timeout={{ ghidra_container_timeout }} \
     --tmpfs /tmp:size=1g \
     --tmpfs /root:size=100m \
+    --tmpfs /home:size=100m \
+    --tmpfs /var/cache:size=100m \
     --user 65534:65534 \
     -v "$WORK_DIR:/sample:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
