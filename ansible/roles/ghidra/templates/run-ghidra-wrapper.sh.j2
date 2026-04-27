@@ -75,6 +75,7 @@ if [ ! -f "$SAMPLE_PATH" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+chmod 777 "$OUTPUT_DIR"
 
 # Copy sample to temp dir — only the single file is mounted
 WORK_DIR="$(mktemp -d)"

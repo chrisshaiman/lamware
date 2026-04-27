@@ -114,10 +114,11 @@ def analyze_with_headless(sample_path: Path) -> dict:
     completes, extracting functions, imports, and strings to a JSON file.
     This is more reliable than parsing Ghidra's log output.
     """
-    project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
+    # Save project to /output/project so it persists on the host volume
+    # and can be reloaded by tool mode for agentic LLM queries
+    project_dir = Path("/output/project")
+    project_dir.mkdir(parents=True, exist_ok=True)
     project_name = "analysis"
-    # ExportAnalysis.py writes to /tmp (writable tmpfs) — run-ghidra.py
-    # reads it and outputs the merged JSON to stdout
     export_path = Path("/tmp/ghidra_export.json")
 
     result = subprocess.run(
