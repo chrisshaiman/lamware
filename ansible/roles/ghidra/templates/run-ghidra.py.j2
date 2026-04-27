@@ -207,6 +207,11 @@ def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: st
         idx = line.find(marker)
         if idx >= 0:
             payload = line[idx + len(marker):]
+            # Ghidra's log formatter may append " (GhidraScript)  " after
+            # the JSON — find the last } and truncate there
+            last_brace = payload.rfind("}")
+            if last_brace >= 0:
+                payload = payload[:last_brace + 1]
             try:
                 return json.loads(payload)
             except json.JSONDecodeError as e:
