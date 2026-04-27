@@ -16,6 +16,7 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
 import ghidra.program.model.mem.Memory;
@@ -295,7 +296,7 @@ public class GhidraTool extends GhidraScript {
 
         Address baseAddr;
         try {
-            baseAddr = parseAddress(addrStr);
+            baseAddr = resolveAddress(addrStr);
         } catch (Exception e) {
             emitError("Invalid address: " + addrStr);
             return;
@@ -434,7 +435,7 @@ public class GhidraTool extends GhidraScript {
 
         Address addr;
         try {
-            addr = parseAddress(addrStr);
+            addr = resolveAddress(addrStr);
         } catch (Exception e) {
             emitError("Invalid address: " + addrStr);
             return;
@@ -475,7 +476,7 @@ public class GhidraTool extends GhidraScript {
         // Try as address if it looks like one
         if (nameOrAddress.startsWith("0x") || nameOrAddress.startsWith("0X")) {
             try {
-                Address addr = parseAddress(nameOrAddress);
+                Address addr = resolveAddress(nameOrAddress);
                 Function fn = funcMgr.getFunctionAt(addr);
                 if (fn != null) return fn;
                 // Also try getFunctionContaining in case they gave a mid-function address
@@ -499,12 +500,12 @@ public class GhidraTool extends GhidraScript {
     }
 
     // =========================================================================
-    // Helper: parseAddress
+    // Helper: resolveAddress
     // Parses a hex address string ("0x...") using the program's AddressFactory.
     // =========================================================================
-    private Address parseAddress(String addrStr) throws Exception {
+    private Address resolveAddress(String addrStr) throws Exception {
         AddressFactory af = currentProgram.getAddressFactory();
-        // Strip "0x"/"0X" prefix — Ghidra's parseAddress expects plain hex
+        // Strip "0x"/"0X" prefix — Ghidra's address factory expects plain hex
         String hex = addrStr;
         if (hex.startsWith("0x") || hex.startsWith("0X")) {
             hex = hex.substring(2);
