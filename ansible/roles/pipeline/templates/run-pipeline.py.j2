@@ -727,6 +727,51 @@ def run_interpret(ghidra_result: dict, output_dir: Path) -> dict:
     return {"enabled": True, "error": "Interpret container exited without final result"}
 
 
+def run_summarize(report: dict) -> dict:
+    """Generate an executive summary of the full pipeline report.
+
+    Single-shot Claude call (no tools) — sends a condensed version of the
+    merged report and gets back a structured summary for analysts.
+    """
+    if not INTERPRET_ENABLED:
+        return {"enabled": False, "reason": "disabled_by_config"}
+    if not Path(INTERPRET_CMD).exists():
+        return {"enabled": False, "reason": "interpret_cmd_not_found"}
+
+    try:
+        proc = subprocess.Popen(
+            [INTERPRET_CMD],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as e:
+        return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
+
+    # Send summarize message
+    msg = json.dumps({"type": "summarize", "report": report, "config": INTERPRET_CONFIG})
+    proc.stdin.write(msg + "\n")
+    proc.stdin.flush()
+
+    try:
+        # Read single response
+        line = proc.stdout.readline().strip()
+        if line:
+            result = json.loads(line)
+            return result.get("summary", {"error": "No summary in response"})
+    except (json.JSONDecodeError, Exception) as e:
+        return {"error": f"Summary parse error: {e}"}
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+    return {"error": "No response from summarize"}
+
+
 # -------------------------------------------------------------------------
 # Report output
 # -------------------------------------------------------------------------
@@ -833,7 +878,21 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
 
-    # Write merged report
+    # Stage 5: Executive summary (single-shot LLM, after all stages)
+    if INTERPRET_ENABLED:
+        print(f"\n[Stage 5] Executive Summary: generating...")
+        report["executive_summary"] = run_summarize(report)
+        summary = report["executive_summary"]
+        if summary.get("executive_summary"):
+            severity = summary.get("severity", "?")
+            findings = len(summary.get("key_findings", []))
+            print(f"  Severity: {severity}, Key findings: {findings}")
+        elif summary.get("error"):
+            print(f"  [!] Error: {summary['error']}")
+    else:
+        report["executive_summary"] = {"enabled": False, "reason": "disabled_by_config"}
+
+    # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
     print(f"\n[Done] Report: {report_path}")
