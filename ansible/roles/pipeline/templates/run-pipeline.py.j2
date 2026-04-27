@@ -418,18 +418,49 @@ def get_dropped_pe_files(cape_data: dict) -> list[Path]:
     return pe_files
 
 
-def should_run_ghidra(cape_data: dict) -> bool:
-    """Check if Cape dropped payloads trigger Ghidra analysis."""
+def get_original_sample_path(cape_data: dict) -> Path | None:
+    """Get the original submitted sample from Cape's storage."""
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return None
+    binary_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/binary")
+    if not binary_path.exists():
+        return None
+    # Check if it's a PE
+    try:
+        with binary_path.open("rb") as fh:
+            if fh.read(2) == b"MZ":
+                return binary_path
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
+def should_run_ghidra(cape_data: dict, sample_path: Path) -> bool:
+    """Check if Ghidra analysis should run.
+
+    Triggers when:
+    1. Cape found dropped PEs + injection/packing signatures, OR
+    2. No dropped PEs but the original sample is a PE (analyze the packed binary)
+    """
     if cape_data.get("status") != "reported":
         return False
     if not Path(GHIDRA_CMD).exists():
         return False
-    # Check for trigger signatures
+
     sigs = get_cape_signatures(cape_data)
     has_trigger = any(sig in GHIDRA_TRIGGERS for sig in sigs)
-    # Check for actual dropped PE files
-    has_pe_files = len(get_dropped_pe_files(cape_data)) > 0
-    return has_trigger and has_pe_files
+    has_dropped_pes = len(get_dropped_pe_files(cape_data)) > 0
+    original_is_pe = get_original_sample_path(cape_data) is not None
+
+    # Dropped PEs with trigger signatures — highest value analysis
+    if has_trigger and has_dropped_pes:
+        return True
+    # Original sample is a PE — analyze even without dropped files
+    if original_is_pe:
+        return True
+
+    return False
 
 
 def run_ghidra_on_file(pe_path: Path, output_dir: Path) -> dict:
@@ -442,19 +473,29 @@ def run_ghidra_on_file(pe_path: Path, output_dir: Path) -> dict:
             timeout=600,
         )
         if result.returncode != 0:
-            return {"error": result.stderr[:200]}
-        return json.loads(result.stdout)
+            return {"error": result.stderr[:200], "filename": pe_path.name}
+        output = json.loads(result.stdout)
+        return output
     except subprocess.TimeoutExpired:
-        return {"error": "timeout (600s)"}
+        return {"error": "timeout (600s)", "filename": pe_path.name}
     except json.JSONDecodeError:
-        return {"error": "invalid JSON output", "raw": result.stdout[:500]}
+        return {"error": "invalid JSON output", "filename": pe_path.name,
+                "raw": result.stdout[:500]}
 
 
-def run_ghidra(cape_data: dict, output_dir: Path) -> dict:
-    """Run Ghidra headless on all dropped PE files."""
+def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path) -> dict:
+    """Run Ghidra headless on dropped PEs and/or the original sample."""
     pe_files = get_dropped_pe_files(cape_data)
-    if not pe_files:
-        return {"triggered": True, "error": "no PE files found in dropped/"}
+    original_pe = get_original_sample_path(cape_data)
+
+    # If no dropped PEs, analyze the original sample
+    if not pe_files and original_pe:
+        pe_files = [original_pe]
+        trigger_reason = "original_sample_is_pe"
+    elif pe_files:
+        trigger_reason = "dropped_pe_with_signatures"
+    else:
+        return {"triggered": True, "error": "no PE files found"}
 
     sigs = get_cape_signatures(cape_data)
     trigger_sigs = [s for s in sigs if s in GHIDRA_TRIGGERS]
