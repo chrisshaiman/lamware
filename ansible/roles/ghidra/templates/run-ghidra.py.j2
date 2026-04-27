@@ -116,11 +116,9 @@ def analyze_with_headless(sample_path: Path) -> dict:
     """
     project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
     project_name = "analysis"
-    export_path = Path(tempfile.mkdtemp(prefix="ghidra_out_")) / "analysis.json"
-
-    # Run analysis with ExportAnalysis post-script
-    env = os.environ.copy()
-    env["GHIDRA_OUTPUT"] = str(export_path)
+    # ExportAnalysis.py writes to /tmp (writable tmpfs) — run-ghidra.py
+    # reads it and outputs the merged JSON to stdout
+    export_path = Path("/tmp/ghidra_export.json")
 
     result = subprocess.run(
         [
@@ -130,12 +128,11 @@ def analyze_with_headless(sample_path: Path) -> dict:
             "-import", str(sample_path),
             "-overwrite",
             "-analysisTimeoutPerFile", "300",
-            "-postScript", "ExportAnalysis.py",
+            "-postScript", "ExportAnalysis.java",
         ],
         capture_output=True,
         text=True,
         timeout=420,
-        env=env,
     )
 
     output = {
@@ -171,8 +168,8 @@ def analyze_with_headless(sample_path: Path) -> dict:
                 if nums:
                     output["functions_count"] = int(nums[0])
         output["note"] = "ExportAnalysis script did not produce output — results from log parsing only"
-        output["ghidra_stderr"] = result.stderr[-1000:] if result.stderr else ""
-        output["ghidra_stdout"] = result.stdout[-1000:] if result.stdout else ""
+        output["ghidra_stderr"] = result.stderr[-2000:] if result.stderr else ""
+        output["ghidra_stdout"] = result.stdout[-3000:] if result.stdout else ""
         output["ghidra_returncode"] = result.returncode
 
     return output
