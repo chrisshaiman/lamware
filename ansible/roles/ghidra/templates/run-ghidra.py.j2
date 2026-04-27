@@ -199,10 +199,14 @@ def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: st
         timeout=120,
     )
 
-    # GhidraTool.java emits exactly one TOOL_RESULT: line with JSON payload
+    # GhidraTool.java emits TOOL_RESULT:<json> via println(), but Ghidra
+    # prefixes script output with "INFO  ScriptName.java> " so we search
+    # for the marker anywhere in the line
     for line in result.stdout.splitlines():
-        if line.startswith("TOOL_RESULT:"):
-            payload = line[len("TOOL_RESULT:"):]
+        marker = "TOOL_RESULT:"
+        idx = line.find(marker)
+        if idx >= 0:
+            payload = line[idx + len(marker):]
             try:
                 return json.loads(payload)
             except json.JSONDecodeError as e:
