@@ -155,6 +155,9 @@ def analyze_with_headless(sample_path: Path) -> dict:
             output["imports"] = exported.get("imports", [])
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")
+            output["decompiled_functions"] = exported.get("decompiled_functions", [])
+            output["project_dir"] = exported.get("project_dir", "")
+            output["program_name"] = sample_path.name
         except (json.JSONDecodeError, KeyError) as e:
             output["parse_error"] = str(e)
     else:
