@@ -1,0 +1,17 @@
+---
+# roles/ghidra/defaults/main.yml
+
+# Ghidra install directory on the host
+ghidra_install_dir: /opt/ghidra
+ghidra_output_dir: /opt/ghidra/output
+ghidra_projects_dir: /opt/ghidra/projects
+
+# Ghidra version — pinned release from GitHub
+ghidra_version: "11.3.1"
+ghidra_release_date: "20250220"
+
+# Container resource limits — Ghidra's JVM needs significant memory
+# for decompilation of large binaries
+ghidra_container_memory: "4g"
+ghidra_container_cpus: "2"
+ghidra_container_timeout: "600"
