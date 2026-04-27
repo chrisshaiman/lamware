@@ -269,7 +269,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
 
     # --- Header ---
     sha256 = ghidra_data.get("sha256", "unknown")
-    function_count = ghidra_data.get("function_count", "unknown")
+    function_count = ghidra_data.get("functions_count", "unknown")
     entry_point = ghidra_data.get("entry_point", "unknown")
 
     parts.append(f"## Binary Under Analysis")
@@ -297,7 +297,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
         parts.append("")
 
     # --- Strings of interest ---
-    strings = ghidra_data.get("strings", [])
+    strings = ghidra_data.get("strings_of_interest", [])
     if strings:
         capped = strings[:max_strings]
         parts.append("## Strings of Interest")
@@ -316,7 +316,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
         parts.append("")
 
     # --- Decompiled functions ---
-    functions = ghidra_data.get("functions", [])
+    functions = ghidra_data.get("decompiled_functions", [])
     if functions:
         parts.append("## Decompiled Functions")
         for fn in functions:
