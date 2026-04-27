@@ -1,6 +1,7 @@
 // ExportAnalysis.java — Ghidra post-analysis script
 // Runs inside Ghidra's headless analyzer after analysis completes.
-// Exports function count, imports, strings of interest, and entry point
+// Exports function count, imports, strings of interest, entry point,
+// and decompiled pseudocode for the top 10 functions by xref count
 // to /tmp/ghidra_export.json for the wrapper script to read.
 //
 // Author: Christopher Shaiman
@@ -8,13 +9,20 @@
 //@category Analysis
 
 import ghidra.app.script.GhidraScript;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.*;
 
 import java.io.FileWriter;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class ExportAnalysis extends GhidraScript {
@@ -27,6 +35,13 @@ public class ExportAnalysis extends GhidraScript {
         "createremotethread", "ntwritevirtualmemory",
         "virtualallocex", "writeprocessmemory",
     };
+
+    // Maximum number of top functions to decompile
+    private static final int MAX_DECOMPILE_FUNCTIONS = 10;
+    // Maximum lines of pseudocode per function
+    private static final int MAX_LINES_PER_FUNCTION = 200;
+    // Maximum total pseudocode characters across all functions
+    private static final int MAX_TOTAL_PSEUDOCODE_CHARS = 12000;
 
     @Override
     public void run() throws Exception {
@@ -85,10 +100,24 @@ public class ExportAnalysis extends GhidraScript {
             }
         }
 
+        // Decompile top functions by xref count
+        List<Map<String, String>> decompiledFunctions = decompileTopFunctions(fm);
+
+        // Resolve project directory for downstream tool reuse.
+        // state.getProject() is available on GhidraScript's inherited state field.
+        String projectDir = "unknown";
+        try {
+            projectDir = state.getProject().getProjectLocator().getProjectDir().getAbsolutePath();
+        } catch (Exception e) {
+            // Non-fatal — project dir is a convenience field
+            projectDir = "unavailable: " + e.getMessage();
+        }
+
         // Build JSON manually (no external libraries available)
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"functions_count\": ").append(functionCount).append(",\n");
+        json.append("  \"project_dir\": \"").append(escapeJson(projectDir)).append("\",\n");
 
         json.append("  \"imports\": [");
         for (int i = 0; i < imports.size(); i++) {
@@ -104,7 +133,22 @@ public class ExportAnalysis extends GhidraScript {
         }
         json.append("],\n");
 
-        json.append("  \"entry_point\": \"").append(escapeJson(entryName)).append("\"\n");
+        json.append("  \"entry_point\": \"").append(escapeJson(entryName)).append("\",\n");
+
+        // Emit decompiled_functions array
+        json.append("  \"decompiled_functions\": [\n");
+        for (int i = 0; i < decompiledFunctions.size(); i++) {
+            Map<String, String> fn = decompiledFunctions.get(i);
+            json.append("    {\n");
+            json.append("      \"name\": \"").append(escapeJson(fn.get("name"))).append("\",\n");
+            json.append("      \"address\": \"").append(escapeJson(fn.get("address"))).append("\",\n");
+            json.append("      \"pseudocode\": \"").append(escapeJson(fn.get("pseudocode"))).append("\"\n");
+            json.append("    }");
+            if (i < decompiledFunctions.size() - 1) json.append(",");
+            json.append("\n");
+        }
+        json.append("  ]\n");
+
         json.append("}\n");
 
         // Write to /tmp (writable tmpfs inside container)
@@ -114,6 +158,121 @@ public class ExportAnalysis extends GhidraScript {
         }
 
         println("EXPORT_COMPLETE:" + outputPath);
+        println("PROJECT_DIR:" + projectDir);
+    }
+
+    /**
+     * Decompile the top N functions ranked by incoming cross-reference count.
+     *
+     * High xref count is a practical heuristic for "frequently called" functions,
+     * which tend to be the most analytically interesting (helpers, dispatchers,
+     * crypto primitives, etc.).
+     *
+     * Caps each function at MAX_LINES_PER_FUNCTION and stops adding functions once
+     * MAX_TOTAL_PSEUDOCODE_CHARS is reached so the output stays LLM-friendly.
+     */
+    private List<Map<String, String>> decompileTopFunctions(FunctionManager fm) {
+        // Build a list of (function, xrefCount) pairs.
+        // FunctionIterator doesn't implement Iterable — must use hasNext()/next().
+        List<Function> allFunctions = new ArrayList<>();
+        FunctionIterator funcIter = fm.getFunctions(true);
+        while (funcIter.hasNext()) {
+            allFunctions.add(funcIter.next());
+        }
+
+        // Count incoming xrefs for each function
+        final Map<Function, Integer> xrefCounts = new HashMap<>();
+        ReferenceManager refMgr = currentProgram.getReferenceManager();
+        for (Function fn : allFunctions) {
+            Address entryAddr = fn.getEntryPoint();
+            int count = 0;
+            // ReferenceIterator also lacks Iterable — use while loop
+            ReferenceIterator refs = refMgr.getReferencesTo(entryAddr);
+            while (refs.hasNext()) {
+                refs.next();
+                count++;
+            }
+            xrefCounts.put(fn, count);
+        }
+
+        // Sort descending by xref count
+        Collections.sort(allFunctions, new Comparator<Function>() {
+            @Override
+            public int compare(Function a, Function b) {
+                return Integer.compare(xrefCounts.getOrDefault(b, 0),
+                                       xrefCounts.getOrDefault(a, 0));
+            }
+        });
+
+        // Set up DecompInterface — must be initialized before use
+        DecompInterface decompiler = new DecompInterface();
+        decompiler.openProgram(currentProgram);
+
+        List<Map<String, String>> results = new ArrayList<>();
+        int totalChars = 0;
+
+        try {
+            int candidateIndex = 0;
+            while (results.size() < MAX_DECOMPILE_FUNCTIONS
+                    && candidateIndex < allFunctions.size()
+                    && totalChars < MAX_TOTAL_PSEUDOCODE_CHARS) {
+
+                Function fn = allFunctions.get(candidateIndex++);
+
+                // 30-second timeout per function; monitor is GhidraScript's task monitor
+                DecompileResults decompResult = decompiler.decompileFunction(fn, 30, monitor);
+                if (decompResult == null || !decompResult.decompileCompleted()) {
+                    continue;
+                }
+
+                String rawCode = decompResult.getDecompiledFunction().getC();
+                if (rawCode == null || rawCode.isEmpty()) {
+                    continue;
+                }
+
+                // Cap at MAX_LINES_PER_FUNCTION
+                String[] lines = rawCode.split("\n", -1);
+                StringBuilder capped = new StringBuilder();
+                int limit = Math.min(lines.length, MAX_LINES_PER_FUNCTION);
+                for (int i = 0; i < limit; i++) {
+                    capped.append(lines[i]);
+                    if (i < limit - 1) capped.append("\n");
+                }
+                if (lines.length > MAX_LINES_PER_FUNCTION) {
+                    capped.append("\n// [truncated: ").append(lines.length - MAX_LINES_PER_FUNCTION)
+                          .append(" lines omitted]");
+                }
+
+                String pseudocode = capped.toString();
+
+                // Respect total char budget
+                if (totalChars + pseudocode.length() > MAX_TOTAL_PSEUDOCODE_CHARS) {
+                    int remaining = MAX_TOTAL_PSEUDOCODE_CHARS - totalChars;
+                    if (remaining < 100) {
+                        // Not enough budget left to be useful — stop here
+                        break;
+                    }
+                    pseudocode = pseudocode.substring(0, remaining) + "\n// [truncated: char budget exhausted]";
+                    totalChars = MAX_TOTAL_PSEUDOCODE_CHARS;
+                } else {
+                    totalChars += pseudocode.length();
+                }
+
+                Map<String, String> entry = new HashMap<>();
+                entry.put("name", fn.getName());
+                entry.put("address", "0x" + fn.getEntryPoint().toString());
+                entry.put("pseudocode", pseudocode);
+                results.add(entry);
+
+                if (totalChars >= MAX_TOTAL_PSEUDOCODE_CHARS) {
+                    break;
+                }
+            }
+        } finally {
+            decompiler.dispose();
+        }
+
+        return results;
     }
 
     private String escapeJson(String s) {
