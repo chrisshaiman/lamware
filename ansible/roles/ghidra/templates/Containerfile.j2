@@ -1,6 +1,6 @@
 # Ghidra headless static analysis container
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/eclipse-temurin:21-jre-jammy
+FROM docker.io/library/eclipse-temurin:21-jdk-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -17,13 +17,17 @@ RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/
     && rm /tmp/ghidra.zip
 
 COPY run-ghidra.py /opt/run-ghidra.py
-COPY ExportAnalysis.py /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.py
+COPY ExportAnalysis.java /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.java
 RUN chmod +x /opt/run-ghidra.py
 
-# Bake Java and home directory config into image so Ghidra finds JDK
-# without interactive prompts, and nobody user has a writable home
+# Java reads user.home from /etc/passwd via getpwuid(), ignoring $HOME.
+# The nobody user (65534) has /nonexistent as home — create it so Java
+# and Ghidra can write config there. Matches triage/volatility pattern
+# of using nobody (65534:65534) with no custom user.
+RUN mkdir -p /nonexistent && chmod 777 /nonexistent
+
 ENV JAVA_HOME=/opt/java/openjdk
-ENV HOME=/tmp
+ENV HOME=/nonexistent
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Sample PE is mounted at /sample (read-only)

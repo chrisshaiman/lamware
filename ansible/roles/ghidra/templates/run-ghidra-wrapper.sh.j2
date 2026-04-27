@@ -44,11 +44,9 @@ exec podman run --rm \
     --cpus={{ ghidra_container_cpus }} \
     --timeout={{ ghidra_container_timeout }} \
     --tmpfs /tmp:size=1g \
-    --tmpfs /home/ghidra:size=100m \
+    --tmpfs /nonexistent:size=100m \
     --tmpfs /var/cache:size=100m \
     --user 65534:65534 \
-    -e HOME=/home/ghidra \
-    -e JAVA_HOME=/opt/java/openjdk \
     -v "$WORK_DIR:/sample:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/ghidra:latest \
