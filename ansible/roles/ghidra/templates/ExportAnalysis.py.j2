@@ -76,7 +76,7 @@ output = {
     "entry_point": entry_name,
 }
 
-output_path = os.environ.get("GHIDRA_OUTPUT", "/output/analysis.json")
+output_path = "/tmp/ghidra_export.json"
 with open(output_path, "w") as f:
     json.dump(output, f, indent=2)
 

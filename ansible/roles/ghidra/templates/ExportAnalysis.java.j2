@@ -1,0 +1,126 @@
+// ExportAnalysis.java — Ghidra post-analysis script
+// Runs inside Ghidra's headless analyzer after analysis completes.
+// Exports function count, imports, strings of interest, and entry point
+// to /tmp/ghidra_export.json for the wrapper script to read.
+//
+// Author: Christopher Shaiman
+// License: Apache 2.0
+//@category Analysis
+
+import ghidra.app.script.GhidraScript;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.symbol.*;
+
+import java.io.FileWriter;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class ExportAnalysis extends GhidraScript {
+
+    private static final String[] INTERESTING_PATTERNS = {
+        "http://", "https://", "ftp://",
+        "cmd.exe", "powershell", "wscript",
+        "software\\", "currentversion\\run",
+        "hkey_", ".onion", "bitcoin",
+        "createremotethread", "ntwritevirtualmemory",
+        "virtualallocex", "writeprocessmemory",
+    };
+
+    @Override
+    public void run() throws Exception {
+        // Count functions
+        FunctionManager fm = currentProgram.getFunctionManager();
+        int functionCount = fm.getFunctionCount();
+
+        // Extract imports by iterating each external library's symbols
+        // ExternalLocationIterator doesn't implement Iterable — use while loop
+        List<String> imports = new ArrayList<>();
+        ExternalManager extMgr = currentProgram.getExternalManager();
+        for (String libName : extMgr.getExternalLibraryNames()) {
+            ExternalLocationIterator iter = extMgr.getExternalLocations(libName);
+            while (iter.hasNext() && imports.size() < 200) {
+                ExternalLocation extLoc = iter.next();
+                String name = extLoc.getLabel();
+                if (name != null) {
+                    imports.add(libName + ":" + name);
+                }
+            }
+        }
+
+        // Extract strings of interest
+        List<String> stringsOfInterest = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        Listing listing = currentProgram.getListing();
+        java.util.Iterator<Data> dataIter = listing.getDefinedData(true);
+        while (dataIter.hasNext() && stringsOfInterest.size() < 100) {
+            Data data = dataIter.next();
+            if (data.hasStringValue()) {
+                Object val = data.getValue();
+                if (val != null) {
+                    String s = val.toString();
+                    if (s.length() > 4 && !seen.contains(s)) {
+                        String lower = s.toLowerCase();
+                        for (String pattern : INTERESTING_PATTERNS) {
+                            if (lower.contains(pattern)) {
+                                stringsOfInterest.add(s);
+                                seen.add(s);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Get entry point
+        String entryName = "unknown";
+        SymbolTable st = currentProgram.getSymbolTable();
+        for (Symbol sym : st.getSymbols("entry")) {
+            Function entryFunc = fm.getFunctionAt(sym.getAddress());
+            if (entryFunc != null) {
+                entryName = entryFunc.getName();
+                break;
+            }
+        }
+
+        // Build JSON manually (no external libraries available)
+        StringBuilder json = new StringBuilder();
+        json.append("{\n");
+        json.append("  \"functions_count\": ").append(functionCount).append(",\n");
+
+        json.append("  \"imports\": [");
+        for (int i = 0; i < imports.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append("\"").append(escapeJson(imports.get(i))).append("\"");
+        }
+        json.append("],\n");
+
+        json.append("  \"strings_of_interest\": [");
+        for (int i = 0; i < stringsOfInterest.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append("\"").append(escapeJson(stringsOfInterest.get(i))).append("\"");
+        }
+        json.append("],\n");
+
+        json.append("  \"entry_point\": \"").append(escapeJson(entryName)).append("\"\n");
+        json.append("}\n");
+
+        // Write to /tmp (writable tmpfs inside container)
+        String outputPath = "/tmp/ghidra_export.json";
+        try (FileWriter fw = new FileWriter(outputPath)) {
+            fw.write(json.toString());
+        }
+
+        println("EXPORT_COMPLETE:" + outputPath);
+    }
+
+    private String escapeJson(String s) {
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+}
