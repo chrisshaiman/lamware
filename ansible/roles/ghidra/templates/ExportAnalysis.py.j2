@@ -1,0 +1,83 @@
+# ExportAnalysis.py — Ghidra post-analysis script
+# Runs inside Ghidra's Jython environment after headless analysis.
+# Exports function count, imports, and strings to /output/analysis.json
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+import json
+import os
+
+from ghidra.program.model.listing import Function
+from ghidra.program.model.symbol import SourceType
+
+program = currentProgram
+listing = program.getListing()
+fm = program.getFunctionManager()
+sm = program.getSymbolTable()
+mem = program.getMemory()
+
+# Count functions
+functions = list(fm.getFunctions(True))
+function_count = len(functions)
+
+# Extract imports
+imports = []
+ext_mgr = program.getExternalManager()
+for ext_loc in ext_mgr.getExternalLocations():
+    lib = ext_loc.getLibraryName()
+    name = ext_loc.getLabel()
+    if lib and name:
+        imports.append("{}:{}".format(lib, name))
+imports = imports[:200]  # cap at 200
+
+# Extract defined strings
+strings_of_interest = []
+interesting_patterns = [
+    "http://", "https://", "ftp://",
+    "cmd.exe", "powershell", "wscript",
+    "SOFTWARE\\", "CurrentVersion\\Run",
+    "HKEY_", ".onion", "bitcoin",
+    "CreateRemoteThread", "NtWriteVirtualMemory",
+    "VirtualAllocEx", "WriteProcessMemory",
+]
+
+for data in listing.getDefinedData(True):
+    if data.hasStringValue():
+        val = data.getValue()
+        if val and len(str(val)) > 4:
+            s = str(val)
+            for pattern in interesting_patterns:
+                if pattern.lower() in s.lower():
+                    if s not in strings_of_interest:
+                        strings_of_interest.append(s)
+                    break
+
+strings_of_interest = strings_of_interest[:100]
+
+# Get entry point info
+entry = None
+entry_func = fm.getFunctionAt(program.getMinAddress())
+if entry_func is None:
+    # Try the actual entry point
+    entry_addr = program.getSymbolTable().getLabelHistory()
+    for sym in sm.getSymbols("entry"):
+        entry_func = fm.getFunctionAt(sym.getAddress())
+        if entry_func:
+            break
+
+entry_name = entry_func.getName() if entry_func else "unknown"
+
+# Write output
+output = {
+    "functions_count": function_count,
+    "imports": imports,
+    "strings_of_interest": strings_of_interest,
+    "entry_point": entry_name,
+}
+
+output_path = os.environ.get("GHIDRA_OUTPUT", "/output/analysis.json")
+with open(output_path, "w") as f:
+    json.dump(output, f, indent=2)
+
+print("EXPORT_COMPLETE:{}".format(output_path))

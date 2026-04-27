@@ -108,11 +108,20 @@ def extract_imports(sample_path: Path) -> list[dict]:
 
 
 def analyze_with_headless(sample_path: Path) -> dict:
-    """Run full Ghidra headless analysis and extract results."""
+    """Run Ghidra headless analysis with ExportAnalysis post-script.
+
+    The post-script runs inside Ghidra's Jython environment after analysis
+    completes, extracting functions, imports, and strings to a JSON file.
+    This is more reliable than parsing Ghidra's log output.
+    """
     project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
     project_name = "analysis"
+    export_path = Path(tempfile.mkdtemp(prefix="ghidra_out_")) / "analysis.json"
 
-    # Run analysis
+    # Run analysis with ExportAnalysis post-script
+    env = os.environ.copy()
+    env["GHIDRA_OUTPUT"] = str(export_path)
+
     result = subprocess.run(
         [
             ANALYZE_HEADLESS,
@@ -121,57 +130,47 @@ def analyze_with_headless(sample_path: Path) -> dict:
             "-import", str(sample_path),
             "-overwrite",
             "-analysisTimeoutPerFile", "300",
+            "-postScript", "ExportAnalysis.py",
         ],
         capture_output=True,
         text=True,
         timeout=420,
+        env=env,
     )
 
     output = {
         "filename": sample_path.name,
         "sha256": sha256_file(sample_path),
-        "analysis_success": result.returncode == 0,
+        "analysis_success": False,
         "functions_count": 0,
         "imports": [],
         "strings_of_interest": [],
+        "entry_point": "unknown",
     }
 
-    # Parse function count from Ghidra output
-    for line in result.stdout.splitlines():
-        if "functions" in line.lower() and "found" in line.lower():
-            nums = re.findall(r'\d+', line)
-            if nums:
-                output["functions_count"] = int(nums[0])
-
-    # Parse imports from output
-    for line in result.stdout.splitlines():
-        if "::" in line and ("dll" in line.lower() or ".dll" in line.lower()):
-            clean = line.strip()
-            if clean and len(clean) < 200:
-                output["imports"].append(clean)
-
-    # Limit imports to top 100
-    output["imports"] = output["imports"][:100]
-
-    # Extract interesting strings from Ghidra's string analysis output
-    interesting_patterns = [
-        r'https?://[^\s"]+',
-        r'SOFTWARE\\[^\s"]+',
-        r'CurrentVersion\\Run[^\s"]*',
-        r'cmd\.exe\s+/[cC]',
-        r'powershell[^\s"]*',
-        r'HKEY_[A-Z_]+',
-    ]
-
-    for line in result.stdout.splitlines():
-        for pattern in interesting_patterns:
-            matches = re.findall(pattern, line)
-            for m in matches:
-                if m not in output["strings_of_interest"]:
-                    output["strings_of_interest"].append(m)
-
-    # Cap strings
-    output["strings_of_interest"] = output["strings_of_interest"][:50]
+    # Check if the export script produced output
+    if export_path.exists():
+        try:
+            with export_path.open() as f:
+                exported = json.load(f)
+            output["analysis_success"] = True
+            output["functions_count"] = exported.get("functions_count", 0)
+            output["imports"] = exported.get("imports", [])
+            output["strings_of_interest"] = exported.get("strings_of_interest", [])
+            output["entry_point"] = exported.get("entry_point", "unknown")
+        except (json.JSONDecodeError, KeyError) as e:
+            output["parse_error"] = str(e)
+    else:
+        # Fall back to parsing Ghidra's stderr for basic info
+        all_output = result.stdout + "\n" + result.stderr
+        for line in all_output.splitlines():
+            if "REPORT: Analysis succeeded" in line:
+                output["analysis_success"] = True
+            if "functions" in line.lower() and ("found" in line.lower() or "created" in line.lower()):
+                nums = re.findall(r'\d+', line)
+                if nums:
+                    output["functions_count"] = int(nums[0])
+        output["note"] = "ExportAnalysis script did not produce output — results from log parsing only"
 
     return output
 
