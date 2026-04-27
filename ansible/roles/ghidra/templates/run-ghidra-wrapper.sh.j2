@@ -52,7 +52,7 @@ if [ "$1" = "--tool" ]; then
         --tmpfs /tmp:size=1g \
         --tmpfs /nonexistent:size=100m \
         --user 65534:65534 \
-        -v "$PROJECT_DIR:/project:ro" \
+        -v "$PROJECT_DIR:/project:rw" \
         localhost/ghidra:latest \
         --tool /project "$PROGRAM_NAME" "$TOOL_NAME" "$TOOL_ARGS"
 fi
