@@ -59,6 +59,14 @@
     group: "{{ cape_user }}"
     mode: "0755"
 
+- name: Deploy ExportAnalysis.py into build context
+  ansible.builtin.template:
+    src: ExportAnalysis.py.j2
+    dest: "{{ ghidra_install_dir }}/build/ExportAnalysis.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
 - name: Build ghidra container image
   ansible.builtin.command:
     cmd: >

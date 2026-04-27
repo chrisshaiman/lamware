@@ -17,6 +17,7 @@ RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/
     && rm /tmp/ghidra.zip
 
 COPY run-ghidra.py /opt/run-ghidra.py
+COPY ExportAnalysis.py /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.py
 RUN chmod +x /opt/run-ghidra.py
 
 # Sample PE is mounted at /sample (read-only)
