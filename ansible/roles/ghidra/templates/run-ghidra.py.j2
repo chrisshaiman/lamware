@@ -178,9 +178,75 @@ def analyze_with_headless(sample_path: Path) -> dict:
     return output
 
 
+def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: str) -> dict:
+    """Query an existing Ghidra project using GhidraTool.java.
+
+    Uses -process to open an already-analyzed program without re-importing.
+    GhidraTool.java emits a TOOL_RESULT:<json> line that we parse from stdout.
+    """
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            "analysis",           # project name — matches what ExportAnalysis saved
+            "-process", program_name,
+            "-noanalysis",        # skip re-analysis, just open and run script
+            "-postScript", "GhidraTool.java", tool_name, args_json,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    # GhidraTool.java emits exactly one TOOL_RESULT: line with JSON payload
+    for line in result.stdout.splitlines():
+        if line.startswith("TOOL_RESULT:"):
+            payload = line[len("TOOL_RESULT:"):]
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError as e:
+                return {
+                    "error": f"TOOL_RESULT parse error: {e}",
+                    "raw": payload,
+                }
+
+    # No TOOL_RESULT line found — surface Ghidra's output for debugging
+    return {
+        "error": "GhidraTool.java did not emit TOOL_RESULT",
+        "tool_name": tool_name,
+        "ghidra_stdout": result.stdout[-3000:] if result.stdout else "",
+        "ghidra_stderr": result.stderr[-2000:] if result.stderr else "",
+        "ghidra_returncode": result.returncode,
+    }
+
+
 def main():
+    # Tool mode: run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>
+    if len(sys.argv) >= 2 and sys.argv[1] == "--tool":
+        if len(sys.argv) != 6:
+            print(json.dumps({
+                "error": "Usage: run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>"
+            }))
+            sys.exit(1)
+
+        project_dir = Path(sys.argv[2])
+        program_name = sys.argv[3]
+        tool_name = sys.argv[4]
+        args_json = sys.argv[5]
+
+        if not project_dir.is_dir():
+            print(json.dumps({"error": f"Project dir not found: {project_dir}"}))
+            sys.exit(1)
+
+        result = run_tool(project_dir, program_name, tool_name, args_json)
+        print(json.dumps(result, indent=2))
+        return
+
+    # Analysis mode: run-ghidra.py <sample_path>
     if len(sys.argv) != 2:
-        print(json.dumps({"error": "Usage: run-ghidra.py <sample_path>"}))
+        print(json.dumps({
+            "error": "Usage: run-ghidra.py <sample_path>  OR  run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>"
+        }))
         sys.exit(1)
 
     sample_path = Path(sys.argv[1])
