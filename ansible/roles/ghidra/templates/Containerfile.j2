@@ -18,6 +18,7 @@ RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/
 
 COPY run-ghidra.py /opt/run-ghidra.py
 COPY ExportAnalysis.java /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.java
+COPY GhidraTool.java /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/GhidraTool.java
 RUN chmod +x /opt/run-ghidra.py
 
 # Java reads user.home from /etc/passwd via getpwuid(), ignoring $HOME.
