@@ -8,11 +8,11 @@ interpret_enabled: true
 interpret_provider: "anthropic"
 
 # Model selection
-interpret_model: "claude-sonnet-4-6-20250514"
+interpret_model: "claude-sonnet-4-6-latest"
 
 # Escalation
 interpret_escalation_threshold: 5
-interpret_escalation_model: "claude-opus-4-6-20250514"
+interpret_escalation_model: "claude-opus-4-6-latest"
 
 # Token budgets
 interpret_max_output_tokens: 2048
