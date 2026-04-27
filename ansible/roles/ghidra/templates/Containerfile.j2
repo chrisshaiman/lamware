@@ -1,0 +1,26 @@
+# Ghidra headless static analysis container
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/eclipse-temurin:21-jre-jammy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    unzip \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install Ghidra
+RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_{{ ghidra_version }}_build/ghidra_{{ ghidra_version }}_PUBLIC_{{ ghidra_release_date }}.zip" \
+    -O /tmp/ghidra.zip \
+    && unzip -q /tmp/ghidra.zip -d /opt \
+    && mv /opt/ghidra_{{ ghidra_version }}_PUBLIC /opt/ghidra \
+    && rm /tmp/ghidra.zip
+
+COPY run-ghidra.py /opt/run-ghidra.py
+RUN chmod +x /opt/run-ghidra.py
+
+# Sample PE is mounted at /sample (read-only)
+# Output goes to /output (read-write volume)
+# Ghidra project temp dir at /projects (tmpfs)
+
+ENTRYPOINT ["python3", "/opt/run-ghidra.py"]

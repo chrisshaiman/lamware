@@ -7,13 +7,13 @@ volatility_output_dir: /opt/volatility3/output
 volatility_symbols_dir: /opt/volatility3/symbols
 
 # Volatility 3 version (PyPI)
-volatility_version: "2.8.0"
+volatility_version: "2.27.0"
 
 # Container resource limits — memory dumps are large (2-4 GB),
 # Volatility needs significant RAM to parse them
 volatility_container_memory: "8g"
 volatility_container_cpus: "2"
-volatility_container_timeout: "600"
+volatility_container_timeout: "900"
 
 # Windows ISF symbol table URL — must match the guest OS version
 # Win11 26100 symbols from Microsoft Symbol Server
