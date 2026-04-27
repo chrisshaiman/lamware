@@ -1,0 +1,90 @@
+---
+# =============================================================================
+# roles/ghidra/tasks/main.yml
+# Builds the Ghidra headless analysis container image.
+#
+# Ghidra runs inside a rootless Podman container with no network access
+# and all capabilities dropped. PE binaries are mounted read-only.
+#
+# Future: LLM-assisted interpretation of decompiled output — send Ghidra's
+# pseudocode to Claude for automated reverse engineering insights.
+#
+# Depends on: podman role (container runtime must be installed)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Host directories
+# -------------------------------------------------------------------------
+
+- name: Create ghidra directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ ghidra_install_dir }}"
+    - "{{ ghidra_output_dir }}"
+    - "{{ ghidra_projects_dir }}"
+
+# -------------------------------------------------------------------------
+# Container image build
+# -------------------------------------------------------------------------
+
+- name: Create container build directory
+  ansible.builtin.file:
+    path: "{{ ghidra_install_dir }}/build"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ ghidra_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy run-ghidra.py into build context
+  ansible.builtin.template:
+    src: run-ghidra.py.j2
+    dest: "{{ ghidra_install_dir }}/build/run-ghidra.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build ghidra container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/ghidra:latest
+      -f {{ ghidra_install_dir }}/build/Containerfile
+      {{ ghidra_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+# -------------------------------------------------------------------------
+# Host-side wrapper script
+# -------------------------------------------------------------------------
+
+- name: Deploy ghidra wrapper script
+  ansible.builtin.template:
+    src: run-ghidra-wrapper.sh.j2
+    dest: "{{ ghidra_install_dir }}/run-ghidra"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ ghidra_install_dir }}/run-ghidra"
+    dest: /usr/local/bin/run-ghidra
+    state: link

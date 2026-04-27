@@ -82,7 +82,11 @@
     - role: volatility
       tags: [volatility]
 
-    # 13. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
+    # 13. Ghidra — containerized headless static analysis
+    - role: ghidra
+      tags: [ghidra]
+
+    # 14. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
     - role: pipeline
       tags: [pipeline]
 

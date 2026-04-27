@@ -38,6 +38,7 @@ CAPE_API_URL = "{{ cape_api_url }}"
 CAPE_API_KEY = "{{ cape_api_key }}"
 TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
 VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
+GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
 REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
 CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
 CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
@@ -372,17 +373,98 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
 
 
 # -------------------------------------------------------------------------
-# Stage 4: Ghidra (stub — wired up in sub-project 4)
+# Stage 4: Ghidra headless static analysis
 # -------------------------------------------------------------------------
+
+# Cape signatures that indicate dropped/unpacked payloads worth analyzing
+GHIDRA_TRIGGERS = [
+    "packed_binary",
+    "injection_write_process",
+    "injection_rwx",
+    "reflective_dll_loading",
+    "shellcode_execution",
+    "drops_exe",
+    "creates_exe",
+]
+
+
+def get_dropped_pe_files(cape_data: dict) -> list[Path]:
+    """Find PE files dropped during Cape analysis."""
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return []
+    dropped_dir = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/dropped")
+    if not dropped_dir.exists():
+        return []
+    pe_files = []
+    for f in dropped_dir.iterdir():
+        if f.is_file() and f.stat().st_size > 1024:  # skip tiny files
+            # Check for PE magic bytes (MZ header)
+            try:
+                with f.open("rb") as fh:
+                    magic = fh.read(2)
+                if magic == b"MZ":
+                    pe_files.append(f)
+            except (OSError, PermissionError):
+                continue
+    return pe_files
+
 
 def should_run_ghidra(cape_data: dict) -> bool:
     """Check if Cape dropped payloads trigger Ghidra analysis."""
-    return False  # Stub: always false until sub-project 4
+    if cape_data.get("status") != "reported":
+        return False
+    if not Path(GHIDRA_CMD).exists():
+        return False
+    # Check for trigger signatures
+    sigs = get_cape_signatures(cape_data)
+    has_trigger = any(sig in GHIDRA_TRIGGERS for sig in sigs)
+    # Check for actual dropped PE files
+    has_pe_files = len(get_dropped_pe_files(cape_data)) > 0
+    return has_trigger and has_pe_files
+
+
+def run_ghidra_on_file(pe_path: Path, output_dir: Path) -> dict:
+    """Run Ghidra headless on a single PE file."""
+    try:
+        result = subprocess.run(
+            [GHIDRA_CMD, str(pe_path), str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:200]}
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout (600s)"}
+    except json.JSONDecodeError:
+        return {"error": "invalid JSON output", "raw": result.stdout[:500]}
 
 
 def run_ghidra(cape_data: dict, output_dir: Path) -> dict:
-    """Run Ghidra headless on dropped PEs. Stub — returns not triggered."""
-    return {"triggered": False, "reason": "ghidra container not yet deployed"}
+    """Run Ghidra headless on all dropped PE files."""
+    pe_files = get_dropped_pe_files(cape_data)
+    if not pe_files:
+        return {"triggered": True, "error": "no PE files found in dropped/"}
+
+    sigs = get_cape_signatures(cape_data)
+    trigger_sigs = [s for s in sigs if s in GHIDRA_TRIGGERS]
+
+    result = {
+        "triggered": True,
+        "trigger_reason": "dropped_pe_with_signatures",
+        "trigger_signatures": trigger_sigs,
+        "analyzed_files": [],
+    }
+
+    # Analyze up to 5 dropped PEs (avoid spending hours on prolific droppers)
+    for pe_path in pe_files[:5]:
+        print(f"    Analyzing {pe_path.name}...")
+        file_result = run_ghidra_on_file(pe_path, output_dir)
+        result["analyzed_files"].append(file_result)
+
+    return result
 
 
 # -------------------------------------------------------------------------

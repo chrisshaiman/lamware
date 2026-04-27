@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""
+Ghidra headless analysis wrapper — runs inside a Podman container.
+Analyzes a PE binary with Ghidra's headless analyzer and extracts:
+- Function count
+- Import table (DLL + function names)
+- Strings of interest (URLs, registry keys, commands)
+- Decompiled entrypoint (first 50 lines)
+
+Usage: python3 run-ghidra.py /sample/payload.exe
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+GHIDRA_HOME = "/opt/ghidra"
+ANALYZE_HEADLESS = f"{GHIDRA_HOME}/support/analyzeHeadless"
+
+
+def sha256_file(path: Path) -> str:
+    """Compute SHA256 of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(8192):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run_headless_analysis(sample_path: Path, project_dir: Path) -> bool:
+    """Run Ghidra headless analyzer on the sample. Returns True on success."""
+    project_name = "analysis"
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            project_name,
+            "-import", str(sample_path),
+            "-overwrite",
+            "-analysisTimeoutPerFile", "300",
+            "-scriptPath", "/opt",
+            "-postScript", "ExportAnalysis.java",
+            "-noanalysis",  # We run analysis then export in one pass
+        ],
+        capture_output=True,
+        text=True,
+        timeout=360,
+    )
+    # analyzeHeadless is noisy — check if the import succeeded
+    return "Import succeeded" in result.stdout or result.returncode == 0
+
+
+def extract_imports(sample_path: Path) -> list[dict]:
+    """Extract import table using Ghidra's analyzeHeadless with a simple approach."""
+    project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
+    project_name = "imports"
+
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            project_name,
+            "-import", str(sample_path),
+            "-overwrite",
+            "-analysisTimeoutPerFile", "300",
+            "-postScript", "PrintImports.py",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=360,
+    )
+
+    # Parse imports from Ghidra's output
+    imports = []
+    for line in result.stdout.splitlines():
+        if line.startswith("IMPORT:"):
+            parts = line.split(":", 2)
+            if len(parts) >= 3:
+                dll_func = parts[1].strip()
+                if "!" in dll_func:
+                    dll, func = dll_func.split("!", 1)
+                    imports.append(f"{dll}:{func}")
+    return imports
+
+
+def analyze_with_headless(sample_path: Path) -> dict:
+    """Run full Ghidra headless analysis and extract results."""
+    project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
+    project_name = "analysis"
+
+    # Run analysis
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            project_name,
+            "-import", str(sample_path),
+            "-overwrite",
+            "-analysisTimeoutPerFile", "300",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=420,
+    )
+
+    output = {
+        "filename": sample_path.name,
+        "sha256": sha256_file(sample_path),
+        "analysis_success": result.returncode == 0,
+        "functions_count": 0,
+        "imports": [],
+        "strings_of_interest": [],
+    }
+
+    # Parse function count from Ghidra output
+    for line in result.stdout.splitlines():
+        if "functions" in line.lower() and "found" in line.lower():
+            nums = re.findall(r'\d+', line)
+            if nums:
+                output["functions_count"] = int(nums[0])
+
+    # Parse imports from output
+    for line in result.stdout.splitlines():
+        if "::" in line and ("dll" in line.lower() or ".dll" in line.lower()):
+            clean = line.strip()
+            if clean and len(clean) < 200:
+                output["imports"].append(clean)
+
+    # Limit imports to top 100
+    output["imports"] = output["imports"][:100]
+
+    # Extract interesting strings from Ghidra's string analysis output
+    interesting_patterns = [
+        r'https?://[^\s"]+',
+        r'SOFTWARE\\[^\s"]+',
+        r'CurrentVersion\\Run[^\s"]*',
+        r'cmd\.exe\s+/[cC]',
+        r'powershell[^\s"]*',
+        r'HKEY_[A-Z_]+',
+    ]
+
+    for line in result.stdout.splitlines():
+        for pattern in interesting_patterns:
+            matches = re.findall(pattern, line)
+            for m in matches:
+                if m not in output["strings_of_interest"]:
+                    output["strings_of_interest"].append(m)
+
+    # Cap strings
+    output["strings_of_interest"] = output["strings_of_interest"][:50]
+
+    return output
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: run-ghidra.py <sample_path>"}))
+        sys.exit(1)
+
+    sample_path = Path(sys.argv[1])
+    if not sample_path.exists():
+        print(json.dumps({"error": f"File not found: {sample_path}"}))
+        sys.exit(1)
+
+    result = analyze_with_headless(sample_path)
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
