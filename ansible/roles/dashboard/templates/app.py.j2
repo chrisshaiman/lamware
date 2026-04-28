@@ -208,7 +208,7 @@ def index():
             <td>{started}</td>
         </tr>"""
 
-    return render_template_string("""<!DOCTYPE html><html><head>
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Malware Analysis Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
@@ -228,7 +228,7 @@ def index():
                 {{ rows }}
             </table>
         </div>
-    </body></html>""", css=CSS, rows=rows, search=search)
+    </body></html>{% endraw %}""", css=CSS, rows=rows, search=search)
 
 
 @app.route("/analysis/<int:analysis_id>")
@@ -336,7 +336,7 @@ def analysis_detail(analysis_id):
     sha_short = a["sha256"][:16] + "..." if a["sha256"] else "?"
     pdf_link = f"/pdf/{a['task_id']}" if a["pdf_generated"] else ""
 
-    return render_template_string("""<!DOCTYPE html><html><head>
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Analysis {{ task_id }} — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
@@ -415,7 +415,7 @@ def analysis_detail(analysis_id):
             </div>
             {% endif %}
         </div>
-    </body></html>""",
+    </body></html>{% endraw %}""",
         css=CSS, task_id=a["task_id"],
         severity_badge=severity_badge(a["severity"]),
         malscore=a["malscore"] or "?",
@@ -490,7 +490,7 @@ def iocs_list():
 
     type_options = "".join(f'<option value="{t}" {"selected" if t == ioc_type else ""}>{t}</option>' for t in types)
 
-    return render_template_string("""<!DOCTYPE html><html><head>
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>IOCs — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
@@ -511,7 +511,7 @@ def iocs_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>""", css=CSS, rows=rows, search=search, type_options=type_options)
+    </body></html>{% endraw %}""", css=CSS, rows=rows, search=search, type_options=type_options)
 
 
 @app.route("/techniques")
@@ -546,7 +546,7 @@ def techniques_list():
             <td style="font-size:11px;">{escape(families)}</td>
         </tr>"""
 
-    return render_template_string("""<!DOCTYPE html><html><head>
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>ATT&CK — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
@@ -561,7 +561,7 @@ def techniques_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>""", css=CSS, rows=rows)
+    </body></html>{% endraw %}""", css=CSS, rows=rows)
 
 
 @app.route("/pdf/<task_id>")

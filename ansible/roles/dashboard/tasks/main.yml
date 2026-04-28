@@ -39,14 +39,14 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
-  notify: restart dashboard
+  notify: Restart dashboard
 
 - name: Deploy systemd service
   ansible.builtin.template:
     src: dashboard.service.j2
     dest: /etc/systemd/system/dashboard.service
     mode: "0644"
-  notify: restart dashboard
+  notify: Restart dashboard
 
 - name: Enable and start dashboard
   ansible.builtin.systemd:
