@@ -342,31 +342,36 @@ def render_executive_summary(report: dict) -> str:
 
 
 def render_iocs(report: dict) -> str:
-    """Render IOC table with source attribution."""
-    # Collect IOCs from multiple sources
+    """Render IOC table with source attribution and type."""
     ioc_entries = []
 
-    # From executive summary
+    # Structured IOCs from executive summary (new format)
     summary_iocs = report.get("executive_summary", {}).get("iocs", [])
     for ioc in summary_iocs:
-        ioc_entries.append(("Summary", ioc))
+        if isinstance(ioc, dict):
+            ioc_entries.append({
+                "source": ioc.get("source", "Summary"),
+                "type": ioc.get("type", "unknown"),
+                "value": ioc.get("value", ""),
+            })
+        elif isinstance(ioc, str):
+            # Legacy string format fallback
+            ioc_entries.append({"source": "Summary", "type": "unknown", "value": ioc})
 
     # YARA matches from triage
     yara = report.get("triage", {}).get("yara_matches", [])
     for m in yara:
         rule = m.get("rule", "")
         if rule:
-            ioc_entries.append(("Triage", f"YARA rule: {rule}"))
+            ioc_entries.append({"source": "Triage", "type": "yara_rule", "value": rule})
 
-    # SHA256 from Ghidra
+    # SHA256 from Ghidra analyzed files
     ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
     for af in ghidra_files:
         sha = af.get("sha256", "")
         if sha and sha != "unknown":
-            source_label = "Ghidra"
-            if af.get("source") == "malfind_injection":
-                source_label = "Volatility"
-            ioc_entries.append((source_label, f"SHA256: {sha}"))
+            source_label = "Volatility" if af.get("source") == "malfind_injection" else "Ghidra"
+            ioc_entries.append({"source": source_label, "type": "hash", "value": f"SHA256:{sha}"})
 
     if not ioc_entries:
         return ""
@@ -374,38 +379,65 @@ def render_iocs(report: dict) -> str:
     # Deduplicate
     seen = set()
     unique = []
-    for source, ioc in ioc_entries:
-        key = ioc.lower()
+    for entry in ioc_entries:
+        key = entry["value"].lower()
         if key not in seen:
             seen.add(key)
-            unique.append((source, ioc))
+            unique.append(entry)
 
     html = '<h2>Indicators of Compromise (IOCs)</h2>\n'
     html += '<table class="ioc-table">\n'
-    html += '<tr><th>Source</th><th>Indicator</th></tr>\n'
-    for source, ioc in unique:
-        html += f'<tr><td>{source_badge(source)}</td><td>{escape_html(ioc)}</td></tr>\n'
+    html += '<tr><th>Source</th><th>Type</th><th>Indicator</th></tr>\n'
+    for entry in unique:
+        html += f'<tr><td>{source_badge(entry["source"])}</td>'
+        html += f'<td>{escape_html(entry["type"])}</td>'
+        html += f'<td>{escape_html(entry["value"])}</td></tr>\n'
     html += '</table>\n'
     return html
 
 
 def render_mitre(report: dict) -> str:
-    """Render MITRE ATT&CK techniques table with source."""
-    techniques = (report.get("llm_interpretation", {})
-                  .get("analysis", {})
-                  .get("attack_techniques", []))
-    if not techniques:
+    """Render MITRE ATT&CK techniques table consolidated from all sources."""
+    all_techniques = []
+
+    # From AI RE interpretation
+    interp_techniques = (report.get("llm_interpretation", {})
+                         .get("analysis", {})
+                         .get("attack_techniques", []))
+    for t in interp_techniques:
+        all_techniques.append({
+            "id": t.get("id", "?"),
+            "name": t.get("name", "?"),
+            "source": "AI Reverse Engineering",
+        })
+
+    # From executive summary (new structured format)
+    summary_techniques = report.get("executive_summary", {}).get("mitre_techniques", [])
+    for t in summary_techniques:
+        all_techniques.append({
+            "id": t.get("id", "?"),
+            "name": t.get("name", "?"),
+            "source": t.get("source", "Summary"),
+        })
+
+    if not all_techniques:
         return ""
+
+    # Deduplicate by technique ID, keep first source seen
+    seen_ids = set()
+    unique = []
+    for t in all_techniques:
+        if t["id"] not in seen_ids:
+            seen_ids.add(t["id"])
+            unique.append(t)
 
     html = '<h2>MITRE ATT&CK Mapping</h2>\n'
     html += '<table class="mitre-table">\n'
     html += '<tr><th>Source</th><th>Technique ID</th><th>Name</th></tr>\n'
-    for t in techniques:
-        tid = t.get("id", "?")
-        name = t.get("name", "?")
-        html += f'<tr><td>{source_badge("AI Reverse Engineering")}</td>'
-        html += f'<td><strong>{escape_html(tid)}</strong></td>'
-        html += f'<td>{escape_html(name)}</td></tr>\n'
+    for t in unique:
+        html += f'<tr><td>{source_badge(t["source"])}</td>'
+        html += f'<td><strong>{escape_html(t["id"])}</strong></td>'
+        html += f'<td>{escape_html(t["name"])}</td></tr>\n'
     html += '</table>\n'
     return html
 
