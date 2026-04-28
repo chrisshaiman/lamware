@@ -13,3 +13,6 @@ collections:
   # ini_file module (used by cape role for conf edits)
   - name: community.general
     version: "12.5.0"
+  # PostgreSQL modules (used by postgres role for DB/user management)
+  - name: community.postgresql
+    version: ">=3.0.0"
