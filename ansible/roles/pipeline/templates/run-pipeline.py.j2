@@ -509,10 +509,6 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
         },
     }
 
-    # Create malfind dump directory for extracted regions
-    malfind_dump_dir = output_dir / "malfind_dumps"
-    malfind_dump_dir.mkdir(parents=True, exist_ok=True)
-
     for plugin in all_plugins:
         short_name = plugin.replace("windows.", "")
         print(f"    Running {plugin}...")
@@ -1614,9 +1610,19 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     # Stage 3.5: Shellcode filtering (from malfind dumps)
     shellcode_candidates = []
     if MALFIND_ENABLED and report.get("volatility", {}).get("triggered"):
+        # Volatility --dump writes .dmp files to --workdir (/output), which maps
+        # to output_dir. Move them into a malfind_dumps subdirectory for organization.
         malfind_dump_dir = output_dir / "malfind_dumps"
+        malfind_dump_dir.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for dmp in output_dir.glob("pid.*.dmp"):
+            dmp.rename(malfind_dump_dir / dmp.name)
+            moved += 1
+        if moved:
+            print(f"\n[Stage 3.5] Shellcode filtering: moved {moved} malfind dump files")
+
         malfind_output = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
-        print(f"\n[Stage 3.5] Shellcode filtering: scanning malfind dumps...")
+        print(f"[Stage 3.5] Shellcode filtering: scanning malfind dumps...")
         shellcode_candidates = filter_malfind_dumps(malfind_dump_dir, malfind_output)
 
     # Stage 4: Ghidra (triggered by dropped payloads)
