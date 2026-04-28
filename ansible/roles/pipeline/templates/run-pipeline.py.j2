@@ -895,7 +895,26 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
-    print(f"\n[Done] Report: {report_path}")
+    print(f"\n[Done] JSON report: {report_path}")
+
+    # Stage 6: PDF report generation
+    print(f"\n[Stage 6] PDF Report: generating...")
+    pdf_path = report_path.parent / "report.pdf"
+    try:
+        result = subprocess.run(
+            ["{{ pipeline_install_dir }}/generate-report.py", str(report_path), str(pdf_path)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            print(f"  PDF written to: {pdf_path}")
+        else:
+            print(f"  [!] PDF generation failed: {result.stderr[:200]}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("  [!] PDF generation timed out (60s)", file=sys.stderr)
+    except Exception as e:
+        print(f"  [!] PDF generation error: {e}", file=sys.stderr)
 
     return report
 

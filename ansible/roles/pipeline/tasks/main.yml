@@ -9,9 +9,11 @@
 # License: Apache 2.0
 # =============================================================================
 
-- name: Install requests for pipeline orchestrator
+- name: Install pipeline Python dependencies
   ansible.builtin.pip:
-    name: requests
+    name:
+      - requests
+      - weasyprint
     state: present
     break_system_packages: true
 
@@ -48,10 +50,24 @@
     group: "{{ cape_user }}"
     mode: "0750"
 
-- name: Create convenience symlink
+- name: Deploy generate-report.py
+  ansible.builtin.template:
+    src: generate-report.py.j2
+    dest: "{{ pipeline_install_dir }}/generate-report.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink for pipeline
   ansible.builtin.file:
     src: "{{ pipeline_install_dir }}/run-pipeline"
     dest: /usr/local/bin/run-pipeline
+    state: link
+
+- name: Create convenience symlink for report generator
+  ansible.builtin.file:
+    src: "{{ pipeline_install_dir }}/generate-report.py"
+    dest: /usr/local/bin/generate-report
     state: link
 
 - name: Deploy cleanup cron script
