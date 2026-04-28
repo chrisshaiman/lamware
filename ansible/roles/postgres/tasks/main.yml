@@ -1,0 +1,90 @@
+---
+# =============================================================================
+# roles/postgres/tasks/main.yml
+# Creates the malware analysis database in the existing PostgreSQL instance
+# (already installed by Cape). Separate database, separate user.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# PostgreSQL is already installed and running (Cape dependency).
+# We just create our database and apply the schema.
+
+- name: Install psycopg2 for pipeline scripts
+  ansible.builtin.pip:
+    name: psycopg2-binary
+    state: present
+    break_system_packages: true
+
+- name: Fix pip package permissions for cape user
+  ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Create pipeline database user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ postgres_db_user }}"
+    password: "{{ postgres_db_password }}"
+    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+
+- name: Create malware analysis database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ postgres_db_name }}"
+    owner: "{{ postgres_db_user }}"
+    encoding: UTF-8
+
+- name: Deploy schema SQL
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/pipeline/files/schema.sql"
+    dest: /tmp/pipeline-schema.sql
+    mode: "0644"
+
+- name: Check if schema already applied
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ postgres_db_name }}"
+    query: "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'samples');"
+  register: schema_check
+
+- name: Apply schema (first time only)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ postgres_db_name }}"
+    path_to_script: /tmp/pipeline-schema.sql
+    as_single_query: false
+  when: not schema_check.query_result[0].exists
+
+- name: Grant table privileges to pipeline user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_privs:
+    database: "{{ postgres_db_name }}"
+    roles: "{{ postgres_db_user }}"
+    type: table
+    objs: ALL_IN_SCHEMA
+    privs: SELECT,INSERT,UPDATE,DELETE
+    schema: public
+
+- name: Grant sequence privileges to pipeline user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_privs:
+    database: "{{ postgres_db_name }}"
+    roles: "{{ postgres_db_user }}"
+    type: sequence
+    objs: ALL_IN_SCHEMA
+    privs: USAGE,SELECT
+    schema: public
+
+- name: Clean up schema file
+  ansible.builtin.file:
+    path: /tmp/pipeline-schema.sql
+    state: absent

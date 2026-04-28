@@ -10,4 +10,8 @@
 # =============================================================================
 
 set -euo pipefail
+
+# Unbuffered output so progress is visible in real time
+export PYTHONUNBUFFERED=1
+
 exec python3 {{ pipeline_install_dir }}/run-pipeline.py "$@"

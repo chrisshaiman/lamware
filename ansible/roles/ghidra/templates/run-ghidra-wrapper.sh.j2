@@ -4,7 +4,11 @@
 # Runs Ghidra's headless analyzer against a PE binary inside a Podman
 # container with full isolation.
 #
-# Usage: run-ghidra <sample_path> [output_dir]
+# Usage (analysis mode):  run-ghidra <sample_path> [output_dir]
+# Usage (tool mode):      run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>
+#
+# Analysis mode: import and analyze a PE binary, output JSON to stdout.
+# Tool mode: query an already-analyzed Ghidra project (no re-analysis).
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -13,6 +17,97 @@
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
+    echo "Usage: run-ghidra <sample_path> [output_dir]" >&2
+    echo "       run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Tool mode
+# ---------------------------------------------------------------------------
+if [ "$1" = "--tool" ]; then
+    if [ $# -ne 5 ]; then
+        echo "Usage: run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>" >&2
+        exit 1
+    fi
+
+    PROJECT_DIR="$(realpath "$2")"
+    PROGRAM_NAME="$3"
+    TOOL_NAME="$4"
+    TOOL_ARGS="$5"
+
+    if [ ! -d "$PROJECT_DIR" ]; then
+        echo "Error: project dir not found: $PROJECT_DIR" >&2
+        exit 1
+    fi
+
+    exec podman run --rm \
+        --network=none \
+        --read-only \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --memory={{ ghidra_container_memory }} \
+        --cpus={{ ghidra_container_cpus }} \
+        --timeout=120 \
+        --tmpfs /tmp:size=1g \
+        --tmpfs /nonexistent:size=100m \
+        --user 65534:65534 \
+        -v "$PROJECT_DIR:/project:rw" \
+        localhost/ghidra:latest \
+        --tool /project "$PROGRAM_NAME" "$TOOL_NAME" "$TOOL_ARGS"
+fi
+
+# ---------------------------------------------------------------------------
+# Shellcode mode — import raw binary for analysis
+# ---------------------------------------------------------------------------
+if [ "$1" = "--shellcode" ]; then
+    if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+        echo "Usage: run-ghidra --shellcode <dump_file> <output_dir> [base_address]" >&2
+        exit 1
+    fi
+
+    DUMP_FILE="$(realpath "$2")"
+    DUMP_NAME="$(basename "$DUMP_FILE")"
+    OUTPUT_DIR="$3"
+    BASE_ADDR="${4:-0x0}"
+
+    if [ ! -f "$DUMP_FILE" ]; then
+        echo "Error: file not found: $DUMP_FILE" >&2
+        exit 1
+    fi
+
+    mkdir -p "$OUTPUT_DIR"
+    chmod 777 "$OUTPUT_DIR"
+
+    # Copy dump to temp dir for isolation
+    WORK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR"' EXIT
+    chmod 755 "$WORK_DIR"
+    cp "$DUMP_FILE" "$WORK_DIR/$DUMP_NAME"
+    chmod 644 "$WORK_DIR/$DUMP_NAME"
+
+    exec podman run --rm \
+        --network=none \
+        --read-only \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        --memory={{ ghidra_container_memory }} \
+        --cpus={{ ghidra_container_cpus }} \
+        --timeout={{ ghidra_container_timeout }} \
+        --tmpfs /tmp:size=1g \
+        --tmpfs /nonexistent:size=100m \
+        --tmpfs /var/cache:size=100m \
+        --user 65534:65534 \
+        -v "$WORK_DIR:/sample:ro" \
+        -v "$OUTPUT_DIR:/output:rw" \
+        localhost/ghidra:latest \
+        --shellcode "/sample/$DUMP_NAME" "$BASE_ADDR"
+fi
+
+# ---------------------------------------------------------------------------
+# Analysis mode
+# ---------------------------------------------------------------------------
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
     echo "Usage: run-ghidra <sample_path> [output_dir]" >&2
     exit 1
 fi
@@ -27,6 +122,7 @@ if [ ! -f "$SAMPLE_PATH" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+chmod 777 "$OUTPUT_DIR"
 
 # Copy sample to temp dir — only the single file is mounted
 WORK_DIR="$(mktemp -d)"

@@ -1,0 +1,15 @@
+[Unit]
+Description=Malware Analysis Dashboard
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{ cape_user }}
+WorkingDirectory={{ dashboard_install_dir }}
+ExecStart=/usr/bin/python3 {{ dashboard_install_dir }}/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
