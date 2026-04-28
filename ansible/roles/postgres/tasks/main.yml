@@ -51,16 +51,15 @@
   community.postgresql.postgresql_query:
     db: "{{ postgres_db_name }}"
     query: "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'samples');"
-  register: schema_check
+  register: postgres_schema_check
 
 - name: Apply schema (first time only)
   become: true
   become_user: postgres
-  community.postgresql.postgresql_query:
-    db: "{{ postgres_db_name }}"
-    path_to_script: /tmp/pipeline-schema.sql
-    as_single_query: false
-  when: not schema_check.query_result[0].exists
+  ansible.builtin.command:
+    cmd: psql -d {{ postgres_db_name }} -f /tmp/pipeline-schema.sql
+  changed_when: true
+  when: not postgres_schema_check.query_result[0].exists
 
 - name: Grant table privileges to pipeline user
   become: true
