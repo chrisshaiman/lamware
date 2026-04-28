@@ -342,74 +342,26 @@ def render_executive_summary(report: dict) -> str:
 
 
 def render_iocs(report: dict) -> str:
-    """Render IOC table with source attribution and type."""
-    ioc_entries = []
+    """Render IOC table from the pipeline's extracted_iocs field.
 
-    # Structured IOCs from executive summary (new format)
-    summary_iocs = report.get("executive_summary", {}).get("iocs", [])
-    for ioc in summary_iocs:
-        if isinstance(ioc, dict):
-            ioc_entries.append({
-                "source": ioc.get("source", "Summary"),
-                "type": ioc.get("type", "unknown"),
-                "value": ioc.get("value", ""),
-            })
-        elif isinstance(ioc, str):
-            # Legacy string format fallback
-            ioc_entries.append({"source": "Summary", "type": "unknown", "value": ioc})
-
-    # YARA matches from triage
-    yara = report.get("triage", {}).get("yara_matches", [])
-    for m in yara:
-        rule = m.get("rule", "")
-        if rule:
-            ioc_entries.append({"source": "Triage", "type": "yara_rule", "value": rule})
-
-    # Network IOCs from Cape
-    cape_network = report.get("cape", {}).get("network", {})
-    for d in cape_network.get("dns_queries", []):
-        domain = d.get("domain", "")
-        if domain:
-            ioc_entries.append({"source": "Cape", "type": "domain", "value": domain})
-    for d in cape_network.get("domains", []):
-        ip = d.get("ip", "")
-        if ip:
-            ioc_entries.append({"source": "Cape", "type": "ip", "value": ip})
-    for h in cape_network.get("hosts", []):
-        if isinstance(h, str) and h:
-            ioc_entries.append({"source": "Cape", "type": "ip", "value": h})
-    for h in cape_network.get("http_requests", []):
-        url = h.get("url", "")
-        if url:
-            ioc_entries.append({"source": "Cape", "type": "url", "value": url})
-
-    # SHA256 from Ghidra analyzed files
-    ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
-    for af in ghidra_files:
-        sha = af.get("sha256", "")
-        if sha and sha != "unknown":
-            source_label = "Volatility" if af.get("source") == "malfind_injection" else "Ghidra"
-            ioc_entries.append({"source": source_label, "type": "hash", "value": f"SHA256:{sha}"})
+    Uses the centralized IOC extraction (extract_iocs in run-pipeline.py)
+    which pulls actionable indicators from all stages with STIX types.
+    """
+    ioc_entries = report.get("extracted_iocs", [])
 
     if not ioc_entries:
         return ""
 
-    # Deduplicate
-    seen = set()
-    unique = []
-    for entry in ioc_entries:
-        key = entry["value"].lower()
-        if key not in seen:
-            seen.add(key)
-            unique.append(entry)
-
     html = '<h2>Indicators of Compromise (IOCs)</h2>\n'
+    html += f'<p style="font-size:10px;color:#666;">{len(ioc_entries)} indicators extracted from all pipeline stages. '
+    html += 'Types follow STIX 2.1 Observable vocabulary.</p>\n'
     html += '<table class="ioc-table">\n'
-    html += '<tr><th>Source</th><th>Type</th><th>Indicator</th></tr>\n'
-    for entry in unique:
-        html += f'<tr><td>{source_badge(entry["source"])}</td>'
-        html += f'<td>{escape_html(entry["type"])}</td>'
-        html += f'<td>{escape_html(entry["value"])}</td></tr>\n'
+    html += '<tr><th>Source</th><th>Type</th><th>Value</th><th>Context</th></tr>\n'
+    for entry in ioc_entries:
+        html += f'<tr><td>{source_badge(entry.get("source", "?"))}</td>'
+        html += f'<td style="white-space:nowrap;">{escape_html(entry.get("type", "?"))}</td>'
+        html += f'<td style="font-family:monospace;font-size:9px;word-break:break-all;">{escape_html(entry.get("value", ""))}</td>'
+        html += f'<td style="font-size:8px;color:#666;">{escape_html(entry.get("context", ""))}</td></tr>\n'
     html += '</table>\n'
     return html
 

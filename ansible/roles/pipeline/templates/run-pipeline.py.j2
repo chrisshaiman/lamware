@@ -1090,6 +1090,161 @@ def run_interpret(ghidra_result: dict, output_dir: Path) -> dict:
     return {"enabled": True, "error": "Interpret container exited without final result"}
 
 
+def extract_iocs(report: dict) -> list[dict]:
+    """Extract all actionable IOCs from every pipeline stage.
+
+    Returns structured IOC list with type, value, source stage, and context.
+    Types follow STIX 2.1 Observable vocabulary where applicable.
+    """
+    import re as _re
+
+    iocs = []
+    seen = set()  # dedup by (type, value)
+
+    def add_ioc(ioc_type: str, value: str, source: str, context: str = ""):
+        """Add an IOC if not already seen."""
+        if not value or len(value) < 3:
+            return
+        key = (ioc_type, value.lower().strip())
+        if key in seen:
+            return
+        seen.add(key)
+        iocs.append({
+            "type": ioc_type,
+            "value": value.strip(),
+            "source": source,
+            "context": context,
+        })
+
+    # --- Triage IOCs ---
+    triage = report.get("triage", {})
+
+    # YARA rule names
+    for m in triage.get("yara_matches", []):
+        rule = m.get("rule", "")
+        if rule:
+            add_ioc("yara-rule", rule, "Triage", "YARA signature match")
+
+    # Sample hash
+    sha256 = ""
+    ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
+    if ghidra_files:
+        sha256 = ghidra_files[0].get("sha256", "")
+    if sha256:
+        add_ioc("file:hashes.SHA-256", sha256, "Triage", "Sample hash")
+
+    # ssdeep
+    ssdeep = triage.get("ssdeep", "")
+    if ssdeep:
+        add_ioc("file:hashes.ssdeep", ssdeep, "Triage", "Fuzzy hash for similarity matching")
+
+    # --- Cape Network IOCs ---
+    cape = report.get("cape", {})
+    network = cape.get("network", {})
+
+    # DNS queries (domains)
+    for d in network.get("dns_queries", []):
+        domain = d.get("domain", "")
+        if domain:
+            answers = d.get("answers", [])
+            ctx = "DNS query (no resolution)" if not answers else f"DNS query → {answers}"
+            add_ioc("domain-name", domain, "Cape", ctx)
+
+    # Resolved domains with IPs
+    for d in network.get("domains", []):
+        domain = d.get("domain", "")
+        ip = d.get("ip", "")
+        if domain:
+            add_ioc("domain-name", domain, "Cape", f"Contacted domain{' → ' + ip if ip else ''}")
+        if ip:
+            add_ioc("ipv4-addr", ip, "Cape", f"Resolved from {domain}")
+
+    # Host IPs
+    for h in network.get("hosts", []):
+        if isinstance(h, str) and h:
+            add_ioc("ipv4-addr", h, "Cape", "Contacted host")
+        elif isinstance(h, dict):
+            ip = h.get("ip", "")
+            if ip:
+                add_ioc("ipv4-addr", ip, "Cape", "Contacted host")
+
+    # HTTP requests
+    for h in network.get("http_requests", []):
+        url = h.get("url", "")
+        host = h.get("host", "")
+        if url:
+            add_ioc("url", url, "Cape", f"HTTP {h.get('method', '?')} request")
+        if host:
+            add_ioc("domain-name", host, "Cape", "HTTP request host")
+
+    # TCP connections
+    for c in network.get("tcp_connections", []):
+        dst = c.get("dst", "")
+        if ":" in dst:
+            ip, port = dst.rsplit(":", 1)
+            if ip:
+                add_ioc("ipv4-addr", ip, "Cape", f"TCP connection to port {port}")
+
+    # --- Cape extracted configs (C2 addresses, etc.) ---
+    for cfg in cape.get("extracted_configs", []):
+        if isinstance(cfg, dict):
+            # Common config fields that contain IOCs
+            for key in ("c2", "c2_address", "cnc", "server", "url", "domains", "ips"):
+                val = cfg.get(key)
+                if isinstance(val, str) and val:
+                    if _re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', val):
+                        add_ioc("ipv4-addr", val, "Cape", f"Extracted config: {key}")
+                    elif "://" in val:
+                        add_ioc("url", val, "Cape", f"Extracted config: {key}")
+                    else:
+                        add_ioc("domain-name", val, "Cape", f"Extracted config: {key}")
+                elif isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, str) and item:
+                            if _re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', item):
+                                add_ioc("ipv4-addr", item, "Cape", f"Extracted config: {key}")
+                            else:
+                                add_ioc("domain-name", item, "Cape", f"Extracted config: {key}")
+
+    # --- Volatility network IOCs ---
+    vol = report.get("volatility", {})
+    netscan = vol.get("plugins", {}).get("netscan", [])
+    if isinstance(netscan, list):
+        for conn in netscan:
+            foreign = conn.get("ForeignAddr", "")
+            if foreign and foreign not in ("0.0.0.0", "::", "*"):
+                port = conn.get("ForeignPort", "")
+                add_ioc("ipv4-addr", foreign, "Volatility",
+                         f"Network connection (port {port})" if port else "Network connection")
+
+    # --- Ghidra strings IOCs ---
+    for af in report.get("ghidra", {}).get("analyzed_files", []):
+        for s in af.get("strings_of_interest", []):
+            s_str = str(s)
+            # Extract URLs
+            urls = _re.findall(r'https?://[^\s\'"<>]+', s_str)
+            for url in urls:
+                add_ioc("url", url, "Ghidra", "URL found in binary strings")
+            # Extract IPs
+            ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', s_str)
+            for ip in ips:
+                parts = ip.split(".")
+                if all(0 <= int(p) <= 255 for p in parts):
+                    add_ioc("ipv4-addr", ip, "Ghidra", "IP found in binary strings")
+
+    # --- AI RE IOCs (from structured analysis output) ---
+    interp = report.get("llm_interpretation", {})
+    analysis = interp.get("analysis", {})
+    # The AI may identify IOCs in its capabilities or narrative
+    for cap in analysis.get("capabilities", []):
+        # Extract any IPs or domains mentioned
+        ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', cap)
+        for ip in ips:
+            add_ioc("ipv4-addr", ip, "AI Reverse Engineering", f"Mentioned in capability: {cap[:80]}")
+
+    return iocs
+
+
 def run_summarize(report: dict) -> dict:
     """Generate an executive summary of the full pipeline report.
 
@@ -1261,6 +1416,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         else:
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
+
+    # IOC extraction — pull actionable indicators from all stages
+    print(f"\n[IOC Extraction] Scanning all stages for indicators...")
+    report["extracted_iocs"] = extract_iocs(report)
+    ioc_count = len(report["extracted_iocs"])
+    ioc_types = {}
+    for ioc in report["extracted_iocs"]:
+        t = ioc["type"]
+        ioc_types[t] = ioc_types.get(t, 0) + 1
+    print(f"  Found {ioc_count} IOCs: {ioc_types}")
 
     # Stage 5: Executive summary (single-shot LLM, after all stages)
     if INTERPRET_ENABLED:
