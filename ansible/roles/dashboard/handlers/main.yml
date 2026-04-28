@@ -1,5 +1,5 @@
 ---
-- name: restart dashboard
+- name: Restart dashboard
   ansible.builtin.systemd:
     name: dashboard
     state: restarted
