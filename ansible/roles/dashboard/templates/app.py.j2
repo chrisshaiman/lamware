@@ -17,6 +17,7 @@ from datetime import datetime
 import psycopg2
 import psycopg2.extras
 from flask import Flask, render_template_string, request, abort, Response
+from markupsafe import Markup
 
 app = Flask(__name__)
 
@@ -228,7 +229,7 @@ def index():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=CSS, rows=rows, search=search)
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search)
 
 
 @app.route("/analysis/<int:analysis_id>")
@@ -416,8 +417,8 @@ def analysis_detail(analysis_id):
             {% endif %}
         </div>
     </body></html>{% endraw %}""",
-        css=CSS, task_id=a["task_id"],
-        severity_badge=severity_badge(a["severity"]),
+        css=Markup(CSS), task_id=a["task_id"],
+        severity_badge=Markup(severity_badge(a["severity"])),
         malscore=a["malscore"] or "?",
         ioc_count=len(iocs), tech_count=len(techniques), sig_count=len(signatures),
         tool_calls=a["interpret_tool_calls"] or 0,
@@ -427,8 +428,8 @@ def analysis_detail(analysis_id):
         pdf_link=pdf_link,
         executive_summary=escape(a["executive_summary"] or ""),
         narrative=escape(a["narrative"] or ""),
-        ioc_rows=ioc_rows, tech_rows=tech_rows, cap_rows=cap_rows,
-        sig_rows=sig_rows, net_rows=net_rows,
+        ioc_rows=Markup(ioc_rows), tech_rows=Markup(tech_rows), cap_rows=Markup(cap_rows),
+        sig_rows=Markup(sig_rows), net_rows=Markup(net_rows),
     )
 
 
@@ -511,7 +512,7 @@ def iocs_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=CSS, rows=rows, search=search, type_options=type_options)
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search, type_options=Markup(type_options))
 
 
 @app.route("/techniques")
@@ -561,7 +562,7 @@ def techniques_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=CSS, rows=rows)
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows))
 
 
 @app.route("/pdf/<task_id>")
