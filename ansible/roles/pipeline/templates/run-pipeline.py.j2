@@ -69,6 +69,15 @@ TOOL_ARG_VALIDATORS = {
 }
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
+# Malfind shellcode analysis config
+MALFIND_ENABLED = {% if pipeline_malfind_enabled | default(true) %}True{% else %}False{% endif %}
+
+MALFIND_MAX_CANDIDATES = {{ pipeline_malfind_max_candidates | default(5) }}
+MALFIND_MIN_SIZE = {{ pipeline_malfind_min_size | default(256) }}
+MALFIND_MAX_SIZE = {{ pipeline_malfind_max_size | default(10485760) }}
+MALFIND_MIN_SCORE = {{ pipeline_malfind_min_score | default(2) }}
+MALFIND_BENIGN_PROCESSES = {{ (pipeline_malfind_benign_processes | default(['csrss.exe', 'smss.exe', 'MsMpEng.exe', 'fontdrvhost.exe'])) | to_json }}
+
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
 
@@ -329,14 +338,18 @@ def determine_extra_plugins(cape_data: dict) -> list[str]:
     return sorted(extras)
 
 
-def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path) -> dict:
+def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
+                      extra_args: list[str] | None = None) -> dict:
     """Run a single Volatility plugin. Returns parsed JSON or error."""
     # malfind and vadinfo scan every memory region — need longer timeout
     # on 4GB+ dumps these can take 10-15 minutes
     plugin_timeout = 600
     try:
+        cmd = [VOLATILITY_CMD, str(dump_path), plugin, str(output_dir)]
+        if extra_args:
+            cmd.extend(extra_args)
         result = subprocess.run(
-            [VOLATILITY_CMD, str(dump_path), plugin, str(output_dir)],
+            cmd,
             capture_output=True,
             text=True,
             timeout=plugin_timeout,
@@ -379,10 +392,15 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
         },
     }
 
+    # Create malfind dump directory for extracted regions
+    malfind_dump_dir = output_dir / "malfind_dumps"
+    malfind_dump_dir.mkdir(parents=True, exist_ok=True)
+
     for plugin in all_plugins:
         short_name = plugin.replace("windows.", "")
         print(f"    Running {plugin}...")
-        plugin_output = run_single_plugin(dump_path, plugin, output_dir)
+        extra = ["--dump"] if short_name == "malfind" and MALFIND_ENABLED else None
+        plugin_output = run_single_plugin(dump_path, plugin, output_dir, extra_args=extra)
         result["plugins"][short_name] = plugin_output
 
         # Build summary from key plugins
@@ -396,6 +414,238 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
     dump_path.unlink(missing_ok=True)
 
     return result
+
+
+# -------------------------------------------------------------------------
+# Stage 3.5: Malfind shellcode filtering and analysis
+# -------------------------------------------------------------------------
+
+import hashlib as _hashlib
+import math as _math
+
+
+def _shannon_entropy(data: bytes) -> float:
+    """Calculate Shannon entropy of byte data."""
+    if not data:
+        return 0.0
+    freq = [0] * 256
+    for b in data:
+        freq[b] += 1
+    length = len(data)
+    entropy = 0.0
+    for count in freq:
+        if count > 0:
+            p = count / length
+            entropy -= p * _math.log2(p)
+    return entropy
+
+
+def _score_shellcode(first_bytes: bytes) -> int:
+    """Score a memory region for likelihood of being shellcode (0-10)."""
+    score = 0
+    if len(first_bytes) < 4:
+        return 0
+
+    # x86 function prologues
+    if first_bytes[:3] == b"\x55\x8b\xec":
+        score += 2
+    # x64 function prologues
+    if first_bytes[:3] in (b"\x48\x83\xec", b"\x48\x89\x5c"):
+        score += 2
+    # Position-independent code patterns
+    if first_bytes[:5] == b"\xe8\x00\x00\x00\x00":
+        score += 3
+    if first_bytes[:2] == b"\xfc\xe8":
+        score += 2
+    if first_bytes[:1] == b"\x60" and len(first_bytes) > 1 and first_bytes[1:2] == b"\xe8":
+        score += 2
+    # Short jmp + pop (jmp over; pop reg)
+    if first_bytes[0] == 0xeb and len(first_bytes) > first_bytes[1] + 2:
+        target = first_bytes[1] + 2
+        if target < len(first_bytes) and first_bytes[target] in range(0x58, 0x60):
+            score += 3
+
+    # Entropy check
+    entropy = _shannon_entropy(first_bytes)
+    if entropy > 6.0:
+        score += 1
+    if entropy < 2.0:
+        score -= 2
+
+    # REX.W prefixes (strong x64 signal)
+    rex_count = sum(1 for b in first_bytes[:64] if b in (0x48, 0x4c, 0x4d))
+    if rex_count > 5:
+        score += 1
+
+    return max(score, 0)
+
+
+def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
+    """Filter malfind dump files to find shellcode candidates."""
+    if not dump_dir.exists():
+        print("    [!] Malfind dump directory not found")
+        return []
+
+    dump_files = list(dump_dir.glob("*.dmp"))
+    if not dump_files:
+        print("    [!] No malfind dump files found")
+        return []
+
+    print(f"    Starting with {len(dump_files)} malfind dump files")
+
+    # Parse malfind JSON to get process info per region
+    region_info = {}
+    if isinstance(vol_malfind_output, list):
+        for entry in vol_malfind_output:
+            pid = entry.get("PID", 0)
+            start_vpn = entry.get("Start VPN", "")
+            process = entry.get("Process", "unknown")
+            if isinstance(start_vpn, str) and start_vpn.startswith("0x"):
+                key = f"pid.{pid}.vad.{start_vpn}"
+            elif isinstance(start_vpn, int):
+                key = f"pid.{pid}.vad.0x{start_vpn:x}"
+            else:
+                key = ""
+            if key:
+                region_info[key] = {
+                    "pid": pid,
+                    "process": process,
+                    "start_vpn": start_vpn,
+                    "protection": entry.get("Protection", ""),
+                }
+
+    # Step 1: Size filter
+    candidates = []
+    size_filtered = 0
+    for f in dump_files:
+        size = f.stat().st_size
+        if size < MALFIND_MIN_SIZE or size > MALFIND_MAX_SIZE:
+            size_filtered += 1
+            continue
+        stem = f.stem
+        info = region_info.get(stem, {"pid": 0, "process": "unknown", "start_vpn": "0x0"})
+        candidates.append({"path": f, "size": size, **info})
+
+    print(f"    Size filter: kept {len(candidates)}/{len(dump_files)} (dropped {size_filtered})")
+
+    # Step 2: Benign process filter
+    pre_process = len(candidates)
+    benign_lower = [p.lower() for p in MALFIND_BENIGN_PROCESSES]
+    candidates = [c for c in candidates if c["process"].lower() not in benign_lower]
+    print(f"    Process filter: kept {len(candidates)}/{pre_process}")
+
+    # Step 3: Content heuristics
+    scored = []
+    pe_skipped = 0
+    padding_skipped = 0
+    for c in candidates:
+        try:
+            with c["path"].open("rb") as fh:
+                first_bytes = fh.read(256)
+        except OSError:
+            continue
+
+        if first_bytes[:2] == b"MZ":
+            pe_skipped += 1
+            continue
+
+        if len(set(first_bytes)) <= 2:
+            padding_skipped += 1
+            continue
+
+        score = _score_shellcode(first_bytes)
+        c["score"] = score
+        c["first_bytes_hex"] = first_bytes[:32].hex()
+        scored.append(c)
+
+    print(f"    Content filter: kept {len(scored)} (PE: {pe_skipped}, padding: {padding_skipped})")
+
+    # Step 4: Deduplicate by first 512 bytes
+    seen_hashes = set()
+    deduped = []
+    for c in scored:
+        try:
+            with c["path"].open("rb") as fh:
+                h = _hashlib.sha256(fh.read(512)).hexdigest()
+        except OSError:
+            continue
+        if h in seen_hashes:
+            continue
+        seen_hashes.add(h)
+        deduped.append(c)
+
+    print(f"    Dedup: kept {len(deduped)}/{len(scored)}")
+
+    # Step 5: Score filter + top N
+    above_threshold = [c for c in deduped if c["score"] >= MALFIND_MIN_SCORE]
+    above_threshold.sort(key=lambda c: c["score"], reverse=True)
+    selected = above_threshold[:MALFIND_MAX_CANDIDATES]
+
+    # Log near misses for tuning
+    near_misses = [c for c in deduped if 0 < c["score"] < MALFIND_MIN_SCORE]
+    if near_misses:
+        print(f"    Near misses (score 1-{MALFIND_MIN_SCORE - 1}): {len(near_misses)} regions")
+        for nm in near_misses[:5]:
+            print(f"      {nm['process']} pid={nm['pid']} score={nm['score']} bytes={nm['first_bytes_hex'][:16]}")
+
+    print(f"    Selected: {len(selected)} candidates (min_score={MALFIND_MIN_SCORE})")
+    for c in selected:
+        print(f"      {c['process']} pid={c['pid']} score={c['score']} size={c['size']}")
+
+    return selected
+
+
+def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
+    """Run Ghidra on a shellcode candidate with try-both architecture detection."""
+    dump_path = candidate["path"]
+    base_addr = candidate.get("start_vpn", "0x0")
+    if isinstance(base_addr, int):
+        base_addr = f"0x{base_addr:x}"
+    sc_output = output_dir / f"shellcode_{candidate['pid']}_{str(base_addr).replace('0x', '')}"
+
+    try:
+        result = subprocess.run(
+            [GHIDRA_CMD, "--shellcode", str(dump_path), str(sc_output), str(base_addr)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            return {
+                "source": "malfind_injection",
+                "pid": candidate.get("pid"),
+                "process": candidate.get("process"),
+                "injection_address": base_addr,
+                "region_size": candidate.get("size"),
+                "filter_score": candidate.get("score"),
+                "error": result.stderr[:200],
+            }
+        analysis = json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return {
+            "source": "malfind_injection",
+            "pid": candidate.get("pid"),
+            "process": candidate.get("process"),
+            "injection_address": base_addr,
+            "error": "timeout (300s)",
+        }
+    except json.JSONDecodeError:
+        return {
+            "source": "malfind_injection",
+            "pid": candidate.get("pid"),
+            "process": candidate.get("process"),
+            "injection_address": base_addr,
+            "error": "invalid JSON from Ghidra",
+        }
+
+    analysis["source"] = "malfind_injection"
+    analysis["pid"] = candidate.get("pid")
+    analysis["process"] = candidate.get("process")
+    analysis["injection_address"] = base_addr
+    analysis["region_size"] = candidate.get("size")
+    analysis["filter_score"] = candidate.get("score")
+
+    return analysis
 
 
 # -------------------------------------------------------------------------
@@ -509,7 +759,8 @@ def run_ghidra_on_file(pe_path: Path, output_dir: Path) -> dict:
                 "raw": result.stdout[:500]}
 
 
-def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path) -> dict:
+def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
+               shellcode_candidates: list[dict] | None = None) -> dict:
     """Run Ghidra headless on dropped PEs and/or the original sample."""
     pe_files = get_dropped_pe_files(cape_data)
     original_pe = get_original_sample_path(cape_data)
@@ -538,6 +789,14 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path) -> dict:
         print(f"    Analyzing {pe_path.name}...")
         file_result = run_ghidra_on_file(pe_path, output_dir)
         result["analyzed_files"].append(file_result)
+
+    # Analyze shellcode candidates from malfind
+    if shellcode_candidates:
+        print(f"    Analyzing {len(shellcode_candidates)} shellcode candidates...")
+        for candidate in shellcode_candidates:
+            print(f"    Shellcode: pid={candidate['pid']} {candidate['process']} score={candidate['score']}")
+            sc_result = run_ghidra_shellcode(candidate, output_dir)
+            result["analyzed_files"].append(sc_result)
 
     return result
 
@@ -844,11 +1103,20 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print("  Not triggered (stub — awaiting sub-project 3)")
         report["volatility"] = {"triggered": False}
 
+    # Stage 3.5: Shellcode filtering (from malfind dumps)
+    shellcode_candidates = []
+    if MALFIND_ENABLED and report.get("volatility", {}).get("triggered"):
+        malfind_dump_dir = output_dir / "malfind_dumps"
+        malfind_output = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
+        print(f"\n[Stage 3.5] Shellcode filtering: scanning malfind dumps...")
+        shellcode_candidates = filter_malfind_dumps(malfind_dump_dir, malfind_output)
+
     # Stage 4: Ghidra (triggered by dropped payloads)
     print(f"\n[Stage 4] Ghidra: checking triggers...")
     if should_run_ghidra(cape_data, sample_path):
         print("  Triggered — running Ghidra headless")
-        report["ghidra"] = run_ghidra(cape_data, output_dir, sample_path)
+        report["ghidra"] = run_ghidra(cape_data, output_dir, sample_path,
+                                      shellcode_candidates=shellcode_candidates)
     else:
         print("  Not triggered")
         report["ghidra"] = {"triggered": False}
