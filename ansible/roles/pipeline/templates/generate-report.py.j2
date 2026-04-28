@@ -365,6 +365,24 @@ def render_iocs(report: dict) -> str:
         if rule:
             ioc_entries.append({"source": "Triage", "type": "yara_rule", "value": rule})
 
+    # Network IOCs from Cape
+    cape_network = report.get("cape", {}).get("network", {})
+    for d in cape_network.get("dns_queries", []):
+        domain = d.get("domain", "")
+        if domain:
+            ioc_entries.append({"source": "Cape", "type": "domain", "value": domain})
+    for d in cape_network.get("domains", []):
+        ip = d.get("ip", "")
+        if ip:
+            ioc_entries.append({"source": "Cape", "type": "ip", "value": ip})
+    for h in cape_network.get("hosts", []):
+        if isinstance(h, str) and h:
+            ioc_entries.append({"source": "Cape", "type": "ip", "value": h})
+    for h in cape_network.get("http_requests", []):
+        url = h.get("url", "")
+        if url:
+            ioc_entries.append({"source": "Cape", "type": "url", "value": url})
+
     # SHA256 from Ghidra analyzed files
     ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
     for af in ghidra_files:
@@ -409,6 +427,15 @@ def render_mitre(report: dict) -> str:
             "id": t.get("id", "?"),
             "name": t.get("name", "?"),
             "source": "AI Reverse Engineering",
+        })
+
+    # From Cape behavioral signatures (already mapped by Cape)
+    cape_ttps = report.get("cape", {}).get("mitre_ttps", [])
+    for t in cape_ttps:
+        all_techniques.append({
+            "id": t.get("id", "?"),
+            "name": t.get("source_signature", "Cape behavioral signature"),
+            "source": "Cape",
         })
 
     # From executive summary (new structured format)
@@ -500,7 +527,78 @@ def render_cape(report: dict) -> str:
 
     status = cape.get("status", "unknown")
     task_id = cape.get("task_id", "n/a")
-    html += f'<div class="stage-header">Status: {escape_html(status)} | Cape Task ID: {escape_html(str(task_id))}</div>\n'
+    malscore = cape.get("malscore", "n/a")
+    payloads = cape.get("payloads_extracted", 0)
+    html += f'<div class="stage-header">Status: {escape_html(status)} | Task ID: {escape_html(str(task_id))} | Malscore: {escape_html(str(malscore))} | Payloads extracted: {payloads}</div>\n'
+
+    # Behavioral signatures (top by severity)
+    sigs = cape.get("signatures", [])
+    if sigs:
+        # Sort by severity descending
+        sorted_sigs = sorted(sigs, key=lambda s: s.get("severity", 0), reverse=True)
+        html += f'<h3>Behavioral Signatures ({len(sigs)})</h3>\n'
+        html += '<table class="ioc-table">\n'
+        html += '<tr><th>Severity</th><th>Signature</th><th>Description</th></tr>\n'
+        for s in sorted_sigs[:25]:
+            sev = s.get("severity", 0)
+            sev_color = {3: "#b22222", 2: "#e65100", 1: "#f9a825"}.get(sev, "#999")
+            html += f'<tr><td><span style="color:{sev_color};font-weight:bold;">{sev}</span></td>'
+            html += f'<td>{escape_html(s.get("name", ""))}</td>'
+            html += f'<td style="font-size:9px;">{escape_html(s.get("description", "")[:150])}</td></tr>\n'
+        if len(sigs) > 25:
+            html += f'<tr><td colspan="3"><em>...and {len(sigs) - 25} more signatures</em></td></tr>\n'
+        html += '</table>\n'
+
+    # Network IOCs
+    network = cape.get("network", {})
+    if network:
+        html += '<h3>Network Activity</h3>\n'
+
+        dns = network.get("dns_queries", [])
+        if dns:
+            html += f'<p><strong>DNS Queries ({len(dns)}):</strong></p>\n'
+            html += '<div style="font-size: 9px; font-family: monospace;">'
+            for d in dns[:15]:
+                html += f'{escape_html(d.get("domain", ""))} ({d.get("type", "")})<br/>'
+            if len(dns) > 15:
+                html += f'<em>...and {len(dns) - 15} more</em>'
+            html += '</div>\n'
+
+        domains = network.get("domains", [])
+        if domains:
+            html += f'<p><strong>Contacted Domains ({len(domains)}):</strong></p>\n'
+            html += '<div style="font-size: 9px; font-family: monospace;">'
+            for d in domains[:15]:
+                domain = d.get("domain", "")
+                ip = d.get("ip", "")
+                html += f'{escape_html(domain)}'
+                if ip:
+                    html += f' → {escape_html(ip)}'
+                html += '<br/>'
+            html += '</div>\n'
+
+        tcp = network.get("tcp_connections", [])
+        if tcp:
+            html += f'<p><strong>TCP Connections ({len(tcp)}):</strong></p>\n'
+            html += '<div style="font-size: 9px; font-family: monospace;">'
+            for c in tcp[:10]:
+                html += f'{escape_html(c.get("src", ""))} → {escape_html(c.get("dst", ""))}<br/>'
+            html += '</div>\n'
+
+        http = network.get("http_requests", [])
+        if http:
+            html += f'<p><strong>HTTP Requests ({len(http)}):</strong></p>\n'
+            html += '<div style="font-size: 9px; font-family: monospace;">'
+            for h in http[:10]:
+                html += f'{escape_html(h.get("method", ""))} {escape_html(h.get("url", ""))}<br/>'
+            html += '</div>\n'
+
+    # CAPE extracted configs (C2, keys, etc.)
+    configs = cape.get("extracted_configs", [])
+    if configs:
+        html += '<h3>Extracted Malware Configuration</h3>\n'
+        for cfg in configs:
+            html += f'<div class="code-block">{escape_html(json.dumps(cfg, indent=2))}</div>\n'
 
     html += '</div>\n'
     return html
