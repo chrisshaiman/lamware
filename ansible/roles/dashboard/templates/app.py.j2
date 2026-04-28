@@ -33,8 +33,21 @@ REPORTS_DIR = "{{ pipeline_reports_dir | default('/opt/pipeline/reports') }}"
 
 
 def get_db():
-    """Get a database connection."""
-    return psycopg2.connect(**DB_CONFIG, cursor_factory=psycopg2.extras.RealDictCursor)
+    """Get a database connection. Use as context manager: with get_db() as conn."""
+    conn = psycopg2.connect(**DB_CONFIG, cursor_factory=psycopg2.extras.RealDictCursor)
+    return conn
+
+
+class db_connection:
+    """Context manager for database connections. Auto-closes on exit."""
+    def __enter__(self):
+        self.conn = psycopg2.connect(**DB_CONFIG, cursor_factory=psycopg2.extras.RealDictCursor)
+        self.cur = self.conn.cursor()
+        return self.cur
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cur.close()
+        self.conn.close()
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -141,43 +154,42 @@ def escape(s):
 def index():
     """Dashboard home — recent analyses list."""
     search = request.args.get("q", "").strip()
-    conn = get_db()
-    cur = conn.cursor()
+    # Escape LIKE metacharacters in search term
+    safe_search = search.replace("%", r"\%").replace("_", r"\_") if search else ""
 
-    if search:
-        cur.execute("""
-            SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
-                   a.malware_family_guess, a.severity, a.malscore,
-                   a.started_at, a.completed_at, a.interpret_tool_calls,
-                   (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
-                   (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
-                   (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
-            FROM analyses a
-            JOIN samples s ON s.id = a.sample_id
-            WHERE s.sha256 ILIKE %s
-               OR s.filename ILIKE %s
-               OR a.malware_family_guess ILIKE %s
-               OR a.task_id ILIKE %s
-            ORDER BY a.started_at DESC
-            LIMIT 50
-        """, (f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"))
-    else:
-        cur.execute("""
-            SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
-                   a.malware_family_guess, a.severity, a.malscore,
-                   a.started_at, a.completed_at, a.interpret_tool_calls,
-                   (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
-                   (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
-                   (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
-            FROM analyses a
-            JOIN samples s ON s.id = a.sample_id
-            ORDER BY a.started_at DESC
-            LIMIT 50
-        """)
+    with db_connection() as cur:
+        if search:
+            cur.execute("""
+                SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
+                       a.malware_family_guess, a.severity, a.malscore,
+                       a.started_at, a.completed_at, a.interpret_tool_calls,
+                       (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
+                       (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
+                       (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
+                FROM analyses a
+                JOIN samples s ON s.id = a.sample_id
+                WHERE s.sha256 ILIKE %s ESCAPE '\\'
+                   OR s.filename ILIKE %s ESCAPE '\\'
+                   OR a.malware_family_guess ILIKE %s ESCAPE '\\'
+                   OR a.task_id ILIKE %s ESCAPE '\\'
+                ORDER BY a.started_at DESC
+                LIMIT 50
+            """, (f"%{safe_search}%", f"%{safe_search}%", f"%{safe_search}%", f"%{safe_search}%"))
+        else:
+            cur.execute("""
+                SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
+                       a.malware_family_guess, a.severity, a.malscore,
+                       a.started_at, a.completed_at, a.interpret_tool_calls,
+                       (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
+                       (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
+                       (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
+                FROM analyses a
+                JOIN samples s ON s.id = a.sample_id
+                ORDER BY a.started_at DESC
+                LIMIT 50
+            """)
 
-    analyses = cur.fetchall()
-    cur.close()
-    conn.close()
+        analyses = cur.fetchall()
 
     rows = ""
     for a in analyses:
@@ -222,64 +234,58 @@ def index():
 @app.route("/analysis/<int:analysis_id>")
 def analysis_detail(analysis_id):
     """Detailed view of a single analysis."""
-    conn = get_db()
-    cur = conn.cursor()
+    with db_connection() as cur:
+        # Main analysis
+        cur.execute("""
+            SELECT a.*, s.sha256, s.filename, s.file_type, s.file_mime, s.entropy, s.ssdeep
+            FROM analyses a JOIN samples s ON s.id = a.sample_id
+            WHERE a.id = %s
+        """, (analysis_id,))
+        a = cur.fetchone()
+        if not a:
+            abort(404)
 
-    # Main analysis
-    cur.execute("""
-        SELECT a.*, s.sha256, s.filename, s.file_type, s.file_mime, s.entropy, s.ssdeep
-        FROM analyses a JOIN samples s ON s.id = a.sample_id
-        WHERE a.id = %s
-    """, (analysis_id,))
-    a = cur.fetchone()
-    if not a:
-        cur.close(); conn.close()
-        abort(404)
+        # IOCs
+        cur.execute("""
+            SELECT iv.type, iv.value, ai.source_stage, ai.context
+            FROM analysis_iocs ai
+            JOIN ioc_values iv ON iv.id = ai.ioc_id
+            WHERE ai.analysis_id = %s
+            ORDER BY ai.source_stage, iv.type
+        """, (analysis_id,))
+        iocs = cur.fetchall()
 
-    # IOCs
-    cur.execute("""
-        SELECT iv.type, iv.value, ai.source_stage, ai.context
-        FROM analysis_iocs ai
-        JOIN ioc_values iv ON iv.id = ai.ioc_id
-        WHERE ai.analysis_id = %s
-        ORDER BY ai.source_stage, iv.type
-    """, (analysis_id,))
-    iocs = cur.fetchall()
+        # Techniques
+        cur.execute("""
+            SELECT tv.technique_id, tv.technique_name, tv.tactics, at2.source_stage, at2.source_detail
+            FROM analysis_techniques at2
+            JOIN technique_values tv ON tv.id = at2.technique_id
+            WHERE at2.analysis_id = %s
+            ORDER BY tv.technique_id
+        """, (analysis_id,))
+        techniques = cur.fetchall()
 
-    # Techniques
-    cur.execute("""
-        SELECT tv.technique_id, tv.technique_name, tv.tactics, at2.source_stage, at2.source_detail
-        FROM analysis_techniques at2
-        JOIN technique_values tv ON tv.id = at2.technique_id
-        WHERE at2.analysis_id = %s
-        ORDER BY tv.technique_id
-    """, (analysis_id,))
-    techniques = cur.fetchall()
+        # Capabilities
+        cur.execute("""
+            SELECT description, source_stage FROM capabilities
+            WHERE analysis_id = %s
+        """, (analysis_id,))
+        capabilities = cur.fetchall()
 
-    # Capabilities
-    cur.execute("""
-        SELECT description, source_stage FROM capabilities
-        WHERE analysis_id = %s
-    """, (analysis_id,))
-    capabilities = cur.fetchall()
+        # Signatures (top 20 by severity)
+        cur.execute("""
+            SELECT name, severity, description FROM signatures
+            WHERE analysis_id = %s ORDER BY severity DESC LIMIT 20
+        """, (analysis_id,))
+        signatures = cur.fetchall()
 
-    # Signatures (top 20 by severity)
-    cur.execute("""
-        SELECT name, severity, description FROM signatures
-        WHERE analysis_id = %s ORDER BY severity DESC LIMIT 20
-    """, (analysis_id,))
-    signatures = cur.fetchall()
-
-    # Network events
-    cur.execute("""
-        SELECT event_type, dns_query, dns_type, http_method, http_url, http_host,
-               src_ip, src_port, dst_ip, dst_port
-        FROM network_events WHERE analysis_id = %s LIMIT 50
-    """, (analysis_id,))
-    network = cur.fetchall()
-
-    cur.close()
-    conn.close()
+        # Network events
+        cur.execute("""
+            SELECT event_type, dns_query, dns_type, http_method, http_url, http_host,
+                   src_ip, src_port, dst_ip, dst_port
+            FROM network_events WHERE analysis_id = %s LIMIT 50
+        """, (analysis_id,))
+        network = cur.fetchall()
 
     # Build IOC rows
     ioc_rows = ""
@@ -431,47 +437,44 @@ def iocs_list():
     """IOC browser — see all IOCs with cross-sample correlation."""
     search = request.args.get("q", "").strip()
     ioc_type = request.args.get("type", "").strip()
-    conn = get_db()
-    cur = conn.cursor()
+    safe_search = search.replace("%", r"\%").replace("_", r"\_") if search else ""
 
-    query = """
-        SELECT iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen,
-               COUNT(DISTINCT a.sample_id) AS sample_count,
-               COUNT(DISTINCT a.id) AS analysis_count,
-               array_agg(DISTINCT a.malware_family_guess)
-                   FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
-        FROM ioc_values iv
-        JOIN analysis_iocs ai ON ai.ioc_id = iv.id
-        JOIN analyses a ON a.id = ai.analysis_id
-    """
-    params = []
-    wheres = []
+    with db_connection() as cur:
+        query = """
+            SELECT iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen,
+                   COUNT(DISTINCT a.sample_id) AS sample_count,
+                   COUNT(DISTINCT a.id) AS analysis_count,
+                   array_agg(DISTINCT a.malware_family_guess)
+                       FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
+            FROM ioc_values iv
+            JOIN analysis_iocs ai ON ai.ioc_id = iv.id
+            JOIN analyses a ON a.id = ai.analysis_id
+        """
+        params = []
+        wheres = []
 
-    if search:
-        wheres.append("iv.value ILIKE %s")
-        params.append(f"%{search}%")
-    if ioc_type:
-        wheres.append("iv.type = %s")
-        params.append(ioc_type)
+        if search:
+            wheres.append("iv.value ILIKE %s ESCAPE '\\\\'")
+            params.append(f"%{safe_search}%")
+        if ioc_type:
+            wheres.append("iv.type = %s")
+            params.append(ioc_type)
 
-    if wheres:
-        query += " WHERE " + " AND ".join(wheres)
+        if wheres:
+            query += " WHERE " + " AND ".join(wheres)
 
-    query += """
-        GROUP BY iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen
-        ORDER BY sample_count DESC, iv.last_seen DESC
-        LIMIT 100
-    """
+        query += """
+            GROUP BY iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen
+            ORDER BY sample_count DESC, iv.last_seen DESC
+            LIMIT 100
+        """
 
-    cur.execute(query, params)
-    iocs = cur.fetchall()
+        cur.execute(query, params)
+        iocs = cur.fetchall()
 
-    # Get distinct types for filter
-    cur.execute("SELECT DISTINCT type FROM ioc_values ORDER BY type")
-    types = [r["type"] for r in cur.fetchall()]
-
-    cur.close()
-    conn.close()
+        # Get distinct types for filter
+        cur.execute("SELECT DISTINCT type FROM ioc_values ORDER BY type")
+        types = [r["type"] for r in cur.fetchall()]
 
     rows = ""
     for ioc in iocs:
@@ -514,23 +517,20 @@ def iocs_list():
 @app.route("/techniques")
 def techniques_list():
     """MITRE ATT&CK technique browser."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT tv.technique_id, tv.technique_name, tv.tactics,
-               COUNT(DISTINCT a.sample_id) AS sample_count,
-               array_agg(DISTINCT at2.source_stage) AS sources,
-               array_agg(DISTINCT a.malware_family_guess)
-                   FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
-        FROM technique_values tv
-        JOIN analysis_techniques at2 ON at2.technique_id = tv.id
-        JOIN analyses a ON a.id = at2.analysis_id
-        GROUP BY tv.id, tv.technique_id, tv.technique_name, tv.tactics
-        ORDER BY sample_count DESC
-    """)
-    techniques = cur.fetchall()
-    cur.close()
-    conn.close()
+    with db_connection() as cur:
+        cur.execute("""
+            SELECT tv.technique_id, tv.technique_name, tv.tactics,
+                   COUNT(DISTINCT a.sample_id) AS sample_count,
+                   array_agg(DISTINCT at2.source_stage) AS sources,
+                   array_agg(DISTINCT a.malware_family_guess)
+                       FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
+            FROM technique_values tv
+            JOIN analysis_techniques at2 ON at2.technique_id = tv.id
+            JOIN analyses a ON a.id = at2.analysis_id
+            GROUP BY tv.id, tv.technique_id, tv.technique_name, tv.tactics
+            ORDER BY sample_count DESC
+        """)
+        techniques = cur.fetchall()
 
     rows = ""
     for t in techniques:
@@ -568,13 +568,18 @@ def techniques_list():
 def download_pdf(task_id):
     """Download the PDF report for an analysis."""
     import os
-    pdf_path = os.path.join(REPORTS_DIR, task_id, "report.pdf")
+    pdf_path = os.path.realpath(os.path.join(REPORTS_DIR, task_id, "report.pdf"))
+    # Prevent path traversal — resolved path must stay within REPORTS_DIR
+    if not pdf_path.startswith(os.path.realpath(REPORTS_DIR)):
+        abort(404)
     if not os.path.exists(pdf_path):
         abort(404)
     with open(pdf_path, "rb") as f:
         pdf_bytes = f.read()
+    # Sanitize task_id for Content-Disposition header
+    safe_name = "".join(c for c in task_id if c.isalnum() or c in "-_.")
     return Response(pdf_bytes, mimetype="application/pdf",
-                    headers={"Content-Disposition": f"attachment; filename={task_id}-report.pdf"})
+                    headers={"Content-Disposition": f"attachment; filename={safe_name}-report.pdf"})
 
 
 if __name__ == "__main__":

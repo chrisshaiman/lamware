@@ -452,9 +452,15 @@ def determine_extra_plugins(cape_data: dict) -> list[str]:
 def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
                       extra_args: list[str] | None = None) -> dict:
     """Run a single Volatility plugin. Returns parsed JSON or error."""
-    # malfind and vadinfo scan every memory region — need longer timeout
-    # on 4GB+ dumps these can take 10-15 minutes
-    plugin_timeout = 600
+    # malfind with --dump is extremely slow on 4GB+ dumps — writing 17K+
+    # binary regions to disk. vadinfo is also slow. Other plugins are fast.
+    short_name = plugin.replace("windows.", "").replace("malware.", "")
+    if short_name == "malfind" and extra_args and "--dump" in extra_args:
+        plugin_timeout = 1800  # 30 min for malfind with disk dump
+    elif short_name in ("malfind", "vadinfo", "handles"):
+        plugin_timeout = 900   # 15 min for heavy plugins
+    else:
+        plugin_timeout = 300   # 5 min for standard plugins
     try:
         cmd = [VOLATILITY_CMD, str(dump_path), plugin, str(output_dir)]
         if extra_args:
@@ -890,7 +896,7 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
 
     result = {
         "triggered": True,
-        "trigger_reason": "dropped_pe_with_signatures",
+        "trigger_reason": trigger_reason,
         "trigger_signatures": trigger_sigs,
         "analyzed_files": [],
     }
