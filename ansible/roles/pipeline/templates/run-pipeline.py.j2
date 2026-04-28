@@ -890,7 +890,7 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
 
     result = {
         "triggered": True,
-        "trigger_reason": "dropped_pe_with_signatures",
+        "trigger_reason": trigger_reason,
         "trigger_signatures": trigger_sigs,
         "analyzed_files": [],
     }
