@@ -4,10 +4,11 @@
 # Runs a single Volatility plugin against a memory dump inside a Podman
 # container with full isolation.
 #
-# Usage: run-volatility <dump_path> <plugin> [output_dir]
+# Usage: run-volatility <dump_path> <plugin> [output_dir] [extra_args...]
 #
 # Example:
 #   run-volatility /tmp/memdump.raw windows.pslist /tmp/vol-output
+#   run-volatility /tmp/memdump.raw windows.malfind /tmp/vol-output --dump
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -16,7 +17,7 @@
 set -euo pipefail
 
 if [ $# -lt 2 ]; then
-    echo "Usage: run-volatility <dump_path> <plugin> [output_dir]" >&2
+    echo "Usage: run-volatility <dump_path> <plugin> [output_dir] [extra_args...]" >&2
     exit 1
 fi
 
@@ -25,6 +26,10 @@ DUMP_DIR="$(dirname "$DUMP_PATH")"
 DUMP_NAME="$(basename "$DUMP_PATH")"
 PLUGIN="$2"
 OUTPUT_DIR="${3:-{{ volatility_output_dir }}}"
+
+# Extra args (e.g., --dump) are passed through to the plugin
+shift 3 2>/dev/null || shift $#
+EXTRA_ARGS=("$@")
 
 if [ ! -f "$DUMP_PATH" ]; then
     echo "Error: dump not found: $DUMP_PATH" >&2
@@ -52,8 +57,11 @@ exec podman run --rm \
     -v "$DUMP_DIR:/dump:ro" \
     -v "{{ volatility_symbols_dir }}:/symbols:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
+    --workdir /output \
     localhost/volatility3:latest \
     -f "/dump/$DUMP_NAME" \
     -s /symbols \
     -r json \
-    "$PLUGIN"
+    -o /output \
+    "$PLUGIN" \
+    "${EXTRA_ARGS[@]}"

@@ -1,0 +1,645 @@
+// GhidraTool.java — Ghidra post-script for agentic LLM tool calls
+// Receives a tool name and JSON args via getScriptArgs(), executes the
+// requested tool against the already-analyzed Ghidra project, and emits
+// one line starting with "TOOL_RESULT:" followed by JSON to stdout.
+//
+// Designed for the malware analysis pipeline's iterative interpretation
+// loop: the LLM calls this script repeatedly, one tool per invocation,
+// to query the binary without re-running full analysis.
+//
+// Author: Christopher Shaiman
+// License: Apache 2.0
+//@category Analysis
+
+import ghidra.app.script.GhidraScript;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.listing.*;
+import ghidra.program.model.symbol.*;
+import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryAccessException;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class GhidraTool extends GhidraScript {
+
+    // Per-tool result caps — keep output LLM-friendly
+    private static final int MAX_DECOMPILE_LINES   = 200;
+    private static final int MAX_XREF_RESULTS       = 50;
+    private static final int MAX_STRING_RESULTS     = 50;
+    private static final int MAX_FUNCTION_RESULTS   = 200;
+    private static final int DEFAULT_STRING_RANGE   = 4096;
+    private static final int MAX_STRING_RANGE       = 4096;
+    private static final int DEFAULT_DATA_LENGTH    = 256;
+    private static final int MAX_DATA_LENGTH        = 65536;
+
+    @Override
+    public void run() throws Exception {
+        String[] args = getScriptArgs();
+
+        // Expect: args[0] = tool name, args[1] = JSON args object (optional)
+        if (args == null || args.length < 1) {
+            emitError("No tool name provided. Usage: <tool_name> [json_args]");
+            return;
+        }
+
+        String toolName = args[0].trim();
+        String jsonArgs = (args.length >= 2) ? args[1] : "{}";
+
+        switch (toolName) {
+            case "decompile_function":
+                runDecompileFunction(jsonArgs);
+                break;
+            case "get_xrefs_to":
+                runGetXrefsTo(jsonArgs);
+                break;
+            case "get_xrefs_from":
+                runGetXrefsFrom(jsonArgs);
+                break;
+            case "get_strings_at":
+                runGetStringsAt(jsonArgs);
+                break;
+            case "list_functions":
+                runListFunctions(jsonArgs);
+                break;
+            case "get_data_at":
+                runGetDataAt(jsonArgs);
+                break;
+            default:
+                emitError("Unknown tool: " + toolName
+                    + ". Available: decompile_function, get_xrefs_to, get_xrefs_from,"
+                    + " get_strings_at, list_functions, get_data_at");
+        }
+    }
+
+    // =========================================================================
+    // Tool: decompile_function
+    // Args: name (string) OR address (string, "0x...")
+    // Returns: {"function": "<name>", "address": "<addr>", "pseudocode": "<code>"}
+    // =========================================================================
+    private void runDecompileFunction(String jsonArgs) throws Exception {
+        String nameOrAddr = extractArg(jsonArgs, "name");
+        if (nameOrAddr == null) {
+            nameOrAddr = extractArg(jsonArgs, "address");
+        }
+        if (nameOrAddr == null) {
+            emitError("decompile_function requires 'name' or 'address'");
+            return;
+        }
+
+        Function fn = findFunction(nameOrAddr);
+        if (fn == null) {
+            emitError("Function not found: " + nameOrAddr);
+            return;
+        }
+
+        DecompInterface decompiler = new DecompInterface();
+        decompiler.openProgram(currentProgram);
+        try {
+            // 30-second timeout; monitor is GhidraScript's task monitor
+            DecompileResults result = decompiler.decompileFunction(fn, 30, monitor);
+            if (result == null || !result.decompileCompleted()) {
+                emitError("Decompile failed for function: " + fn.getName());
+                return;
+            }
+
+            String rawCode = result.getDecompiledFunction().getC();
+            if (rawCode == null || rawCode.isEmpty()) {
+                emitError("No pseudocode produced for function: " + fn.getName());
+                return;
+            }
+
+            // Cap at MAX_DECOMPILE_LINES
+            String[] lines = rawCode.split("\n", -1);
+            StringBuilder capped = new StringBuilder();
+            int limit = Math.min(lines.length, MAX_DECOMPILE_LINES);
+            for (int i = 0; i < limit; i++) {
+                capped.append(lines[i]);
+                if (i < limit - 1) capped.append("\n");
+            }
+            if (lines.length > MAX_DECOMPILE_LINES) {
+                capped.append("\n// [truncated: ")
+                      .append(lines.length - MAX_DECOMPILE_LINES)
+                      .append(" lines omitted]");
+            }
+
+            StringBuilder json = new StringBuilder();
+            json.append("{");
+            json.append("\"function\": \"").append(escapeJson(fn.getName())).append("\", ");
+            json.append("\"address\": \"0x").append(fn.getEntryPoint().toString()).append("\", ");
+            json.append("\"pseudocode\": \"").append(escapeJson(capped.toString())).append("\"");
+            json.append("}");
+            emitResult(json.toString());
+
+        } finally {
+            decompiler.dispose();
+        }
+    }
+
+    // =========================================================================
+    // Tool: get_xrefs_to
+    // Args: name (string) OR address (string)
+    // Returns: {"function": "<name>", "address": "<addr>", "xrefs_to": [...], "count": N}
+    // Each xref: {"from_function": "<name>", "from_address": "<addr>", "type": "<type>"}
+    // =========================================================================
+    private void runGetXrefsTo(String jsonArgs) {
+        String nameOrAddr = extractArg(jsonArgs, "name");
+        if (nameOrAddr == null) {
+            nameOrAddr = extractArg(jsonArgs, "address");
+        }
+        if (nameOrAddr == null) {
+            emitError("get_xrefs_to requires 'name' or 'address'");
+            return;
+        }
+
+        Function fn = findFunction(nameOrAddr);
+        if (fn == null) {
+            emitError("Function not found: " + nameOrAddr);
+            return;
+        }
+
+        Address entryAddr = fn.getEntryPoint();
+        ReferenceManager refMgr = currentProgram.getReferenceManager();
+        FunctionManager funcMgr = currentProgram.getFunctionManager();
+
+        List<String> xrefEntries = new ArrayList<>();
+        // ReferenceIterator does not implement Iterable — use while loop
+        ReferenceIterator refs = refMgr.getReferencesTo(entryAddr);
+        while (refs.hasNext() && xrefEntries.size() < MAX_XREF_RESULTS) {
+            Reference ref = refs.next();
+            Address fromAddr = ref.getFromAddress();
+            Function caller = funcMgr.getFunctionContaining(fromAddr);
+            String callerName = (caller != null) ? caller.getName() : "<unknown>";
+
+            StringBuilder entry = new StringBuilder();
+            entry.append("{");
+            entry.append("\"from_function\": \"").append(escapeJson(callerName)).append("\", ");
+            entry.append("\"from_address\": \"0x").append(fromAddr.toString()).append("\", ");
+            entry.append("\"type\": \"").append(escapeJson(ref.getReferenceType().getName())).append("\"");
+            entry.append("}");
+            xrefEntries.add(entry.toString());
+        }
+
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        json.append("\"function\": \"").append(escapeJson(fn.getName())).append("\", ");
+        json.append("\"address\": \"0x").append(entryAddr.toString()).append("\", ");
+        json.append("\"count\": ").append(xrefEntries.size()).append(", ");
+        json.append("\"xrefs_to\": [");
+        for (int i = 0; i < xrefEntries.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append(xrefEntries.get(i));
+        }
+        json.append("]}");
+        emitResult(json.toString());
+    }
+
+    // =========================================================================
+    // Tool: get_xrefs_from
+    // Args: name (string) OR address (string)
+    // Returns: {"function": "<name>", "address": "<addr>", "xrefs_from": [...], "count": N}
+    // Each xref: {"to_function": "<name>", "to_address": "<addr>", "from_address": "<addr>", "type": "<type>"}
+    // =========================================================================
+    private void runGetXrefsFrom(String jsonArgs) {
+        String nameOrAddr = extractArg(jsonArgs, "name");
+        if (nameOrAddr == null) {
+            nameOrAddr = extractArg(jsonArgs, "address");
+        }
+        if (nameOrAddr == null) {
+            emitError("get_xrefs_from requires 'name' or 'address'");
+            return;
+        }
+
+        Function fn = findFunction(nameOrAddr);
+        if (fn == null) {
+            emitError("Function not found: " + nameOrAddr);
+            return;
+        }
+
+        ReferenceManager refMgr = currentProgram.getReferenceManager();
+        FunctionManager funcMgr = currentProgram.getFunctionManager();
+        Listing listing = currentProgram.getListing();
+
+        // Walk all instructions in the function body and collect outgoing refs
+        List<String> xrefEntries = new ArrayList<>();
+        AddressSetView body = fn.getBody();
+        InstructionIterator instrIter = listing.getInstructions(body, true);
+        // InstructionIterator has hasNext()/next() but also implements Iterable in some
+        // versions; use the explicit while pattern to be safe across Ghidra versions.
+        while (instrIter.hasNext() && xrefEntries.size() < MAX_XREF_RESULTS) {
+            Instruction instr = instrIter.next();
+            Reference[] refs = instr.getReferencesFrom();
+            for (Reference ref : refs) {
+                if (xrefEntries.size() >= MAX_XREF_RESULTS) break;
+                if (!ref.getReferenceType().isCall() && !ref.getReferenceType().isJump()) {
+                    continue;
+                }
+                Address toAddr = ref.getToAddress();
+                Function callee = funcMgr.getFunctionAt(toAddr);
+                String calleeName = (callee != null) ? callee.getName() : "<unknown>";
+
+                StringBuilder entry = new StringBuilder();
+                entry.append("{");
+                entry.append("\"to_function\": \"").append(escapeJson(calleeName)).append("\", ");
+                entry.append("\"to_address\": \"0x").append(toAddr.toString()).append("\", ");
+                entry.append("\"from_address\": \"0x").append(instr.getAddress().toString()).append("\", ");
+                entry.append("\"type\": \"").append(escapeJson(ref.getReferenceType().getName())).append("\"");
+                entry.append("}");
+                xrefEntries.add(entry.toString());
+            }
+        }
+
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        json.append("\"function\": \"").append(escapeJson(fn.getName())).append("\", ");
+        json.append("\"address\": \"0x").append(fn.getEntryPoint().toString()).append("\", ");
+        json.append("\"count\": ").append(xrefEntries.size()).append(", ");
+        json.append("\"xrefs_from\": [");
+        for (int i = 0; i < xrefEntries.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append(xrefEntries.get(i));
+        }
+        json.append("]}");
+        emitResult(json.toString());
+    }
+
+    // =========================================================================
+    // Tool: get_strings_at
+    // Args: address (string), range (int, optional, default 4096, max 4096)
+    // Returns: {"address": "<addr>", "range": N, "strings": [...], "count": N}
+    // Each string: {"address": "<addr>", "value": "<string>", "length": N}
+    // =========================================================================
+    private void runGetStringsAt(String jsonArgs) {
+        String addrStr = extractArg(jsonArgs, "address");
+        if (addrStr == null) {
+            emitError("get_strings_at requires 'address'");
+            return;
+        }
+
+        // Parse range, default 4096, cap at MAX_STRING_RANGE
+        int range = DEFAULT_STRING_RANGE;
+        String rangeStr = extractArg(jsonArgs, "range");
+        if (rangeStr != null) {
+            try {
+                range = Integer.parseInt(rangeStr);
+            } catch (NumberFormatException e) {
+                emitError("'range' must be an integer");
+                return;
+            }
+        }
+        if (range <= 0) range = DEFAULT_STRING_RANGE;
+        if (range > MAX_STRING_RANGE) range = MAX_STRING_RANGE;
+
+        Address baseAddr;
+        try {
+            baseAddr = resolveAddress(addrStr);
+        } catch (Exception e) {
+            emitError("Invalid address: " + addrStr);
+            return;
+        }
+
+        Address endAddr;
+        try {
+            endAddr = baseAddr.add(range);
+        } catch (Exception e) {
+            // Address arithmetic overflow — just use max address
+            endAddr = currentProgram.getMaxAddress();
+        }
+
+        Listing listing = currentProgram.getListing();
+        List<String> stringEntries = new ArrayList<>();
+
+        // DataIterator does not implement Iterable — use while loop
+        DataIterator dataIter = listing.getDefinedData(baseAddr, true);
+        while (dataIter.hasNext() && stringEntries.size() < MAX_STRING_RESULTS) {
+            Data data = dataIter.next();
+            // Stop once we exceed the requested range
+            if (data.getAddress().compareTo(endAddr) > 0) break;
+            if (!data.hasStringValue()) continue;
+
+            Object val = data.getValue();
+            if (val == null) continue;
+            String s = val.toString();
+            if (s.isEmpty()) continue;
+
+            StringBuilder entry = new StringBuilder();
+            entry.append("{");
+            entry.append("\"address\": \"0x").append(data.getAddress().toString()).append("\", ");
+            entry.append("\"value\": \"").append(escapeJson(s)).append("\", ");
+            entry.append("\"length\": ").append(s.length());
+            entry.append("}");
+            stringEntries.add(entry.toString());
+        }
+
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        json.append("\"address\": \"0x").append(baseAddr.toString()).append("\", ");
+        json.append("\"range\": ").append(range).append(", ");
+        json.append("\"count\": ").append(stringEntries.size()).append(", ");
+        json.append("\"strings\": [");
+        for (int i = 0; i < stringEntries.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append(stringEntries.get(i));
+        }
+        json.append("]}");
+        emitResult(json.toString());
+    }
+
+    // =========================================================================
+    // Tool: list_functions
+    // Args: filter (string, optional) — wildcard pattern (* and ?)
+    // Returns: {"count": N, "functions": [...]}
+    // Each function: {"name": "<name>", "address": "<addr>", "xref_count": N}
+    // =========================================================================
+    private void runListFunctions(String jsonArgs) {
+        String filter = extractArg(jsonArgs, "filter");
+        // null filter means "list all"
+
+        FunctionManager funcMgr = currentProgram.getFunctionManager();
+        ReferenceManager refMgr = currentProgram.getReferenceManager();
+
+        List<String> funcEntries = new ArrayList<>();
+
+        // FunctionIterator does not implement Iterable — use while loop
+        FunctionIterator funcIter = funcMgr.getFunctions(true);
+        while (funcIter.hasNext() && funcEntries.size() < MAX_FUNCTION_RESULTS) {
+            Function fn = funcIter.next();
+            String name = fn.getName();
+
+            // Apply wildcard filter if provided
+            if (filter != null && !matchesWildcard(name, filter)) {
+                continue;
+            }
+
+            // Count incoming xrefs
+            int xrefCount = 0;
+            // ReferenceIterator does not implement Iterable — use while loop
+            ReferenceIterator refs = refMgr.getReferencesTo(fn.getEntryPoint());
+            while (refs.hasNext()) {
+                refs.next();
+                xrefCount++;
+            }
+
+            StringBuilder entry = new StringBuilder();
+            entry.append("{");
+            entry.append("\"name\": \"").append(escapeJson(name)).append("\", ");
+            entry.append("\"address\": \"0x").append(fn.getEntryPoint().toString()).append("\", ");
+            entry.append("\"xref_count\": ").append(xrefCount);
+            entry.append("}");
+            funcEntries.add(entry.toString());
+        }
+
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        json.append("\"count\": ").append(funcEntries.size()).append(", ");
+        if (filter != null) {
+            json.append("\"filter\": \"").append(escapeJson(filter)).append("\", ");
+        }
+        json.append("\"functions\": [");
+        for (int i = 0; i < funcEntries.size(); i++) {
+            if (i > 0) json.append(", ");
+            json.append(funcEntries.get(i));
+        }
+        json.append("]}");
+        emitResult(json.toString());
+    }
+
+    // =========================================================================
+    // Tool: get_data_at
+    // Args: address (string), length (int, optional, default 256, max 65536)
+    // Returns: {"address": "<addr>", "length": N, "hex": "<hex string>"}
+    // =========================================================================
+    private void runGetDataAt(String jsonArgs) {
+        String addrStr = extractArg(jsonArgs, "address");
+        if (addrStr == null) {
+            emitError("get_data_at requires 'address'");
+            return;
+        }
+
+        int length = DEFAULT_DATA_LENGTH;
+        String lengthStr = extractArg(jsonArgs, "length");
+        if (lengthStr != null) {
+            try {
+                length = Integer.parseInt(lengthStr);
+            } catch (NumberFormatException e) {
+                emitError("'length' must be an integer");
+                return;
+            }
+        }
+        if (length <= 0) length = DEFAULT_DATA_LENGTH;
+        if (length > MAX_DATA_LENGTH) length = MAX_DATA_LENGTH;
+
+        Address addr;
+        try {
+            addr = resolveAddress(addrStr);
+        } catch (Exception e) {
+            emitError("Invalid address: " + addrStr);
+            return;
+        }
+
+        Memory mem = currentProgram.getMemory();
+        byte[] buf = new byte[length];
+        int bytesRead;
+        try {
+            bytesRead = mem.getBytes(addr, buf);
+        } catch (MemoryAccessException e) {
+            emitError("Memory read failed at " + addrStr + ": " + e.getMessage());
+            return;
+        }
+
+        // Build hex string from the bytes actually read
+        StringBuilder hex = new StringBuilder();
+        for (int i = 0; i < bytesRead; i++) {
+            hex.append(String.format("%02x", buf[i] & 0xFF));
+        }
+
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+        json.append("\"address\": \"0x").append(addr.toString()).append("\", ");
+        json.append("\"length\": ").append(bytesRead).append(", ");
+        json.append("\"hex\": \"").append(hex.toString()).append("\"");
+        json.append("}");
+        emitResult(json.toString());
+    }
+
+    // =========================================================================
+    // Helper: findFunction
+    // Try as hex address first (starts with "0x"), then by name.
+    // =========================================================================
+    private Function findFunction(String nameOrAddress) {
+        FunctionManager funcMgr = currentProgram.getFunctionManager();
+
+        // Try as address if it looks like one
+        if (nameOrAddress.startsWith("0x") || nameOrAddress.startsWith("0X")) {
+            try {
+                Address addr = resolveAddress(nameOrAddress);
+                Function fn = funcMgr.getFunctionAt(addr);
+                if (fn != null) return fn;
+                // Also try getFunctionContaining in case they gave a mid-function address
+                fn = funcMgr.getFunctionContaining(addr);
+                if (fn != null) return fn;
+            } catch (Exception e) {
+                // Fall through to name search
+            }
+        }
+
+        // Search by name — FunctionIterator does not implement Iterable, use while loop
+        FunctionIterator iter = funcMgr.getFunctions(true);
+        while (iter.hasNext()) {
+            Function fn = iter.next();
+            if (fn.getName().equals(nameOrAddress)) {
+                return fn;
+            }
+        }
+
+        return null;
+    }
+
+    // =========================================================================
+    // Helper: resolveAddress
+    // Parses a hex address string ("0x...") using the program's AddressFactory.
+    // =========================================================================
+    private Address resolveAddress(String addrStr) throws Exception {
+        AddressFactory af = currentProgram.getAddressFactory();
+        // Strip "0x"/"0X" prefix — Ghidra's address factory expects plain hex
+        String hex = addrStr;
+        if (hex.startsWith("0x") || hex.startsWith("0X")) {
+            hex = hex.substring(2);
+        }
+        Address addr = af.getAddress(hex);
+        if (addr == null) {
+            throw new Exception("Cannot parse address: " + addrStr);
+        }
+        return addr;
+    }
+
+    // =========================================================================
+    // Helper: extractArg
+    // Minimal JSON string/number value extractor — no external library.
+    // Handles: "key": "value"  and  "key": 123
+    // Does NOT handle nested objects or arrays as values.
+    // =========================================================================
+    private String extractArg(String json, String key) {
+        if (json == null || key == null) return null;
+
+        // Look for: "key": "value"  (quoted string value)
+        String quotedPattern = "\"" + key + "\"";
+        int keyIdx = json.indexOf(quotedPattern);
+        if (keyIdx < 0) return null;
+
+        int colonIdx = json.indexOf(":", keyIdx + quotedPattern.length());
+        if (colonIdx < 0) return null;
+
+        // Skip whitespace after the colon
+        int valueStart = colonIdx + 1;
+        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
+            valueStart++;
+        }
+        if (valueStart >= json.length()) return null;
+
+        char firstChar = json.charAt(valueStart);
+
+        if (firstChar == '"') {
+            // Quoted string — find closing quote, respecting backslash escapes
+            StringBuilder sb = new StringBuilder();
+            int i = valueStart + 1;
+            while (i < json.length()) {
+                char c = json.charAt(i);
+                if (c == '\\' && i + 1 < json.length()) {
+                    char next = json.charAt(i + 1);
+                    switch (next) {
+                        case '"':  sb.append('"');  i += 2; break;
+                        case '\\': sb.append('\\'); i += 2; break;
+                        case 'n':  sb.append('\n'); i += 2; break;
+                        case 'r':  sb.append('\r'); i += 2; break;
+                        case 't':  sb.append('\t'); i += 2; break;
+                        default:   sb.append(next); i += 2; break;
+                    }
+                } else if (c == '"') {
+                    break;
+                } else {
+                    sb.append(c);
+                    i++;
+                }
+            }
+            return sb.toString();
+
+        } else if (Character.isDigit(firstChar) || firstChar == '-') {
+            // Numeric value — read until non-numeric character
+            int end = valueStart;
+            while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+                end++;
+            }
+            return json.substring(valueStart, end);
+        }
+
+        return null;
+    }
+
+    // =========================================================================
+    // Helper: escapeJson
+    // Escape characters that would break a JSON string literal.
+    // =========================================================================
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    // =========================================================================
+    // Helper: matchesWildcard
+    // Simple * (match any sequence) and ? (match one char) wildcard matching.
+    // Case-insensitive to match typical symbol search UX.
+    // =========================================================================
+    private boolean matchesWildcard(String text, String pattern) {
+        // Normalize to lowercase for case-insensitive matching
+        String t = text.toLowerCase();
+        String p = pattern.toLowerCase();
+        return wildcardMatch(t, 0, p, 0);
+    }
+
+    private boolean wildcardMatch(String text, int ti, String pattern, int pi) {
+        // Recursive wildcard matcher
+        while (pi < pattern.length()) {
+            char pc = pattern.charAt(pi);
+            if (pc == '*') {
+                // Skip consecutive stars
+                while (pi < pattern.length() && pattern.charAt(pi) == '*') pi++;
+                if (pi == pattern.length()) return true; // trailing * matches rest
+                // Try matching remainder of pattern at each position in text
+                for (int i = ti; i <= text.length(); i++) {
+                    if (wildcardMatch(text, i, pattern, pi)) return true;
+                }
+                return false;
+            } else if (pc == '?') {
+                if (ti >= text.length()) return false;
+                ti++;
+                pi++;
+            } else {
+                if (ti >= text.length() || text.charAt(ti) != pc) return false;
+                ti++;
+                pi++;
+            }
+        }
+        return ti == text.length();
+    }
+
+    // =========================================================================
+    // Output helpers
+    // The wrapper script parses lines beginning with "TOOL_RESULT:".
+    // =========================================================================
+    private void emitResult(String jsonPayload) {
+        println("TOOL_RESULT:" + jsonPayload);
+    }
+
+    private void emitError(String message) {
+        println("TOOL_RESULT:{\"error\": \"" + escapeJson(message) + "\"}");
+    }
+}

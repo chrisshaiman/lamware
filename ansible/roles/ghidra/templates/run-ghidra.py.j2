@@ -114,10 +114,11 @@ def analyze_with_headless(sample_path: Path) -> dict:
     completes, extracting functions, imports, and strings to a JSON file.
     This is more reliable than parsing Ghidra's log output.
     """
-    project_dir = Path(tempfile.mkdtemp(prefix="ghidra_"))
+    # Save project to /output/project so it persists on the host volume
+    # and can be reloaded by tool mode for agentic LLM queries
+    project_dir = Path("/output/project")
+    project_dir.mkdir(parents=True, exist_ok=True)
     project_name = "analysis"
-    # ExportAnalysis.py writes to /tmp (writable tmpfs) — run-ghidra.py
-    # reads it and outputs the merged JSON to stdout
     export_path = Path("/tmp/ghidra_export.json")
 
     result = subprocess.run(
@@ -155,6 +156,9 @@ def analyze_with_headless(sample_path: Path) -> dict:
             output["imports"] = exported.get("imports", [])
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")
+            output["decompiled_functions"] = exported.get("decompiled_functions", [])
+            output["project_dir"] = exported.get("project_dir", "")
+            output["program_name"] = sample_path.name
         except (json.JSONDecodeError, KeyError) as e:
             output["parse_error"] = str(e)
     else:
@@ -175,9 +179,188 @@ def analyze_with_headless(sample_path: Path) -> dict:
     return output
 
 
+def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: str) -> dict:
+    """Query an existing Ghidra project using GhidraTool.java.
+
+    Uses -process to open an already-analyzed program without re-importing.
+    GhidraTool.java emits a TOOL_RESULT:<json> line that we parse from stdout.
+    """
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            "analysis",           # project name — matches what ExportAnalysis saved
+            "-process", program_name,
+            "-noanalysis",        # skip re-analysis, just open and run script
+            "-postScript", "GhidraTool.java", tool_name, args_json,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    # GhidraTool.java emits TOOL_RESULT:<json> via println(), but Ghidra
+    # prefixes script output with "INFO  ScriptName.java> " so we search
+    # for the marker anywhere in the line
+    for line in result.stdout.splitlines():
+        marker = "TOOL_RESULT:"
+        idx = line.find(marker)
+        if idx >= 0:
+            payload = line[idx + len(marker):]
+            # Ghidra's log formatter may append " (GhidraScript)  " after
+            # the JSON — find the last } and truncate there
+            last_brace = payload.rfind("}")
+            if last_brace >= 0:
+                payload = payload[:last_brace + 1]
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError as e:
+                return {
+                    "error": f"TOOL_RESULT parse error: {e}",
+                    "raw": payload,
+                }
+
+    # No TOOL_RESULT line found — surface Ghidra's output for debugging
+    return {
+        "error": "GhidraTool.java did not emit TOOL_RESULT",
+        "tool_name": tool_name,
+        "ghidra_stdout": result.stdout[-3000:] if result.stdout else "",
+        "ghidra_stderr": result.stderr[-2000:] if result.stderr else "",
+        "ghidra_returncode": result.returncode,
+    }
+
+
+def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0") -> dict:
+    """Import and analyze a raw binary (shellcode) using BinaryLoader.
+
+    Unlike PE analysis, raw shellcode has no headers — we specify the
+    architecture and loader explicitly. Used for malfind-extracted
+    injected code regions.
+    """
+    project_dir = Path("/output/project")
+    project_dir.mkdir(parents=True, exist_ok=True)
+    project_name = "analysis"
+    export_path = Path("/tmp/ghidra_export.json")
+
+    # Clean any previous export
+    if export_path.exists():
+        export_path.unlink()
+
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            project_name,
+            "-import", str(sample_path),
+            "-overwrite",
+            "-loader", "BinaryLoader",
+            "-processor", processor,
+            "-analysisTimeoutPerFile", "120",
+            "-postScript", "ExportAnalysis.java",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    output = {
+        "filename": sample_path.name,
+        "sha256": sha256_file(sample_path),
+        "processor": processor,
+        "base_address": base_addr,
+        "analysis_success": False,
+        "functions_count": 0,
+        "imports": [],
+        "strings_of_interest": [],
+        "decompiled_functions": [],
+        "entry_point": "unknown",
+    }
+
+    if export_path.exists():
+        try:
+            with export_path.open() as f:
+                exported = json.load(f)
+            output["analysis_success"] = True
+            output["functions_count"] = exported.get("functions_count", 0)
+            output["imports"] = exported.get("imports", [])
+            output["strings_of_interest"] = exported.get("strings_of_interest", [])
+            output["entry_point"] = exported.get("entry_point", "unknown")
+            output["decompiled_functions"] = exported.get("decompiled_functions", [])
+            output["project_dir"] = exported.get("project_dir", "")
+            output["program_name"] = sample_path.name
+        except (json.JSONDecodeError, KeyError) as e:
+            output["parse_error"] = str(e)
+
+    return output
+
+
 def main():
+    # Shellcode mode: try both architectures, keep best
+    if len(sys.argv) >= 2 and sys.argv[1] == "--shellcode":
+        if len(sys.argv) != 4:
+            print(json.dumps({
+                "error": "Usage: run-ghidra.py --shellcode <sample_path> <base_address>"
+            }))
+            sys.exit(1)
+
+        sample_path = Path(sys.argv[2])
+        base_addr = sys.argv[3]
+
+        if not sample_path.exists():
+            print(json.dumps({"error": f"File not found: {sample_path}"}))
+            sys.exit(1)
+
+        # Try both architectures, keep whichever finds more functions
+        result_x64 = analyze_shellcode(sample_path, "x86:LE:64:default", base_addr)
+        result_x86 = analyze_shellcode(sample_path, "x86:LE:32:default", base_addr)
+
+        x64_funcs = result_x64.get("functions_count", 0)
+        x86_funcs = result_x86.get("functions_count", 0)
+
+        if x86_funcs > x64_funcs:
+            result = result_x86
+            result["architecture"] = "x86"
+            result["architecture_detection"] = f"x86_had_more_functions ({x86_funcs} vs {x64_funcs})"
+        else:
+            result = result_x64
+            result["architecture"] = "x64"
+            if x64_funcs == x86_funcs:
+                result["architecture_detection"] = f"tied_at_{x64_funcs}_prefer_x64"
+            else:
+                result["architecture_detection"] = f"x64_had_more_functions ({x64_funcs} vs {x86_funcs})"
+
+        if x64_funcs == 0 and x86_funcs == 0:
+            result["no_functions_detected"] = True
+
+        print(json.dumps(result, indent=2))
+        return
+
+    # Tool mode: run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>
+    if len(sys.argv) >= 2 and sys.argv[1] == "--tool":
+        if len(sys.argv) != 6:
+            print(json.dumps({
+                "error": "Usage: run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>"
+            }))
+            sys.exit(1)
+
+        project_dir = Path(sys.argv[2])
+        program_name = sys.argv[3]
+        tool_name = sys.argv[4]
+        args_json = sys.argv[5]
+
+        if not project_dir.is_dir():
+            print(json.dumps({"error": f"Project dir not found: {project_dir}"}))
+            sys.exit(1)
+
+        result = run_tool(project_dir, program_name, tool_name, args_json)
+        print(json.dumps(result, indent=2))
+        return
+
+    # Analysis mode: run-ghidra.py <sample_path>
     if len(sys.argv) != 2:
-        print(json.dumps({"error": "Usage: run-ghidra.py <sample_path>"}))
+        print(json.dumps({
+            "error": "Usage: run-ghidra.py <sample_path>  OR  run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>"
+        }))
         sys.exit(1)
 
     sample_path = Path(sys.argv[1])

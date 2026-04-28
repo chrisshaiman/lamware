@@ -1,0 +1,9 @@
+---
+# roles/postgres/defaults/main.yml
+
+# PostgreSQL for pipeline analysis data
+postgres_db_name: malware_analysis
+postgres_db_user: pipeline
+postgres_db_password: "{{ pipeline_db_password | default('changeme') }}"
+postgres_listen_address: "127.0.0.1"
+postgres_port: 5432

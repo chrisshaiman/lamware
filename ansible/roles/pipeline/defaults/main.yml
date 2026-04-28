@@ -65,3 +65,16 @@ pipeline_volatility_extra_plugins:
       - packed_binary
     plugins:
       - windows.filescan
+
+# Malfind shellcode analysis (Stage 3.5)
+# Extract and analyze injected code regions from memory dumps
+pipeline_malfind_enabled: true
+pipeline_malfind_max_candidates: 5       # top N shellcode regions to analyze
+pipeline_malfind_min_size: 256           # skip regions smaller than this (bytes)
+pipeline_malfind_max_size: 10485760      # skip regions larger than 10MB
+pipeline_malfind_min_score: 2            # minimum heuristic score (0-10)
+pipeline_malfind_benign_processes:       # processes with commonly legitimate RWX
+  - csrss.exe
+  - smss.exe
+  - MsMpEng.exe
+  - fontdrvhost.exe

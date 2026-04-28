@@ -1,0 +1,581 @@
+#!/usr/bin/env python3
+"""
+Malware Analysis Dashboard — Flask web application.
+
+Reads structured analysis data from the PostgreSQL database and renders
+it in a browser-friendly format. Phase 1: read-only viewer with search.
+
+Runs behind WireGuard (not exposed to the internet).
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+from datetime import datetime
+
+import psycopg2
+import psycopg2.extras
+from flask import Flask, render_template_string, request, abort, Response
+
+app = Flask(__name__)
+
+# Database config (injected by Ansible)
+DB_CONFIG = {
+    "host": "{{ postgres_listen_address | default('127.0.0.1') }}",
+    "port": {{ postgres_port | default(5432) }},
+    "dbname": "{{ postgres_db_name | default('malware_analysis') }}",
+    "user": "{{ postgres_db_user | default('pipeline') }}",
+    "password": "{{ pipeline_db_password | default('') }}",
+}
+
+REPORTS_DIR = "{{ pipeline_reports_dir | default('/opt/pipeline/reports') }}"
+
+
+def get_db():
+    """Get a database connection."""
+    return psycopg2.connect(**DB_CONFIG, cursor_factory=psycopg2.extras.RealDictCursor)
+
+
+# ---------------------------------------------------------------------------
+# CSS — shared across all pages
+# ---------------------------------------------------------------------------
+
+CSS = """
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9; line-height: 1.5;
+}
+a { color: #58a6ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 12px 20px; display: flex; align-items: center; gap: 16px;
+}
+header h1 { font-size: 18px; color: #f0f6fc; }
+header nav a { color: #8b949e; font-size: 14px; padding: 4px 12px; }
+header nav a:hover { color: #f0f6fc; }
+.search-box {
+    padding: 8px 12px; background: #0d1117; border: 1px solid #30363d;
+    border-radius: 6px; color: #c9d1d9; font-size: 14px; width: 300px;
+}
+table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+th {
+    background: #161b22; color: #8b949e; font-size: 12px; text-transform: uppercase;
+    padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d;
+}
+td { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px; }
+tr:hover { background: #161b22; }
+.badge {
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+}
+.badge-critical { background: #da3633; color: white; }
+.badge-high { background: #d29922; color: white; }
+.badge-medium { background: #3fb950; color: white; }
+.badge-low { background: #388bfd; color: white; }
+.badge-source {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; color: white; margin-right: 4px;
+}
+.card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px; margin: 12px 0;
+}
+.card h3 { color: #f0f6fc; margin-bottom: 8px; font-size: 15px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat-box { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; text-align: center; }
+.stat-box .number { font-size: 28px; font-weight: bold; color: #f0f6fc; }
+.stat-box .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+.mono { font-family: "Consolas", "Monaco", monospace; font-size: 12px; }
+.narrative {
+    background: #0d1117; border-left: 3px solid #da3633; padding: 12px 16px;
+    margin: 8px 0; white-space: pre-wrap; font-size: 13px;
+}
+.tag {
+    display: inline-block; background: #30363d; color: #c9d1d9;
+    padding: 2px 8px; border-radius: 12px; font-size: 11px; margin: 2px;
+}
+pre {
+    background: #0d1117; padding: 12px; border-radius: 6px;
+    overflow-x: auto; font-size: 12px; color: #c9d1d9;
+}
+"""
+
+SOURCE_COLORS = {
+    "Triage": "#2196f3",
+    "Cape": "#ff9800",
+    "Volatility": "#9c27b0",
+    "Ghidra": "#4caf50",
+    "AI Reverse Engineering": "#e91e63",
+    "Summary": "#607d8b",
+}
+
+
+def severity_badge(s):
+    if not s:
+        return ""
+    css = {"critical": "badge-critical", "high": "badge-high",
+           "medium": "badge-medium", "low": "badge-low"}.get(s.lower(), "")
+    return f'<span class="badge {css}">{s}</span>'
+
+
+def source_badge(source):
+    color = SOURCE_COLORS.get(source, "#666")
+    return f'<span class="badge-source" style="background:{color};">{source}</span>'
+
+
+def escape(s):
+    if s is None:
+        return ""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def index():
+    """Dashboard home — recent analyses list."""
+    search = request.args.get("q", "").strip()
+    conn = get_db()
+    cur = conn.cursor()
+
+    if search:
+        cur.execute("""
+            SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
+                   a.malware_family_guess, a.severity, a.malscore,
+                   a.started_at, a.completed_at, a.interpret_tool_calls,
+                   (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
+                   (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
+                   (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
+            FROM analyses a
+            JOIN samples s ON s.id = a.sample_id
+            WHERE s.sha256 ILIKE %s
+               OR s.filename ILIKE %s
+               OR a.malware_family_guess ILIKE %s
+               OR a.task_id ILIKE %s
+            ORDER BY a.started_at DESC
+            LIMIT 50
+        """, (f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"))
+    else:
+        cur.execute("""
+            SELECT a.id, a.task_id, s.sha256, s.filename, s.file_type,
+                   a.malware_family_guess, a.severity, a.malscore,
+                   a.started_at, a.completed_at, a.interpret_tool_calls,
+                   (SELECT COUNT(*) FROM analysis_iocs ai WHERE ai.analysis_id = a.id) AS ioc_count,
+                   (SELECT COUNT(*) FROM analysis_techniques at2 WHERE at2.analysis_id = a.id) AS technique_count,
+                   (SELECT COUNT(*) FROM signatures sg WHERE sg.analysis_id = a.id) AS sig_count
+            FROM analyses a
+            JOIN samples s ON s.id = a.sample_id
+            ORDER BY a.started_at DESC
+            LIMIT 50
+        """)
+
+    analyses = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    rows = ""
+    for a in analyses:
+        sha_short = a["sha256"][:16] + "..." if a["sha256"] else "?"
+        started = a["started_at"].strftime("%Y-%m-%d %H:%M") if a["started_at"] else "?"
+        rows += f"""<tr>
+            <td><a href="/analysis/{a['id']}">{escape(a['task_id'])}</a></td>
+            <td class="mono">{escape(sha_short)}</td>
+            <td>{escape(a['filename'] or '?')}</td>
+            <td>{escape(a['malware_family_guess'] or '?')}</td>
+            <td>{severity_badge(a['severity'])}</td>
+            <td>{a['malscore'] or '?'}</td>
+            <td>{a['ioc_count']}</td>
+            <td>{a['technique_count']}</td>
+            <td>{a['sig_count']}</td>
+            <td>{started}</td>
+        </tr>"""
+
+    return render_template_string("""<!DOCTYPE html><html><head>
+        <title>Malware Analysis Dashboard</title>
+        <style>{{ css }}</style>
+    </head><body>
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <form action="/" method="get" style="margin-left:auto;">
+                <input class="search-box" name="q" placeholder="Search hash, filename, family..." value="{{ search }}">
+            </form>
+        </header>
+        <div class="container">
+            <h2>Recent Analyses</h2>
+            <table>
+                <tr><th>Task</th><th>SHA256</th><th>Filename</th><th>Family</th>
+                    <th>Severity</th><th>Score</th><th>IOCs</th><th>ATT&CK</th>
+                    <th>Sigs</th><th>Date</th></tr>
+                {{ rows }}
+            </table>
+        </div>
+    </body></html>""", css=CSS, rows=rows, search=search)
+
+
+@app.route("/analysis/<int:analysis_id>")
+def analysis_detail(analysis_id):
+    """Detailed view of a single analysis."""
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Main analysis
+    cur.execute("""
+        SELECT a.*, s.sha256, s.filename, s.file_type, s.file_mime, s.entropy, s.ssdeep
+        FROM analyses a JOIN samples s ON s.id = a.sample_id
+        WHERE a.id = %s
+    """, (analysis_id,))
+    a = cur.fetchone()
+    if not a:
+        cur.close(); conn.close()
+        abort(404)
+
+    # IOCs
+    cur.execute("""
+        SELECT iv.type, iv.value, ai.source_stage, ai.context
+        FROM analysis_iocs ai
+        JOIN ioc_values iv ON iv.id = ai.ioc_id
+        WHERE ai.analysis_id = %s
+        ORDER BY ai.source_stage, iv.type
+    """, (analysis_id,))
+    iocs = cur.fetchall()
+
+    # Techniques
+    cur.execute("""
+        SELECT tv.technique_id, tv.technique_name, tv.tactics, at2.source_stage, at2.source_detail
+        FROM analysis_techniques at2
+        JOIN technique_values tv ON tv.id = at2.technique_id
+        WHERE at2.analysis_id = %s
+        ORDER BY tv.technique_id
+    """, (analysis_id,))
+    techniques = cur.fetchall()
+
+    # Capabilities
+    cur.execute("""
+        SELECT description, source_stage FROM capabilities
+        WHERE analysis_id = %s
+    """, (analysis_id,))
+    capabilities = cur.fetchall()
+
+    # Signatures (top 20 by severity)
+    cur.execute("""
+        SELECT name, severity, description FROM signatures
+        WHERE analysis_id = %s ORDER BY severity DESC LIMIT 20
+    """, (analysis_id,))
+    signatures = cur.fetchall()
+
+    # Network events
+    cur.execute("""
+        SELECT event_type, dns_query, dns_type, http_method, http_url, http_host,
+               src_ip, src_port, dst_ip, dst_port
+        FROM network_events WHERE analysis_id = %s LIMIT 50
+    """, (analysis_id,))
+    network = cur.fetchall()
+
+    cur.close()
+    conn.close()
+
+    # Build IOC rows
+    ioc_rows = ""
+    for ioc in iocs:
+        ioc_rows += f"""<tr>
+            <td>{source_badge(ioc['source_stage'])}</td>
+            <td>{escape(ioc['type'])}</td>
+            <td class="mono">{escape(ioc['value'])}</td>
+            <td style="font-size:11px;color:#8b949e;">{escape(ioc['context'] or '')}</td>
+        </tr>"""
+
+    # Build technique rows
+    tech_rows = ""
+    for t in techniques:
+        tactics = ", ".join(t["tactics"]) if t["tactics"] else ""
+        tech_rows += f"""<tr>
+            <td>{source_badge(t['source_stage'])}</td>
+            <td><strong>{escape(t['technique_id'])}</strong></td>
+            <td>{escape(t['technique_name'])}</td>
+            <td style="font-size:11px;">{escape(tactics)}</td>
+        </tr>"""
+
+    # Build capability rows
+    cap_rows = ""
+    for c in capabilities:
+        cap_rows += f"<li>{source_badge(c['source_stage'])} {escape(c['description'])}</li>"
+
+    # Build signature rows
+    sig_rows = ""
+    for s in signatures:
+        sev_color = {3: "#da3633", 2: "#d29922", 1: "#3fb950"}.get(s["severity"], "#666")
+        sig_rows += f"""<tr>
+            <td><span style="color:{sev_color};font-weight:bold;">{s['severity']}</span></td>
+            <td>{escape(s['name'])}</td>
+            <td style="font-size:11px;">{escape((s['description'] or '')[:150])}</td>
+        </tr>"""
+
+    # Build network rows
+    net_rows = ""
+    for n in network:
+        if n["event_type"] == "dns":
+            net_rows += f"<tr><td>DNS</td><td>{escape(n['dns_query'])}</td><td>{escape(n['dns_type'] or '')}</td></tr>"
+        elif n["event_type"] == "http":
+            net_rows += f"<tr><td>HTTP</td><td>{escape(n['http_method'])} {escape(n['http_url'])}</td><td>{escape(n['http_host'] or '')}</td></tr>"
+        elif n["event_type"] == "tcp":
+            net_rows += f"<tr><td>TCP</td><td>{escape(n['src_ip'])}:{n['src_port']} → {escape(n['dst_ip'])}:{n['dst_port']}</td><td></td></tr>"
+
+    sha_short = a["sha256"][:16] + "..." if a["sha256"] else "?"
+    pdf_link = f"/pdf/{a['task_id']}" if a["pdf_generated"] else ""
+
+    return render_template_string("""<!DOCTYPE html><html><head>
+        <title>Analysis {{ task_id }} — Dashboard</title>
+        <style>{{ css }}</style>
+    </head><body>
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+        </header>
+        <div class="container">
+            <h2>Analysis: {{ task_id }}</h2>
+            <div class="stat-grid">
+                <div class="stat-box"><div class="number">{{ severity_badge }}</div><div class="label">Severity</div></div>
+                <div class="stat-box"><div class="number">{{ malscore }}</div><div class="label">Malscore</div></div>
+                <div class="stat-box"><div class="number">{{ ioc_count }}</div><div class="label">IOCs</div></div>
+                <div class="stat-box"><div class="number">{{ tech_count }}</div><div class="label">ATT&CK</div></div>
+                <div class="stat-box"><div class="number">{{ sig_count }}</div><div class="label">Signatures</div></div>
+                <div class="stat-box"><div class="number">{{ tool_calls }}</div><div class="label">AI Tool Calls</div></div>
+            </div>
+
+            <div class="card">
+                <h3>Sample</h3>
+                <table>
+                    <tr><td style="width:120px;color:#8b949e;">SHA256</td><td class="mono">{{ sha256 }}</td></tr>
+                    <tr><td style="color:#8b949e;">Filename</td><td>{{ filename }}</td></tr>
+                    <tr><td style="color:#8b949e;">Family</td><td><strong>{{ family }}</strong></td></tr>
+                    <tr><td style="color:#8b949e;">File Type</td><td>{{ file_type }}</td></tr>
+                    {% if pdf_link %}<tr><td style="color:#8b949e;">PDF Report</td><td><a href="{{ pdf_link }}">Download PDF</a></td></tr>{% endif %}
+                </table>
+            </div>
+
+            {% if executive_summary %}
+            <div class="card">
+                <h3>Executive Summary</h3>
+                <div class="narrative">{{ executive_summary }}</div>
+            </div>
+            {% endif %}
+
+            {% if narrative %}
+            <div class="card">
+                <h3>AI Reverse Engineering Analysis</h3>
+                <div class="narrative">{{ narrative }}</div>
+            </div>
+            {% endif %}
+
+            {% if ioc_rows %}
+            <div class="card">
+                <h3>Indicators of Compromise ({{ ioc_count }})</h3>
+                <table><tr><th>Source</th><th>Type</th><th>Value</th><th>Context</th></tr>{{ ioc_rows }}</table>
+            </div>
+            {% endif %}
+
+            {% if tech_rows %}
+            <div class="card">
+                <h3>MITRE ATT&CK ({{ tech_count }})</h3>
+                <table><tr><th>Source</th><th>ID</th><th>Technique</th><th>Tactics</th></tr>{{ tech_rows }}</table>
+            </div>
+            {% endif %}
+
+            {% if cap_rows %}
+            <div class="card">
+                <h3>Capabilities</h3>
+                <ul style="list-style:none;padding:0;">{{ cap_rows }}</ul>
+            </div>
+            {% endif %}
+
+            {% if sig_rows %}
+            <div class="card">
+                <h3>Behavioral Signatures (Cape)</h3>
+                <table><tr><th>Sev</th><th>Name</th><th>Description</th></tr>{{ sig_rows }}</table>
+            </div>
+            {% endif %}
+
+            {% if net_rows %}
+            <div class="card">
+                <h3>Network Activity</h3>
+                <table><tr><th>Type</th><th>Detail</th><th>Host</th></tr>{{ net_rows }}</table>
+            </div>
+            {% endif %}
+        </div>
+    </body></html>""",
+        css=CSS, task_id=a["task_id"],
+        severity_badge=severity_badge(a["severity"]),
+        malscore=a["malscore"] or "?",
+        ioc_count=len(iocs), tech_count=len(techniques), sig_count=len(signatures),
+        tool_calls=a["interpret_tool_calls"] or 0,
+        sha256=escape(a["sha256"]), filename=escape(a["filename"] or "?"),
+        family=escape(a["malware_family_guess"] or "?"),
+        file_type=escape(a["file_type"] or "?"),
+        pdf_link=pdf_link,
+        executive_summary=escape(a["executive_summary"] or ""),
+        narrative=escape(a["narrative"] or ""),
+        ioc_rows=ioc_rows, tech_rows=tech_rows, cap_rows=cap_rows,
+        sig_rows=sig_rows, net_rows=net_rows,
+    )
+
+
+@app.route("/iocs")
+def iocs_list():
+    """IOC browser — see all IOCs with cross-sample correlation."""
+    search = request.args.get("q", "").strip()
+    ioc_type = request.args.get("type", "").strip()
+    conn = get_db()
+    cur = conn.cursor()
+
+    query = """
+        SELECT iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen,
+               COUNT(DISTINCT a.sample_id) AS sample_count,
+               COUNT(DISTINCT a.id) AS analysis_count,
+               array_agg(DISTINCT a.malware_family_guess)
+                   FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
+        FROM ioc_values iv
+        JOIN analysis_iocs ai ON ai.ioc_id = iv.id
+        JOIN analyses a ON a.id = ai.analysis_id
+    """
+    params = []
+    wheres = []
+
+    if search:
+        wheres.append("iv.value ILIKE %s")
+        params.append(f"%{search}%")
+    if ioc_type:
+        wheres.append("iv.type = %s")
+        params.append(ioc_type)
+
+    if wheres:
+        query += " WHERE " + " AND ".join(wheres)
+
+    query += """
+        GROUP BY iv.id, iv.type, iv.value, iv.first_seen, iv.last_seen
+        ORDER BY sample_count DESC, iv.last_seen DESC
+        LIMIT 100
+    """
+
+    cur.execute(query, params)
+    iocs = cur.fetchall()
+
+    # Get distinct types for filter
+    cur.execute("SELECT DISTINCT type FROM ioc_values ORDER BY type")
+    types = [r["type"] for r in cur.fetchall()]
+
+    cur.close()
+    conn.close()
+
+    rows = ""
+    for ioc in iocs:
+        families = ", ".join(ioc["families"]) if ioc["families"] else ""
+        first = ioc["first_seen"].strftime("%Y-%m-%d") if ioc["first_seen"] else "?"
+        rows += f"""<tr>
+            <td>{escape(ioc['type'])}</td>
+            <td class="mono">{escape(ioc['value'][:100])}</td>
+            <td><strong>{ioc['sample_count']}</strong></td>
+            <td style="font-size:11px;">{escape(families)}</td>
+            <td>{first}</td>
+        </tr>"""
+
+    type_options = "".join(f'<option value="{t}" {"selected" if t == ioc_type else ""}>{t}</option>' for t in types)
+
+    return render_template_string("""<!DOCTYPE html><html><head>
+        <title>IOCs — Dashboard</title>
+        <style>{{ css }}</style>
+    </head><body>
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <form action="/iocs" method="get" style="margin-left:auto;display:flex;gap:8px;">
+                <select name="type" class="search-box" style="width:150px;">
+                    <option value="">All types</option>{{ type_options }}
+                </select>
+                <input class="search-box" name="q" placeholder="Search IOC value..." value="{{ search }}">
+            </form>
+        </header>
+        <div class="container">
+            <h2>Indicators of Compromise</h2>
+            <table>
+                <tr><th>Type</th><th>Value</th><th>Samples</th><th>Families</th><th>First Seen</th></tr>
+                {{ rows }}
+            </table>
+        </div>
+    </body></html>""", css=CSS, rows=rows, search=search, type_options=type_options)
+
+
+@app.route("/techniques")
+def techniques_list():
+    """MITRE ATT&CK technique browser."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT tv.technique_id, tv.technique_name, tv.tactics,
+               COUNT(DISTINCT a.sample_id) AS sample_count,
+               array_agg(DISTINCT at2.source_stage) AS sources,
+               array_agg(DISTINCT a.malware_family_guess)
+                   FILTER (WHERE a.malware_family_guess IS NOT NULL) AS families
+        FROM technique_values tv
+        JOIN analysis_techniques at2 ON at2.technique_id = tv.id
+        JOIN analyses a ON a.id = at2.analysis_id
+        GROUP BY tv.id, tv.technique_id, tv.technique_name, tv.tactics
+        ORDER BY sample_count DESC
+    """)
+    techniques = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    rows = ""
+    for t in techniques:
+        tactics = ", ".join(t["tactics"]) if t["tactics"] else ""
+        sources = " ".join(source_badge(s) for s in (t["sources"] or []))
+        families = ", ".join(t["families"]) if t["families"] else ""
+        rows += f"""<tr>
+            <td><strong>{escape(t['technique_id'])}</strong></td>
+            <td>{escape(t['technique_name'])}</td>
+            <td style="font-size:11px;">{escape(tactics)}</td>
+            <td><strong>{t['sample_count']}</strong></td>
+            <td>{sources}</td>
+            <td style="font-size:11px;">{escape(families)}</td>
+        </tr>"""
+
+    return render_template_string("""<!DOCTYPE html><html><head>
+        <title>ATT&CK — Dashboard</title>
+        <style>{{ css }}</style>
+    </head><body>
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+        </header>
+        <div class="container">
+            <h2>MITRE ATT&CK Techniques</h2>
+            <table>
+                <tr><th>ID</th><th>Technique</th><th>Tactics</th><th>Samples</th><th>Sources</th><th>Families</th></tr>
+                {{ rows }}
+            </table>
+        </div>
+    </body></html>""", css=CSS, rows=rows)
+
+
+@app.route("/pdf/<task_id>")
+def download_pdf(task_id):
+    """Download the PDF report for an analysis."""
+    import os
+    pdf_path = os.path.join(REPORTS_DIR, task_id, "report.pdf")
+    if not os.path.exists(pdf_path):
+        abort(404)
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+    return Response(pdf_bytes, mimetype="application/pdf",
+                    headers={"Content-Disposition": f"attachment; filename={task_id}-report.pdf"})
+
+
+if __name__ == "__main__":
+    app.run(host="{{ dashboard_bind }}", port={{ dashboard_port }}, debug=False)
