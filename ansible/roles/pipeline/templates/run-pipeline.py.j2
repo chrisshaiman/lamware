@@ -578,19 +578,147 @@ def _score_shellcode(first_bytes: bytes) -> int:
         if target < len(first_bytes) and first_bytes[target] in range(0x58, 0x60):
             score += 3
 
-    # Entropy check
-    entropy = _shannon_entropy(first_bytes)
-    if entropy > 6.0:
-        score += 1
-    if entropy < 2.0:
-        score -= 2
+    # Entropy check — use first 64 bytes only, not the full 256.
+    # Injected code stubs often have a small prologue at page start followed
+    # by zeros (rest of allocated page), which tanks full-page entropy unfairly.
+    entropy_sample = first_bytes[:64] if len(first_bytes) >= 64 else first_bytes
+    entropy = _shannon_entropy(entropy_sample)
+    if entropy > 5.0:
+        score += 1  # high entropy in first 64 bytes = likely real code
+    if entropy < 1.0:
+        score -= 2  # truly empty/repetitive even in first 64 bytes
 
     # REX.W prefixes (strong x64 signal)
     rex_count = sum(1 for b in first_bytes[:64] if b in (0x48, 0x4c, 0x4d))
     if rex_count > 5:
         score += 1
 
+    # Suspicious API names in the data — indicates a manually resolved import
+    # table, which is a strong injection/shellcode indicator
+    text = first_bytes.decode("ascii", errors="ignore").lower()
+    suspicious_apis = [
+        "loadlibrary", "getprocaddress", "virtualalloc", "createthread",
+        "writeprocessmemory", "createremotethread", "ntwritevirtualmemory",
+        "getmodulehandle", "iswow64", "ntdll", "kernel32", "ntcreatethreadex",
+        "rtlcreateheap", "virtualprotect",
+    ]
+    api_hits = sum(1 for api in suspicious_apis if api in text)
+    if api_hits >= 3:
+        score += 4  # strong signal — multiple resolved API names
+    elif api_hits >= 1:
+        score += 2
+
     return max(score, 0)
+
+
+def extract_shellcode_artifacts(dump_path: Path) -> dict:
+    """Extract forensic artifacts from a raw memory dump.
+
+    Scans the dump bytes for API names, file paths, DLL names, URLs, IPs,
+    embedded PE headers, and other strings of interest. These artifacts are
+    often more valuable than decompilation — they reveal what the injected
+    code was designed to do without needing to find function boundaries.
+    """
+    import re as _re
+
+    try:
+        with dump_path.open("rb") as f:
+            data = f.read(65536)  # first 64KB is plenty
+    except OSError:
+        return {}
+
+    text = data.decode("ascii", errors="ignore")
+
+    artifacts = {
+        "resolved_apis": [],
+        "file_paths": [],
+        "dll_names": [],
+        "urls": [],
+        "ip_addresses": [],
+        "registry_keys": [],
+        "embedded_pe": False,
+        "interesting_strings": [],
+    }
+
+    # Windows API names (common in resolved import tables)
+    known_apis = [
+        "LoadLibraryA", "LoadLibraryW", "GetProcAddress",
+        "VirtualAlloc", "VirtualAllocEx", "VirtualProtect", "VirtualProtectEx",
+        "CreateThread", "CreateRemoteThread", "CreateRemoteThreadEx",
+        "ResumeThread", "SuspendThread", "ExitThread",
+        "WriteProcessMemory", "ReadProcessMemory",
+        "NtWriteVirtualMemory", "NtCreateThreadEx", "NtAllocateVirtualMemory",
+        "OpenProcess", "CreateProcessA", "CreateProcessW",
+        "GetModuleHandleA", "GetModuleHandleW",
+        "IsWow64Process", "GetSystemInfo",
+        "InternetOpenA", "InternetOpenUrlA", "HttpOpenRequestA",
+        "URLDownloadToFileA", "URLDownloadToFileW",
+        "WinExec", "ShellExecuteA", "ShellExecuteW",
+        "RegOpenKeyExA", "RegSetValueExA", "RegCreateKeyExA",
+        "CryptDecrypt", "CryptEncrypt", "CryptImportKey",
+        "GetTempPathA", "GetTempPathW",
+        "Sleep", "ExitProcess", "GetLastError",
+        "WSAStartup", "connect", "send", "recv", "socket",
+    ]
+    for api in known_apis:
+        if api in text:
+            artifacts["resolved_apis"].append(api)
+
+    # File paths (Windows-style)
+    paths = _re.findall(r'[A-Z]:\\[\w\\.-]+\.\w{1,5}', text)
+    artifacts["file_paths"] = list(set(paths))[:20]
+
+    # DLL names
+    dlls = _re.findall(r'[\w.-]+\.dll', text, _re.IGNORECASE)
+    artifacts["dll_names"] = list(set(d for d in dlls if len(d) > 5))[:20]
+
+    # URLs
+    urls = _re.findall(r'https?://[^\x00\s\'"<>]{5,200}', text)
+    artifacts["urls"] = list(set(urls))[:20]
+
+    # IP addresses
+    ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', text)
+    valid_ips = []
+    for ip in ips:
+        parts = ip.split(".")
+        if all(0 <= int(p) <= 255 for p in parts) and ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
+            valid_ips.append(ip)
+    artifacts["ip_addresses"] = list(set(valid_ips))[:20]
+
+    # Registry keys
+    reg_keys = _re.findall(r'(?:HKEY_[\w]+|SOFTWARE|CurrentVersion|Run|Services)\\[\w\\]+', text)
+    artifacts["registry_keys"] = list(set(reg_keys))[:10]
+
+    # Embedded PE (MZ header anywhere in the dump)
+    mz_offsets = []
+    offset = 0
+    while True:
+        idx = data.find(b"MZ", offset)
+        if idx < 0:
+            break
+        # Check for PE signature at the typical offset
+        if idx + 0x40 < len(data):
+            pe_offset_bytes = data[idx + 0x3C:idx + 0x40]
+            if len(pe_offset_bytes) == 4:
+                pe_offset = int.from_bytes(pe_offset_bytes, "little")
+                if 0 < pe_offset < 0x400 and idx + pe_offset + 2 <= len(data):
+                    if data[idx + pe_offset:idx + pe_offset + 2] == b"PE":
+                        mz_offsets.append(f"0x{idx:x}")
+        offset = idx + 1
+    if mz_offsets:
+        artifacts["embedded_pe"] = True
+        artifacts["pe_offsets"] = mz_offsets[:5]
+
+    # Other interesting strings (mutex-like, user agents, etc.)
+    interesting = []
+    mutex_patterns = _re.findall(r'(?:Global\\|Local\\)[\w-]+', text)
+    interesting.extend([f"mutex:{m}" for m in mutex_patterns])
+    ua_patterns = _re.findall(r'Mozilla/[\d.]+[^"\x00]{10,100}', text)
+    interesting.extend([f"user-agent:{ua[:80]}" for ua in ua_patterns])
+    artifacts["interesting_strings"] = interesting[:10]
+
+    # Clean up empty lists
+    return {k: v for k, v in artifacts.items() if v}
 
 
 def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
@@ -606,24 +734,38 @@ def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
 
     print(f"    Starting with {len(dump_files)} malfind dump files")
 
-    # Parse malfind JSON to get process info per region
+    # Parse malfind JSON to get process info per region.
+    # The "File output" field contains the exact dump filename (e.g.,
+    # "pid.736.vad.0x7ffcd1d70000-0x7ffcd1d7efff.dmp") which we use
+    # as the lookup key to match dump files to their metadata.
     region_info = {}
     if isinstance(vol_malfind_output, list):
         for entry in vol_malfind_output:
             pid = entry.get("PID", 0)
-            start_vpn = entry.get("Start VPN", "")
             process = entry.get("Process", "unknown")
-            if isinstance(start_vpn, str) and start_vpn.startswith("0x"):
-                key = f"pid.{pid}.vad.{start_vpn}"
-            elif isinstance(start_vpn, int):
-                key = f"pid.{pid}.vad.0x{start_vpn:x}"
+            start_vpn = entry.get("Start VPN", 0)
+            # Use the File output field as the key — it matches the dump filename
+            file_output = entry.get("File output", "")
+            if file_output and file_output != "Disabled":
+                # Strip .dmp extension to match Path.stem
+                key = file_output.replace(".dmp", "") if file_output.endswith(".dmp") else file_output
             else:
-                key = ""
+                # Fallback: reconstruct from PID and addresses
+                end_vpn = entry.get("End VPN", 0)
+                if isinstance(start_vpn, int) and isinstance(end_vpn, int):
+                    key = f"pid.{pid}.vad.0x{start_vpn:x}-0x{end_vpn:x}"
+                else:
+                    key = ""
             if key:
+                # Format start_vpn as hex string for display
+                if isinstance(start_vpn, int):
+                    start_vpn_str = f"0x{start_vpn:x}"
+                else:
+                    start_vpn_str = str(start_vpn)
                 region_info[key] = {
                     "pid": pid,
                     "process": process,
-                    "start_vpn": start_vpn,
+                    "start_vpn": start_vpn_str,
                     "protection": entry.get("Protection", ""),
                 }
 
@@ -703,18 +845,27 @@ def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
 
     print(f"    Selected: {len(selected)} candidates (min_score={MALFIND_MIN_SCORE})")
     for c in selected:
-        print(f"      {c['process']} pid={c['pid']} score={c['score']} size={c['size']}")
+        print(f"      {c['process']} pid={c['pid']} addr={c.get('start_vpn', '?')} score={c['score']} size={c['size']} bytes={c['first_bytes_hex'][:16]}")
 
     return selected
 
 
 def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
-    """Run Ghidra on a shellcode candidate with try-both architecture detection."""
+    """Run artifact extraction and Ghidra on a shellcode candidate."""
     dump_path = candidate["path"]
     base_addr = candidate.get("start_vpn", "0x0")
     if isinstance(base_addr, int):
         base_addr = f"0x{base_addr:x}"
     sc_output = output_dir / f"shellcode_{candidate['pid']}_{str(base_addr).replace('0x', '')}"
+
+    # Extract artifacts from the raw dump BEFORE Ghidra (always succeeds)
+    artifacts = extract_shellcode_artifacts(dump_path)
+    if artifacts:
+        api_count = len(artifacts.get("resolved_apis", []))
+        path_count = len(artifacts.get("file_paths", []))
+        dll_count = len(artifacts.get("dll_names", []))
+        has_pe = artifacts.get("embedded_pe", False)
+        print(f"      Artifacts: {api_count} APIs, {path_count} paths, {dll_count} DLLs, PE={has_pe}")
 
     try:
         result = subprocess.run(
@@ -731,6 +882,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
                 "injection_address": base_addr,
                 "region_size": candidate.get("size"),
                 "filter_score": candidate.get("score"),
+                "shellcode_artifacts": artifacts or {},
                 "error": result.stderr[:200],
             }
         analysis = json.loads(result.stdout)
@@ -740,6 +892,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
             "pid": candidate.get("pid"),
             "process": candidate.get("process"),
             "injection_address": base_addr,
+            "shellcode_artifacts": artifacts or {},
             "error": "timeout (300s)",
         }
     except json.JSONDecodeError:
@@ -748,6 +901,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
             "pid": candidate.get("pid"),
             "process": candidate.get("process"),
             "injection_address": base_addr,
+            "shellcode_artifacts": artifacts or {},
             "error": "invalid JSON from Ghidra",
         }
 
@@ -757,6 +911,8 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
     analysis["injection_address"] = base_addr
     analysis["region_size"] = candidate.get("size")
     analysis["filter_score"] = candidate.get("score")
+    if artifacts:
+        analysis["shellcode_artifacts"] = artifacts
 
     return analysis
 
@@ -1241,12 +1397,34 @@ def extract_iocs(report: dict) -> list[dict]:
                 if all(0 <= int(p) <= 255 for p in parts):
                     add_ioc("ipv4-addr", ip, "Ghidra", "IP found in binary strings")
 
+    # --- Shellcode artifact IOCs (from malfind dump analysis) ---
+    for af in report.get("ghidra", {}).get("analyzed_files", []):
+        if af.get("source") != "malfind_injection":
+            continue
+        artifacts = af.get("shellcode_artifacts", {})
+        pid = af.get("pid", "?")
+        process = af.get("process", "?")
+        ctx_prefix = f"Injected into {process} (pid {pid})"
+
+        for path in artifacts.get("file_paths", []):
+            add_ioc("file:name", path, "Volatility", f"{ctx_prefix} — dropped file path")
+        for url in artifacts.get("urls", []):
+            add_ioc("url", url, "Volatility", f"{ctx_prefix} — URL in injected memory")
+        for ip in artifacts.get("ip_addresses", []):
+            add_ioc("ipv4-addr", ip, "Volatility", f"{ctx_prefix} — IP in injected memory")
+        for dll in artifacts.get("dll_names", []):
+            if dll.lower() not in ("ntdll.dll", "kernel32.dll", "kernelbase.dll",
+                                    "user32.dll", "advapi32.dll", "msvcrt.dll"):
+                add_ioc("file:name", dll, "Volatility", f"{ctx_prefix} — DLL loaded by injected code")
+        for api in artifacts.get("resolved_apis", []):
+            # APIs themselves aren't IOCs, but certain ones indicate specific capabilities
+            # We add them as context but don't create IOC entries for every API
+            pass
+
     # --- AI RE IOCs (from structured analysis output) ---
     interp = report.get("llm_interpretation", {})
     analysis = interp.get("analysis", {})
-    # The AI may identify IOCs in its capabilities or narrative
     for cap in analysis.get("capabilities", []):
-        # Extract any IPs or domains mentioned
         ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', cap)
         for ip in ips:
             add_ioc("ipv4-addr", ip, "AI Reverse Engineering", f"Mentioned in capability: {cap[:80]}")

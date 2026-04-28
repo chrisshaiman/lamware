@@ -606,7 +606,43 @@ def render_ghidra(report: dict) -> str:
             addr = af.get("injection_address", "?")
             arch = af.get("architecture", "?")
             html += f'<h3>{badge} {escape_html(source_label)}: PID {pid} ({escape_html(process)})</h3>\n'
-            html += f'<div class="stage-header">Address: {escape_html(str(addr))} | Architecture: {arch} | Functions: {funcs}</div>\n'
+            html += f'<div class="stage-header">Address: {escape_html(str(addr))} | Architecture: {arch} | Functions: {funcs} | Score: {af.get("filter_score", "?")}</div>\n'
+
+            # Shellcode artifacts — the most valuable data from injected memory
+            sc_artifacts = af.get("shellcode_artifacts", {})
+            if sc_artifacts:
+                resolved = sc_artifacts.get("resolved_apis", [])
+                if resolved:
+                    html += f'<p><strong>Resolved APIs ({len(resolved)}):</strong></p>\n'
+                    html += '<div style="font-size: 9px; font-family: monospace;">'
+                    html += ", ".join(escape_html(a) for a in resolved)
+                    html += '</div>\n'
+
+                file_paths = sc_artifacts.get("file_paths", [])
+                if file_paths:
+                    html += '<p><strong>File Paths:</strong></p>\n'
+                    html += '<div style="font-size: 9px; font-family: monospace;">'
+                    for p in file_paths:
+                        html += f'{escape_html(p)}<br/>'
+                    html += '</div>\n'
+
+                dll_names = sc_artifacts.get("dll_names", [])
+                if dll_names:
+                    html += f'<p><strong>DLL Names:</strong> {escape_html(", ".join(dll_names))}</p>\n'
+
+                urls = sc_artifacts.get("urls", [])
+                if urls:
+                    html += '<p><strong>URLs:</strong></p>\n'
+                    for u in urls:
+                        html += f'<div class="mono" style="font-size:9px;">{escape_html(u)}</div>\n'
+
+                ips = sc_artifacts.get("ip_addresses", [])
+                if ips:
+                    html += f'<p><strong>IP Addresses:</strong> {escape_html(", ".join(ips))}</p>\n'
+
+                if sc_artifacts.get("embedded_pe"):
+                    pe_offsets = sc_artifacts.get("pe_offsets", [])
+                    html += f'<p><strong>Embedded PE detected</strong> at offsets: {escape_html(", ".join(pe_offsets))}</p>\n'
         else:
             html += f'<h3>{source_badge("Ghidra")} PE Binary: {escape_html(name)}</h3>\n'
             html += f'<div class="stage-header">Functions: {funcs} | Imports: {len(imports)} | Success: {"Yes" if success else "No"}</div>\n'
