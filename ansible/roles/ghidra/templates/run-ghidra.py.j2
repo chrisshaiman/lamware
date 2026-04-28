@@ -230,7 +230,111 @@ def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: st
     }
 
 
+def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0") -> dict:
+    """Import and analyze a raw binary (shellcode) using BinaryLoader.
+
+    Unlike PE analysis, raw shellcode has no headers — we specify the
+    architecture and loader explicitly. Used for malfind-extracted
+    injected code regions.
+    """
+    project_dir = Path("/output/project")
+    project_dir.mkdir(parents=True, exist_ok=True)
+    project_name = "analysis"
+    export_path = Path("/tmp/ghidra_export.json")
+
+    # Clean any previous export
+    if export_path.exists():
+        export_path.unlink()
+
+    result = subprocess.run(
+        [
+            ANALYZE_HEADLESS,
+            str(project_dir),
+            project_name,
+            "-import", str(sample_path),
+            "-overwrite",
+            "-loader", "BinaryLoader",
+            "-processor", processor,
+            "-analysisTimeoutPerFile", "120",
+            "-postScript", "ExportAnalysis.java",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    output = {
+        "filename": sample_path.name,
+        "sha256": sha256_file(sample_path),
+        "processor": processor,
+        "base_address": base_addr,
+        "analysis_success": False,
+        "functions_count": 0,
+        "imports": [],
+        "strings_of_interest": [],
+        "decompiled_functions": [],
+        "entry_point": "unknown",
+    }
+
+    if export_path.exists():
+        try:
+            with export_path.open() as f:
+                exported = json.load(f)
+            output["analysis_success"] = True
+            output["functions_count"] = exported.get("functions_count", 0)
+            output["imports"] = exported.get("imports", [])
+            output["strings_of_interest"] = exported.get("strings_of_interest", [])
+            output["entry_point"] = exported.get("entry_point", "unknown")
+            output["decompiled_functions"] = exported.get("decompiled_functions", [])
+            output["project_dir"] = exported.get("project_dir", "")
+            output["program_name"] = sample_path.name
+        except (json.JSONDecodeError, KeyError) as e:
+            output["parse_error"] = str(e)
+
+    return output
+
+
 def main():
+    # Shellcode mode: try both architectures, keep best
+    if len(sys.argv) >= 2 and sys.argv[1] == "--shellcode":
+        if len(sys.argv) != 4:
+            print(json.dumps({
+                "error": "Usage: run-ghidra.py --shellcode <sample_path> <base_address>"
+            }))
+            sys.exit(1)
+
+        sample_path = Path(sys.argv[2])
+        base_addr = sys.argv[3]
+
+        if not sample_path.exists():
+            print(json.dumps({"error": f"File not found: {sample_path}"}))
+            sys.exit(1)
+
+        # Try both architectures, keep whichever finds more functions
+        result_x64 = analyze_shellcode(sample_path, "x86:LE:64:default", base_addr)
+        result_x86 = analyze_shellcode(sample_path, "x86:LE:32:default", base_addr)
+
+        x64_funcs = result_x64.get("functions_count", 0)
+        x86_funcs = result_x86.get("functions_count", 0)
+
+        if x86_funcs > x64_funcs:
+            result = result_x86
+            result["architecture"] = "x86"
+            result["architecture_detection"] = f"x86_had_more_functions ({x86_funcs} vs {x64_funcs})"
+        else:
+            result = result_x64
+            result["architecture"] = "x64"
+            if x64_funcs == x86_funcs:
+                result["architecture_detection"] = f"tied_at_{x64_funcs}_prefer_x64"
+            else:
+                result["architecture_detection"] = f"x64_had_more_functions ({x64_funcs} vs {x86_funcs})"
+
+        if x64_funcs == 0 and x86_funcs == 0:
+            result["no_functions_detected"] = True
+
+        print(json.dumps(result, indent=2))
+        return
+
     # Tool mode: run-ghidra.py --tool <project_dir> <program_name> <tool_name> <args_json>
     if len(sys.argv) >= 2 and sys.argv[1] == "--tool":
         if len(sys.argv) != 6:
