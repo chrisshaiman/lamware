@@ -90,7 +90,11 @@
     - role: interpret
       tags: [interpret]
 
-    # 15. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
+    # 15. PostgreSQL — analysis database (uses Cape's existing PostgreSQL instance)
+    - role: postgres
+      tags: [postgres]
+
+    # 16. Pipeline orchestrator — chains triage → Cape → Volatility → Ghidra
     - role: pipeline
       tags: [pipeline]
 
