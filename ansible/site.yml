@@ -98,6 +98,10 @@
     - role: pipeline
       tags: [pipeline]
 
-    # 16. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 17. Dashboard — Flask web UI for browsing analysis results
+    - role: dashboard
+      tags: [dashboard]
+
+    # 18. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
