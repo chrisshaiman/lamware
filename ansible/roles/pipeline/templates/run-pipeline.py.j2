@@ -43,6 +43,7 @@ VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
 GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
 INTERPRET_ENABLED = {% if interpret_enabled | default(true) %}True{% else %}False{% endif %}
+
 INTERPRET_TIMEOUT = {{ interpret_timeout | default(300) }}
 INTERPRET_CONFIG = {
     "model": "{{ interpret_model | default('claude-sonnet-4-6') }}",
