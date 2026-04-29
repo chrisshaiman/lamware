@@ -32,6 +32,7 @@
     mode: "0750"
   loop:
     - "{{ pipeline_install_dir }}"
+    - "{{ pipeline_install_dir }}/stages"
     - "{{ pipeline_reports_dir }}"
 
 - name: Deploy run-pipeline.py
@@ -41,6 +42,32 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
+
+- name: Deploy pipeline stage modules
+  ansible.builtin.template:
+    src: "stages/{{ item }}"
+    dest: "{{ pipeline_install_dir }}/stages/{{ item | replace('.j2', '') }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0640"
+  loop:
+    - __init__.py.j2
+    - triage.py.j2
+    - cape.py.j2
+    - volatility.py.j2
+    - ghidra.py.j2
+    - interpret.py.j2
+
+- name: Deploy pipeline helper modules
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0640"
+  loop:
+    - ioc_extract.py.j2
+    - db_ingest.py.j2
 
 - name: Deploy pipeline wrapper script
   ansible.builtin.template:
