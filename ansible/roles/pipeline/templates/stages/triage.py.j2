@@ -1,0 +1,103 @@
+"""
+Stage 1: Triage — containerized YARA/ssdeep/FLOSS analysis.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run_triage(sample_path: Path, output_dir: Path, triage_cmd: str) -> dict:
+    """Run containerized triage analysis. Returns triage JSON."""
+    try:
+        result = subprocess.run(
+            [triage_cmd, str(sample_path), str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"  [!] Triage failed: {result.stderr[:200]}", file=sys.stderr)
+            return {"error": "triage failed", "stderr": result.stderr[:500]}
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        print("  [!] Triage timed out (300s)", file=sys.stderr)
+        return {"error": "triage timeout"}
+    except json.JSONDecodeError as e:
+        print(f"  [!] Triage output not valid JSON: {e}", file=sys.stderr)
+        return {"error": "invalid triage output"}
+
+
+def derive_tags_from_triage(triage_result: dict) -> list[str]:
+    """Extract Cape routing tags from triage results."""
+    triage = triage_result.get("triage", {})
+    tags = triage.get("routing_tags_added", [])
+    if "x64" not in tags:
+        tags.insert(0, "x64")
+    return tags
+
+
+def derive_package_from_triage(triage_result: dict) -> str:
+    """Derive Cape analysis package from triage file type detection.
+
+    Cape uses the 'package' field to select the right analysis module.
+    Without it, Cape falls back to filename extension — which fails when
+    the sample has no extension (e.g., 'binary').
+    """
+    triage = triage_result.get("triage", {})
+    file_type = triage.get("file_type", "").lower()
+    file_mime = triage.get("file_mime", "").lower()
+
+    # PE executables
+    if "pe32" in file_type or file_mime == "application/x-dosexec":
+        if "dll" in file_type:
+            return "dll"
+        return "exe"
+
+    # Scripts
+    if any(kw in file_type for kw in ["powershell", "ps1"]):
+        return "ps1"
+    if "python" in file_type:
+        return "python"
+    if "batch" in file_type or "dos batch" in file_type:
+        return "bat"
+    if "vbscript" in file_type or file_mime == "text/vbscript":
+        return "vbs"
+    if "javascript" in file_type or file_mime == "application/javascript":
+        return "js"
+
+    # Documents
+    if any(kw in file_type for kw in ["word", "document", "openxml"]):
+        return "doc"
+    if any(kw in file_type for kw in ["excel", "spreadsheet"]):
+        return "xls"
+    if "pdf" in file_type or file_mime == "application/pdf":
+        return "pdf"
+    if "rtf" in file_type:
+        return "doc"
+
+    # Archives
+    if "zip" in file_type or file_mime == "application/zip":
+        return "zip"
+    if "rar" in file_type:
+        return "rar"
+
+    # .NET / Java
+    if "msil" in file_type or ".net" in file_type:
+        return "exe"
+    if "java" in file_type or file_mime == "application/java-archive":
+        return "jar"
+
+    # If triage detected it as ASCII text, check YARA for hints
+    if "ascii text" in file_type or "text/plain" in file_mime:
+        yara_matches = triage.get("yara_matches", [])
+        rule_names = [m.get("rule", "").lower() for m in yara_matches]
+        if any("base64" in r or "powershell" in r for r in rule_names):
+            return "ps1"
+
+    # Unknown — let Cape auto-detect
+    return ""
