@@ -1,0 +1,541 @@
+"""
+Stage 3: Volatility memory forensics — triggered by Cape signatures.
+
+Includes malfind shellcode filtering and targeted dump extraction.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import hashlib
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _shannon_entropy(data: bytes) -> float:
+    """Calculate Shannon entropy of byte data."""
+    if not data:
+        return 0.0
+    freq = [0] * 256
+    for b in data:
+        freq[b] += 1
+    length = len(data)
+    entropy = 0.0
+    for count in freq:
+        if count > 0:
+            p = count / length
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+def _score_shellcode(first_bytes: bytes) -> int:
+    """Score a memory region for likelihood of being shellcode (0-10)."""
+    score = 0
+    if len(first_bytes) < 4:
+        return 0
+
+    # x86 function prologues
+    if first_bytes[:3] == b"\x55\x8b\xec":
+        score += 2
+    # x64 function prologues
+    if first_bytes[:3] in (b"\x48\x83\xec", b"\x48\x89\x5c"):
+        score += 2
+    # Position-independent code patterns
+    if first_bytes[:5] == b"\xe8\x00\x00\x00\x00":
+        score += 3
+    if first_bytes[:2] == b"\xfc\xe8":
+        score += 2
+    if first_bytes[:1] == b"\x60" and len(first_bytes) > 1 and first_bytes[1:2] == b"\xe8":
+        score += 2
+    # Short jmp + pop (jmp over; pop reg)
+    if first_bytes[0] == 0xeb and len(first_bytes) > first_bytes[1] + 2:
+        target = first_bytes[1] + 2
+        if target < len(first_bytes) and first_bytes[target] in range(0x58, 0x60):
+            score += 3
+
+    # Entropy check — use first 64 bytes only, not the full 256.
+    # Injected code stubs often have a small prologue at page start followed
+    # by zeros (rest of allocated page), which tanks full-page entropy unfairly.
+    entropy_sample = first_bytes[:64] if len(first_bytes) >= 64 else first_bytes
+    entropy = _shannon_entropy(entropy_sample)
+    if entropy > 5.0:
+        score += 1  # high entropy in first 64 bytes = likely real code
+    if entropy < 1.0:
+        score -= 2  # truly empty/repetitive even in first 64 bytes
+
+    # REX.W prefixes (strong x64 signal)
+    rex_count = sum(1 for b in first_bytes[:64] if b in (0x48, 0x4c, 0x4d))
+    if rex_count > 5:
+        score += 1
+
+    # Suspicious API names in the data — indicates a manually resolved import
+    # table, which is a strong injection/shellcode indicator
+    text = first_bytes.decode("ascii", errors="ignore").lower()
+    suspicious_apis = [
+        "loadlibrary", "getprocaddress", "virtualalloc", "createthread",
+        "writeprocessmemory", "createremotethread", "ntwritevirtualmemory",
+        "getmodulehandle", "iswow64", "ntdll", "kernel32", "ntcreatethreadex",
+        "rtlcreateheap", "virtualprotect",
+    ]
+    api_hits = sum(1 for api in suspicious_apis if api in text)
+    if api_hits >= 2:
+        score += 4  # strong signal — 2+ API names in 64 bytes = resolved import table
+    elif api_hits >= 1:
+        score += 2
+
+    return max(score, 0)
+
+
+def extract_shellcode_artifacts(dump_path: Path) -> dict:
+    """Extract forensic artifacts from a raw memory dump.
+
+    Scans the dump bytes for API names, file paths, DLL names, URLs, IPs,
+    embedded PE headers, and other strings of interest. These artifacts are
+    often more valuable than decompilation — they reveal what the injected
+    code was designed to do without needing to find function boundaries.
+    """
+    import re as _re
+
+    try:
+        with dump_path.open("rb") as f:
+            data = f.read(65536)  # first 64KB is plenty
+    except OSError:
+        return {}
+
+    text = data.decode("ascii", errors="ignore")
+
+    artifacts = {
+        "resolved_apis": [],
+        "file_paths": [],
+        "dll_names": [],
+        "urls": [],
+        "ip_addresses": [],
+        "registry_keys": [],
+        "embedded_pe": False,
+        "interesting_strings": [],
+    }
+
+    # Windows API names (common in resolved import tables)
+    known_apis = [
+        "LoadLibraryA", "LoadLibraryW", "GetProcAddress",
+        "VirtualAlloc", "VirtualAllocEx", "VirtualProtect", "VirtualProtectEx",
+        "CreateThread", "CreateRemoteThread", "CreateRemoteThreadEx",
+        "ResumeThread", "SuspendThread", "ExitThread",
+        "WriteProcessMemory", "ReadProcessMemory",
+        "NtWriteVirtualMemory", "NtCreateThreadEx", "NtAllocateVirtualMemory",
+        "OpenProcess", "CreateProcessA", "CreateProcessW",
+        "GetModuleHandleA", "GetModuleHandleW",
+        "IsWow64Process", "GetSystemInfo",
+        "InternetOpenA", "InternetOpenUrlA", "HttpOpenRequestA",
+        "URLDownloadToFileA", "URLDownloadToFileW",
+        "WinExec", "ShellExecuteA", "ShellExecuteW",
+        "RegOpenKeyExA", "RegSetValueExA", "RegCreateKeyExA",
+        "CryptDecrypt", "CryptEncrypt", "CryptImportKey",
+        "GetTempPathA", "GetTempPathW",
+        "Sleep", "ExitProcess", "GetLastError",
+        "WSAStartup", "connect", "send", "recv", "socket",
+    ]
+    for api in known_apis:
+        if api in text:
+            artifacts["resolved_apis"].append(api)
+
+    # File paths (Windows-style)
+    paths = _re.findall(r'[A-Z]:\\[\w\\.-]+\.\w{1,5}', text)
+    artifacts["file_paths"] = list(set(paths))[:20]
+
+    # DLL names
+    dlls = _re.findall(r'[\w.-]+\.dll', text, _re.IGNORECASE)
+    artifacts["dll_names"] = list(set(d for d in dlls if len(d) > 5))[:20]
+
+    # URLs
+    urls = _re.findall(r'https?://[^\x00\s\'"<>]{5,200}', text)
+    artifacts["urls"] = list(set(urls))[:20]
+
+    # IP addresses
+    ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', text)
+    valid_ips = []
+    for ip in ips:
+        parts = ip.split(".")
+        if all(0 <= int(p) <= 255 for p in parts) and ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
+            valid_ips.append(ip)
+    artifacts["ip_addresses"] = list(set(valid_ips))[:20]
+
+    # Registry keys
+    reg_keys = _re.findall(r'(?:HKEY_[\w]+|SOFTWARE|CurrentVersion|Run|Services)\\[\w\\]+', text)
+    artifacts["registry_keys"] = list(set(reg_keys))[:10]
+
+    # Embedded PE (MZ header anywhere in the dump)
+    mz_offsets = []
+    offset = 0
+    while True:
+        idx = data.find(b"MZ", offset)
+        if idx < 0:
+            break
+        # Check for PE signature at the typical offset
+        if idx + 0x40 < len(data):
+            pe_offset_bytes = data[idx + 0x3C:idx + 0x40]
+            if len(pe_offset_bytes) == 4:
+                pe_offset = int.from_bytes(pe_offset_bytes, "little")
+                if 0 < pe_offset < 0x400 and idx + pe_offset + 2 <= len(data):
+                    if data[idx + pe_offset:idx + pe_offset + 2] == b"PE":
+                        mz_offsets.append(f"0x{idx:x}")
+        offset = idx + 1
+    if mz_offsets:
+        artifacts["embedded_pe"] = True
+        artifacts["pe_offsets"] = mz_offsets[:5]
+
+    # Other interesting strings (mutex-like, user agents, etc.)
+    interesting = []
+    mutex_patterns = _re.findall(r'(?:Global\\|Local\\)[\w-]+', text)
+    interesting.extend([f"mutex:{m}" for m in mutex_patterns])
+    ua_patterns = _re.findall(r'Mozilla/[\d.]+[^"\x00]{10,100}', text)
+    interesting.extend([f"user-agent:{ua[:80]}" for ua in ua_patterns])
+    artifacts["interesting_strings"] = interesting[:10]
+
+    # Clean up empty lists
+    return {k: v for k, v in artifacts.items() if v}
+
+
+def filter_malfind_json(vol_malfind_output, malfind_min_size: int,
+                        malfind_max_size: int, malfind_min_score: int,
+                        malfind_max_candidates: int,
+                        malfind_benign_processes: list[str],
+                        cape_injection_pids: list[int] | None = None) -> tuple[list[dict], set[int]]:
+    """Filter malfind JSON metadata to identify shellcode candidates.
+
+    Two-pass approach: this runs first (no disk I/O) to decide which PIDs
+    are worth dumping, before we ever touch the memory image for extraction.
+
+    If cape_injection_pids is provided, regions in those PIDs get a +5 score
+    boost — Cape already confirmed injection into those processes.
+
+    Returns (selected_regions, target_pids) where target_pids is the set of
+    PIDs that produced at least one selected region.
+    """
+    cape_pids = set(cape_injection_pids or [])
+    if cape_pids:
+        print(f"    Cape injection PIDs (priority): {sorted(cape_pids)}")
+
+    if not isinstance(vol_malfind_output, list) or not vol_malfind_output:
+        print("    [!] No malfind JSON output to filter")
+        return [], set()
+
+    print(f"    Starting with {len(vol_malfind_output)} malfind regions")
+
+    # Step 1: Size filter — compute from VPN range, not from a file on disk
+    candidates = []
+    size_filtered = 0
+    for entry in vol_malfind_output:
+        pid = entry.get("PID", 0)
+        process = entry.get("Process", "unknown")
+        start_vpn = entry.get("Start VPN", 0)
+        end_vpn = entry.get("End VPN", 0)
+
+        # Region size from address range
+        if isinstance(start_vpn, int) and isinstance(end_vpn, int) and end_vpn >= start_vpn:
+            size = end_vpn - start_vpn + 1
+        else:
+            size = 0
+
+        if size < malfind_min_size or size > malfind_max_size:
+            size_filtered += 1
+            continue
+
+        start_vpn_str = f"0x{start_vpn:x}" if isinstance(start_vpn, int) else str(start_vpn)
+        candidates.append({
+            "pid": pid,
+            "process": process,
+            "start_vpn": start_vpn_str,
+            "size": size,
+            "protection": entry.get("Protection", ""),
+            "file_output": entry.get("File output", ""),
+            "_hexdump": entry.get("Hexdump", ""),
+        })
+
+    print(f"    Size filter: kept {len(candidates)}/{len(vol_malfind_output)} (dropped {size_filtered})")
+
+    # Step 2: Benign process filter
+    pre_process = len(candidates)
+    benign_lower = [p.lower() for p in malfind_benign_processes]
+    candidates = [c for c in candidates if c["process"].lower() not in benign_lower]
+    print(f"    Process filter: kept {len(candidates)}/{pre_process}")
+
+    # Step 3: Content heuristics — parse hex dump string into bytes
+    scored = []
+    pe_skipped = 0
+    padding_skipped = 0
+    for c in candidates:
+        hexdump_str = c.pop("_hexdump", "")
+        try:
+            # Hexdump field is space-separated hex bytes: "4d 5a 90 00 ..."
+            first_bytes = bytes(int(h, 16) for h in hexdump_str.split() if h)
+        except (ValueError, TypeError):
+            first_bytes = b""
+
+        if not first_bytes:
+            continue
+
+        if first_bytes[:2] == b"MZ":
+            pe_skipped += 1
+            continue
+
+        if len(set(first_bytes)) <= 2:
+            padding_skipped += 1
+            continue
+
+        score = _score_shellcode(first_bytes)
+        # Cape-confirmed injection PIDs get a priority boost
+        if c["pid"] in cape_pids:
+            score += 5
+            c["cape_confirmed"] = True
+        c["score"] = score
+        c["first_bytes_hex"] = first_bytes[:32].hex()
+        scored.append(c)
+
+    print(f"    Content filter: kept {len(scored)} (PE: {pe_skipped}, padding: {padding_skipped})")
+
+    # Step 4: Deduplicate by hex content hash
+    seen_hashes = set()
+    deduped = []
+    for c in scored:
+        h = hashlib.sha256(c["first_bytes_hex"].encode()).hexdigest()
+        if h in seen_hashes:
+            continue
+        seen_hashes.add(h)
+        deduped.append(c)
+
+    print(f"    Dedup: kept {len(deduped)}/{len(scored)}")
+
+    # Step 5: Score filter + top N
+    above_threshold = [c for c in deduped if c["score"] >= malfind_min_score]
+    above_threshold.sort(key=lambda c: c["score"], reverse=True)
+    selected = above_threshold[:malfind_max_candidates]
+
+    # Log near misses for tuning
+    near_misses = [c for c in deduped if 0 < c["score"] < malfind_min_score]
+    if near_misses:
+        print(f"    Near misses (score 1-{malfind_min_score - 1}): {len(near_misses)} regions")
+        for nm in near_misses[:5]:
+            print(f"      {nm['process']} pid={nm['pid']} score={nm['score']} bytes={nm['first_bytes_hex'][:16]}")
+
+    print(f"    Selected: {len(selected)} candidates (min_score={malfind_min_score})")
+    for c in selected:
+        print(f"      {c['process']} pid={c['pid']} addr={c.get('start_vpn', '?')} score={c['score']} size={c['size']} bytes={c['first_bytes_hex'][:16]}")
+
+    target_pids = {c["pid"] for c in selected}
+    return selected, target_pids
+
+
+def run_targeted_malfind_dump(dump_path: Path, target_pids: set[int],
+                              output_dir: Path, volatility_cmd: str) -> Path:
+    """Run malfind --dump for selected PIDs only, then move dumps to malfind_dumps/.
+
+    Targeted extraction is much faster than dumping all 17K regions — we only
+    write files for the handful of PIDs that passed the heuristic filter.
+    """
+    malfind_dump_dir = output_dir / "malfind_dumps"
+    malfind_dump_dir.mkdir(parents=True, exist_ok=True)
+
+    pid_str = ",".join(str(p) for p in sorted(target_pids))
+    print(f"    Running targeted malfind --dump for PIDs: {pid_str}")
+
+    try:
+        result = subprocess.run(
+            [
+                volatility_cmd,
+                str(dump_path),
+                "windows.malfind",
+                str(output_dir),
+                "--pid", pid_str,
+                "--dump",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            print(f"    [!] Targeted malfind --dump failed: {result.stderr[:200]}")
+    except subprocess.TimeoutExpired:
+        print("    [!] Targeted malfind --dump timed out (600s)")
+
+    # Move any pid.*.dmp files written to output_dir into malfind_dumps/
+    moved = 0
+    for dmp in output_dir.glob("pid.*.dmp"):
+        dmp.rename(malfind_dump_dir / dmp.name)
+        moved += 1
+    print(f"    Moved {moved} dump file(s) to {malfind_dump_dir.name}/")
+
+    return malfind_dump_dir
+
+
+def should_run_volatility(cape_data: dict, volatility_cmd: str,
+                          volatility_triggers: list[str],
+                          get_cape_signatures_fn) -> bool:
+    """Check if Cape signatures trigger Volatility analysis."""
+    if cape_data.get("status") != "reported":
+        return False
+    if not Path(volatility_cmd).exists():
+        return False
+    sigs = get_cape_signatures_fn(cape_data)
+    return any(sig in volatility_triggers for sig in sigs)
+
+
+def get_memory_dump_path(cape_data: dict) -> Path | None:
+    """Find the memory dump from Cape's analysis storage."""
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return None
+    # Cape stores memory dumps at storage/analyses/<id>/memory.dmp
+    dump_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/memory.dmp")
+    if dump_path.exists():
+        return dump_path
+    return None
+
+
+def determine_extra_plugins(cape_data: dict, volatility_extra_plugins: dict,
+                            get_cape_signatures_fn) -> list[str]:
+    """Determine which extra Volatility plugins to run based on triggers."""
+    sigs = get_cape_signatures_fn(cape_data)
+    extras = set()
+    for category, config in volatility_extra_plugins.items():
+        triggers = config.get("triggers", [])
+        plugins = config.get("plugins", [])
+        if any(sig in triggers for sig in sigs):
+            extras.update(plugins)
+    return sorted(extras)
+
+
+def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
+                      volatility_cmd: str,
+                      extra_args: list[str] | None = None) -> dict:
+    """Run a single Volatility plugin. Returns parsed JSON or error."""
+    # malfind with --dump is extremely slow on 4GB+ dumps — writing 17K+
+    # binary regions to disk. vadinfo is also slow. Other plugins are fast.
+    short_name = plugin.replace("windows.", "").replace("malware.", "")
+    if short_name == "malfind" and extra_args and "--dump" in extra_args:
+        plugin_timeout = 1800  # 30 min for malfind with disk dump
+    elif short_name in ("malfind", "vadinfo", "handles"):
+        plugin_timeout = 900   # 15 min for heavy plugins
+    else:
+        plugin_timeout = 300   # 5 min for standard plugins
+    try:
+        cmd = [volatility_cmd, str(dump_path), plugin, str(output_dir)]
+        if extra_args:
+            cmd.extend(extra_args)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=plugin_timeout,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:200]}
+        # Volatility may print progress messages before the JSON output.
+        # Find the JSON array/object by locating the first [ or { and last ] or }
+        stdout = result.stdout
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            pass
+        # Try extracting JSON from within progress noise
+        for start_char, end_char in [("[", "]"), ("{", "}")]:
+            start = stdout.find(start_char)
+            end = stdout.rfind(end_char)
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(stdout[start:end + 1])
+                except json.JSONDecodeError:
+                    continue
+        # Last resort: try each line
+        for line in stdout.strip().split("\n"):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        return {"error": "invalid JSON output", "raw": result.stdout[:500]}
+    except subprocess.TimeoutExpired:
+        return {"error": f"timeout ({plugin_timeout}s)"}
+
+
+def run_volatility(cape_data: dict, output_dir: Path,
+                   volatility_cmd: str,
+                   volatility_triggers: list[str],
+                   volatility_standard_plugins: list[str],
+                   volatility_extra_plugins: dict,
+                   malfind_enabled: bool,
+                   malfind_min_size: int,
+                   malfind_max_size: int,
+                   malfind_min_score: int,
+                   malfind_max_candidates: int,
+                   malfind_benign_processes: list[str],
+                   get_cape_signatures_fn,
+                   cape_injection_pids: list[int] | None = None) -> dict:
+    """Run Volatility 3 plugins on the memory dump."""
+    dump_path = get_memory_dump_path(cape_data)
+    if not dump_path:
+        return {"triggered": True, "error": "memory dump not found"}
+
+    sigs = get_cape_signatures_fn(cape_data)
+    trigger_sigs = [s for s in sigs if s in volatility_triggers]
+    extra_plugins = determine_extra_plugins(cape_data, volatility_extra_plugins,
+                                            get_cape_signatures_fn)
+    all_plugins = volatility_standard_plugins + extra_plugins
+
+    result = {
+        "triggered": True,
+        "trigger_signatures": trigger_sigs,
+        "plugins_run": [p.replace("windows.", "") for p in all_plugins],
+        "plugins": {},
+        "summary": {
+            "injected_processes": 0,
+            "suspicious_connections": 0,
+        },
+    }
+
+    for plugin in all_plugins:
+        short_name = plugin.replace("windows.", "").replace("malware.", "")
+        print(f"    Running {plugin}...")
+        # First malfind pass: JSON only (no --dump), fast and complete
+        plugin_output = run_single_plugin(dump_path, plugin, output_dir,
+                                          volatility_cmd)
+        result["plugins"][short_name] = plugin_output
+
+        # Build summary from key plugins
+        if short_name == "malfind" and isinstance(plugin_output, list):
+            result["summary"]["injected_processes"] = len(plugin_output)
+
+            # Two-pass malfind: filter JSON immediately, then run targeted dump
+            # while the memory dump is guaranteed to still exist (Cape may delete
+            # it after its processor finishes, which can happen during later plugins)
+            if malfind_enabled:
+                print(f"    Filtering malfind JSON for shellcode candidates...")
+                selected_regions, target_pids = filter_malfind_json(
+                    plugin_output,
+                    malfind_min_size=malfind_min_size,
+                    malfind_max_size=malfind_max_size,
+                    malfind_min_score=malfind_min_score,
+                    malfind_max_candidates=malfind_max_candidates,
+                    malfind_benign_processes=malfind_benign_processes,
+                    cape_injection_pids=cape_injection_pids,
+                )
+                if target_pids and dump_path.exists():
+                    malfind_dump_dir = run_targeted_malfind_dump(
+                        dump_path, target_pids, output_dir, volatility_cmd)
+                    result["_malfind_selected"] = selected_regions
+                    result["_malfind_dump_dir"] = str(malfind_dump_dir)
+                else:
+                    result["_malfind_selected"] = selected_regions
+                    result["_malfind_dump_dir"] = ""
+
+        elif short_name == "netscan" and isinstance(plugin_output, list):
+            result["summary"]["suspicious_connections"] = len(plugin_output)
+
+    # Clean up memory dump after all plugins are done
+    if dump_path.exists():
+        print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
+        dump_path.unlink(missing_ok=True)
+
+    return result

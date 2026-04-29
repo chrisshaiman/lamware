@@ -38,14 +38,16 @@ pipeline_volatility_extra_plugins:
       - injection_ntqueueapcthread
       - injection_write_process
       - injection_rwx
-      - process_hollowing
-      - reflective_dll_loading
-      - shellcode_execution
-      - api_unhooking
-      - antisandbox_unhook
       - creates_suspended_process
     plugins:
       - windows.handles
+  # vadinfo is expensive (10+ min on 4GB dumps) — only run for techniques
+  # where full memory layout matters, not standard injection
+  memory_layout:
+    triggers:
+      - process_hollowing
+      - reflective_dll_loading
+    plugins:
       - windows.vadinfo
   persistence:
     triggers:

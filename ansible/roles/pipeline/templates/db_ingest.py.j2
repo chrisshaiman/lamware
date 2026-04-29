@@ -1,0 +1,239 @@
+"""
+Database ingestion — write structured analysis data to PostgreSQL.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import sys
+
+
+# -------------------------------------------------------------------------
+# Configuration (injected by Ansible template)
+# -------------------------------------------------------------------------
+
+DB_HOST = "{{ postgres_listen_address | default('127.0.0.1') }}"
+DB_PORT = {{ postgres_port | default(5432) }}
+DB_NAME = "{{ postgres_db_name | default('malware_analysis') }}"
+DB_USER = "{{ postgres_db_user | default('pipeline') }}"
+DB_PASSWORD = "{{ pipeline_db_password | default('') }}"
+
+
+def ingest_to_db(report: dict) -> bool:
+    """Write structured analysis data to PostgreSQL.
+
+    Inserts/updates samples, analyses, IOCs, techniques, capabilities,
+    signatures, and network events. Returns True on success.
+    """
+    if not DB_PASSWORD:
+        print("  [!] DB ingestion skipped — no database password configured")
+        return False
+
+    try:
+        import psycopg2
+        import psycopg2.extras
+    except ImportError:
+        print("  [!] DB ingestion skipped — psycopg2 not installed")
+        return False
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        conn.autocommit = False
+        cur = conn.cursor()
+    except Exception as e:
+        print(f"  [!] DB connection failed: {e}")
+        return False
+
+    try:
+        # --- Upsert sample ---
+        triage = report.get("triage", {})
+        ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
+        sha256 = ghidra_files[0].get("sha256", "") if ghidra_files else ""
+        if not sha256:
+            sha256 = report.get("task_id", "unknown")
+
+        cur.execute("""
+            INSERT INTO samples (sha256, filename, file_type, file_mime, entropy, ssdeep)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sha256) DO UPDATE SET
+                last_seen = NOW(),
+                filename = COALESCE(EXCLUDED.filename, samples.filename)
+            RETURNING id
+        """, (
+            sha256,
+            report.get("sample_name", ""),
+            triage.get("file_type", ""),
+            triage.get("file_mime", ""),
+            triage.get("entropy"),
+            triage.get("ssdeep", ""),
+        ))
+        sample_id = cur.fetchone()[0]
+
+        # --- Insert analysis ---
+        interp = report.get("llm_interpretation", {})
+        analysis = interp.get("analysis", {})
+        summary = report.get("executive_summary", {})
+
+        cur.execute("""
+            INSERT INTO analyses (
+                sample_id, task_id, started_at, completed_at,
+                severity, malscore, malware_family_guess,
+                triage_completed, cape_completed, cape_task_id,
+                volatility_completed, volatility_triggered,
+                ghidra_completed, ghidra_triggered,
+                interpret_completed, summary_completed,
+                interpret_model, interpret_tool_calls, interpret_duration_secs,
+                interpret_escalated, possible_prompt_influence,
+                narrative, working_notes, executive_summary,
+                report_json
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            ) RETURNING id
+        """, (
+            sample_id,
+            report.get("task_id", ""),
+            report.get("started_at"),
+            report.get("completed_at"),
+            summary.get("severity") or analysis.get("risk_assessment"),
+            report.get("cape", {}).get("malscore"),
+            analysis.get("malware_family_guess"),
+            bool(triage),
+            report.get("cape", {}).get("status") == "reported",
+            report.get("cape", {}).get("task_id"),
+            bool(report.get("volatility", {}).get("plugins")),
+            report.get("volatility", {}).get("triggered", False),
+            bool(ghidra_files),
+            report.get("ghidra", {}).get("triggered", False),
+            interp.get("enabled", False) and "error" not in interp,
+            bool(summary.get("executive_summary")),
+            interp.get("model_final", interp.get("model_initial")),
+            interp.get("tool_calls_used", 0),
+            interp.get("duration_seconds"),
+            interp.get("escalated", False),
+            interp.get("possible_prompt_influence", False),
+            analysis.get("narrative", ""),
+            analysis.get("working_notes", ""),
+            summary.get("executive_summary", ""),
+            psycopg2.extras.Json(report),
+        ))
+        analysis_id = cur.fetchone()[0]
+
+        # --- Insert IOCs ---
+        for ioc in report.get("extracted_iocs", []):
+            cur.execute("""
+                INSERT INTO ioc_values (type, value)
+                VALUES (%s, %s)
+                ON CONFLICT (type, value) DO UPDATE SET
+                    last_seen = NOW()
+                RETURNING id
+            """, (ioc["type"], ioc["value"]))
+            ioc_id = cur.fetchone()[0]
+
+            cur.execute("""
+                INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING
+            """, (analysis_id, ioc_id, ioc["source"], ioc.get("context", "")))
+
+        # --- Insert MITRE techniques ---
+        # From AI RE
+        for t in analysis.get("attack_techniques", []):
+            cur.execute("""
+                INSERT INTO technique_values (technique_id, technique_name)
+                VALUES (%s, %s)
+                ON CONFLICT (technique_id) DO NOTHING
+                RETURNING id
+            """, (t.get("id", ""), t.get("name", "")))
+            row = cur.fetchone()
+            if row:
+                tech_id = row[0]
+            else:
+                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                            (t.get("id", ""),))
+                tech_id = cur.fetchone()[0]
+
+            cur.execute("""
+                INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
+            """, (analysis_id, tech_id, "AI Reverse Engineering"))
+
+        # From Cape TTPs
+        for t in report.get("cape", {}).get("mitre_ttps", []):
+            cur.execute("""
+                INSERT INTO technique_values (technique_id, technique_name)
+                VALUES (%s, %s)
+                ON CONFLICT (technique_id) DO NOTHING
+                RETURNING id
+            """, (t.get("id", ""), t.get("source_signature", "")))
+            row = cur.fetchone()
+            if row:
+                tech_id = row[0]
+            else:
+                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                            (t.get("id", ""),))
+                tech_id = cur.fetchone()[0]
+
+            cur.execute("""
+                INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
+            """, (analysis_id, tech_id, "Cape", t.get("source_signature", "")))
+
+        # --- Insert capabilities ---
+        for cap in analysis.get("capabilities", []):
+            cur.execute("""
+                INSERT INTO capabilities (analysis_id, description, source_stage)
+                VALUES (%s, %s, %s)
+            """, (analysis_id, cap, "AI Reverse Engineering"))
+
+        # --- Insert signatures ---
+        for sig in report.get("cape", {}).get("signatures", []):
+            cur.execute("""
+                INSERT INTO signatures (analysis_id, name, severity, description)
+                VALUES (%s, %s, %s, %s)
+            """, (analysis_id, sig.get("name", ""), sig.get("severity", 0),
+                  sig.get("description", "")))
+
+        # --- Insert network events ---
+        cape_net = report.get("cape", {}).get("network", {})
+        for d in cape_net.get("dns_queries", []):
+            cur.execute("""
+                INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers)
+                VALUES (%s, 'dns', %s, %s, %s)
+            """, (analysis_id, d.get("domain", ""), d.get("type", ""),
+                  psycopg2.extras.Json(d.get("answers", []))))
+
+        for h in cape_net.get("http_requests", []):
+            cur.execute("""
+                INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host)
+                VALUES (%s, 'http', %s, %s, %s)
+            """, (analysis_id, h.get("method", ""), h.get("url", ""), h.get("host", "")))
+
+        for c in cape_net.get("tcp_connections", []):
+            dst = c.get("dst", "")
+            src = c.get("src", "")
+            dst_ip, dst_port = (dst.rsplit(":", 1) + ["0"])[:2] if ":" in dst else (dst, "0")
+            src_ip, src_port = (src.rsplit(":", 1) + ["0"])[:2] if ":" in src else (src, "0")
+            cur.execute("""
+                INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port)
+                VALUES (%s, 'tcp', %s, %s, %s, %s)
+            """, (analysis_id, src_ip, int(src_port) if src_port.isdigit() else 0,
+                  dst_ip, int(dst_port) if dst_port.isdigit() else 0))
+
+        conn.commit()
+        print(f"  DB: ingested analysis {analysis_id} for sample {sample_id}")
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        print(f"  [!] DB ingestion error: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()

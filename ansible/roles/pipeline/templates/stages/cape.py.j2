@@ -1,0 +1,265 @@
+"""
+Stage 2: Cape dynamic analysis — submit samples, poll for results,
+extract intelligence from Cape's full analysis report.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+
+# -------------------------------------------------------------------------
+# Configuration (injected by Ansible template)
+# -------------------------------------------------------------------------
+
+CAPE_API_URL = "{{ cape_api_url }}"
+CAPE_API_KEY = "{{ cape_api_key }}"
+CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
+CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
+
+
+def cape_headers() -> dict:
+    """Build Cape API auth headers."""
+    if not CAPE_API_KEY or CAPE_API_KEY.startswith("PLACEHOLDER"):
+        return {}
+    return {"Authorization": f"Token {CAPE_API_KEY}"}
+
+
+def derive_filename(sample_path: Path, package: str, original_name: str = "") -> str:
+    """Derive a meaningful filename for Cape submission.
+
+    Priority: original_name (from sample-feeder) > sample_path name with
+    triage-derived extension > sample_path name as-is.
+    """
+    if original_name:
+        return original_name
+    name = sample_path.name
+    if "." not in name and package:
+        # No extension — append one from the detected package
+        ext_map = {
+            "exe": ".exe", "dll": ".dll", "ps1": ".ps1", "bat": ".bat",
+            "vbs": ".vbs", "js": ".js", "doc": ".doc", "xls": ".xls",
+            "pdf": ".pdf", "zip": ".zip", "rar": ".rar", "jar": ".jar",
+            "python": ".py",
+        }
+        ext = ext_map.get(package, "")
+        if ext:
+            name = f"{name}{ext}"
+    return name
+
+
+def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
+                   filename: str = "", custom: str = "") -> int:
+    """Submit sample to Cape API. Returns task ID."""
+    url = f"{CAPE_API_URL}/tasks/create/file/"
+    submit_name = filename or sample_path.name
+    data = {
+        "tags": ",".join(tags),
+        "memory": "1",
+        "custom": custom,
+    }
+    if package:
+        data["package"] = package
+    with sample_path.open("rb") as fh:
+        resp = requests.post(
+            url,
+            files={"file": (submit_name, fh)},
+            data=data,
+            headers=cape_headers(),
+            timeout=30,
+        )
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("error"):
+        raise ValueError(f"Cape submission error: {result.get('error_value', result)}")
+    return result["data"]["task_ids"][0]
+
+
+def poll_cape_task(task_id: int) -> dict:
+    """Poll Cape API until task is reported or timeout."""
+    url = f"{CAPE_API_URL}/tasks/view/{task_id}/"
+    start = time.time()
+    last_status = ""
+
+    while time.time() - start < CAPE_TIMEOUT:
+        try:
+            resp = requests.get(url, headers=cape_headers(), timeout=10)
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            status = data.get("status", "unknown")
+
+            if status != last_status:
+                elapsed = int(time.time() - start)
+                print(f"  Cape task {task_id}: {status} ({elapsed}s)")
+                last_status = status
+
+            if status == "reported":
+                return data
+
+        except requests.RequestException as e:
+            print(f"  [!] Cape API error: {e}", file=sys.stderr)
+
+        time.sleep(CAPE_POLL_INTERVAL)
+
+    print(f"  [!] Cape timeout after {CAPE_TIMEOUT}s", file=sys.stderr)
+    return {"status": "timeout", "id": task_id}
+
+
+def get_cape_signatures(cape_data: dict) -> list[str]:
+    """Extract signature names from Cape task data."""
+    # Cape stores signatures in the full report, not the task view.
+    # Check the storage path for the report JSON.
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return []
+    report_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/reports/report.json")
+    if not report_path.exists():
+        return []
+    try:
+        with report_path.open() as f:
+            report = json.load(f)
+        return [s.get("name", "") for s in report.get("signatures", [])]
+    except (json.JSONDecodeError, KeyError):
+        return []
+
+
+def extract_cape_intel(cape_data: dict) -> dict:
+    """Extract rich intelligence from Cape's full analysis report.
+
+    Pulls: behavioral signatures with MITRE TTPs, network IOCs (DNS, domains,
+    hosts), CAPE config extraction (C2s, keys), and payload metadata.
+    """
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    if not task_id:
+        return {}
+    report_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/reports/report.json")
+    if not report_path.exists():
+        return {}
+    try:
+        with report_path.open() as f:
+            full_report = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {"error": "Failed to parse Cape report JSON"}
+
+    intel = {}
+
+    # Behavioral signatures with severity and descriptions
+    sigs = full_report.get("signatures", [])
+    intel["signatures"] = [
+        {
+            "name": s.get("name", ""),
+            "severity": s.get("severity", 0),
+            "description": s.get("description", ""),
+        }
+        for s in sigs
+    ]
+
+    # Extract injection PIDs from signature data — Cape knows exactly which
+    # processes were involved in injection. These PIDs can guide Volatility's
+    # malfind analysis to the most interesting memory regions.
+    injection_pids = set()
+    injection_details = []
+    injection_sig_names = [
+        "creates_suspended_process", "resumethread_remote_process",
+        "injection_write_process", "injection_write_exe_process",
+        "injection_rwx", "injection_module_stomping_probing",
+    ]
+    for s in sigs:
+        if s.get("name", "") not in injection_sig_names:
+            continue
+        for d in s.get("data", []):
+            # Extract PIDs from data entries
+            if isinstance(d, dict):
+                pid = d.get("pid")
+                if pid and isinstance(pid, int):
+                    injection_pids.add(pid)
+                # Parse text descriptions for target PIDs
+                for key in ("thread_resumed", "write_memory", "write_exe_memory"):
+                    text = d.get(key, "")
+                    if text:
+                        injection_details.append(text)
+                        # Extract "process ID XXXX" patterns
+                        import re
+                        pids_in_text = re.findall(r'process ID (\d+)', text)
+                        for p in pids_in_text:
+                            injection_pids.add(int(p))
+
+    intel["injection_pids"] = sorted(injection_pids)
+    intel["injection_details"] = injection_details[:20]
+
+    # MITRE TTPs from Cape signatures (already mapped by Cape)
+    ttps = full_report.get("ttps", [])
+    cape_mitre = []
+    for entry in ttps:
+        sig_name = entry.get("signature", "")
+        for ttp in entry.get("ttps", []):
+            cape_mitre.append({"id": ttp, "source_signature": sig_name})
+    intel["mitre_ttps"] = cape_mitre
+
+    # Network IOCs
+    net = full_report.get("network", {})
+    network_iocs = {}
+
+    dns = net.get("dns", [])
+    if dns:
+        network_iocs["dns_queries"] = [
+            {"domain": d.get("request", ""), "type": d.get("type", ""),
+             "answers": d.get("answers", [])}
+            for d in dns[:50]
+        ]
+
+    domains = net.get("domains", [])
+    if domains:
+        network_iocs["domains"] = [
+            {"domain": d.get("domain", ""), "ip": d.get("ip", "")}
+            for d in domains[:50]
+        ]
+
+    hosts = net.get("hosts", [])
+    if hosts:
+        network_iocs["hosts"] = hosts[:50]
+
+    http = net.get("http", [])
+    if http:
+        network_iocs["http_requests"] = [
+            {"url": h.get("uri", ""), "method": h.get("method", ""),
+             "host": h.get("host", "")}
+            for h in http[:50]
+        ]
+
+    tcp = net.get("tcp", [])
+    if tcp:
+        network_iocs["tcp_connections"] = [
+            {"dst": f"{c.get('dst', '')}:{c.get('dport', '')}",
+             "src": f"{c.get('src', '')}:{c.get('sport', '')}"}
+            for c in tcp[:50]
+        ]
+
+    if network_iocs:
+        intel["network"] = network_iocs
+
+    # CAPE config extraction (C2 addresses, encryption keys, campaign IDs)
+    cape_data_section = full_report.get("CAPE", {})
+    configs = cape_data_section.get("configs", [])
+    if configs:
+        intel["extracted_configs"] = configs
+
+    # CAPE payloads (unpacked/injected code extracted by Cape)
+    payloads = cape_data_section.get("payloads", [])
+    if payloads:
+        intel["payloads_extracted"] = len(payloads)
+        intel["payload_samples"] = [
+            {"sha256": p.get("sha256", "")[:20] + "...", "size": p.get("size", 0)}
+            for p in payloads[:10]
+        ]
+
+    # Malscore
+    intel["malscore"] = full_report.get("malscore", 0)
+
+    return intel
