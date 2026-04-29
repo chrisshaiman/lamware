@@ -473,18 +473,31 @@ def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
         )
         if result.returncode != 0:
             return {"error": result.stderr[:200]}
-        return json.loads(result.stdout)
-    except subprocess.TimeoutExpired:
-        return {"error": f"timeout ({plugin_timeout}s)"}
-    except json.JSONDecodeError:
-        # Volatility JSON output may have extra lines — try to extract
-        lines = result.stdout.strip().split("\n")
-        for line in lines:
+        # Volatility may print progress messages before the JSON output.
+        # Find the JSON array/object by locating the first [ or { and last ] or }
+        stdout = result.stdout
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            pass
+        # Try extracting JSON from within progress noise
+        for start_char, end_char in [("[", "]"), ("{", "}")]:
+            start = stdout.find(start_char)
+            end = stdout.rfind(end_char)
+            if start >= 0 and end > start:
+                try:
+                    return json.loads(stdout[start:end + 1])
+                except json.JSONDecodeError:
+                    continue
+        # Last resort: try each line
+        for line in stdout.strip().split("\n"):
             try:
                 return json.loads(line)
             except json.JSONDecodeError:
                 continue
         return {"error": "invalid JSON output", "raw": result.stdout[:500]}
+    except subprocess.TimeoutExpired:
+        return {"error": f"timeout ({plugin_timeout}s)"}
 
 
 def run_volatility(cape_data: dict, output_dir: Path) -> dict:
@@ -510,21 +523,37 @@ def run_volatility(cape_data: dict, output_dir: Path) -> dict:
     }
 
     for plugin in all_plugins:
-        short_name = plugin.replace("windows.", "")
+        short_name = plugin.replace("windows.", "").replace("malware.", "")
         print(f"    Running {plugin}...")
-        extra = ["--dump"] if short_name == "malfind" and MALFIND_ENABLED else None
-        plugin_output = run_single_plugin(dump_path, plugin, output_dir, extra_args=extra)
+        # First malfind pass: JSON only (no --dump), fast and complete
+        plugin_output = run_single_plugin(dump_path, plugin, output_dir)
         result["plugins"][short_name] = plugin_output
 
         # Build summary from key plugins
         if short_name == "malfind" and isinstance(plugin_output, list):
             result["summary"]["injected_processes"] = len(plugin_output)
+
+            # Two-pass malfind: filter JSON immediately, then run targeted dump
+            # while the memory dump is guaranteed to still exist (Cape may delete
+            # it after its processor finishes, which can happen during later plugins)
+            if MALFIND_ENABLED:
+                print(f"    Filtering malfind JSON for shellcode candidates...")
+                selected_regions, target_pids = filter_malfind_json(plugin_output)
+                if target_pids and dump_path.exists():
+                    malfind_dump_dir = run_targeted_malfind_dump(dump_path, target_pids, output_dir)
+                    result["_malfind_selected"] = selected_regions
+                    result["_malfind_dump_dir"] = str(malfind_dump_dir)
+                else:
+                    result["_malfind_selected"] = selected_regions
+                    result["_malfind_dump_dir"] = ""
+
         elif short_name == "netscan" and isinstance(plugin_output, list):
             result["summary"]["suspicious_connections"] = len(plugin_output)
 
-    # Clean up memory dump immediately after processing
-    print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
-    dump_path.unlink(missing_ok=True)
+    # Clean up memory dump after all plugins are done
+    if dump_path.exists():
+        print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
+        dump_path.unlink(missing_ok=True)
 
     return result
 
@@ -721,67 +750,52 @@ def extract_shellcode_artifacts(dump_path: Path) -> dict:
     return {k: v for k, v in artifacts.items() if v}
 
 
-def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
-    """Filter malfind dump files to find shellcode candidates."""
-    if not dump_dir.exists():
-        print("    [!] Malfind dump directory not found")
-        return []
+def filter_malfind_json(vol_malfind_output) -> tuple[list[dict], set[int]]:
+    """Filter malfind JSON metadata to identify shellcode candidates.
 
-    dump_files = list(dump_dir.glob("*.dmp"))
-    if not dump_files:
-        print("    [!] No malfind dump files found")
-        return []
+    Two-pass approach: this runs first (no disk I/O) to decide which PIDs
+    are worth dumping, before we ever touch the memory image for extraction.
 
-    print(f"    Starting with {len(dump_files)} malfind dump files")
+    Returns (selected_regions, target_pids) where target_pids is the set of
+    PIDs that produced at least one selected region.
+    """
+    if not isinstance(vol_malfind_output, list) or not vol_malfind_output:
+        print("    [!] No malfind JSON output to filter")
+        return [], set()
 
-    # Parse malfind JSON to get process info per region.
-    # The "File output" field contains the exact dump filename (e.g.,
-    # "pid.736.vad.0x7ffcd1d70000-0x7ffcd1d7efff.dmp") which we use
-    # as the lookup key to match dump files to their metadata.
-    region_info = {}
-    if isinstance(vol_malfind_output, list):
-        for entry in vol_malfind_output:
-            pid = entry.get("PID", 0)
-            process = entry.get("Process", "unknown")
-            start_vpn = entry.get("Start VPN", 0)
-            # Use the File output field as the key — it matches the dump filename
-            file_output = entry.get("File output", "")
-            if file_output and file_output != "Disabled":
-                # Strip .dmp extension to match Path.stem
-                key = file_output.replace(".dmp", "") if file_output.endswith(".dmp") else file_output
-            else:
-                # Fallback: reconstruct from PID and addresses
-                end_vpn = entry.get("End VPN", 0)
-                if isinstance(start_vpn, int) and isinstance(end_vpn, int):
-                    key = f"pid.{pid}.vad.0x{start_vpn:x}-0x{end_vpn:x}"
-                else:
-                    key = ""
-            if key:
-                # Format start_vpn as hex string for display
-                if isinstance(start_vpn, int):
-                    start_vpn_str = f"0x{start_vpn:x}"
-                else:
-                    start_vpn_str = str(start_vpn)
-                region_info[key] = {
-                    "pid": pid,
-                    "process": process,
-                    "start_vpn": start_vpn_str,
-                    "protection": entry.get("Protection", ""),
-                }
+    print(f"    Starting with {len(vol_malfind_output)} malfind regions")
 
-    # Step 1: Size filter
+    # Step 1: Size filter — compute from VPN range, not from a file on disk
     candidates = []
     size_filtered = 0
-    for f in dump_files:
-        size = f.stat().st_size
+    for entry in vol_malfind_output:
+        pid = entry.get("PID", 0)
+        process = entry.get("Process", "unknown")
+        start_vpn = entry.get("Start VPN", 0)
+        end_vpn = entry.get("End VPN", 0)
+
+        # Region size from address range
+        if isinstance(start_vpn, int) and isinstance(end_vpn, int) and end_vpn >= start_vpn:
+            size = end_vpn - start_vpn + 1
+        else:
+            size = 0
+
         if size < MALFIND_MIN_SIZE or size > MALFIND_MAX_SIZE:
             size_filtered += 1
             continue
-        stem = f.stem
-        info = region_info.get(stem, {"pid": 0, "process": "unknown", "start_vpn": "0x0"})
-        candidates.append({"path": f, "size": size, **info})
 
-    print(f"    Size filter: kept {len(candidates)}/{len(dump_files)} (dropped {size_filtered})")
+        start_vpn_str = f"0x{start_vpn:x}" if isinstance(start_vpn, int) else str(start_vpn)
+        candidates.append({
+            "pid": pid,
+            "process": process,
+            "start_vpn": start_vpn_str,
+            "size": size,
+            "protection": entry.get("Protection", ""),
+            "file_output": entry.get("File output", ""),
+            "_hexdump": entry.get("Hexdump", ""),
+        })
+
+    print(f"    Size filter: kept {len(candidates)}/{len(vol_malfind_output)} (dropped {size_filtered})")
 
     # Step 2: Benign process filter
     pre_process = len(candidates)
@@ -789,15 +803,19 @@ def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
     candidates = [c for c in candidates if c["process"].lower() not in benign_lower]
     print(f"    Process filter: kept {len(candidates)}/{pre_process}")
 
-    # Step 3: Content heuristics
+    # Step 3: Content heuristics — parse hex dump string into bytes
     scored = []
     pe_skipped = 0
     padding_skipped = 0
     for c in candidates:
+        hexdump_str = c.pop("_hexdump", "")
         try:
-            with c["path"].open("rb") as fh:
-                first_bytes = fh.read(256)
-        except OSError:
+            # Hexdump field is space-separated hex bytes: "4d 5a 90 00 ..."
+            first_bytes = bytes(int(h, 16) for h in hexdump_str.split() if h)
+        except (ValueError, TypeError):
+            first_bytes = b""
+
+        if not first_bytes:
             continue
 
         if first_bytes[:2] == b"MZ":
@@ -815,15 +833,11 @@ def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
 
     print(f"    Content filter: kept {len(scored)} (PE: {pe_skipped}, padding: {padding_skipped})")
 
-    # Step 4: Deduplicate by first 512 bytes
+    # Step 4: Deduplicate by hex content hash
     seen_hashes = set()
     deduped = []
     for c in scored:
-        try:
-            with c["path"].open("rb") as fh:
-                h = _hashlib.sha256(fh.read(512)).hexdigest()
-        except OSError:
-            continue
+        h = _hashlib.sha256(c["first_bytes_hex"].encode()).hexdigest()
         if h in seen_hashes:
             continue
         seen_hashes.add(h)
@@ -847,7 +861,49 @@ def filter_malfind_dumps(dump_dir: Path, vol_malfind_output) -> list[dict]:
     for c in selected:
         print(f"      {c['process']} pid={c['pid']} addr={c.get('start_vpn', '?')} score={c['score']} size={c['size']} bytes={c['first_bytes_hex'][:16]}")
 
-    return selected
+    target_pids = {c["pid"] for c in selected}
+    return selected, target_pids
+
+
+def run_targeted_malfind_dump(dump_path: Path, target_pids: set[int], output_dir: Path) -> Path:
+    """Run malfind --dump for selected PIDs only, then move dumps to malfind_dumps/.
+
+    Targeted extraction is much faster than dumping all 17K regions — we only
+    write files for the handful of PIDs that passed the heuristic filter.
+    """
+    malfind_dump_dir = output_dir / "malfind_dumps"
+    malfind_dump_dir.mkdir(parents=True, exist_ok=True)
+
+    pid_str = ",".join(str(p) for p in sorted(target_pids))
+    print(f"    Running targeted malfind --dump for PIDs: {pid_str}")
+
+    try:
+        result = subprocess.run(
+            [
+                VOLATILITY_CMD,
+                str(dump_path),
+                "windows.malfind",
+                str(output_dir),
+                "--pid", pid_str,
+                "--dump",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            print(f"    [!] Targeted malfind --dump failed: {result.stderr[:200]}")
+    except subprocess.TimeoutExpired:
+        print("    [!] Targeted malfind --dump timed out (600s)")
+
+    # Move any pid.*.dmp files written to output_dir into malfind_dumps/
+    moved = 0
+    for dmp in output_dir.glob("pid.*.dmp"):
+        dmp.rename(malfind_dump_dir / dmp.name)
+        moved += 1
+    print(f"    Moved {moved} dump file(s) to {malfind_dump_dir.name}/")
+
+    return malfind_dump_dir
 
 
 def run_ghidra_shellcode(candidate: dict, output_dir: Path) -> dict:
@@ -1785,23 +1841,36 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print("  Not triggered (stub — awaiting sub-project 3)")
         report["volatility"] = {"triggered": False}
 
-    # Stage 3.5: Shellcode filtering (from malfind dumps)
+    # Stage 3.5: Shellcode analysis (dump already extracted during Volatility stage)
+    # The two-pass approach runs inside run_volatility: JSON filter right after
+    # malfind, then targeted dump while the memory dump still exists.
     shellcode_candidates = []
-    if MALFIND_ENABLED and report.get("volatility", {}).get("triggered"):
-        # Volatility --dump writes .dmp files to --workdir (/output), which maps
-        # to output_dir. Move them into a malfind_dumps subdirectory for organization.
-        malfind_dump_dir = output_dir / "malfind_dumps"
-        malfind_dump_dir.mkdir(parents=True, exist_ok=True)
-        moved = 0
-        for dmp in output_dir.glob("pid.*.dmp"):
-            dmp.rename(malfind_dump_dir / dmp.name)
-            moved += 1
-        if moved:
-            print(f"\n[Stage 3.5] Shellcode filtering: moved {moved} malfind dump files")
+    vol_data = report.get("volatility", {})
+    selected_regions = vol_data.get("_malfind_selected", [])
+    malfind_dump_dir_str = vol_data.get("_malfind_dump_dir", "")
+    malfind_dump_dir = Path(malfind_dump_dir_str) if malfind_dump_dir_str else output_dir / "malfind_dumps"
 
-        malfind_output = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
-        print(f"[Stage 3.5] Shellcode filtering: scanning malfind dumps...")
-        shellcode_candidates = filter_malfind_dumps(malfind_dump_dir, malfind_output)
+    if selected_regions:
+        print(f"\n[Stage 3.5] Shellcode analysis: {len(selected_regions)} candidates from malfind")
+
+        # Match selected regions to their dump files for Ghidra analysis
+        for region in selected_regions:
+            file_output = region.get("file_output", "")
+            if file_output:
+                dump_file = malfind_dump_dir / file_output
+                if dump_file.exists():
+                    region["path"] = dump_file
+            # Fallback: construct expected filename from PID and start address
+            if "path" not in region:
+                pattern = f"pid.{region['pid']}.vad.{region['start_vpn']}*"
+                matches = list(malfind_dump_dir.glob(pattern))
+                if matches:
+                    region["path"] = matches[0]
+
+        shellcode_candidates = [r for r in selected_regions if "path" in r]
+        if len(shellcode_candidates) < len(selected_regions):
+            missing = len(selected_regions) - len(shellcode_candidates)
+            print(f"    [!] {missing} selected regions have no dump file")
 
     # Stage 4: Ghidra (triggered by dropped payloads)
     print(f"\n[Stage 4] Ghidra: checking triggers...")
