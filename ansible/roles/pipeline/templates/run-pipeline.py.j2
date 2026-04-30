@@ -32,7 +32,7 @@ from stages.cape import (
     get_cape_signatures, extract_cape_intel,
 )
 from stages.volatility import (
-    should_run_volatility, run_volatility,
+    should_run_volatility, run_volatility, extract_shellcode_artifacts,
 )
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
@@ -108,6 +108,313 @@ def write_report(task_id: str, report: dict, reports_dir: Path) -> Path:
 
 
 # -------------------------------------------------------------------------
+# Programmatic analysis — deterministic, no LLM needed
+# -------------------------------------------------------------------------
+
+def determine_family(report: dict) -> str:
+    """Determine malware family from YARA rules and Cape signatures.
+
+    Faster, cheaper, and more consistent than LLM guessing.
+    The LLM can refine this, but the programmatic answer is the primary.
+    """
+    candidates = {}
+
+    # Cape's own family detection (highest confidence)
+    cape = report.get("cape", {})
+    for sig in cape.get("signatures", []):
+        families = sig.get("families", [])
+        if isinstance(families, list):
+            for fam in families:
+                if fam:
+                    candidates[fam.lower()] = candidates.get(fam.lower(), 0) + 10
+
+    # YARA rule names often contain family names
+    triage = report.get("triage", {})
+    known_families = [
+        "emotet", "trickbot", "qakbot", "qbot", "icedid", "dridex",
+        "cobalt", "cobaltstrike", "metasploit", "meterpreter",
+        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat",
+        "raccoon", "redline", "vidar", "lumma", "stealc",
+        "lockbit", "blackcat", "alphv", "conti", "ryuk", "revil",
+        "guloader", "smokeloader", "amadey", "systembc",
+    ]
+    for match in triage.get("yara_matches", []):
+        rule = match.get("rule", "").lower()
+        for family in known_families:
+            if family in rule:
+                candidates[family] = candidates.get(family, 0) + 5
+
+    # Cape extracted configs often have a family tag
+    for cfg in cape.get("extracted_configs", []):
+        if isinstance(cfg, dict):
+            family = cfg.get("family", "") or cfg.get("malware", "")
+            if family:
+                candidates[family.lower()] = candidates.get(family.lower(), 0) + 15
+
+    if candidates:
+        return max(candidates, key=candidates.get)
+    return "unknown"
+
+
+def calculate_severity(report: dict) -> str:
+    """Calculate severity from structured data — no LLM needed.
+
+    Scoring:
+    - Cape malscore (0-10) is the primary input
+    - High-severity Cape signatures add weight
+    - Injection behavior = critical
+    - Network C2 activity = high
+    """
+    score = 0
+    cape = report.get("cape", {})
+
+    # Cape malscore (0-10)
+    malscore = cape.get("malscore", 0)
+    if isinstance(malscore, (int, float)):
+        score += malscore * 2  # 0-20 points
+
+    # High-severity signatures
+    for sig in cape.get("signatures", []):
+        sev = sig.get("severity", 0)
+        if sev >= 3:
+            score += 3
+        elif sev >= 2:
+            score += 1
+
+    # Injection behavior
+    injection_bufs = cape.get("injection_buffers", [])
+    if injection_bufs:
+        score += 10
+
+    # Network C2
+    network = cape.get("network", {})
+    dns = network.get("dns_queries", [])
+    if dns:
+        score += 5
+
+    # Cross-correlations
+    for finding in report.get("cross_correlations", []):
+        if finding.get("severity") == "critical":
+            score += 10
+        elif finding.get("severity") == "high":
+            score += 5
+
+    if score >= 30:
+        return "critical"
+    elif score >= 20:
+        return "high"
+    elif score >= 10:
+        return "medium"
+    return "low"
+
+
+def build_mitre_mapping(report: dict) -> list[dict]:
+    """Build MITRE ATT&CK mapping from Cape TTPs — no LLM needed.
+
+    Cape already maps its behavioral signatures to MITRE technique IDs.
+    The LLM can add techniques it discovers in code, but the Cape mapping
+    is the authoritative source.
+    """
+    techniques = {}
+    cape = report.get("cape", {})
+
+    for ttp in cape.get("mitre_ttps", []):
+        tid = ttp.get("id", "")
+        if tid and tid not in techniques:
+            techniques[tid] = {
+                "id": tid,
+                "source_signature": ttp.get("source_signature", ""),
+                "sources": ["Cape"],
+            }
+
+    # Add any from LLM interpretation (supplementary)
+    llm = report.get("llm_interpretation", {})
+    analysis = llm.get("analysis", {})
+    for t in analysis.get("attack_techniques", []):
+        tid = t.get("id", "")
+        if tid:
+            if tid in techniques:
+                if "AI Reverse Engineering" not in techniques[tid]["sources"]:
+                    techniques[tid]["sources"].append("AI Reverse Engineering")
+            else:
+                techniques[tid] = {
+                    "id": tid,
+                    "name": t.get("name", ""),
+                    "sources": ["AI Reverse Engineering"],
+                }
+
+    return list(techniques.values())
+
+
+# -------------------------------------------------------------------------
+# Cross-tool correlation — findings that no single tool produces alone
+# -------------------------------------------------------------------------
+
+def cross_correlate(report: dict) -> list[dict]:
+    """Cross-reference Cape and Volatility data to find corroborated findings.
+
+    These are things an analyst would manually check — we automate them.
+    Each finding cites which tools corroborated it.
+    """
+    findings = []
+    cape = report.get("cape", {})
+    vol = report.get("volatility", {})
+    vol_plugins = vol.get("plugins", {})
+
+    # --- 1. Dropped files confirmed loaded (Cape dropped files × dlllist) ---
+    # Cape says a file was dropped. dlllist confirms it was loaded by a process.
+    dropped_files = []
+    for af in report.get("ghidra", {}).get("analyzed_files", []):
+        # Shellcode artifacts may contain file paths from injected memory
+        for path in af.get("shellcode_artifacts", {}).get("file_paths", []):
+            dropped_files.append(path)
+    # Also check Cape's dropped file list
+    cape_task_id = cape.get("task_id")
+    if cape_task_id:
+        import os
+        dropped_dir = f"/opt/CAPEv2/storage/analyses/{cape_task_id}/dropped"
+        if os.path.isdir(dropped_dir):
+            for f in os.listdir(dropped_dir):
+                dropped_files.append(f)
+
+    dlllist = vol_plugins.get("dlllist", [])
+    if isinstance(dlllist, list) and dropped_files:
+        loaded_dlls = set()
+        for entry in dlllist:
+            dll_path = entry.get("Path", "")
+            dll_name = entry.get("Name", "")
+            if dll_path:
+                loaded_dlls.add(dll_path.lower())
+                loaded_dlls.add(dll_name.lower() if dll_name else "")
+
+        for dropped in dropped_files:
+            dropped_name = dropped.lower().split("\\")[-1].split("/")[-1]
+            if dropped_name in loaded_dlls or any(dropped_name in dll for dll in loaded_dlls if dll):
+                pid_loaded_by = []
+                for entry in dlllist:
+                    if dropped_name in (entry.get("Path", "") + entry.get("Name", "")).lower():
+                        pid_loaded_by.append(f"{entry.get('Process', '?')} (pid {entry.get('PID', '?')})")
+                findings.append({
+                    "type": "dropped_file_loaded",
+                    "severity": "high",
+                    "title": f"Dropped file '{dropped_name}' was loaded and executed",
+                    "detail": f"Cape observed this file being written to disk. Volatility confirms it was loaded by: {', '.join(set(pid_loaded_by[:5]))}",
+                    "sources": ["Cape", "Volatility"],
+                    "mitre": "T1059 — Execution",
+                })
+
+    # --- 2. Shellcode self-modification (Cape buffer × malfind hexdump) ---
+    # Cape captured the bytes as they were written. Malfind shows what's in
+    # memory now. If they differ, the shellcode modified itself after injection.
+    injection_bufs = cape.get("injection_buffers", [])
+    malfind = vol_plugins.get("malfind", [])
+    if isinstance(malfind, list) and injection_bufs:
+        for buf in injection_bufs:
+            target_pid = buf.get("target_pid", 0)
+            inject_addr = buf.get("injection_address", "")
+            # Find the corresponding malfind region
+            for region in malfind:
+                region_pid = region.get("PID", 0)
+                region_start = region.get("Start VPN", 0)
+                if isinstance(region_start, int):
+                    region_start_hex = f"0x{region_start:08x}"
+                else:
+                    region_start_hex = str(region_start)
+
+                if region_pid == target_pid and inject_addr == region_start_hex:
+                    # Compare first bytes
+                    hexdump = region.get("Hexdump", "")
+                    try:
+                        malfind_bytes = bytes(
+                            int(h, 16) for h in hexdump.split()
+                            if h and len(h) == 2 and all(c in "0123456789abcdefABCDEF" for c in h)
+                        ) if hexdump else b""
+                    except (ValueError, TypeError):
+                        malfind_bytes = b""
+
+                    # Get Cape buffer first bytes for comparison
+                    buf_path = buf.get("path", "")
+                    if buf_path:
+                        import os
+                        try:
+                            with open(buf_path, "rb") as f:
+                                cape_bytes = f.read(len(malfind_bytes))
+                        except (OSError, FileNotFoundError):
+                            cape_bytes = b""
+                    else:
+                        cape_bytes = b""
+
+                    if cape_bytes and malfind_bytes and cape_bytes != malfind_bytes[:len(cape_bytes)]:
+                        findings.append({
+                            "type": "shellcode_self_modified",
+                            "severity": "high",
+                            "title": f"Injected shellcode self-modified in PID {target_pid} at {inject_addr}",
+                            "detail": f"Memory content differs from what was originally injected.",
+                            "before": cape_bytes[:64].hex(),
+                            "after": malfind_bytes[:64].hex(),
+                            "pid": target_pid,
+                            "address": inject_addr,
+                            "sources": ["Cape", "Volatility"],
+                            "mitre": "T1027 — Obfuscated Files or Information",
+                        })
+                    break
+
+    # --- 3. Command line spoofing (Cape process creation × Volatility cmdline) ---
+    # Cape logged the original command line at process creation.
+    # Volatility reads the command line from the PEB in memory.
+    # If they differ, the process overwrote its own command line.
+    cmdline = vol_plugins.get("cmdline", [])
+    if isinstance(cmdline, list):
+        vol_cmdlines = {}
+        for entry in cmdline:
+            pid = entry.get("PID", 0)
+            args = entry.get("Args", "")
+            if pid and args:
+                vol_cmdlines[pid] = args
+
+        # Cape's behavior log has process creation with command lines
+        behavior = {}
+        cape_task_id = cape.get("task_id")
+        if cape_task_id:
+            import os
+            report_path = f"/opt/CAPEv2/storage/analyses/{cape_task_id}/reports/report.json"
+            if os.path.exists(report_path):
+                try:
+                    import json as _json
+                    with open(report_path) as f:
+                        full_report = _json.load(f)
+                    for proc in full_report.get("behavior", {}).get("processes", []):
+                        pid = proc.get("process_id", 0)
+                        cmdline_cape = proc.get("environ", {}).get("CommandLine", "")
+                        if not cmdline_cape:
+                            # Try getting from process_path + command_line
+                            cmdline_cape = proc.get("command_line", "")
+                        if pid and cmdline_cape:
+                            behavior[pid] = cmdline_cape
+                except (OSError, _json.JSONDecodeError):
+                    pass
+
+        for pid, cape_cmd in behavior.items():
+            vol_cmd = vol_cmdlines.get(pid, "")
+            if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
+                # Normalize — ignore minor whitespace/case differences
+                if vol_cmd.strip().lower() != cape_cmd.strip().lower():
+                    findings.append({
+                        "type": "cmdline_spoofing",
+                        "severity": "critical",
+                        "title": f"Command line spoofing detected in PID {pid}",
+                        "detail": f"Process command line changed between execution and memory dump.",
+                        "before": cape_cmd[:300],
+                        "after": vol_cmd[:300],
+                        "pid": pid,
+                        "sources": ["Cape", "Volatility"],
+                        "mitre": "T1036 — Masquerading",
+                    })
+
+    return findings
+
+
+# -------------------------------------------------------------------------
 # Main pipeline
 # -------------------------------------------------------------------------
 
@@ -155,18 +462,89 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         # Extract rich intelligence from Cape's full report
         if cape_data.get("status") == "reported":
             print("  Extracting Cape intelligence (signatures, network, configs)...")
-            cape_intel = extract_cape_intel(cape_data)
+            cape_intel = extract_cape_intel(cape_data, output_dir=output_dir)
             report["cape"].update(cape_intel)
             sig_count = len(cape_intel.get("signatures", []))
             ttp_count = len(cape_intel.get("mitre_ttps", []))
             net_keys = list(cape_intel.get("network", {}).keys())
             payloads = cape_intel.get("payloads_extracted", 0)
+            injection_bufs = cape_intel.get("injection_buffers", [])
             print(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}")
+            if injection_bufs:
+                print(f"  Injection buffers captured: {len(injection_bufs)}")
+                for inj in injection_bufs:
+                    print(f"    {inj['source_process']} (pid {inj['source_pid']}) → pid {inj['target_pid']} at {inj['injection_address']} ({inj['size']} bytes)")
 
     except Exception as e:
         print(f"  [!] Cape submission failed: {e}", file=sys.stderr)
         report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
         cape_data = {}
+
+    # Stage 2.5: Process Cape injection buffers
+    # Cape captures the exact bytes written during cross-process injection.
+    # These are ground truth — no need for Volatility to find them.
+    cape_injection_candidates = []
+    injection_bufs = report.get("cape", {}).get("injection_buffers", [])
+    if injection_bufs:
+        print(f"\n[Stage 2.5] Processing {len(injection_bufs)} Cape injection buffer(s)...")
+        for inj in injection_bufs:
+            buf_path = Path(inj["path"])
+            if not buf_path.exists():
+                continue
+            size = inj["size"]
+            # Artifact extraction on all buffers
+            artifacts = extract_shellcode_artifacts(buf_path)
+            api_count = len(artifacts.get("resolved_apis", []))
+            path_count = len(artifacts.get("file_paths", []))
+            print(f"    {inj['source_process']} → pid {inj['target_pid']} at {inj['injection_address']}: {size} bytes, {api_count} APIs, {path_count} paths")
+
+            candidate = {
+                "source": "cape_injection",
+                "source_pid": inj["source_pid"],
+                "source_process": inj["source_process"],
+                "pid": inj["target_pid"],
+                "process": f"target_of_{inj['source_process']}",
+                "injection_address": inj["injection_address"],
+                "region_size": size,
+                "path": buf_path,
+                "shellcode_artifacts": artifacts,
+                "cape_confirmed": True,
+            }
+
+            # >= 1KB: send to Ghidra + LLM for decompilation
+            if size >= 1024:
+                candidate["analyze_with_ghidra"] = True
+                print(f"      → Queued for Ghidra + LLM analysis ({size} bytes)")
+            else:
+                candidate["analyze_with_ghidra"] = False
+                print(f"      → Artifact extraction only ({size} bytes, < 1KB)")
+
+            cape_injection_candidates.append(candidate)
+
+    # Also process Cape's large extracted payloads (unpacked shellcode, > 1KB)
+    large_payloads = report.get("cape", {}).get("large_payloads", [])
+    if large_payloads:
+        print(f"  Cape large payloads: {len(large_payloads)} (>= 1KB, queued for Ghidra + LLM)")
+        for lp in large_payloads:
+            lp_path = Path(lp["path"])
+            if not lp_path.exists():
+                continue
+            artifacts = extract_shellcode_artifacts(lp_path)
+            cape_injection_candidates.append({
+                "source": "cape_payload",
+                "pid": 0,
+                "process": f"cape_{lp.get('cape_type', 'unknown')}",
+                "injection_address": "N/A",
+                "region_size": lp["size"],
+                "path": lp_path,
+                "shellcode_artifacts": artifacts,
+                "cape_confirmed": True,
+                "analyze_with_ghidra": lp["size"] >= 1024,
+                "cape_type": lp.get("cape_type", "unknown"),
+                "sha256": lp.get("sha256", ""),
+            })
+            api_count = len(artifacts.get("resolved_apis", []))
+            print(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
 
     # Stage 3: Volatility (triggered by Cape signatures)
     print(f"\n[Stage 3] Volatility: checking triggers...")
@@ -193,6 +571,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             malfind_benign_processes=MALFIND_BENIGN_PROCESSES,
             get_cape_signatures_fn=get_cape_signatures,
             cape_injection_pids=cape_injection_pids,
+            cape_has_injection_buffers=len(cape_injection_candidates) > 0,
         )
     else:
         print("  Not triggered (stub — awaiting sub-project 3)")
@@ -228,6 +607,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         if len(shellcode_candidates) < len(selected_regions):
             missing = len(selected_regions) - len(shellcode_candidates)
             print(f"    [!] {missing} selected regions have no dump file")
+
+    # Merge Cape injection candidates with malfind candidates
+    # Cape buffers are ground truth — they go first
+    if cape_injection_candidates:
+        all_candidates = cape_injection_candidates + shellcode_candidates
+        print(f"\n  Total shellcode candidates: {len(cape_injection_candidates)} from Cape + {len(shellcode_candidates)} from malfind")
+    else:
+        all_candidates = shellcode_candidates
+    shellcode_candidates = all_candidates
 
     # Stage 4: Ghidra (triggered by dropped payloads)
     print(f"\n[Stage 4] Ghidra: checking triggers...")
@@ -275,6 +663,58 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         else:
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
+
+    # Stage 4.6: LLM analysis of shellcode artifacts (no Ghidra needed)
+    # Small injection buffers (< 1KB) with artifacts get sent directly to LLM
+    # for interpretation — the hex dump + artifact list is enough context.
+    shellcode_with_artifacts = [
+        af for af in analyzed_files
+        if af.get("shellcode_artifacts") and not af.get("analysis_success")
+    ]
+    if shellcode_with_artifacts and INTERPRET_ENABLED:
+        print(f"\n[Stage 4.6] LLM Shellcode Analysis: {len(shellcode_with_artifacts)} artifact-only candidates")
+        for sc in shellcode_with_artifacts:
+            arts = sc.get("shellcode_artifacts", {})
+            apis = arts.get("resolved_apis", [])
+            paths = arts.get("file_paths", [])
+            if apis or paths:
+                # Build a summary for the LLM without Ghidra
+                sc["llm_artifact_summary"] = {
+                    "source": sc.get("source", "unknown"),
+                    "source_process": sc.get("source_process", "unknown"),
+                    "target_pid": sc.get("pid"),
+                    "target_process": sc.get("process"),
+                    "injection_address": sc.get("injection_address"),
+                    "size": sc.get("region_size"),
+                    "resolved_apis": apis,
+                    "file_paths": paths,
+                    "dll_names": arts.get("dll_names", []),
+                    "urls": arts.get("urls", []),
+                    "ip_addresses": arts.get("ip_addresses", []),
+                    "embedded_pe": arts.get("embedded_pe", False),
+                }
+                print(f"    {sc.get('source_process', '?')} → pid {sc.get('pid')}: {len(apis)} APIs, {len(paths)} paths")
+
+    # Cross-tool correlation — must run BEFORE severity calculation
+    # (severity reads cross_correlations to boost score for critical findings)
+    print(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
+    report["cross_correlations"] = cross_correlate(report)
+    for finding in report["cross_correlations"]:
+        severity = finding.get("severity", "info")
+        title = finding.get("title", "?")
+        sources = " + ".join(finding.get("sources", []))
+        print(f"  [{severity.upper()}] {title} ({sources})")
+    if not report["cross_correlations"]:
+        print("  No cross-tool findings detected")
+
+    # Programmatic analysis — deterministic, runs before LLM
+    print(f"\n[Analysis] Programmatic analysis...")
+    report["family"] = determine_family(report)
+    report["severity"] = calculate_severity(report)
+    report["mitre_mapping"] = build_mitre_mapping(report)
+    print(f"  Family: {report['family']}")
+    print(f"  Severity: {report['severity']}")
+    print(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     # IOC extraction — pull actionable indicators from all stages
     print(f"\n[IOC Extraction] Scanning all stages for indicators...")

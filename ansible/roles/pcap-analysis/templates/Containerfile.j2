@@ -1,0 +1,22 @@
+# PCAP analysis container — Zeek + Suricata for network traffic analysis
+# Reads PCAP files, produces structured logs and IDS alerts.
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    zeek \
+    suricata \
+    python3 \
+    python3-json5 \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY analyze-pcap.py /opt/analyze-pcap.py
+COPY suricata.yaml /etc/suricata/suricata.yaml
+RUN chmod +x /opt/analyze-pcap.py
+
+# Create working directories
+RUN mkdir -p /output /rules /nonexistent && chmod 777 /nonexistent /output
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-pcap.py"]

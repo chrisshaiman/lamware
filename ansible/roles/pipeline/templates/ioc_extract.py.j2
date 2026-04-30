@@ -172,6 +172,45 @@ def extract_iocs(report: dict) -> list[dict]:
             # We add them as context but don't create IOC entries for every API
             pass
 
+    # --- Volatility insights IOCs ---
+    vol_insights = vol.get("insights", {})
+
+    # Mutex IOCs — strong family identifiers
+    for m in vol_insights.get("mutexes", []):
+        mutex_name = m.get("mutex", "")
+        if mutex_name:
+            add_ioc("mutex", mutex_name, "Volatility",
+                     f"Mutex held by {m.get('process', '?')} (pid {m.get('pid', '?')})")
+
+    # Active connections from memory
+    for conn in vol_insights.get("active_connections", []):
+        ip = conn.get("foreign_addr", "")
+        port = conn.get("foreign_port", 0)
+        if ip:
+            add_ioc("ipv4-addr", ip, "Volatility",
+                     f"Active connection from {conn.get('process', '?')} to port {port}")
+
+    # Suspicious DLLs loaded from unusual paths
+    for dll in vol_insights.get("suspicious_dlls", []):
+        path = dll.get("dll_path", "")
+        if path:
+            add_ioc("file:name", path, "Volatility",
+                     f"DLL loaded from unusual path by {dll.get('process', '?')}")
+
+    # Suspicious command lines
+    for cmd in vol_insights.get("suspicious_cmdlines", []):
+        cmdline = cmd.get("cmdline", "")
+        if cmdline:
+            add_ioc("process:command_line", cmdline[:200], "Volatility",
+                     f"Suspicious command from {cmd.get('process', '?')} (pattern: {cmd.get('pattern', '?')})")
+
+    # Suspicious file handles
+    for fh in vol_insights.get("suspicious_files", []):
+        path = fh.get("path", "")
+        if path:
+            add_ioc("file:name", path, "Volatility",
+                     f"Open file handle by {fh.get('process', '?')}")
+
     # --- AI RE IOCs (from structured analysis output) ---
     interp = report.get("llm_interpretation", {})
     analysis = interp.get("analysis", {})

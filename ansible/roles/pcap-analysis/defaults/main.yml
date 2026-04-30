@@ -1,0 +1,10 @@
+---
+# roles/pcap-analysis/defaults/main.yml
+
+pcap_analysis_install_dir: /opt/pcap-analysis
+pcap_analysis_container_memory: "1g"
+pcap_analysis_container_cpus: "1"
+pcap_analysis_container_timeout: "120"
+
+# Suricata rule update URL (ET Open ruleset)
+suricata_rules_url: "https://rules.emergingthreats.net/open/suricata-6.0/emerging-all.rules"

@@ -472,7 +472,8 @@ def run_volatility(cape_data: dict, output_dir: Path,
                    malfind_max_candidates: int,
                    malfind_benign_processes: list[str],
                    get_cape_signatures_fn,
-                   cape_injection_pids: list[int] | None = None) -> dict:
+                   cape_injection_pids: list[int] | None = None,
+                   cape_has_injection_buffers: bool = False) -> dict:
     """Run Volatility 3 plugins on the memory dump."""
     dump_path = get_memory_dump_path(cape_data)
     if not dump_path:
@@ -507,28 +508,32 @@ def run_volatility(cape_data: dict, output_dir: Path,
         if short_name == "malfind" and isinstance(plugin_output, list):
             result["summary"]["injected_processes"] = len(plugin_output)
 
-            # Two-pass malfind: filter JSON immediately, then run targeted dump
-            # while the memory dump is guaranteed to still exist (Cape may delete
-            # it after its processor finishes, which can happen during later plugins)
+            # Malfind dump strategy:
+            # - Cape has injection buffers → skip targeted dump (Cape has the bytes)
+            # - Cape has no buffers → fallback to targeted dump from memory
             if malfind_enabled:
-                print(f"    Filtering malfind JSON for shellcode candidates...")
-                selected_regions, target_pids = filter_malfind_json(
-                    plugin_output,
-                    malfind_min_size=malfind_min_size,
-                    malfind_max_size=malfind_max_size,
-                    malfind_min_score=malfind_min_score,
-                    malfind_max_candidates=malfind_max_candidates,
-                    malfind_benign_processes=malfind_benign_processes,
-                    cape_injection_pids=cape_injection_pids,
-                )
-                if target_pids and dump_path.exists():
-                    malfind_dump_dir = run_targeted_malfind_dump(
-                        dump_path, target_pids, output_dir, volatility_cmd)
-                    result["_malfind_selected"] = selected_regions
-                    result["_malfind_dump_dir"] = str(malfind_dump_dir)
+                if cape_has_injection_buffers:
+                    print(f"    Cape captured injection buffers — skipping malfind dump")
+                    print(f"    (malfind JSON metadata retained for report: {len(plugin_output)} regions)")
                 else:
-                    result["_malfind_selected"] = selected_regions
-                    result["_malfind_dump_dir"] = ""
+                    print(f"    No Cape injection buffers — running malfind heuristic filter...")
+                    selected_regions, target_pids = filter_malfind_json(
+                        plugin_output,
+                        malfind_min_size=malfind_min_size,
+                        malfind_max_size=malfind_max_size,
+                        malfind_min_score=malfind_min_score,
+                        malfind_max_candidates=malfind_max_candidates,
+                        malfind_benign_processes=malfind_benign_processes,
+                        cape_injection_pids=cape_injection_pids,
+                    )
+                    if target_pids and dump_path.exists():
+                        malfind_dump_dir = run_targeted_malfind_dump(
+                            dump_path, target_pids, output_dir, volatility_cmd)
+                        result["_malfind_selected"] = selected_regions
+                        result["_malfind_dump_dir"] = str(malfind_dump_dir)
+                    else:
+                        result["_malfind_selected"] = selected_regions
+                        result["_malfind_dump_dir"] = ""
 
         elif short_name == "netscan" and isinstance(plugin_output, list):
             result["summary"]["suspicious_connections"] = len(plugin_output)
@@ -538,4 +543,208 @@ def run_volatility(cape_data: dict, output_dir: Path,
         print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
         dump_path.unlink(missing_ok=True)
 
+    # Extract insights from all plugin outputs
+    result["insights"] = extract_volatility_insights(result.get("plugins", {}))
+    insights = result["insights"]
+    if insights:
+        items = []
+        if insights.get("suspicious_cmdlines"): items.append(f"{len(insights['suspicious_cmdlines'])} suspicious cmdlines")
+        if insights.get("active_connections"): items.append(f"{len(insights['active_connections'])} active connections")
+        if insights.get("mutexes"): items.append(f"{len(insights['mutexes'])} mutexes")
+        if insights.get("suspicious_dlls"): items.append(f"{len(insights['suspicious_dlls'])} suspicious DLLs")
+        if insights.get("anomalous_parents"): items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
+        if items:
+            print(f"    Volatility insights: {', '.join(items)}")
+
     return result
+
+
+def extract_volatility_insights(plugins: dict) -> dict:
+    """Extract actionable intelligence from Volatility plugin outputs.
+
+    Processes psscan, pstree, cmdline, netscan, dlllist, and handles
+    to find suspicious patterns, IOCs, and anomalies.
+    """
+    import re
+    insights = {}
+
+    # --- cmdline: suspicious command lines ---
+    cmdline = plugins.get("cmdline", [])
+    if isinstance(cmdline, list):
+        suspicious_cmdlines = []
+        suspicious_patterns = [
+            r'-ep\s+bypass', r'-nop\b', r'-w\s+hidden', r'-enc\s+',
+            r'encodedcommand', r'frombase64', r'downloadstring', r'invoke-expression',
+            r'iex\s*\(', r'net\.webclient', r'bitstransfer', r'start-process',
+            r'cmd\.exe\s*/c', r'wscript', r'cscript', r'mshta', r'regsvr32',
+            r'rundll32', r'certutil.*-decode', r'bitsadmin.*transfer',
+            r'powershell.*-e\s+[A-Za-z0-9+/=]{20,}',  # encoded powershell
+        ]
+        for entry in cmdline:
+            pid = entry.get("PID", 0)
+            name = entry.get("Process", "")
+            args = entry.get("Args", "")
+            if not args:
+                continue
+            args_lower = args.lower()
+            for pattern in suspicious_patterns:
+                if re.search(pattern, args_lower):
+                    suspicious_cmdlines.append({
+                        "pid": pid,
+                        "process": name,
+                        "cmdline": args[:500],
+                        "pattern": pattern,
+                    })
+                    break
+        if suspicious_cmdlines:
+            insights["suspicious_cmdlines"] = suspicious_cmdlines
+
+    # --- netscan: active network connections ---
+    netscan = plugins.get("netscan", [])
+    if isinstance(netscan, list):
+        active_connections = []
+        for conn in netscan:
+            foreign_addr = conn.get("ForeignAddr", "")
+            foreign_port = conn.get("ForeignPort", 0)
+            local_port = conn.get("LocalPort", 0)
+            state = conn.get("State", "")
+            owner = conn.get("Owner", "")
+            pid = conn.get("PID", 0)
+
+            # Skip localhost and empty
+            if not foreign_addr or foreign_addr in ("0.0.0.0", "::", "*", "127.0.0.1"):
+                continue
+
+            active_connections.append({
+                "pid": pid,
+                "process": owner,
+                "foreign_addr": foreign_addr,
+                "foreign_port": foreign_port,
+                "local_port": local_port,
+                "state": state,
+            })
+        if active_connections:
+            insights["active_connections"] = active_connections
+
+    # --- handles: mutex IOCs and suspicious file handles ---
+    handles = plugins.get("handles", [])
+    if isinstance(handles, list):
+        mutexes = []
+        suspicious_files = []
+        seen_mutexes = set()
+
+        for handle in handles:
+            handle_type = handle.get("Type", "")
+            name = handle.get("Name", "")
+            pid = handle.get("PID", 0)
+            process = handle.get("Process", "")
+
+            if not name:
+                continue
+
+            # Mutant/Mutex handles — often unique per malware family
+            if handle_type in ("Mutant", "Mutex"):
+                # Skip common Windows mutexes
+                if name.startswith(("\\BaseNamedObjects\\SM0:", "\\BaseNamedObjects\\WilStaging",
+                                    "\\BaseNamedObjects\\MSCTF", "\\BaseNamedObjects\\_SHuassist")):
+                    continue
+                if name not in seen_mutexes:
+                    seen_mutexes.add(name)
+                    mutexes.append({
+                        "pid": pid,
+                        "process": process,
+                        "mutex": name,
+                    })
+
+            # File handles to temp/suspicious paths
+            elif handle_type == "File":
+                name_lower = name.lower()
+                if any(sus in name_lower for sus in
+                       ["\\temp\\", "\\appdata\\", "\\programdata\\",
+                        ".exe", ".dll", ".bat", ".ps1", ".vbs"]):
+                    suspicious_files.append({
+                        "pid": pid,
+                        "process": process,
+                        "path": name,
+                    })
+
+        if mutexes:
+            insights["mutexes"] = mutexes[:50]
+        if suspicious_files:
+            insights["suspicious_files"] = suspicious_files[:50]
+
+    # --- dlllist: DLLs loaded from unusual paths ---
+    dlllist = plugins.get("dlllist", [])
+    if isinstance(dlllist, list):
+        suspicious_dlls = []
+        for entry in dlllist:
+            path = entry.get("Path", "")
+            name = entry.get("Name", "")
+            pid = entry.get("PID", 0)
+            process = entry.get("Process", "")
+
+            if not path:
+                continue
+
+            path_lower = path.lower()
+            # DLLs loaded from temp, user dirs, or unusual locations
+            if any(sus in path_lower for sus in
+                   ["\\temp\\", "\\appdata\\", "\\programdata\\", "\\downloads\\",
+                    "\\desktop\\", "\\public\\", "\\users\\"]):
+                # Skip known legitimate paths
+                if "\\appdata\\local\\microsoft\\" not in path_lower:
+                    suspicious_dlls.append({
+                        "pid": pid,
+                        "process": process,
+                        "dll_path": path,
+                    })
+
+        if suspicious_dlls:
+            # Dedup
+            seen = set()
+            unique_dlls = []
+            for d in suspicious_dlls:
+                if d["dll_path"] not in seen:
+                    seen.add(d["dll_path"])
+                    unique_dlls.append(d)
+            insights["suspicious_dlls"] = unique_dlls[:30]
+
+    # --- pstree: anomalous parent-child relationships ---
+    pstree = plugins.get("pstree", [])
+    if isinstance(pstree, list):
+        anomalous_parents = []
+        # Normal parent-child expectations
+        expected_parents = {
+            "svchost.exe": ["services.exe"],
+            "lsass.exe": ["wininit.exe"],
+            "smss.exe": ["system"],
+            "csrss.exe": ["smss.exe"],
+            "wininit.exe": ["smss.exe"],
+            "winlogon.exe": ["smss.exe"],
+        }
+        # pstree format varies — check if we have parent info
+        for entry in pstree:
+            name = entry.get("ImageFileName", "").lower()
+            ppid = entry.get("PPID", 0)
+            pid = entry.get("PID", 0)
+
+            if name in expected_parents:
+                # Find parent process name
+                parent = None
+                for p in pstree:
+                    if p.get("PID") == ppid:
+                        parent = p.get("ImageFileName", "").lower()
+                        break
+                if parent and parent not in expected_parents[name]:
+                    anomalous_parents.append({
+                        "pid": pid,
+                        "process": name,
+                        "parent_pid": ppid,
+                        "parent_process": parent,
+                        "expected_parents": expected_parents[name],
+                    })
+
+        if anomalous_parents:
+            insights["anomalous_parents"] = anomalous_parents
+
+    return insights

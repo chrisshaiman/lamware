@@ -129,11 +129,136 @@ def get_cape_signatures(cape_data: dict) -> list[str]:
         return []
 
 
-def extract_cape_intel(cape_data: dict) -> dict:
+def _get_arg(args, name):
+    """Extract a named argument from Cape's API call arguments list."""
+    if isinstance(args, list):
+        for a in args:
+            if isinstance(a, dict) and a.get("name") == name:
+                return a.get("value", "")
+    elif isinstance(args, dict):
+        return args.get(name, "")
+    return ""
+
+
+def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]:
+    """Extract injected shellcode bytes from Cape's WriteProcessMemory traces.
+
+    Cape captures the exact bytes written to another process's memory during
+    injection. We extract these directly — no need for Volatility malfind
+    to find them in a memory dump.
+
+    Each buffer is written to a file for artifact extraction and optionally
+    Ghidra analysis (>= 1KB).
+
+    Returns list of injection records with file paths.
+    """
+    behavior = full_report.get("behavior", {})
+    processes = behavior.get("processes", [])
+    injections = []
+    seen = set()
+
+    inject_dir = output_dir / "cape_injections"
+    inject_dir.mkdir(parents=True, exist_ok=True)
+
+    for proc in processes:
+        source_pid = proc.get("process_id", 0)
+        source_name = proc.get("process_name", "unknown")
+        calls = proc.get("calls", [])
+
+        for call in calls:
+            api = call.get("api", "")
+            args = call.get("arguments", [])
+
+            # WriteProcessMemory / NtWriteVirtualMemory — cross-process injection
+            if api not in ("WriteProcessMemory", "NtWriteVirtualMemory"):
+                continue
+
+            target_pid_str = _get_arg(args, "ProcessId")
+            base_addr = _get_arg(args, "BaseAddress")
+            buffer_data = _get_arg(args, "Buffer")
+            buf_len_str = _get_arg(args, "BufferLength") or _get_arg(args, "NumberOfBytesToWrite")
+
+            target_pid = int(target_pid_str) if target_pid_str and str(target_pid_str).isdigit() else 0
+            if not target_pid or target_pid == source_pid:
+                continue
+            if not buffer_data:
+                continue
+
+            # Dedup by (target_pid, address)
+            key = (target_pid, base_addr)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            # Decode the buffer bytes
+            # Cape stores Buffer as a Python escaped string like "\xe8\x89\x00\x00"
+            try:
+                if isinstance(buffer_data, str):
+                    # Decode Python escape sequences (\xe8 → byte 0xe8)
+                    raw_bytes = buffer_data.encode("utf-8").decode("unicode_escape").encode("latin-1")
+                elif isinstance(buffer_data, bytes):
+                    raw_bytes = buffer_data
+                else:
+                    continue
+            except (UnicodeDecodeError, ValueError):
+                # Fallback: try latin-1 direct encoding
+                try:
+                    raw_bytes = buffer_data.encode("latin-1") if isinstance(buffer_data, str) else buffer_data
+                except Exception:
+                    continue
+
+            if len(raw_bytes) < 8:
+                continue
+
+            # Write buffer to file
+            safe_addr = base_addr.replace("0x", "") if base_addr else "unknown"
+            filename = f"inject_{source_pid}_to_{target_pid}_at_{safe_addr}.bin"
+            filepath = inject_dir / filename
+            with filepath.open("wb") as f:
+                f.write(raw_bytes)
+
+            import hashlib
+            content_hash = hashlib.sha256(raw_bytes).hexdigest()
+
+            injections.append({
+                "source_pid": source_pid,
+                "source_process": source_name,
+                "target_pid": target_pid,
+                "injection_address": base_addr,
+                "size": len(raw_bytes),
+                "api": api,
+                "path": filepath,
+                "filename": filename,
+                "content_hash": content_hash,
+            })
+
+    # Dedup by content — Emotet injects the same stub into dozens of processes.
+    # Keep one representative per unique buffer, track all targets.
+    unique = {}
+    for inj in injections:
+        h = inj["content_hash"]
+        if h not in unique:
+            unique[h] = {**inj, "all_targets": []}
+        unique[h]["all_targets"].append({
+            "pid": inj["target_pid"],
+            "address": inj["injection_address"],
+        })
+
+    deduped = list(unique.values())
+    if len(deduped) < len(injections):
+        print(f"    Deduped injection buffers: {len(injections)} → {len(deduped)} unique")
+        for d in deduped:
+            print(f"      {d['source_process']} → {len(d['all_targets'])} targets ({d['size']} bytes)")
+
+    return deduped
+
+
+def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
     """Extract rich intelligence from Cape's full analysis report.
 
     Pulls: behavioral signatures with MITRE TTPs, network IOCs (DNS, domains,
-    hosts), CAPE config extraction (C2s, keys), and payload metadata.
+    hosts), CAPE config extraction (C2s, keys), payload metadata, and
+    injected shellcode buffers from API call traces.
     """
     task_id = cape_data.get("id") or cape_data.get("task_id")
     if not task_id:
@@ -258,8 +383,30 @@ def extract_cape_intel(cape_data: dict) -> dict:
             {"sha256": p.get("sha256", "")[:20] + "...", "size": p.get("size", 0)}
             for p in payloads[:10]
         ]
+        # Save paths of large payloads for Ghidra + LLM analysis
+        large_payloads = [
+            {
+                "path": p.get("path", ""),
+                "sha256": p.get("sha256", ""),
+                "size": p.get("size", 0),
+                "cape_type": p.get("cape_type", "unknown"),
+            }
+            for p in sorted(payloads, key=lambda x: x.get("size", 0), reverse=True)
+            if p.get("size", 0) >= 1024 and p.get("path")
+        ][:5]  # top 5 by size
+        if large_payloads:
+            intel["large_payloads"] = large_payloads
 
     # Malscore
     intel["malscore"] = full_report.get("malscore", 0)
+
+    # Extract injected shellcode buffers from API traces
+    if output_dir:
+        injections = extract_injection_buffers(full_report, output_dir)
+        if injections:
+            intel["injection_buffers"] = [
+                {k: str(v) if isinstance(v, Path) else v for k, v in inj.items()}
+                for inj in injections
+            ]
 
     return intel

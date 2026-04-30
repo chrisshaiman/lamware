@@ -1,21 +1,32 @@
 # Automated Malware Analysis Platform
 
-An end-to-end malware analysis platform that combines dynamic sandbox detonation, memory forensics, static binary analysis, and AI-powered reverse engineering to produce comprehensive, actionable intelligence reports.
+An end-to-end malware analysis platform that doesn't just run tools — it **connects them**. Dynamic sandbox detonation, memory forensics, static analysis, and AI-powered reverse engineering work together, cross-referencing their findings to produce intelligence that no single tool generates alone.
 
-Built on OVH bare metal with full infrastructure-as-code automation (Terraform + Ansible + Packer). Every analysis tool runs in an isolated container. An agentic AI reverse engineer autonomously investigates binaries using Ghidra, producing structured MITRE ATT&CK mappings, IOCs, and narrative analysis.
+## What Makes This Different
 
-## What It Does
+Most malware analysis setups run tools independently — Cape produces a report, Volatility produces a report, Ghidra produces a report, and an analyst manually correlates them. This platform automates that analyst workflow:
 
-Submit a malware sample and get back a full analysis report with:
+**Cross-tool correlation.** When Cape's sandbox observes a process writing shellcode into another process, the platform extracts those exact bytes from Cape's API traces, scans them for resolved API names and file paths, and cross-references against Volatility's memory forensics to detect if the shellcode modified itself after landing. If Cape logged a dropped DLL and Volatility confirms it was loaded by a system process — that's a confirmed second-stage deployment, not just a file write.
 
-- **28+ YARA signature matches** from community rule sets
-- **40+ behavioral signatures** from sandbox detonation (CAPEv2)
-- **Memory forensics** — process injection detection, network connections, DLL analysis
-- **Static analysis** — function decompilation, import tables, string extraction (Ghidra)
-- **AI reverse engineering** — Claude autonomously investigates the binary with 6 Ghidra query tools, producing malware family identification, capability analysis, and MITRE ATT&CK technique mapping
-- **Executive summary** — analyst-ready briefing with key findings, IOCs, and recommended defensive actions
-- **Structured IOCs** — STIX 2.1 typed indicators (IPs, domains, hashes, URLs) with source attribution
-- **PDF report** — formatted report with source badges showing which pipeline stage surfaced each finding
+**AI-driven investigation.** An agentic LLM autonomously explores the binary using Ghidra's decompiler — listing functions, tracing cross-references, decompiling suspicious code, reading data — and produces a structured analysis with MITRE ATT&CK mappings. It doesn't just describe what it sees; it investigates iteratively like a human analyst would, following leads across function calls.
+
+**Kill chain narrative.** The executive summary organizes findings by behavior (injection, persistence, C2, evasion) not by tool. Each claim cites which tools corroborated it: *"The malware injected identical 235-byte shellcode stubs into 59 system processes (Cape API traces), resolving LoadLibraryA, CreateRemoteThread, and WSAStartup at runtime (Volatility memory artifacts), confirming both process injection and C2 communication capability."*
+
+**Ground-truth shellcode extraction.** Instead of scanning 17,000+ memory regions hoping to find injected code, the platform reads Cape's WriteProcessMemory traces to extract the exact bytes that were injected — with the source process, target process, and injection address. No heuristics needed for what Cape directly observed.
+
+## What It Produces
+
+Submit a malware sample and get back:
+
+- **Structured IOCs** with STIX 2.1 types, source attribution, and context — ready for SIEM searches and block lists
+- **MITRE ATT&CK mapping** from multiple sources (Cape behavioral signatures + AI reverse engineering)
+- **Cross-tool findings** — dropped files confirmed loaded, shellcode self-modification detected, command line spoofing identified
+- **AI reverse engineering narrative** — what the malware does, how it works, traced through decompiled code
+- **Kill chain executive summary** — analyst-ready briefing organized by attack phase
+- **Memory forensics insights** — suspicious command lines, mutex IOCs, DLLs from unusual paths, anomalous process relationships
+- **PDF report** with source attribution badges showing which pipeline stage surfaced each finding
+- **PostgreSQL database** with normalized data for cross-sample correlation and evolution tracking
+- **Web dashboard** for browsing analyses, IOCs, and MITRE techniques
 
 ## Pipeline Architecture
 
@@ -27,34 +38,57 @@ Sample
   │
   ├─ Stage 2: Dynamic Analysis ── CAPEv2 sandbox, Windows 11 guest VMs
   │  (KVM/QEMU with anti-evasion)   Behavioral signatures, memory dumps, network capture
+  │     │
+  │     ├─ 2.5: Injection Buffer ── Extract shellcode bytes from WriteProcessMemory
+  │     │   Extraction               API traces — ground truth, no scanning needed
+  │     │
+  │     └─ 2.5: Cape Payload ────── Scan unpacked/extracted payloads for
+  │         Analysis                  decrypted APIs, file paths, URLs, IPs
   │
   ├─ Stage 3: Memory Forensics ── Volatility 3 (psscan, malfind, netscan, dlllist...)
-  │  (containerized, --network=none)   Process injection detection, 17K+ injected regions
+  │  (containerized, --network=none)   Process injection detection, connection state,
+  │                                     mutex IOCs, DLL loads, command line analysis
+  │
+  ├─ Cross-Correlation ────────── Compare Cape + Volatility findings:
+  │                                 Dropped file loaded? Shellcode self-modified?
+  │                                 Command line spoofed?
   │
   ├─ Stage 4: Static Analysis ─── Ghidra headless (decompilation, imports, strings)
-  │  (containerized, --network=none)   60+ functions, 100+ imports, pseudocode
+  │  (containerized, --network=none)   Functions, pseudocode, cross-references
   │
-  ├─ Stage 4.5: AI Reverse Eng ── Claude agentic loop with 6 Ghidra tools
-  │  (containerized, --network=host)   Decompile functions, trace xrefs, read data
-  │  ↕ orchestrator brokers         Autonomous investigation, 8-10 tool calls
-  │  (tool arg validation)           MITRE ATT&CK mapping, family identification
+  ├─ Stage 4.5: AI Investigation ─ Agentic LLM with 6 Ghidra query tools
+  │  (containerized, --network=host)   Autonomous investigation, 6-10 tool calls
+  │  ↕ orchestrator brokers           MITRE ATT&CK mapping, family identification
+  │  (tool arg validation)            Model escalation: Sonnet → Opus for complex samples
   │
-  ├─ IOC Extraction ───────────── Structured indicators from all stages
+  ├─ IOC Extraction ───────────── Structured indicators from ALL stages
   │                                 STIX 2.1 types, source attribution, context
   │
-  ├─ Executive Summary ────────── LLM-generated analyst briefing
-  │                                 Key findings, recommended actions, severity
+  ├─ Kill Chain Summary ───────── LLM narrative organized by attack phase
+  │                                 Cites corroborating sources for each finding
   │
-  ├─ Database Ingestion ────────── PostgreSQL (normalized IOCs, techniques, capabilities)
-  │                                 Cross-sample correlation, evolution tracking
+  ├─ Database Ingestion ────────── PostgreSQL with normalized IOCs, techniques,
+  │                                 capabilities, network events, MISP-style tags
   │
   └─ PDF Report ───────────────── Formatted report with source attribution badges
 ```
 
+## Cross-Tool Correlation
+
+Findings that no single tool produces alone:
+
+| Correlation | What it detects | Tools involved |
+|---|---|---|
+| Dropped file in dlllist | Payload was not just written — it was loaded and executed | Cape + Volatility |
+| WriteProcessMemory vs malfind | Shellcode decrypted/unpacked itself after injection | Cape + Volatility |
+| Cape cmdline vs PEB cmdline | Process overwrote its own command line to hide | Cape + Volatility |
+| Cape DNS vs shellcode APIs | DGA domains + networking APIs = confirmed C2 capability | Cape + Volatility artifacts |
+| YARA family + Cape config | Family-specific config extraction guided by signature match | Triage + Cape |
+
 ## Security Model
 
 Every analysis tool runs in a Podman container with:
-- `--network=none` — no network access (except the AI interpret container which needs Claude API)
+- `--network=none` — no network access (except the AI container which needs the LLM API)
 - `--read-only` — immutable filesystem
 - `--cap-drop=ALL` — no Linux capabilities
 - `--user 65534:65534` — unprivileged nobody user
@@ -69,7 +103,7 @@ LLM prompt injection mitigations:
 - All binary data wrapped in `UNTRUSTED_DATA` / `UNTRUSTED_CODE` delimiters
 - LLM output is informational only — never modifies verdicts or triggers actions
 - Tool argument validation via regex whitelist before reaching Ghidra
-- Post-processing detection for suspicious keywords ("benign", "safe")
+- Post-processing detection for prompt influence keywords
 - Full audit logging of prompts and responses
 - Triage/Cape/Volatility determine maliciousness — AI explains HOW, not WHETHER
 
@@ -84,8 +118,8 @@ OVH Bare Metal (RISE-2)
 ├── INetSim network simulation
 ├── WireGuard VPN for admin access
 ├── Podman (rootless containers for all tool stages)
-├── PostgreSQL (analysis database — shared instance, separate DB)
-├── Flask dashboard (port 5000, behind WireGuard)
+├── PostgreSQL (analysis database)
+├── Flask dashboard (behind WireGuard)
 └── 18 Ansible roles for fully automated deployment
 ```
 
@@ -127,42 +161,9 @@ ssh sandbox 'sudo -u cape sample-feeder'
 # Reports:   /opt/pipeline/reports/<task_id>/report.pdf
 ```
 
-## Ansible Roles (18)
-
-| # | Role | Purpose |
-|---|------|---------|
-| 1 | hardening | CIS-aligned OS hardening (konstruktoid) |
-| 2 | kvm | KVM/QEMU/libvirt hypervisor |
-| 3 | networking | Detonation bridge, iptables air-gap, INetSim rules |
-| 4 | inetsim | Network simulation for guest VM traffic |
-| 5 | wireguard | VPN for admin access |
-| 6 | qemu-patched | DSDT-patched QEMU binary (anti-VM evasion) |
-| 7 | mongodb | MongoDB 8.0 for CAPEv2 |
-| 8 | cape | CAPEv2 installer, config, services |
-| 9 | cape-guests | Windows 11 guest VMs, libvirt domains, snapshots |
-| 10 | podman | Container runtime for analysis tools |
-| 11 | triage | Containerized YARA/ssdeep/FLOSS analysis |
-| 12 | volatility | Containerized Volatility 3 memory forensics |
-| 13 | ghidra | Containerized Ghidra headless static analysis |
-| 14 | interpret | Containerized Claude AI reverse engineering agent |
-| 15 | postgres | Analysis database (PostgreSQL, shared instance) |
-| 16 | pipeline | Pipeline orchestrator, PDF reports, DB ingestion |
-| 17 | dashboard | Flask web UI for browsing analysis results |
-| 18 | sample-feeder | MalwareBazaar CLI for sample ingestion |
-
-## Database Schema
-
-Normalized PostgreSQL schema for cross-sample intelligence:
-- **IOCs** with STIX 2.1 types — query "which samples share this C2 domain?"
-- **MITRE ATT&CK** with tactic context — "show me all T1055 across families"
-- **Sample relationships** — dropped/injected file lineage tracking
-- **Network events** — structured DNS, HTTP, TCP from sandbox
-- **MISP-style tags** — flexible taxonomy on samples, analyses, and IOCs
-- **Correlation views** — shared infrastructure, technique frequency, sample lineage
-
 ## AI Reverse Engineering Agent
 
-The interpret stage uses Claude's tool_use API with 6 Ghidra query tools:
+The interpret stage uses an LLM's tool_use API with 6 Ghidra query tools:
 
 | Tool | Description |
 |------|-------------|
@@ -175,7 +176,17 @@ The interpret stage uses Claude's tool_use API with 6 Ghidra query tools:
 
 The agent autonomously investigates the binary — listing functions, decompiling suspicious ones, tracing cross-references, reading data — and produces a structured analysis with malware family identification, capabilities, and MITRE ATT&CK technique mapping.
 
-Model escalation: starts with Claude Sonnet, escalates to Opus after 5 tool calls for deeper analysis.
+Model escalation: starts with a faster model, escalates to a more capable model after 5 tool calls for deeper investigation.
+
+## Database Schema
+
+Normalized PostgreSQL schema for cross-sample intelligence:
+- **IOCs** with STIX 2.1 types — query "which samples share this C2 domain?"
+- **MITRE ATT&CK** with tactic context — "show me all T1055 across families"
+- **Sample relationships** — dropped/injected file lineage tracking
+- **Network events** — structured DNS, HTTP, TCP from sandbox
+- **MISP-style tags** — flexible taxonomy on samples, analyses, and IOCs
+- **Correlation views** — shared infrastructure, technique frequency, sample lineage
 
 ## Documentation
 
@@ -187,7 +198,7 @@ Model escalation: starts with Claude Sonnet, escalates to Opus after 5 tool call
 
 ## Cost
 
-~$92/month (OVH RISE-2 bare metal) + ~$0.50-5.00/day Claude API usage depending on sample volume.
+~$92/month (OVH RISE-2 bare metal) + ~$0.50-5.00/day LLM API usage depending on sample volume.
 
 ## Author
 

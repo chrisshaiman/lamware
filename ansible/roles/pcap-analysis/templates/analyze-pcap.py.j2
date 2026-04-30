@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+analyze-pcap.py — Run Zeek and Suricata on a PCAP file.
+
+Produces structured JSON output with:
+- Zeek: connections, DNS, HTTP transactions, TLS/JA3, files
+- Suricata: IDS alerts matching known malware signatures
+
+Usage: python3 analyze-pcap.py /pcap/capture.pcap
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def run_zeek(pcap_path: str, work_dir: str) -> dict:
+    """Run Zeek on the PCAP and parse its log files."""
+    zeek_dir = os.path.join(work_dir, "zeek")
+    os.makedirs(zeek_dir, exist_ok=True)
+
+    result = subprocess.run(
+        ["zeek", "-r", pcap_path, "-C",
+         "LogAscii::use_json=T"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=zeek_dir,
+    )
+
+    output = {}
+
+    # Parse each Zeek log file
+    log_parsers = {
+        "conn.log": "connections",
+        "dns.log": "dns",
+        "http.log": "http",
+        "ssl.log": "tls",
+        "files.log": "files",
+        "weird.log": "anomalies",
+    }
+
+    for log_file, key in log_parsers.items():
+        log_path = os.path.join(zeek_dir, log_file)
+        if not os.path.exists(log_path):
+            continue
+        entries = []
+        with open(log_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        if entries:
+            output[key] = entries
+
+    # Extract key IOCs from Zeek data
+    iocs = []
+
+    # JA3 fingerprints from TLS
+    for tls in output.get("tls", []):
+        ja3 = tls.get("ja3")
+        if ja3:
+            iocs.append({"type": "ja3", "value": ja3,
+                         "server": tls.get("server_name", ""),
+                         "source": "Zeek"})
+
+    # HTTP details
+    for http in output.get("http", []):
+        ua = http.get("user_agent", "")
+        uri = http.get("uri", "")
+        host = http.get("host", "")
+        method = http.get("method", "")
+        if ua:
+            iocs.append({"type": "user-agent", "value": ua, "source": "Zeek"})
+        if uri and host:
+            iocs.append({"type": "url", "value": f"http://{host}{uri}",
+                         "method": method, "source": "Zeek"})
+
+    # Connection summary
+    connections = output.get("connections", [])
+    unique_dsts = set()
+    for conn in connections:
+        dst = conn.get("id.resp_h", "")
+        port = conn.get("id.resp_p", 0)
+        if dst and dst not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
+            unique_dsts.add(f"{dst}:{port}")
+
+    output["summary"] = {
+        "total_connections": len(connections),
+        "unique_destinations": len(unique_dsts),
+        "dns_queries": len(output.get("dns", [])),
+        "http_transactions": len(output.get("http", [])),
+        "tls_sessions": len(output.get("tls", [])),
+        "files_transferred": len(output.get("files", [])),
+        "anomalies": len(output.get("anomalies", [])),
+    }
+    output["iocs"] = iocs
+
+    return output
+
+
+def run_suricata(pcap_path: str, work_dir: str) -> dict:
+    """Run Suricata on the PCAP and parse alerts."""
+    suricata_dir = os.path.join(work_dir, "suricata")
+    os.makedirs(suricata_dir, exist_ok=True)
+
+    result = subprocess.run(
+        ["suricata", "-r", pcap_path,
+         "-l", suricata_dir,
+         "--set", f"default-log-dir={suricata_dir}",
+         "-k", "none"],  # disable checksum validation
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    output = {"alerts": [], "summary": {}}
+
+    # Parse eve.json (Suricata's JSON event log)
+    eve_path = os.path.join(suricata_dir, "eve.json")
+    if os.path.exists(eve_path):
+        alerts = []
+        stats = {}
+        with open(eve_path) as f:
+            for line in f:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("event_type", "")
+                if event_type == "alert":
+                    alert = event.get("alert", {})
+                    alerts.append({
+                        "signature": alert.get("signature", ""),
+                        "signature_id": alert.get("signature_id", 0),
+                        "severity": alert.get("severity", 0),
+                        "category": alert.get("category", ""),
+                        "src_ip": event.get("src_ip", ""),
+                        "dst_ip": event.get("dest_ip", ""),
+                        "src_port": event.get("src_port", 0),
+                        "dst_port": event.get("dest_port", 0),
+                        "proto": event.get("proto", ""),
+                    })
+                elif event_type == "stats":
+                    stats = event.get("stats", {})
+
+        # Dedup alerts by signature
+        seen = set()
+        unique_alerts = []
+        for a in alerts:
+            key = (a["signature"], a["src_ip"], a["dst_ip"])
+            if key not in seen:
+                seen.add(key)
+                unique_alerts.append(a)
+
+        output["alerts"] = unique_alerts
+        output["summary"] = {
+            "total_alerts": len(alerts),
+            "unique_alerts": len(unique_alerts),
+            "categories": list(set(a["category"] for a in unique_alerts if a["category"])),
+        }
+
+    return output
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: analyze-pcap.py <pcap_path>"}))
+        sys.exit(1)
+
+    pcap_path = sys.argv[1]
+    if not os.path.exists(pcap_path):
+        print(json.dumps({"error": f"PCAP not found: {pcap_path}"}))
+        sys.exit(1)
+
+    work_dir = tempfile.mkdtemp(prefix="pcap_")
+
+    result = {
+        "pcap": pcap_path,
+        "pcap_size": os.path.getsize(pcap_path),
+    }
+
+    # Run Zeek
+    try:
+        result["zeek"] = run_zeek(pcap_path, work_dir)
+        print(f"Zeek: {result['zeek'].get('summary', {})}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        result["zeek"] = {"error": "timeout"}
+    except Exception as e:
+        result["zeek"] = {"error": str(e)}
+
+    # Run Suricata
+    try:
+        result["suricata"] = run_suricata(pcap_path, work_dir)
+        print(f"Suricata: {result['suricata'].get('summary', {})}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        result["suricata"] = {"error": "timeout"}
+    except Exception as e:
+        result["suricata"] = {"error": str(e)}
+
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()
