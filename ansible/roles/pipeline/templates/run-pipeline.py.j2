@@ -324,7 +324,13 @@ def cross_correlate(report: dict) -> list[dict]:
                 if region_pid == target_pid and inject_addr == region_start_hex:
                     # Compare first bytes
                     hexdump = region.get("Hexdump", "")
-                    malfind_bytes = bytes(int(h, 16) for h in hexdump.split() if h) if hexdump else b""
+                    try:
+                        malfind_bytes = bytes(
+                            int(h, 16) for h in hexdump.split()
+                            if h and len(h) == 2 and all(c in "0123456789abcdefABCDEF" for c in h)
+                        ) if hexdump else b""
+                    except (ValueError, TypeError):
+                        malfind_bytes = b""
 
                     # Get Cape buffer first bytes for comparison
                     buf_path = buf.get("path", "")
@@ -689,16 +695,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
                 }
                 print(f"    {sc.get('source_process', '?')} → pid {sc.get('pid')}: {len(apis)} APIs, {len(paths)} paths")
 
-    # Programmatic analysis — deterministic, runs before LLM
-    print(f"\n[Analysis] Programmatic analysis...")
-    report["family"] = determine_family(report)
-    report["severity"] = calculate_severity(report)
-    report["mitre_mapping"] = build_mitre_mapping(report)
-    print(f"  Family: {report['family']}")
-    print(f"  Severity: {report['severity']}")
-    print(f"  MITRE techniques: {len(report['mitre_mapping'])}")
-
-    # Cross-tool correlation — findings no single tool produces alone
+    # Cross-tool correlation — must run BEFORE severity calculation
+    # (severity reads cross_correlations to boost score for critical findings)
     print(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
     report["cross_correlations"] = cross_correlate(report)
     for finding in report["cross_correlations"]:
@@ -708,6 +706,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print(f"  [{severity.upper()}] {title} ({sources})")
     if not report["cross_correlations"]:
         print("  No cross-tool findings detected")
+
+    # Programmatic analysis — deterministic, runs before LLM
+    print(f"\n[Analysis] Programmatic analysis...")
+    report["family"] = determine_family(report)
+    report["severity"] = calculate_severity(report)
+    report["mitre_mapping"] = build_mitre_mapping(report)
+    print(f"  Family: {report['family']}")
+    print(f"  Severity: {report['severity']}")
+    print(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     # IOC extraction — pull actionable indicators from all stages
     print(f"\n[IOC Extraction] Scanning all stages for indicators...")
