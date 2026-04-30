@@ -1,0 +1,28 @@
+# Minimal Suricata config for offline PCAP analysis
+%YAML 1.1
+---
+
+default-log-dir: /var/log/suricata/
+
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert:
+            payload: yes
+            payload-printable: yes
+            http-body: yes
+            http-body-printable: yes
+        - dns
+        - tls
+        - http
+
+default-rule-path: /rules/
+
+rule-files:
+  - "*.rules"
+
+classification-file: /etc/suricata/classification.config
+reference-config-file: /etc/suricata/reference.config

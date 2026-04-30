@@ -1,0 +1,47 @@
+#!/bin/bash
+# =============================================================================
+# run-pcap-analysis — host-side wrapper for containerized PCAP analysis
+# Runs Zeek + Suricata against a PCAP file inside a Podman container.
+#
+# Usage: run-pcap-analysis <pcap_path> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-pcap-analysis <pcap_path> [output_dir]" >&2
+    exit 1
+fi
+
+PCAP_PATH="$(realpath "$1")"
+PCAP_NAME="$(basename "$PCAP_PATH")"
+PCAP_DIR="$(dirname "$PCAP_PATH")"
+OUTPUT_DIR="${2:-{{ pcap_analysis_install_dir }}/output}"
+
+if [ ! -f "$PCAP_PATH" ]; then
+    echo "Error: PCAP not found: $PCAP_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ pcap_analysis_container_memory }} \
+    --cpus={{ pcap_analysis_container_cpus }} \
+    --timeout={{ pcap_analysis_container_timeout }} \
+    --tmpfs /tmp:size=500m \
+    --tmpfs /nonexistent:size=10m \
+    --tmpfs /var/log/suricata:size=50m \
+    --tmpfs /var/run/suricata:size=10m \
+    --user 65534:65534 \
+    -v "$PCAP_DIR:/pcap:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/pcap-analysis:latest \
+    "/pcap/$PCAP_NAME"

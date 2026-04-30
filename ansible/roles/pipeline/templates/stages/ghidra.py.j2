@@ -124,21 +124,49 @@ def run_ghidra_on_file(pe_path: Path, output_dir: Path,
 
 def run_ghidra_shellcode(candidate: dict, output_dir: Path,
                          ghidra_cmd: str) -> dict:
-    """Run artifact extraction and Ghidra on a shellcode candidate."""
-    dump_path = candidate["path"]
-    base_addr = candidate.get("start_vpn", "0x0")
+    """Run artifact extraction and optionally Ghidra on a shellcode candidate.
+
+    For Cape injection buffers, artifacts may already be extracted (in
+    candidate["shellcode_artifacts"]). Ghidra only runs if the candidate
+    is >= 1KB (candidate["analyze_with_ghidra"] == True or not set).
+    """
+    dump_path = Path(candidate["path"])
+    base_addr = candidate.get("start_vpn", candidate.get("injection_address", "0x0"))
     if isinstance(base_addr, int):
         base_addr = f"0x{base_addr:x}"
+    source = candidate.get("source", "malfind_injection")
     sc_output = output_dir / f"shellcode_{candidate['pid']}_{str(base_addr).replace('0x', '')}"
 
-    # Extract artifacts from the raw dump BEFORE Ghidra (always succeeds)
-    artifacts = extract_shellcode_artifacts(dump_path)
+    # Use pre-extracted artifacts from Cape, or extract from dump file
+    artifacts = candidate.get("shellcode_artifacts")
+    if not artifacts:
+        artifacts = extract_shellcode_artifacts(dump_path)
     if artifacts:
         api_count = len(artifacts.get("resolved_apis", []))
         path_count = len(artifacts.get("file_paths", []))
         dll_count = len(artifacts.get("dll_names", []))
         has_pe = artifacts.get("embedded_pe", False)
         print(f"      Artifacts: {api_count} APIs, {path_count} paths, {dll_count} DLLs, PE={has_pe}")
+
+    # Small buffers (< 1KB): artifact extraction only, skip Ghidra
+    if candidate.get("analyze_with_ghidra") is False:
+        result = {
+            "source": source,
+            "pid": candidate.get("pid"),
+            "process": candidate.get("process"),
+            "injection_address": base_addr,
+            "region_size": candidate.get("region_size") or candidate.get("size"),
+            "filter_score": candidate.get("score", 0),
+            "analysis_success": False,
+            "functions_count": 0,
+            "note": f"Artifact extraction only ({candidate.get('region_size', candidate.get('size', 0))} bytes, < 1KB threshold)",
+        }
+        if candidate.get("source_process"):
+            result["source_process"] = candidate["source_process"]
+            result["source_pid"] = candidate.get("source_pid")
+        if artifacts:
+            result["shellcode_artifacts"] = artifacts
+        return result
 
     try:
         result = subprocess.run(
@@ -178,12 +206,15 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
             "error": "invalid JSON from Ghidra",
         }
 
-    analysis["source"] = "malfind_injection"
+    analysis["source"] = source
     analysis["pid"] = candidate.get("pid")
     analysis["process"] = candidate.get("process")
     analysis["injection_address"] = base_addr
-    analysis["region_size"] = candidate.get("size")
-    analysis["filter_score"] = candidate.get("score")
+    analysis["region_size"] = candidate.get("region_size") or candidate.get("size")
+    analysis["filter_score"] = candidate.get("score", 0)
+    if candidate.get("source_process"):
+        analysis["source_process"] = candidate["source_process"]
+        analysis["source_pid"] = candidate.get("source_pid")
     if artifacts:
         analysis["shellcode_artifacts"] = artifacts
 
@@ -226,7 +257,7 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     if shellcode_candidates:
         print(f"    Analyzing {len(shellcode_candidates)} shellcode candidates...")
         for candidate in shellcode_candidates:
-            print(f"    Shellcode: pid={candidate['pid']} {candidate['process']} score={candidate['score']}")
+            print(f"    Shellcode: pid={candidate.get('pid', '?')} {candidate.get('process', '?')} score={candidate.get('score', '-')} source={candidate.get('source', '?')} size={candidate.get('region_size', candidate.get('size', '?'))}")
             sc_result = run_ghidra_shellcode(candidate, output_dir, ghidra_cmd)
             result["analyzed_files"].append(sc_result)
 
