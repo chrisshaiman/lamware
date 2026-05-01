@@ -3,13 +3,24 @@
 # Built locally by Ansible. Never pulled from a registry.
 FROM docker.io/library/ubuntu:24.04
 
+# Zeek requires its own repo — not in Ubuntu's default packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg \
+    ca-certificates \
+    curl \
+    && echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' \
+       > /etc/apt/sources.list.d/zeek.list \
+    && curl -fsSL 'https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key' \
+       | gpg --dearmor -o /etc/apt/trusted.gpg.d/zeek.gpg \
+    && apt-get update && apt-get install -y --no-install-recommends \
     zeek \
     suricata \
     python3 \
     python3-json5 \
     jq \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/opt/zeek/bin:${PATH}"
 
 COPY analyze-pcap.py /opt/analyze-pcap.py
 COPY suricata.yaml /etc/suricata/suricata.yaml
