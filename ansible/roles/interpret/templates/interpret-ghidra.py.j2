@@ -139,6 +139,18 @@ search for in logs or block
 """
 
 # ---------------------------------------------------------------------------
+# Cached system prompts — reused across multi-turn agentic loop
+# cache_control tells the API to cache the system prompt server-side,
+# saving ~90% on input tokens for subsequent turns within the 5-min TTL.
+# ---------------------------------------------------------------------------
+
+CACHED_SYSTEM = [{"type": "text", "text": SYSTEM_PROMPT,
+                  "cache_control": {"type": "ephemeral"}}]
+
+CACHED_SUMMARY_SYSTEM = [{"type": "text", "text": SUMMARY_SYSTEM_PROMPT,
+                          "cache_control": {"type": "ephemeral"}}]
+
+# ---------------------------------------------------------------------------
 # Tool definitions — 6 tools matching GhidraTool.java
 # ---------------------------------------------------------------------------
 
@@ -674,7 +686,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=SUMMARY_SYSTEM_PROMPT,
+            system=CACHED_SUMMARY_SYSTEM,
             messages=[{"role": "user", "content": prompt_text}],
         )
         text = "".join(b.text for b in response.content if b.type == "text")
@@ -753,7 +765,7 @@ def main() -> None:
             response = client.messages.create(
                 model=current_model,
                 max_tokens=max_output_tokens,
-                system=SYSTEM_PROMPT,
+                system=CACHED_SYSTEM,
                 tools=TOOLS,
                 messages=messages,
             )
@@ -854,7 +866,7 @@ def main() -> None:
                         final_response = client.messages.create(
                             model=current_model,
                             max_tokens=max_output_tokens,
-                            system=SYSTEM_PROMPT,
+                            system=CACHED_SYSTEM,
                             messages=messages,
                         )
                         final_text = "".join(
@@ -917,7 +929,7 @@ def main() -> None:
                     final_response = client.messages.create(
                         model=current_model,
                         max_tokens=max_output_tokens,
-                        system=SYSTEM_PROMPT,
+                        system=CACHED_SYSTEM,
                         messages=messages,
                     )
                     final_text = "".join(
