@@ -2,6 +2,8 @@
 Stage 3: Volatility memory forensics — triggered by Cape signatures.
 
 Includes malfind shellcode filtering and targeted dump extraction.
+Plugins run in parallel where safe (read-only access to memory dump).
+Memory dump is optionally copied to a ramdisk for faster I/O.
 
 Author: Christopher Shaiman
 License: Apache 2.0
@@ -10,8 +12,11 @@ License: Apache 2.0
 import hashlib
 import json
 import math
+import os
+import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
@@ -460,6 +465,36 @@ def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
         return {"error": f"timeout ({plugin_timeout}s)"}
 
 
+def copy_to_ramdisk(dump_path: Path, ramdisk_path: str) -> Path | None:
+    """Copy memory dump to ramdisk for faster I/O.
+
+    Returns the ramdisk copy path, or None if ramdisk is unavailable.
+    The caller is responsible for cleanup.
+    """
+    ramdisk = Path(ramdisk_path)
+    if not ramdisk.is_dir():
+        return None
+
+    # Check available space (need dump size + some headroom)
+    dump_size = dump_path.stat().st_size
+    try:
+        stat = os.statvfs(str(ramdisk))
+        available = stat.f_bavail * stat.f_frsize
+        if available < dump_size + (100 * 1024 * 1024):  # 100MB headroom
+            print(f"    Ramdisk too small ({available // (1024*1024)}MB free, need {dump_size // (1024*1024)}MB)")
+            return None
+    except OSError:
+        return None
+
+    ramdisk_dump = ramdisk / dump_path.name
+    print(f"    Copying dump to ramdisk ({dump_size // (1024*1024)} MB)...")
+    start = time.time()
+    shutil.copy2(str(dump_path), str(ramdisk_dump))
+    elapsed = time.time() - start
+    print(f"    Copied in {elapsed:.1f}s")
+    return ramdisk_dump
+
+
 def run_volatility(cape_data: dict, output_dir: Path,
                    volatility_cmd: str,
                    volatility_triggers: list[str],
@@ -473,11 +508,24 @@ def run_volatility(cape_data: dict, output_dir: Path,
                    malfind_benign_processes: list[str],
                    get_cape_signatures_fn,
                    cape_injection_pids: list[int] | None = None,
-                   cape_has_injection_buffers: bool = False) -> dict:
-    """Run Volatility 3 plugins on the memory dump."""
+                   cape_has_injection_buffers: bool = False,
+                   ramdisk_path: str = "",
+                   parallel_workers: int = 3) -> dict:
+    """Run Volatility 3 plugins on the memory dump.
+
+    Plugins are split into two phases:
+      Phase 1 (parallel): independent read-only plugins that can run concurrently
+      Phase 2 (sequential): malfind post-processing that depends on Phase 1 results
+    """
     dump_path = get_memory_dump_path(cape_data)
     if not dump_path:
         return {"triggered": True, "error": "memory dump not found"}
+
+    # Try ramdisk for faster I/O across all plugins
+    ramdisk_dump = None
+    if ramdisk_path:
+        ramdisk_dump = copy_to_ramdisk(dump_path, ramdisk_path)
+    active_dump = ramdisk_dump if ramdisk_dump else dump_path
 
     sigs = get_cape_signatures_fn(cape_data)
     trigger_sigs = [s for s in sigs if s in volatility_triggers]
@@ -496,21 +544,46 @@ def run_volatility(cape_data: dict, output_dir: Path,
         },
     }
 
-    for plugin in all_plugins:
+    # Split plugins into parallel-safe and sequential groups.
+    # malfind needs post-processing (dump extraction) so runs separately.
+    parallel_plugins = [p for p in all_plugins if "malfind" not in p]
+    sequential_plugins = [p for p in all_plugins if "malfind" in p]
+
+    # Phase 1: run independent plugins in parallel
+    if parallel_plugins:
+        print(f"    Running {len(parallel_plugins)} plugins in parallel (workers={parallel_workers})...")
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {}
+            for plugin in parallel_plugins:
+                short_name = plugin.replace("windows.", "").replace("malware.", "")
+                future = executor.submit(
+                    run_single_plugin, active_dump, plugin, output_dir, volatility_cmd)
+                futures[future] = (plugin, short_name)
+
+            for future in as_completed(futures):
+                plugin, short_name = futures[future]
+                try:
+                    plugin_output = future.result()
+                except Exception as e:
+                    plugin_output = {"error": str(e)}
+                result["plugins"][short_name] = plugin_output
+                status = "OK" if "error" not in (plugin_output if isinstance(plugin_output, dict) else {}) else "FAILED"
+                print(f"    {plugin}... {status}")
+
+                if short_name == "netscan" and isinstance(plugin_output, list):
+                    result["summary"]["suspicious_connections"] = len(plugin_output)
+
+    # Phase 2: malfind runs sequentially (needs post-processing)
+    for plugin in sequential_plugins:
         short_name = plugin.replace("windows.", "").replace("malware.", "")
         print(f"    Running {plugin}...")
-        # First malfind pass: JSON only (no --dump), fast and complete
-        plugin_output = run_single_plugin(dump_path, plugin, output_dir,
+        plugin_output = run_single_plugin(active_dump, plugin, output_dir,
                                           volatility_cmd)
         result["plugins"][short_name] = plugin_output
 
-        # Build summary from key plugins
         if short_name == "malfind" and isinstance(plugin_output, list):
             result["summary"]["injected_processes"] = len(plugin_output)
 
-            # Malfind dump strategy:
-            # - Cape has injection buffers → skip targeted dump (Cape has the bytes)
-            # - Cape has no buffers → fallback to targeted dump from memory
             if malfind_enabled:
                 if cape_has_injection_buffers:
                     print(f"    Cape captured injection buffers — skipping malfind dump")
@@ -526,19 +599,21 @@ def run_volatility(cape_data: dict, output_dir: Path,
                         malfind_benign_processes=malfind_benign_processes,
                         cape_injection_pids=cape_injection_pids,
                     )
-                    if target_pids and dump_path.exists():
+                    if target_pids and active_dump.exists():
                         malfind_dump_dir = run_targeted_malfind_dump(
-                            dump_path, target_pids, output_dir, volatility_cmd)
+                            active_dump, target_pids, output_dir, volatility_cmd)
                         result["_malfind_selected"] = selected_regions
                         result["_malfind_dump_dir"] = str(malfind_dump_dir)
                     else:
                         result["_malfind_selected"] = selected_regions
                         result["_malfind_dump_dir"] = ""
 
-        elif short_name == "netscan" and isinstance(plugin_output, list):
-            result["summary"]["suspicious_connections"] = len(plugin_output)
+    # Clean up ramdisk copy first (free RAM)
+    if ramdisk_dump and ramdisk_dump.exists():
+        ramdisk_dump.unlink(missing_ok=True)
+        print(f"    Cleaned ramdisk copy")
 
-    # Clean up memory dump after all plugins are done
+    # Clean up original memory dump
     if dump_path.exists():
         print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
         dump_path.unlink(missing_ok=True)

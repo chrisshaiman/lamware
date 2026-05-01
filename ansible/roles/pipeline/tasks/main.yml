@@ -36,6 +36,24 @@
     - "{{ pipeline_install_dir }}/stages"
     - "{{ pipeline_reports_dir }}"
 
+- name: Create ramdisk mount point for Volatility
+  ansible.builtin.file:
+    path: "{{ pipeline_volatility_ramdisk }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  when: pipeline_volatility_ramdisk | default('') | length > 0
+
+- name: Mount ramdisk (tmpfs) for Volatility memory dumps
+  ansible.posix.mount:
+    path: "{{ pipeline_volatility_ramdisk }}"
+    src: tmpfs
+    fstype: tmpfs
+    opts: "size=8g,uid={{ cape_user }},gid={{ cape_user }},mode=0750"
+    state: mounted
+  when: pipeline_volatility_ramdisk | default('') | length > 0
+
 - name: Deploy run-pipeline.py
   ansible.builtin.template:
     src: run-pipeline.py.j2
