@@ -425,6 +425,16 @@ def parse_final_response(text: str) -> dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 continue
 
+    # Try finding a JSON object in free text — the LLM sometimes writes
+    # preamble before the JSON (e.g., "Here is my analysis:\n{...}")
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(text[first_brace:last_brace + 1])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     # Fall back — wrap raw text so the pipeline always gets structured output
     return {
         "malware_family_guess": "unknown",
@@ -565,6 +575,33 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
         parts.append("## Defense Evasion")
         for s in evasion_sigs[:8]:
             parts.append(f"- {s['name']}: {s.get('description', '')[:100]} [Cape]")
+        parts.append("")
+
+    # --- PCAP analysis (Zeek + Suricata) ---
+    pcap = report.get("pcap_analysis", {})
+    zeek = pcap.get("zeek", {})
+    suricata = pcap.get("suricata", {})
+    zeek_summary = zeek.get("summary", {})
+    suricata_alerts = suricata.get("alerts", [])
+
+    if zeek_summary or suricata_alerts:
+        parts.append("## Network Traffic Analysis (PCAP)")
+        if zeek_summary:
+            parts.append(f"Zeek analysis: {zeek_summary.get('total_connections', 0)} connections, "
+                        f"{zeek_summary.get('dns_queries', 0)} DNS queries, "
+                        f"{zeek_summary.get('http_transactions', 0)} HTTP transactions, "
+                        f"{zeek_summary.get('tls_sessions', 0)} TLS sessions [Zeek]")
+        zeek_iocs = zeek.get("iocs", [])
+        ja3_iocs = [i for i in zeek_iocs if i.get("type") == "ja3"]
+        if ja3_iocs:
+            parts.append(f"\nJA3 TLS fingerprints ({len(ja3_iocs)}) [Zeek]:")
+            for j in ja3_iocs[:5]:
+                parts.append(f"  - {j['value']} (server: {j.get('server', '?')})")
+        if suricata_alerts:
+            parts.append(f"\nIDS alerts ({len(suricata_alerts)} unique) [Suricata]:")
+            for a in suricata_alerts[:8]:
+                parts.append(f"  - [{a.get('severity', '?')}] {a.get('signature', '?')} "
+                           f"({a.get('src_ip', '?')} → {a.get('dst_ip', '?')}:{a.get('dst_port', '?')})")
         parts.append("")
 
     # --- Anomalous behaviors from Volatility ---

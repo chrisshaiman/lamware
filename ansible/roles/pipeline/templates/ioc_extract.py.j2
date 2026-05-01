@@ -211,6 +211,34 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("file:name", path, "Volatility",
                      f"Open file handle by {fh.get('process', '?')}")
 
+    # --- PCAP analysis IOCs (Zeek + Suricata) ---
+    pcap = report.get("pcap_analysis", {})
+    zeek = pcap.get("zeek", {})
+
+    # JA3 fingerprints — unique TLS client identification
+    for ioc in zeek.get("iocs", []):
+        ioc_type = ioc.get("type", "")
+        value = ioc.get("value", "")
+        if ioc_type == "ja3" and value:
+            server = ioc.get("server", "")
+            add_ioc("ja3", value, "PCAP (Zeek)",
+                    f"TLS fingerprint{' for ' + server if server else ''}")
+        elif ioc_type == "user-agent" and value:
+            add_ioc("user-agent", value, "PCAP (Zeek)", "HTTP user-agent string")
+        elif ioc_type == "url" and value:
+            add_ioc("url", value, "PCAP (Zeek)",
+                    f"HTTP {ioc.get('method', '')} request")
+
+    # Suricata IDS alerts — signature-based detections
+    for alert in pcap.get("suricata", {}).get("alerts", []):
+        sig = alert.get("signature", "")
+        if sig:
+            dst_ip = alert.get("dst_ip", "")
+            add_ioc("ids-alert", sig, "PCAP (Suricata)",
+                    f"Severity {alert.get('severity', '?')}, "
+                    f"category: {alert.get('category', '?')}"
+                    f"{', dst: ' + dst_ip if dst_ip else ''}")
+
     # --- AI RE IOCs (from structured analysis output) ---
     interp = report.get("llm_interpretation", {})
     analysis = interp.get("analysis", {})

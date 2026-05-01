@@ -34,10 +34,11 @@ from stages.cape import (
 from stages.volatility import (
     should_run_volatility, run_volatility, extract_shellcode_artifacts,
 )
+from stages.pcap import get_cape_pcap, run_pcap_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
 from ioc_extract import extract_iocs
-from db_ingest import ingest_to_db
+from db_ingest import ingest_to_db, mark_pdf_generated
 
 
 # -------------------------------------------------------------------------
@@ -75,6 +76,12 @@ MALFIND_MIN_SIZE = {{ pipeline_malfind_min_size | default(256) }}
 MALFIND_MAX_SIZE = {{ pipeline_malfind_max_size | default(10485760) }}
 MALFIND_MIN_SCORE = {{ pipeline_malfind_min_score | default(2) }}
 MALFIND_BENIGN_PROCESSES = {{ (pipeline_malfind_benign_processes | default(['csrss.exe', 'smss.exe', 'MsMpEng.exe', 'fontdrvhost.exe'])) | to_json }}
+
+# PCAP analysis config
+PCAP_ENABLED = {% if pipeline_pcap_enabled | default(true) %}True{% else %}False{% endif %}
+
+PCAP_CMD = "{{ pcap_analysis_install_dir | default('/opt/pcap-analysis') }}/run-pcap-analysis"
+PCAP_TIMEOUT = {{ pipeline_pcap_timeout | default(120) }}
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
@@ -372,29 +379,10 @@ def cross_correlate(report: dict) -> list[dict]:
             if pid and args:
                 vol_cmdlines[pid] = args
 
-        # Cape's behavior log has process creation with command lines
-        behavior = {}
-        cape_task_id = cape.get("task_id")
-        if cape_task_id:
-            import os
-            report_path = f"/opt/CAPEv2/storage/analyses/{cape_task_id}/reports/report.json"
-            if os.path.exists(report_path):
-                try:
-                    import json as _json
-                    with open(report_path) as f:
-                        full_report = _json.load(f)
-                    for proc in full_report.get("behavior", {}).get("processes", []):
-                        pid = proc.get("process_id", 0)
-                        cmdline_cape = proc.get("environ", {}).get("CommandLine", "")
-                        if not cmdline_cape:
-                            # Try getting from process_path + command_line
-                            cmdline_cape = proc.get("command_line", "")
-                        if pid and cmdline_cape:
-                            behavior[pid] = cmdline_cape
-                except (OSError, _json.JSONDecodeError):
-                    pass
+        # Cape command lines extracted during extract_cape_intel
+        cape_cmdlines = cape.get("process_cmdlines", {})
 
-        for pid, cape_cmd in behavior.items():
+        for pid, cape_cmd in cape_cmdlines.items():
             vol_cmd = vol_cmdlines.get(pid, "")
             if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
                 # Normalize — ignore minor whitespace/case differences
@@ -546,6 +534,35 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             api_count = len(artifacts.get("resolved_apis", []))
             print(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
 
+    # Stage 2.7: PCAP analysis — Zeek + Suricata on Cape's network capture
+    cape_task_id = report.get("cape", {}).get("task_id")
+    pcap_path = get_cape_pcap(cape_task_id) if PCAP_ENABLED else None
+    if pcap_path:
+        print(f"\n[Stage 2.7] PCAP Analysis: running Zeek + Suricata...")
+        pcap_output_dir = str(output_dir / "pcap_analysis")
+        pcap_result = run_pcap_analysis(
+            pcap_path, pcap_output_dir, pcap_cmd=PCAP_CMD, timeout=PCAP_TIMEOUT,
+        )
+        report["pcap_analysis"] = pcap_result
+        if pcap_result.get("error"):
+            print(f"  [!] {pcap_result['error']}")
+        else:
+            zeek_summary = pcap_result.get("zeek", {}).get("summary", {})
+            suricata_summary = pcap_result.get("suricata", {}).get("summary", {})
+            print(f"  Zeek: {zeek_summary.get('total_connections', 0)} connections, "
+                  f"{zeek_summary.get('dns_queries', 0)} DNS, "
+                  f"{zeek_summary.get('http_transactions', 0)} HTTP, "
+                  f"{zeek_summary.get('tls_sessions', 0)} TLS")
+            alerts = suricata_summary.get('unique_alerts', 0)
+            if alerts:
+                print(f"  Suricata: {alerts} unique alerts")
+                for alert in pcap_result.get("suricata", {}).get("alerts", [])[:5]:
+                    print(f"    [{alert.get('severity', '?')}] {alert.get('signature', '?')}")
+    elif PCAP_ENABLED:
+        report["pcap_analysis"] = {"skipped": True, "reason": "no PCAP available"}
+    else:
+        report["pcap_analysis"] = {"enabled": False}
+
     # Stage 3: Volatility (triggered by Cape signatures)
     print(f"\n[Stage 3] Volatility: checking triggers...")
     if should_run_volatility(cape_data, volatility_cmd=VOLATILITY_CMD,
@@ -664,9 +681,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
 
-    # Stage 4.6: LLM analysis of shellcode artifacts (no Ghidra needed)
-    # Small injection buffers (< 1KB) with artifacts get sent directly to LLM
-    # for interpretation — the hex dump + artifact list is enough context.
+    # Stage 4.6: Log shellcode artifacts summary (no Ghidra needed)
+    # Small injection buffers (< 1KB) with artifacts — data already in
+    # shellcode_artifacts dict and included in report JSON for the LLM summary.
     shellcode_with_artifacts = [
         af for af in analyzed_files
         if af.get("shellcode_artifacts") and not af.get("analysis_success")
@@ -678,21 +695,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             apis = arts.get("resolved_apis", [])
             paths = arts.get("file_paths", [])
             if apis or paths:
-                # Build a summary for the LLM without Ghidra
-                sc["llm_artifact_summary"] = {
-                    "source": sc.get("source", "unknown"),
-                    "source_process": sc.get("source_process", "unknown"),
-                    "target_pid": sc.get("pid"),
-                    "target_process": sc.get("process"),
-                    "injection_address": sc.get("injection_address"),
-                    "size": sc.get("region_size"),
-                    "resolved_apis": apis,
-                    "file_paths": paths,
-                    "dll_names": arts.get("dll_names", []),
-                    "urls": arts.get("urls", []),
-                    "ip_addresses": arts.get("ip_addresses", []),
-                    "embedded_pe": arts.get("embedded_pe", False),
-                }
                 print(f"    {sc.get('source_process', '?')} → pid {sc.get('pid')}: {len(apis)} APIs, {len(paths)} paths")
 
     # Cross-tool correlation — must run BEFORE severity calculation
@@ -758,7 +760,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Database ingestion — write structured data to PostgreSQL
     print(f"\n[DB Ingestion] Writing to database...")
-    ingest_to_db(report)
+    analysis_id = ingest_to_db(report)
 
     # Stage 6: PDF report generation
     print(f"\n[Stage 6] PDF Report: generating...")
@@ -772,6 +774,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         )
         if result.returncode == 0:
             print(f"  PDF written to: {pdf_path}")
+            if analysis_id:
+                mark_pdf_generated(analysis_id)
         else:
             print(f"  [!] PDF generation failed: {result.stderr[:200]}", file=sys.stderr)
     except subprocess.TimeoutExpired:
@@ -782,41 +786,163 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     return report
 
 
+def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
+    """Re-run analysis stages on a saved report.json.
+
+    Loads collected data from a previous run and re-executes the fast
+    post-collection stages. Use this to iterate on reporting, IOC
+    extraction, severity logic, and dashboard rendering without waiting
+    for Cape/Volatility/Ghidra to re-run.
+
+    Replayable stages (default: all):
+      correlate   — cross-tool correlation
+      analysis    — programmatic family/severity/MITRE
+      iocs        — IOC extraction
+      summary     — executive summary (LLM call)
+      db          — database ingestion
+      pdf         — PDF report generation
+    """
+    print(f"[Replay] Loading {report_path}")
+    with report_path.open() as f:
+        report = json.load(f)
+
+    task_id = report.get("task_id", report_path.parent.name)
+    output_dir = REPORTS_DIR / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    all_stages = ["correlate", "analysis", "iocs", "summary", "db", "pdf"]
+    run_stages = stages if stages else all_stages
+
+    print(f"[Replay] Task: {task_id}")
+    print(f"[Replay] Stages: {', '.join(run_stages)}")
+
+    if "correlate" in run_stages:
+        print(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
+        report["cross_correlations"] = cross_correlate(report)
+        for finding in report["cross_correlations"]:
+            sev = finding.get("severity", "info")
+            title = finding.get("title", "?")
+            sources = " + ".join(finding.get("sources", []))
+            print(f"  [{sev.upper()}] {title} ({sources})")
+        if not report["cross_correlations"]:
+            print("  No cross-tool findings detected")
+
+    if "analysis" in run_stages:
+        print(f"\n[Analysis] Programmatic analysis...")
+        report["family"] = determine_family(report)
+        report["severity"] = calculate_severity(report)
+        report["mitre_mapping"] = build_mitre_mapping(report)
+        print(f"  Family: {report['family']}")
+        print(f"  Severity: {report['severity']}")
+        print(f"  MITRE techniques: {len(report['mitre_mapping'])}")
+
+    if "iocs" in run_stages:
+        print(f"\n[IOC Extraction] Scanning all stages for indicators...")
+        report["extracted_iocs"] = extract_iocs(report)
+        ioc_count = len(report["extracted_iocs"])
+        ioc_types = {}
+        for ioc in report["extracted_iocs"]:
+            t = ioc["type"]
+            ioc_types[t] = ioc_types.get(t, 0) + 1
+        print(f"  Found {ioc_count} IOCs: {ioc_types}")
+
+    if "summary" in run_stages:
+        if INTERPRET_ENABLED:
+            print(f"\n[Executive Summary] Generating...")
+            report["executive_summary"] = run_summarize(
+                report,
+                interpret_cmd=INTERPRET_CMD,
+                interpret_enabled=INTERPRET_ENABLED,
+                interpret_config=INTERPRET_CONFIG,
+            )
+            summary = report["executive_summary"]
+            if summary.get("executive_summary"):
+                print(f"  Key findings: {len(summary.get('key_findings', []))}")
+            elif summary.get("error"):
+                print(f"  [!] Error: {summary['error']}")
+
+    # Write updated report
+    report["replayed_at"] = datetime.now(timezone.utc).isoformat()
+    report["replayed_stages"] = run_stages
+    new_report_path = write_report(task_id, report, REPORTS_DIR)
+    print(f"\n[Done] Updated report: {new_report_path}")
+
+    if "db" in run_stages:
+        print(f"\n[DB Ingestion] Writing to database...")
+        analysis_id = ingest_to_db(report)
+    else:
+        analysis_id = None
+
+    if "pdf" in run_stages:
+        print(f"\n[PDF Report] Generating...")
+        pdf_path = new_report_path.parent / "report.pdf"
+        try:
+            result = subprocess.run(
+                ["{{ pipeline_install_dir }}/generate-report.py",
+                 str(new_report_path), str(pdf_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                print(f"  PDF written to: {pdf_path}")
+                if analysis_id:
+                    mark_pdf_generated(analysis_id)
+            else:
+                print(f"  [!] PDF generation failed: {result.stderr[:200]}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print("  [!] PDF generation timed out (60s)", file=sys.stderr)
+        except Exception as e:
+            print(f"  [!] PDF generation error: {e}", file=sys.stderr)
+
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="run-pipeline",
-        description="Run the four-stage malware analysis pipeline.",
+        description="Run the multi-stage malware analysis pipeline.",
     )
-    parser.add_argument("sample", type=Path, help="Path to the malware sample")
+    parser.add_argument("sample", type=Path,
+                        help="Path to the malware sample (or report.json with --replay)")
     parser.add_argument("--task-id", default=None,
                         help="Pipeline task ID (auto-generated if not set)")
     parser.add_argument("--filename", default="",
                         help="Original filename (used for Cape submission and reporting)")
+    parser.add_argument("--replay", action="store_true",
+                        help="Replay mode: re-run post-collection stages on a saved report.json")
+    parser.add_argument("--stages", default=None,
+                        help="Comma-separated stages to replay (default: all). "
+                             "Options: correlate,analysis,iocs,summary,db,pdf")
     args = parser.parse_args()
 
     if not args.sample.exists():
         print(f"Error: file not found: {args.sample}", file=sys.stderr)
         sys.exit(1)
 
-    task_id = args.task_id or uuid.uuid4().hex[:12]
-    report = run_pipeline(args.sample, task_id, original_name=args.filename)
+    if args.replay:
+        stages = args.stages.split(",") if args.stages else None
+        run_replay(args.sample, stages=stages)
+    else:
+        task_id = args.task_id or uuid.uuid4().hex[:12]
+        report = run_pipeline(args.sample, task_id, original_name=args.filename)
 
-    # Print summary
-    triage = report.get("triage", {})
-    yara_count = len(triage.get("yara_matches", []))
-    cape_status = report.get("cape", {}).get("status", "n/a")
-    vol_triggered = report.get("volatility", {}).get("triggered", False)
-    ghidra_triggered = report.get("ghidra", {}).get("triggered", False)
+        # Print summary
+        triage = report.get("triage", {})
+        yara_count = len(triage.get("yara_matches", []))
+        cape_status = report.get("cape", {}).get("status", "n/a")
+        vol_triggered = report.get("volatility", {}).get("triggered", False)
+        ghidra_triggered = report.get("ghidra", {}).get("triggered", False)
 
-    llm_enabled = report.get("llm_interpretation", {}).get("enabled", False)
-    llm_family = report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess", "n/a")
+        llm_enabled = report.get("llm_interpretation", {}).get("enabled", False)
+        llm_family = report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess", "n/a")
 
-    print(f"\nSummary:")
-    print(f"  Triage:     {yara_count} YARA matches")
-    print(f"  Cape:       {cape_status}")
-    print(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
-    print(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
-    print(f"  LLM:        {llm_family if llm_enabled else 'disabled'}")
+        print(f"\nSummary:")
+        print(f"  Triage:     {yara_count} YARA matches")
+        print(f"  Cape:       {cape_status}")
+        print(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
+        print(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
+        print(f"  LLM:        {llm_family if llm_enabled else 'disabled'}")
 
 
 if __name__ == "__main__":

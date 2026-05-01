@@ -240,24 +240,28 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
     except OSError as e:
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
 
-    # Send summarize message
+    # Send summarize message — use communicate() to avoid deadlock on
+    # large reports (42MB+ when malfind/volatility data is included)
     msg = json.dumps({"type": "summarize", "report": report, "config": interpret_config}, default=str)
-    proc.stdin.write(msg + "\n")
-    proc.stdin.flush()
 
     try:
-        # Read single response
-        line = proc.stdout.readline().strip()
-        if line:
+        stdout, stderr = proc.communicate(input=msg + "\n", timeout=300)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {"error": "Summary generation timed out (300s)"}
+    except Exception as e:
+        proc.kill()
+        return {"error": f"Summary communication error: {e}"}
+
+    # Parse the last JSON line from stdout (container may emit status lines too)
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
             result = json.loads(line)
             return result.get("summary", {"error": "No summary in response"})
-    except Exception as e:
-        return {"error": f"Summary parse error: {e}"}
-    finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        except json.JSONDecodeError:
+            continue
 
-    return {"error": "No response from summarize"}
+    return {"error": f"No valid JSON in summarize output. stderr: {stderr[:300]}"}
