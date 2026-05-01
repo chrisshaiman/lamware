@@ -14,6 +14,7 @@
     name:
       - requests
       - weasyprint
+      - markdown
     state: present
     break_system_packages: true
 
@@ -55,6 +56,7 @@
     - triage.py.j2
     - cape.py.j2
     - volatility.py.j2
+    - pcap.py.j2
     - ghidra.py.j2
     - interpret.py.j2
 

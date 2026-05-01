@@ -14,6 +14,7 @@ License: Apache 2.0
 import json
 from datetime import datetime
 
+import markdown as md
 import psycopg2
 import psycopg2.extras
 from flask import Flask, render_template_string, request, abort, Response
@@ -106,8 +107,12 @@ tr:hover { background: #161b22; }
 .mono { font-family: "Consolas", "Monaco", monospace; font-size: 12px; }
 .narrative {
     background: #0d1117; border-left: 3px solid #da3633; padding: 12px 16px;
-    margin: 8px 0; white-space: pre-wrap; font-size: 13px;
+    margin: 8px 0; font-size: 13px;
 }
+.narrative p { margin: 8px 0; }
+.narrative ul, .narrative ol { margin: 8px 0 8px 20px; }
+.narrative code { background: #30363d; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+.narrative strong { color: #f0f6fc; }
 .tag {
     display: inline-block; background: #30363d; color: #c9d1d9;
     padding: 2px 8px; border-radius: 12px; font-size: 11px; margin: 2px;
@@ -145,6 +150,62 @@ def escape(s):
     if s is None:
         return ""
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def render_markdown(text):
+    """Convert markdown text to safe HTML for narrative display.
+
+    If the text contains a JSON blob (from a failed parse_final_response),
+    try to extract the narrative field from it.
+    """
+    import re as _re
+    if not text:
+        return ""
+    text = str(text)
+
+    # Check if this looks like it contains a JSON blob with a narrative key
+    narr_idx = text.find('"narrative"')
+    if narr_idx != -1:
+        # Try JSON parse of the whole blob first
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            try:
+                parsed = json.loads(text[first_brace:last_brace + 1])
+                if isinstance(parsed, dict) and "narrative" in parsed:
+                    text = parsed["narrative"]
+                    return md.markdown(text, extensions=["nl2br", "fenced_code"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # JSON broken — extract everything after "narrative": "
+        match = _re.search(r'"narrative"\s*:\s*"', text)
+        if match:
+            start = match.end()
+            # Find the narrative value — may be truncated (no closing quote)
+            extracted = []
+            i = start
+            while i < len(text):
+                ch = text[i]
+                if ch == '\\' and i + 1 < len(text):
+                    next_ch = text[i + 1]
+                    if next_ch == 'n':
+                        extracted.append('\n')
+                    elif next_ch == '"':
+                        extracted.append('"')
+                    elif next_ch == '\\':
+                        extracted.append('\\')
+                    else:
+                        extracted.append(ch + next_ch)
+                    i += 2
+                elif ch == '"':
+                    break  # end of JSON string value
+                else:
+                    extracted.append(ch)
+                    i += 1
+            text = ''.join(extracted)
+
+    return md.markdown(text, extensions=["nl2br", "fenced_code"])
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +349,37 @@ def analysis_detail(analysis_id):
         """, (analysis_id,))
         network = cur.fetchall()
 
+    # Extract cross-correlation findings from report JSON
+    report_json = a.get("report_json") or {}
+    correlations = report_json.get("cross_correlations", [])
+
+    # Build cross-correlation rows
+    corr_rows = ""
+    for c in correlations:
+        sev = c.get("severity", "info")
+        sev_color = {"critical": "#da3633", "high": "#d29922", "medium": "#3fb950",
+                     "low": "#388bfd"}.get(sev, "#8b949e")
+        sources = ", ".join(c.get("sources", []))
+        mitre = c.get("mitre", "")
+        detail = c.get("detail", "")
+        before_data = c.get("before", "")
+        after_data = c.get("after", "")
+        corr_rows += f"""<tr>
+            <td><span style="color:{sev_color};font-weight:bold;text-transform:uppercase;">{escape(sev)}</span></td>
+            <td><strong>{escape(c.get('title', ''))}</strong></td>
+            <td style="font-size:11px;">{escape(sources)}</td>
+            <td style="font-size:11px;">{escape(mitre)}</td>
+        </tr>"""
+        if detail or before_data or after_data:
+            extra = ""
+            if before_data:
+                extra += f"<strong>Before:</strong> {escape(str(before_data)[:200])}<br>"
+            if after_data:
+                extra += f"<strong>After:</strong> {escape(str(after_data)[:200])}<br>"
+            if detail:
+                extra += escape(str(detail)[:300])
+            corr_rows += f"""<tr><td colspan="4" style="padding-left:24px;font-size:11px;color:#8b949e;border-bottom:1px solid #30363d;">{extra}</td></tr>"""
+
     # Build IOC rows
     ioc_rows = ""
     for ioc in iocs:
@@ -374,6 +466,13 @@ def analysis_detail(analysis_id):
             </div>
             {% endif %}
 
+            {% if corr_rows %}
+            <div class="card">
+                <h3>Cross-Tool Correlation Findings</h3>
+                <table><tr><th>Severity</th><th>Finding</th><th>Sources</th><th>MITRE</th></tr>{{ corr_rows }}</table>
+            </div>
+            {% endif %}
+
             {% if narrative %}
             <div class="card">
                 <h3>AI Reverse Engineering Analysis</h3>
@@ -426,8 +525,9 @@ def analysis_detail(analysis_id):
         family=escape(a["malware_family_guess"] or "?"),
         file_type=escape(a["file_type"] or "?"),
         pdf_link=pdf_link,
-        executive_summary=escape(a["executive_summary"] or ""),
-        narrative=escape(a["narrative"] or ""),
+        executive_summary=Markup(render_markdown(a["executive_summary"] or "")),
+        narrative=Markup(render_markdown(a["narrative"] or "")),
+        corr_rows=Markup(corr_rows),
         ioc_rows=Markup(ioc_rows), tech_rows=Markup(tech_rows), cap_rows=Markup(cap_rows),
         sig_rows=Markup(sig_rows), net_rows=Markup(net_rows),
     )

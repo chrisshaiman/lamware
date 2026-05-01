@@ -77,6 +77,14 @@ def ingest_to_db(report: dict) -> bool:
         analysis = interp.get("analysis", {})
         summary = report.get("executive_summary", {})
 
+        # Programmatic analysis is authoritative for severity/family;
+        # LLM values are fallback only
+        severity = (report.get("severity")
+                    or summary.get("severity")
+                    or analysis.get("risk_assessment"))
+        family = (report.get("family")
+                  or analysis.get("malware_family_guess"))
+
         cur.execute("""
             INSERT INTO analyses (
                 sample_id, task_id, started_at, completed_at,
@@ -99,9 +107,9 @@ def ingest_to_db(report: dict) -> bool:
             report.get("task_id", ""),
             report.get("started_at"),
             report.get("completed_at"),
-            summary.get("severity") or analysis.get("risk_assessment"),
+            severity,
             report.get("cape", {}).get("malscore"),
-            analysis.get("malware_family_guess"),
+            family,
             bool(triage),
             report.get("cape", {}).get("status") == "reported",
             report.get("cape", {}).get("task_id"),
@@ -228,12 +236,38 @@ def ingest_to_db(report: dict) -> bool:
 
         conn.commit()
         print(f"  DB: ingested analysis {analysis_id} for sample {sample_id}")
-        return True
+        return analysis_id
 
     except Exception as e:
         conn.rollback()
         print(f"  [!] DB ingestion error: {e}")
-        return False
+        return None
     finally:
         cur.close()
         conn.close()
+
+
+def mark_pdf_generated(analysis_id: int) -> bool:
+    """Set pdf_generated=True for the given analysis row."""
+    if not DB_PASSWORD or not analysis_id:
+        return False
+
+    try:
+        import psycopg2
+    except ImportError:
+        return False
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute("UPDATE analyses SET pdf_generated = TRUE WHERE id = %s", (analysis_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"  [!] Failed to update pdf_generated: {e}")
+        return False
