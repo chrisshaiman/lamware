@@ -83,6 +83,10 @@ PCAP_ENABLED = {% if pipeline_pcap_enabled | default(true) %}True{% else %}False
 PCAP_CMD = "{{ pcap_analysis_install_dir | default('/opt/pcap-analysis') }}/run-pcap-analysis"
 PCAP_TIMEOUT = {{ pipeline_pcap_timeout | default(120) }}
 
+# Volatility performance — ramdisk and parallel execution
+VOLATILITY_RAMDISK = "{{ pipeline_volatility_ramdisk | default('') }}"
+VOLATILITY_PARALLEL_WORKERS = {{ pipeline_volatility_parallel_workers | default(3) }}
+
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
 
@@ -589,6 +593,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             get_cape_signatures_fn=get_cape_signatures,
             cape_injection_pids=cape_injection_pids,
             cape_has_injection_buffers=len(cape_injection_candidates) > 0,
+            ramdisk_path=VOLATILITY_RAMDISK,
+            parallel_workers=VOLATILITY_PARALLEL_WORKERS,
         )
     else:
         print("  Not triggered (stub — awaiting sub-project 3)")

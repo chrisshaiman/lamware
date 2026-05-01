@@ -68,6 +68,10 @@ pipeline_volatility_extra_plugins:
     plugins:
       - windows.filescan
 
+# Volatility performance
+pipeline_volatility_ramdisk: /opt/pipeline/ramdisk   # tmpfs mount for fast dump I/O (empty = disabled)
+pipeline_volatility_parallel_workers: 3              # concurrent plugin containers
+
 # PCAP analysis (Stage 2.7) — Zeek + Suricata on Cape's network capture
 pipeline_pcap_enabled: true
 pipeline_pcap_timeout: 120              # seconds
