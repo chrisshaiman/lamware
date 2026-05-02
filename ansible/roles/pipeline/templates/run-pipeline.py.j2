@@ -386,11 +386,32 @@ def cross_correlate(report: dict) -> list[dict]:
         # Cape command lines extracted during extract_cape_intel
         cape_cmdlines = cape.get("process_cmdlines", {})
 
+        # Benign cmdline differences — COM servers get -Embedding at launch,
+        # PEB may not reflect it. Not malicious command line spoofing.
+        benign_flags = ["-embedding", "/prefetch:", "-servername:"]
+
+        def is_benign_difference(before: str, after: str) -> bool:
+            """Check if cmdline difference is a known benign pattern."""
+            b = before.strip().lower()
+            a = after.strip().lower()
+            # Check if the only difference is a benign flag
+            for flag in benign_flags:
+                if b.replace(flag, "").strip() == a.replace(flag, "").strip():
+                    return True
+                # Also handle the flag with different casing/spacing
+                b_no_flag = " ".join(p for p in b.split() if flag not in p.lower())
+                a_no_flag = " ".join(p for p in a.split() if flag not in p.lower())
+                if b_no_flag == a_no_flag:
+                    return True
+            return False
+
         for pid, cape_cmd in cape_cmdlines.items():
             vol_cmd = vol_cmdlines.get(pid, "")
             if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
                 # Normalize — ignore minor whitespace/case differences
                 if vol_cmd.strip().lower() != cape_cmd.strip().lower():
+                    if is_benign_difference(cape_cmd, vol_cmd):
+                        continue
                     findings.append({
                         "type": "cmdline_spoofing",
                         "severity": "critical",
