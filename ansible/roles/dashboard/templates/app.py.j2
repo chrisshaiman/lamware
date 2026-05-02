@@ -416,11 +416,24 @@ def analysis_detail(analysis_id):
             <td style="font-size:11px;">{escape((s['description'] or '')[:150])}</td>
         </tr>"""
 
-    # Build network rows
+    # Build network rows — filter known benign Windows noise
+    benign_domains = {
+        "connectivity.microsoft.com", "settings-win.data.microsoft.com",
+        "mobile.events.data.microsoft.com", "msedge.api.cdp.microsoft.com",
+        "storeedge.microsoft.com", "v10.events.data.microsoft.com",
+        "watson.telemetry.microsoft.com", "www.msftconnecttest.com",
+        "ipv6.msftconnecttest.com", "msftconnecttest.com",
+        "www.bing.com", "bing.com", "dns.msftncsi.com",
+        "login.live.com", "windowsupdate.com", "ctldl.windowsupdate.com",
+        "ocsp.digicert.com", "crl.microsoft.com", "time.windows.com",
+    }
     net_rows = ""
     for n in network:
         if n["event_type"] == "dns":
-            net_rows += f"<tr><td>DNS</td><td>{escape(n['dns_query'])}</td><td>{escape(n['dns_type'] or '')}</td></tr>"
+            query = n["dns_query"] or ""
+            if query.lower() in benign_domains:
+                continue
+            net_rows += f"<tr><td>DNS</td><td>{escape(query)}</td><td>{escape(n['dns_type'] or '')}</td></tr>"
         elif n["event_type"] == "http":
             net_rows += f"<tr><td>HTTP</td><td>{escape(n['http_method'])} {escape(n['http_url'])}</td><td>{escape(n['http_host'] or '')}</td></tr>"
         elif n["event_type"] == "tcp":
