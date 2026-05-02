@@ -433,6 +433,22 @@ def cross_correlate(report: dict) -> list[dict]:
 
 def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> dict:
     """Execute the multi-stage malware analysis pipeline."""
+    import time as _time
+    pipeline_start = _time.time()
+    stage_timings = {}
+
+    def stage_timer(name):
+        """Context manager to time a pipeline stage."""
+        class Timer:
+            def __enter__(self):
+                self.start = _time.time()
+                return self
+            def __exit__(self, *args):
+                elapsed = _time.time() - self.start
+                stage_timings[name] = round(elapsed, 1)
+                print(f"  [{name} completed in {elapsed:.0f}s]")
+        return Timer()
+
     report = {
         "task_id": task_id,
         "sample": str(sample_path),
@@ -445,18 +461,20 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 1: Triage (always)
     print(f"\n[Stage 1] Triage: {report['sample_name']}")
-    triage_result = run_triage(sample_path, output_dir, triage_cmd=TRIAGE_CMD)
-    report.update(triage_result)
-    cape_tags = derive_tags_from_triage(triage_result)
-    cape_package = derive_package_from_triage(triage_result)
-    cape_filename = derive_filename(sample_path, cape_package, original_name)
-    print(f"  Tags: {cape_tags}")
-    if cape_package:
-        print(f"  Package: {cape_package}")
-    print(f"  Filename: {cape_filename}")
+    with stage_timer("triage"):
+        triage_result = run_triage(sample_path, output_dir, triage_cmd=TRIAGE_CMD)
+        report.update(triage_result)
+        cape_tags = derive_tags_from_triage(triage_result)
+        cape_package = derive_package_from_triage(triage_result)
+        cape_filename = derive_filename(sample_path, cape_package, original_name)
+        print(f"  Tags: {cape_tags}")
+        if cape_package:
+            print(f"  Package: {cape_package}")
+        print(f"  Filename: {cape_filename}")
 
     # Stage 2: Cape (always, with triage-informed tags, package, and filename)
     print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
+    _cape_start = _time.time()
     try:
         cape_task_id = submit_to_cape(
             sample_path,
@@ -492,6 +510,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print(f"  [!] Cape submission failed: {e}", file=sys.stderr)
         report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
         cape_data = {}
+    stage_timings["cape"] = round(_time.time() - _cape_start, 1)
+    print(f"  [cape completed in {stage_timings['cape']:.0f}s]")
 
     # Stage 2.5: Process Cape injection buffers
     # Cape captures the exact bytes written during cross-process injection.
@@ -560,6 +580,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             print(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
 
     # Stage 2.7: PCAP analysis — Zeek + Suricata on Cape's network capture
+    _pcap_start = _time.time()
     cape_task_id = report.get("cape", {}).get("task_id")
     pcap_path = get_cape_pcap(cape_task_id) if PCAP_ENABLED else None
     if pcap_path:
@@ -587,8 +608,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         report["pcap_analysis"] = {"skipped": True, "reason": "no PCAP available"}
     else:
         report["pcap_analysis"] = {"enabled": False}
+    stage_timings["pcap"] = round(_time.time() - _pcap_start, 1)
 
     # Stage 3: Volatility (triggered by Cape signatures)
+    _vol_start = _time.time()
     print(f"\n[Stage 3] Volatility: checking triggers...")
     if should_run_volatility(cape_data, volatility_cmd=VOLATILITY_CMD,
                              volatility_triggers=VOLATILITY_TRIGGERS,
@@ -620,6 +643,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         print("  Not triggered (stub — awaiting sub-project 3)")
         report["volatility"] = {"triggered": False}
+    stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
 
     # Stage 3.5: Shellcode analysis (dump already extracted during Volatility stage)
     # The two-pass approach runs inside run_volatility: JSON filter right after
@@ -662,6 +686,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     shellcode_candidates = all_candidates
 
     # Stage 4: Ghidra (triggered by dropped payloads)
+    _ghidra_start = _time.time()
     print(f"\n[Stage 4] Ghidra: checking triggers...")
     if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                          get_cape_signatures_fn=get_cape_signatures):
@@ -675,8 +700,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         print("  Not triggered")
         report["ghidra"] = {"triggered": False}
+    stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
 
     # Stage 4.5: LLM Interpretation (agentic, after Ghidra)
+    _interp_start = _time.time()
     ghidra_data = report.get("ghidra", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
@@ -707,6 +734,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         else:
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
+    stage_timings["interpret"] = round(_time.time() - _interp_start, 1)
 
     # Stage 4.6: Log shellcode artifacts summary (no Ghidra needed)
     # Small injection buffers (< 1KB) with artifacts — data already in
@@ -762,6 +790,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             del vol_data[key]
 
     # Stage 5: Executive summary (single-shot LLM, after all stages)
+    _summary_start = _time.time()
     if INTERPRET_ENABLED:
         print(f"\n[Stage 5] Executive Summary: generating...")
         report["executive_summary"] = run_summarize(
@@ -779,6 +808,14 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             print(f"  [!] Error: {summary['error']}")
     else:
         report["executive_summary"] = {"enabled": False, "reason": "disabled_by_config"}
+    stage_timings["summary"] = round(_time.time() - _summary_start, 1)
+
+    # Timing summary
+    total_elapsed = round(_time.time() - pipeline_start, 1)
+    stage_timings["total"] = total_elapsed
+    report["timing"] = stage_timings
+    print(f"\n[Timing] Total: {total_elapsed:.0f}s | " +
+          " | ".join(f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total"))
 
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(timezone.utc).isoformat()
