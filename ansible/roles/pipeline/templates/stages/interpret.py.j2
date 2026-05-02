@@ -267,7 +267,7 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
             # as a raw JSON string. Extract them.
             if "executive_summary" not in summary and "narrative" in summary:
                 raw = summary["narrative"]
-                # Try code block extraction
+                # Try full JSON parse (code blocks, bare JSON)
                 import re
                 cb_match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", raw, re.DOTALL)
                 if cb_match:
@@ -277,7 +277,6 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
                             return parsed
                     except (json.JSONDecodeError, TypeError):
                         pass
-                # Try bare JSON extraction
                 first = raw.find("{")
                 last = raw.rfind("}")
                 if first != -1 and last > first:
@@ -287,6 +286,33 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
                             return parsed
                     except (json.JSONDecodeError, TypeError):
                         pass
+
+                # JSON malformed — extract executive_summary value directly
+                es_match = re.search(r'"executive_summary"\s*:\s*"', raw)
+                if es_match:
+                    start = es_match.end()
+                    extracted = []
+                    i = start
+                    while i < len(raw):
+                        ch = raw[i]
+                        if ch == '\\' and i + 1 < len(raw):
+                            next_ch = raw[i + 1]
+                            if next_ch == 'n':
+                                extracted.append('\n')
+                            elif next_ch == '"':
+                                extracted.append('"')
+                            elif next_ch == '\\':
+                                extracted.append('\\')
+                            else:
+                                extracted.append(ch + next_ch)
+                            i += 2
+                        elif ch == '"':
+                            break
+                        else:
+                            extracted.append(ch)
+                            i += 1
+                    if extracted:
+                        summary["executive_summary"] = ''.join(extracted)
 
             return summary
         except json.JSONDecodeError:
