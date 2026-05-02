@@ -260,7 +260,35 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
             continue
         try:
             result = json.loads(line)
-            return result.get("summary", {"error": "No summary in response"})
+            summary = result.get("summary", {"error": "No summary in response"})
+
+            # If parse_final_response hit the fallback, the summary fields
+            # (executive_summary, key_findings, etc.) end up inside "narrative"
+            # as a raw JSON string. Extract them.
+            if "executive_summary" not in summary and "narrative" in summary:
+                raw = summary["narrative"]
+                # Try code block extraction
+                import re
+                cb_match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", raw, re.DOTALL)
+                if cb_match:
+                    try:
+                        parsed = json.loads(cb_match.group(1))
+                        if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                # Try bare JSON extraction
+                first = raw.find("{")
+                last = raw.rfind("}")
+                if first != -1 and last > first:
+                    try:
+                        parsed = json.loads(raw[first:last + 1])
+                        if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            return summary
         except json.JSONDecodeError:
             continue
 
