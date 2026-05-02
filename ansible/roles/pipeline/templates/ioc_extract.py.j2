@@ -66,24 +66,38 @@ BENIGN_IPS = {
 BENIGN_IP_PREFIXES = ("239.", "224.", "169.254.", "fe80:")
 
 
-def is_benign_indicator(ioc_type: str, value: str) -> bool:
+def is_benign_domain(domain: str) -> bool:
+    """Check if a domain is known benign (Windows noise)."""
+    d = domain.lower().strip()
+    if d in BENIGN_DOMAINS:
+        return True
+    for benign in BENIGN_DOMAINS:
+        if d.endswith("." + benign):
+            return True
+    return False
+
+
+def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
     """Check if an indicator is known benign (Windows noise)."""
     v = value.lower().strip()
     if ioc_type in ("domain-name", "url"):
         domain = v
         if "://" in domain:
             domain = domain.split("://", 1)[1].split("/")[0]
-        # Exact match or subdomain match
-        if domain in BENIGN_DOMAINS:
+        if is_benign_domain(domain):
             return True
-        for benign in BENIGN_DOMAINS:
-            if domain.endswith("." + benign):
-                return True
     elif ioc_type == "ipv4-addr":
         if v in BENIGN_IPS:
             return True
         if any(v.startswith(p) for p in BENIGN_IP_PREFIXES):
             return True
+        # Filter IPs resolved from benign domains
+        if context:
+            ctx_lower = context.lower()
+            if "resolved from" in ctx_lower:
+                for benign in BENIGN_DOMAINS:
+                    if benign in ctx_lower:
+                        return True
     return False
 
 
@@ -100,7 +114,7 @@ def extract_iocs(report: dict) -> list[dict]:
         """Add an IOC if not already seen or known benign."""
         if not value or len(value) < 3:
             return
-        if is_benign_indicator(ioc_type, value):
+        if is_benign_indicator(ioc_type, value, context):
             return
         key = (ioc_type, value.lower().strip())
         if key in seen:
