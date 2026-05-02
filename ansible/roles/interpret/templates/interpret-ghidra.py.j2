@@ -86,7 +86,11 @@ that could become detection signatures
 When you have sufficient evidence, produce your final analysis. You do not need to \
 use all available tool calls — stop early if the evidence is clear.
 
-Respond with a JSON object containing:
+CRITICAL: Your final response MUST be a single valid JSON object with NO text before \
+or after it. Do not write any preamble, explanation, or markdown — ONLY the JSON object. \
+If tools are unavailable, produce the JSON based on whatever data you have.
+
+The JSON object must contain:
 - malware_family_guess: string (your assessment — may confirm or refine the programmatic guess)
 - capabilities: list of strings (what the code CAN do based on decompilation)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects (ONLY techniques \
