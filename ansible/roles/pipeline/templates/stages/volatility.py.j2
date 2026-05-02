@@ -518,6 +518,8 @@ def run_volatility(cape_data: dict, output_dir: Path,
       Phase 1 (parallel): independent read-only plugins that can run concurrently
       Phase 2 (sequential): malfind post-processing that depends on Phase 1 results
     """
+    vol_start = time.time()
+
     dump_path = get_memory_dump_path(cape_data)
     if not dump_path:
         return {"triggered": True, "error": "memory dump not found"}
@@ -547,24 +549,28 @@ def run_volatility(cape_data: dict, output_dir: Path,
 
     # Run ALL plugins in parallel — they're all read-only on the dump.
     # Malfind post-processing (dump extraction) runs after all complete.
+    plugins_start = time.time()
     print(f"    Running {len(all_plugins)} plugins in parallel (workers={parallel_workers})...")
     with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
         futures = {}
+        plugin_starts = {}
         for plugin in all_plugins:
             short_name = plugin.replace("windows.", "").replace("malware.", "")
+            plugin_starts[plugin] = time.time()
             future = executor.submit(
                 run_single_plugin, active_dump, plugin, output_dir, volatility_cmd)
             futures[future] = (plugin, short_name)
 
         for future in as_completed(futures):
             plugin, short_name = futures[future]
+            elapsed = time.time() - plugin_starts[plugin]
             try:
                 plugin_output = future.result()
             except Exception as e:
                 plugin_output = {"error": str(e)}
             result["plugins"][short_name] = plugin_output
             status = "OK" if "error" not in (plugin_output if isinstance(plugin_output, dict) else {}) else "FAILED"
-            print(f"    {plugin}... {status}")
+            print(f"    {plugin}... {status} ({elapsed:.0f}s)")
 
             if short_name == "netscan" and isinstance(plugin_output, list):
                 result["summary"]["suspicious_connections"] = len(plugin_output)
@@ -624,6 +630,14 @@ def run_volatility(cape_data: dict, output_dir: Path,
         if insights.get("anomalous_parents"): items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
         if items:
             print(f"    Volatility insights: {', '.join(items)}")
+
+    vol_elapsed = time.time() - vol_start
+    plugins_elapsed = time.time() - plugins_start
+    result["timing"] = {
+        "total_seconds": round(vol_elapsed, 1),
+        "plugins_seconds": round(plugins_elapsed, 1),
+    }
+    print(f"    Volatility total: {vol_elapsed:.0f}s (plugins: {plugins_elapsed:.0f}s)")
 
     return result
 
