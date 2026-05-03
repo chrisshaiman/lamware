@@ -399,7 +399,7 @@ def cross_correlate(report: dict) -> list[dict]:
 
         # Benign cmdline differences — COM servers get -Embedding at launch,
         # PEB may not reflect it. Not malicious command line spoofing.
-        benign_flags = ["-embedding", "/prefetch:", "-servername:"]
+        benign_flags = ["-embedding", "-secured", "/prefetch:", "-servername:"]
 
         def is_benign_difference(before: str, after: str) -> bool:
             """Check if cmdline difference is a known benign pattern."""
