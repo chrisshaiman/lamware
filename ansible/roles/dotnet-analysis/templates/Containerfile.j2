@@ -1,0 +1,21 @@
+# .NET analysis container — ILSpy decompiler for .NET/MSIL binaries
+# Decompiles .NET assemblies to C# source code for LLM analysis.
+# Built locally by Ansible. Never pulled from a registry.
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+
+RUN dotnet tool install -g ilspycmd
+
+# Add dotnet tools to PATH
+ENV PATH="${PATH}:/root/.dotnet/tools"
+
+COPY analyze-dotnet.py /opt/analyze-dotnet.py
+RUN chmod +x /opt/analyze-dotnet.py
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /output /nonexistent && chmod 777 /nonexistent /output
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-dotnet.py"]

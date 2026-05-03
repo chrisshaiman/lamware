@@ -1,0 +1,70 @@
+"""
+Stage 4 (.NET): ILSpy decompilation for .NET/MSIL binaries.
+
+Detects .NET assemblies via YARA matches and file type, then runs
+ILSpy to decompile to C# source code. Produces much better output
+than Ghidra for .NET binaries since ILSpy understands IL natively.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import subprocess
+from pathlib import Path
+
+
+DOTNET_YARA_INDICATORS = [
+    "isnet", "net_exe", "netexecutable", "msil", "dotnet", "csharp",
+]
+
+
+def is_dotnet_binary(report: dict) -> bool:
+    """Check if the sample is a .NET assembly based on triage data."""
+    triage = report.get("triage", {})
+
+    # Check file type
+    file_type = (triage.get("file_type", "") or "").lower()
+    if "msil" in file_type or ".net" in file_type or "mono" in file_type:
+        return True
+
+    # Check YARA matches
+    for match in triage.get("yara_matches", []):
+        rule = match.get("rule", "").lower()
+        if any(indicator in rule for indicator in DOTNET_YARA_INDICATORS):
+            return True
+
+    return False
+
+
+def run_dotnet_analysis(binary_path: Path, output_dir: Path,
+                        dotnet_cmd: str, timeout: int = 120) -> dict:
+    """Run ILSpy decompilation on a .NET assembly.
+
+    Returns structured JSON with decompiled C# source, class listing,
+    and extracted strings of interest.
+    """
+    try:
+        result = subprocess.run(
+            [dotnet_cmd, str(binary_path), str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return {"error": f"dotnet analysis command not found: {dotnet_cmd}",
+                "analysis_success": False}
+    except subprocess.TimeoutExpired:
+        return {"error": f"dotnet analysis timed out ({timeout}s)",
+                "analysis_success": False}
+
+    if result.returncode != 0:
+        return {"error": f"dotnet analysis failed: {result.stderr[:300]}",
+                "analysis_success": False}
+
+    try:
+        output = json.loads(result.stdout)
+        return output
+    except json.JSONDecodeError:
+        return {"error": f"Failed to parse dotnet output: {result.stdout[:200]}",
+                "analysis_success": False}

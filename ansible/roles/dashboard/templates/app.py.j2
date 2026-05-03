@@ -788,9 +788,16 @@ def pipeline_status():
     rows = ""
     for a in analyses:
         status = a["pipeline_status"] or "completed"
+        # Mark stale runs — running for 30+ min without completion
+        if status == "running" and a["started_at"]:
+            from datetime import datetime, timezone
+            age = datetime.now(timezone.utc) - (a["started_at"].replace(tzinfo=timezone.utc) if a["started_at"].tzinfo is None else a["started_at"])
+            if age.total_seconds() > 1800 and not a["completed_at"]:
+                status = "stale"
         status_color = {
             "running": "#f9a825", "completed": "#3fb950",
             "failed": "#da3633", "pending": "#8b949e",
+            "stale": "#e65100",
         }.get(status, "#8b949e")
 
         sha_short = a["sha256"][:12] + "..." if a["sha256"] else "?"
