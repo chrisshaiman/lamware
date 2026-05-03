@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# roles/dotnet-analysis/tasks/main.yml
+# Builds the ILSpy .NET decompilation container.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create dotnet-analysis directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ dotnet_analysis_install_dir }}"
+    - "{{ dotnet_analysis_install_dir }}/build"
+    - "{{ dotnet_analysis_install_dir }}/output"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ dotnet_analysis_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy analyze-dotnet.py
+  ansible.builtin.template:
+    src: analyze-dotnet.py.j2
+    dest: "{{ dotnet_analysis_install_dir }}/build/analyze-dotnet.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build dotnet-analysis container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/dotnet-analysis:latest
+      -f {{ dotnet_analysis_install_dir }}/build/Containerfile
+      {{ dotnet_analysis_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+- name: Deploy dotnet-analysis wrapper script
+  ansible.builtin.template:
+    src: run-dotnet-analysis-wrapper.sh.j2
+    dest: "{{ dotnet_analysis_install_dir }}/run-dotnet-analysis"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ dotnet_analysis_install_dir }}/run-dotnet-analysis"
+    dest: /usr/local/bin/run-dotnet-analysis
+    state: link
