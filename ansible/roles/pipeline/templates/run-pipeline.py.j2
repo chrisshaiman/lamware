@@ -145,7 +145,8 @@ def determine_family(report: dict) -> str:
     known_families = [
         "emotet", "trickbot", "qakbot", "qbot", "icedid", "dridex",
         "cobalt", "cobaltstrike", "metasploit", "meterpreter",
-        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat",
+        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat", "nanocore",
+        "darkcomet", "quasar", "warzone", "netwire", "poisonivy", "orcus",
         "raccoon", "redline", "vidar", "lumma", "stealc",
         "lockbit", "blackcat", "alphv", "conti", "ryuk", "revil",
         "guloader", "smokeloader", "amadey", "systembc",
@@ -190,7 +191,7 @@ def calculate_severity(report: dict) -> str:
     # Cape malscore (0-10)
     malscore = cape.get("malscore", 0)
     if isinstance(malscore, (int, float)):
-        score += malscore * 2  # 0-20 points
+        score += malscore * 3  # 0-30 points (malscore 10 = critical by itself)
 
     # High-severity signatures
     for sig in cape.get("signatures", []):
