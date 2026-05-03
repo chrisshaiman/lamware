@@ -19,7 +19,8 @@ Most malware analysis setups run tools independently — Cape produces a report,
 Submit a malware sample and get back:
 
 - **Structured IOCs** with STIX 2.1 types, source attribution, and context — ready for SIEM searches and block lists
-- **MITRE ATT&CK mapping** from multiple sources (Cape behavioral signatures + AI reverse engineering)
+- **MITRE ATT&CK mapping** from multiple sources (Cape behavioral signatures + AI reverse engineering) with IOC-to-technique evidence linking
+- **Real-time pipeline status** dashboard with per-stage progress tracking
 - **Cross-tool findings** — dropped files confirmed loaded, shellcode self-modification detected, command line spoofing identified
 - **AI reverse engineering narrative** — what the malware does, how it works, traced through decompiled code
 - **Kill chain executive summary** — analyst-ready briefing organized by attack phase
@@ -53,8 +54,11 @@ Sample
   │                                 Dropped file loaded? Shellcode self-modified?
   │                                 Command line spoofed?
   │
-  ├─ Stage 4: Static Analysis ─── Ghidra headless (decompilation, imports, strings)
-  │  (containerized, --network=none)   Functions, pseudocode, cross-references
+  ├─ Stage 2.7: PCAP Analysis ─── Zeek (protocol analysis) + Suricata (IDS signatures)
+  │  (containerized, --network=none)   JA3 fingerprints, HTTP details, IDS alerts
+  │
+  ├─ Stage 4: Static Analysis ─── Ghidra headless (native PE) / ILSpy (.NET)
+  │  (containerized, --network=none)   Functions, pseudocode, cross-references, C# source
   │
   ├─ Stage 4.5: AI Investigation ─ Agentic LLM with 6 Ghidra query tools
   │  (containerized, --network=host)   Autonomous investigation, 6-10 tool calls
@@ -120,7 +124,7 @@ OVH Bare Metal (RISE-2)
 ├── Podman (rootless containers for all tool stages)
 ├── PostgreSQL (analysis database)
 ├── Flask dashboard (behind WireGuard)
-└── 18 Ansible roles for fully automated deployment
+└── 20 Ansible roles for fully automated deployment
 ```
 
 ## Quick Start
