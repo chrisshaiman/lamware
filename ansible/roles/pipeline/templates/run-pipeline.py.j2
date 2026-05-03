@@ -666,8 +666,20 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             parallel_workers=VOLATILITY_PARALLEL_WORKERS,
         )
     else:
-        print("  Not triggered (stub — awaiting sub-project 3)")
-        report["volatility"] = {"triggered": False}
+        # Explain why Volatility was skipped
+        cape_sigs = get_cape_signatures(cape_data) if cape_data else []
+        if not cape_data or cape_data.get("status") != "reported":
+            reason = "Cape analysis not available"
+        elif not Path(VOLATILITY_CMD).exists():
+            reason = "Volatility container not installed"
+        elif not cape_sigs:
+            reason = "Cape reported no behavioral signatures"
+        else:
+            reason = (f"Cape signatures ({len(cape_sigs)}) did not match "
+                      f"Volatility triggers. Triggers require: injection, "
+                      f"hollowing, rootkit, persistence, or packing signatures")
+        print(f"  Not triggered — {reason}")
+        report["volatility"] = {"triggered": False, "reason": reason}
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
 
