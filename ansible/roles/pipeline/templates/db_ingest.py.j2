@@ -8,6 +8,67 @@ License: Apache 2.0
 import sys
 
 
+# MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
+# Covers common techniques seen in malware analysis. Techniques not in this
+# dict get no tactics (dashboard shows empty). Expand as needed.
+MITRE_TACTICS = {
+    "T1007": ["discovery"],
+    "T1012": ["discovery"],
+    "T1014": ["defense-evasion"],
+    "T1016": ["discovery"],
+    "T1018": ["discovery"],
+    "T1021": ["lateral-movement"],
+    "T1027": ["defense-evasion"],
+    "T1027.002": ["defense-evasion"],
+    "T1033": ["discovery"],
+    "T1036": ["defense-evasion"],
+    "T1041": ["exfiltration"],
+    "T1047": ["execution"],
+    "T1053": ["execution", "persistence", "privilege-escalation"],
+    "T1055": ["defense-evasion", "privilege-escalation"],
+    "T1055.003": ["defense-evasion", "privilege-escalation"],
+    "T1055.012": ["defense-evasion", "privilege-escalation"],
+    "T1057": ["discovery"],
+    "T1059": ["execution"],
+    "T1059.001": ["execution"],
+    "T1059.003": ["execution"],
+    "T1059.005": ["execution"],
+    "T1059.006": ["execution"],
+    "T1071": ["command-and-control"],
+    "T1071.001": ["command-and-control"],
+    "T1082": ["discovery"],
+    "T1083": ["discovery"],
+    "T1095": ["command-and-control"],
+    "T1105": ["command-and-control"],
+    "T1106": ["execution"],
+    "T1112": ["defense-evasion"],
+    "T1134": ["defense-evasion", "privilege-escalation"],
+    "T1134.001": ["defense-evasion", "privilege-escalation"],
+    "T1140": ["defense-evasion"],
+    "T1204": ["execution"],
+    "T1218": ["defense-evasion"],
+    "T1486": ["impact"],
+    "T1489": ["impact"],
+    "T1490": ["impact"],
+    "T1497": ["defense-evasion", "discovery"],
+    "T1497.001": ["defense-evasion", "discovery"],
+    "T1518": ["discovery"],
+    "T1543": ["persistence", "privilege-escalation"],
+    "T1547": ["persistence", "privilege-escalation"],
+    "T1547.001": ["persistence", "privilege-escalation"],
+    "T1548": ["defense-evasion", "privilege-escalation"],
+    "T1548.002": ["defense-evasion", "privilege-escalation"],
+    "T1553": ["defense-evasion"],
+    "T1555": ["credential-access"],
+    "T1560": ["collection"],
+    "T1562": ["defense-evasion"],
+    "T1571": ["command-and-control"],
+    "T1573": ["command-and-control"],
+    "T1574": ["persistence", "privilege-escalation", "defense-evasion"],
+    "T1480": ["defense-evasion"],
+}
+
+
 # -------------------------------------------------------------------------
 # Configuration (injected by Ansible template)
 # -------------------------------------------------------------------------
@@ -157,12 +218,15 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # --- Insert MITRE techniques ---
         # From AI RE
         for t in analysis.get("attack_techniques", []):
+            tid = t.get("id", "")
+            tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name)
-                VALUES (%s, %s)
-                ON CONFLICT (technique_id) DO NOTHING
+                INSERT INTO technique_values (technique_id, technique_name, tactics)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (technique_id) DO UPDATE SET
+                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (t.get("id", ""), t.get("name", "")))
+            """, (tid, t.get("name", ""), tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
@@ -179,12 +243,15 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
 
         # From Cape TTPs
         for t in report.get("cape", {}).get("mitre_ttps", []):
+            tid = t.get("id", "")
+            tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name)
-                VALUES (%s, %s)
-                ON CONFLICT (technique_id) DO NOTHING
+                INSERT INTO technique_values (technique_id, technique_name, tactics)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (technique_id) DO UPDATE SET
+                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (t.get("id", ""), t.get("source_signature", "")))
+            """, (tid, t.get("source_signature", ""), tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
