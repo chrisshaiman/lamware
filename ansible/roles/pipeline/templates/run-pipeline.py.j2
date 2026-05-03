@@ -162,6 +162,13 @@ def determine_family(report: dict) -> str:
             if family:
                 candidates[family.lower()] = candidates.get(family.lower(), 0) + 15
 
+    # LLM family guess as fallback (lower weight — code analysis, not signatures)
+    llm_family = (report.get("llm_interpretation", {})
+                  .get("analysis", {})
+                  .get("malware_family_guess", ""))
+    if llm_family and llm_family.lower() != "unknown":
+        candidates[llm_family.lower()] = candidates.get(llm_family.lower(), 0) + 3
+
     if candidates:
         return max(candidates, key=candidates.get)
     return "unknown"
