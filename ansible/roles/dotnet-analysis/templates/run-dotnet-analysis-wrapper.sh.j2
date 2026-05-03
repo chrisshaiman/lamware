@@ -1,0 +1,45 @@
+#!/bin/bash
+# =============================================================================
+# run-dotnet-analysis — host-side wrapper for containerized .NET decompilation
+# Runs ILSpy against a .NET assembly inside a Podman container.
+#
+# Usage: run-dotnet-analysis <binary_path> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-dotnet-analysis <binary_path> [output_dir]" >&2
+    exit 1
+fi
+
+BINARY_PATH="$(realpath "$1")"
+BINARY_NAME="$(basename "$BINARY_PATH")"
+BINARY_DIR="$(dirname "$BINARY_PATH")"
+OUTPUT_DIR="${2:-{{ dotnet_analysis_install_dir }}/output}"
+
+if [ ! -f "$BINARY_PATH" ]; then
+    echo "Error: binary not found: $BINARY_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ dotnet_analysis_container_memory }} \
+    --cpus={{ dotnet_analysis_container_cpus }} \
+    --timeout={{ dotnet_analysis_container_timeout }} \
+    --tmpfs /tmp:size=500m \
+    --tmpfs /nonexistent:size=10m \
+    --user 65534:65534 \
+    -v "$BINARY_DIR:/sample:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/dotnet-analysis:latest \
+    "/sample/$BINARY_NAME"

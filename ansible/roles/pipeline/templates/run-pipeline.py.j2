@@ -35,6 +35,7 @@ from stages.volatility import (
     should_run_volatility, run_volatility, extract_shellcode_artifacts,
 )
 from stages.pcap import get_cape_pcap, run_pcap_analysis
+from stages.dotnet import is_dotnet_binary, run_dotnet_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
 from ioc_extract import extract_iocs, map_iocs_to_techniques
@@ -51,6 +52,7 @@ CAPE_API_KEY = "{{ cape_api_key }}"
 TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
 VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
 GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
+DOTNET_CMD = "{{ dotnet_analysis_install_dir | default('/opt/dotnet-analysis') }}/run-dotnet-analysis"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
 INTERPRET_ENABLED = {% if interpret_enabled | default(true) %}True{% else %}False{% endif %}
 
@@ -145,7 +147,8 @@ def determine_family(report: dict) -> str:
     known_families = [
         "emotet", "trickbot", "qakbot", "qbot", "icedid", "dridex",
         "cobalt", "cobaltstrike", "metasploit", "meterpreter",
-        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat",
+        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat", "nanocore",
+        "darkcomet", "quasar", "warzone", "netwire", "poisonivy", "orcus",
         "raccoon", "redline", "vidar", "lumma", "stealc",
         "lockbit", "blackcat", "alphv", "conti", "ryuk", "revil",
         "guloader", "smokeloader", "amadey", "systembc",
@@ -190,7 +193,7 @@ def calculate_severity(report: dict) -> str:
     # Cape malscore (0-10)
     malscore = cape.get("malscore", 0)
     if isinstance(malscore, (int, float)):
-        score += malscore * 2  # 0-20 points
+        score += malscore * 3  # 0-30 points (malscore 10 = critical by itself)
 
     # High-severity signatures
     for sig in cape.get("signatures", []):
@@ -396,7 +399,7 @@ def cross_correlate(report: dict) -> list[dict]:
 
         # Benign cmdline differences — COM servers get -Embedding at launch,
         # PEB may not reflect it. Not malicious command line spoofing.
-        benign_flags = ["-embedding", "/prefetch:", "-servername:"]
+        benign_flags = ["-embedding", "-secured", "/prefetch:", "-servername:"]
 
         def is_benign_difference(before: str, after: str) -> bool:
             """Check if cmdline difference is a known benign pattern."""
@@ -666,8 +669,20 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             parallel_workers=VOLATILITY_PARALLEL_WORKERS,
         )
     else:
-        print("  Not triggered (stub — awaiting sub-project 3)")
-        report["volatility"] = {"triggered": False}
+        # Explain why Volatility was skipped
+        cape_sigs = get_cape_signatures(cape_data) if cape_data else []
+        if not cape_data or cape_data.get("status") != "reported":
+            reason = "Cape analysis not available"
+        elif not Path(VOLATILITY_CMD).exists():
+            reason = "Volatility container not installed"
+        elif not cape_sigs:
+            reason = "Cape reported no behavioral signatures"
+        else:
+            reason = (f"Cape signatures ({len(cape_sigs)}) did not match "
+                      f"Volatility triggers. Triggers require: injection, "
+                      f"hollowing, rootkit, persistence, or packing signatures")
+        print(f"  Not triggered — {reason}")
+        report["volatility"] = {"triggered": False, "reason": reason}
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
 
@@ -711,12 +726,29 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         all_candidates = shellcode_candidates
     shellcode_candidates = all_candidates
 
-    # Stage 4: Ghidra (triggered by dropped payloads)
+    # Stage 4: Static analysis (Ghidra for native PE, ILSpy for .NET)
     _ghidra_start = _time.time()
     update_stage(analysis_id_early, "ghidra", "started")
-    print(f"\n[Stage 4] Ghidra: checking triggers...")
-    if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
-                         get_cape_signatures_fn=get_cape_signatures):
+
+    # Check if this is a .NET binary — route to ILSpy instead
+    if is_dotnet_binary(report):
+        print(f"\n[Stage 4] .NET detected — running ILSpy decompilation...")
+        dotnet_result = run_dotnet_analysis(
+            sample_path, output_dir, dotnet_cmd=DOTNET_CMD)
+        report["dotnet_analysis"] = dotnet_result
+        if dotnet_result.get("analysis_success"):
+            source_len = dotnet_result.get("decompilation", {}).get("source_length", 0)
+            class_count = dotnet_result.get("class_count", 0)
+            strings_count = len(dotnet_result.get("strings_of_interest", []))
+            print(f"  Decompiled: {source_len} chars C# source, {class_count} classes, {strings_count} interesting strings")
+        else:
+            print(f"  [!] ILSpy failed: {dotnet_result.get('error', 'unknown')}")
+
+        report["ghidra"] = {"triggered": True, "dotnet_routed": True,
+                            "analyzed_files": []}
+    elif should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
+                           get_cape_signatures_fn=get_cape_signatures):
+        print(f"\n[Stage 4] Ghidra: checking triggers...")
         print("  Triggered — running Ghidra headless")
         report["ghidra"] = run_ghidra(
             cape_data, output_dir, sample_path,
@@ -725,19 +757,55 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             shellcode_candidates=shellcode_candidates,
         )
     else:
+        print(f"\n[Stage 4] Ghidra: checking triggers...")
         print("  Not triggered")
         report["ghidra"] = {"triggered": False}
     stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
     update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
-    # Stage 4.5: LLM Interpretation (agentic, after Ghidra)
+    # Stage 4.5: LLM Interpretation (agentic for Ghidra, single-shot for .NET)
     _interp_start = _time.time()
     update_stage(analysis_id_early, "interpret", "started")
     ghidra_data = report.get("ghidra", {})
+    dotnet_data = report.get("dotnet_analysis", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
-    if successful:
+    if dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
+        # .NET path — send C# source directly to LLM (no Ghidra tools needed)
+        print(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
+        dotnet_source = dotnet_data.get("decompilation", {}).get("source", "")
+        dotnet_classes = dotnet_data.get("classes", [])
+        dotnet_strings = dotnet_data.get("strings_of_interest", [])
+
+        # Build init message with C# source instead of Ghidra data
+        dotnet_init = {
+            "analysis_type": "dotnet",
+            "source_language": "csharp",
+            "decompiled_source": dotnet_source[:50000],  # cap for LLM context
+            "class_count": len(dotnet_classes),
+            "classes": dotnet_classes[:50],
+            "strings_of_interest": dotnet_strings,
+            "analysis_success": True,
+        }
+        report["llm_interpretation"] = run_interpret(
+            dotnet_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        interp = report["llm_interpretation"]
+        if interp.get("enabled") and interp.get("analysis"):
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            print(f"  Family guess: {family}")
+            print(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+        elif interp.get("error"):
+            print(f"  [!] Error: {interp['error']}")
+
+    elif successful:
+        # Native PE path — agentic Ghidra investigation
         print(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
         report["llm_interpretation"] = run_interpret(
             successful[0], output_dir,
@@ -757,12 +825,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         elif interp.get("error"):
             print(f"  [!] Error: {interp['error']}")
     else:
-        if INTERPRET_ENABLED and ghidra_data.get("triggered"):
-            print(f"\n[Stage 4.5] LLM Interpretation: skipped (no successful Ghidra analysis)")
-            report["llm_interpretation"] = {"enabled": True, "reason": "no_ghidra_data"}
+        if INTERPRET_ENABLED and (ghidra_data.get("triggered") or dotnet_data):
+            print(f"\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")
+            report["llm_interpretation"] = {"enabled": True, "reason": "no_analysis_data"}
         else:
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
-                                            "reason": "ghidra_not_triggered"}
+                                            "reason": "not_triggered"}
     stage_timings["interpret"] = round(_time.time() - _interp_start, 1)
     update_stage(analysis_id_early, "interpret", "completed", f"{stage_timings['interpret']:.0f}s")
 

@@ -83,6 +83,20 @@ that could become detection signatures
 4. Inter-function relationships — what calls what, data flow between components
 5. YARA rule suggestions — identify unique byte sequences suitable for detection rules
 
+INVESTIGATION STRATEGY — follow this approach for efficient analysis:
+1. Start with the entry point — decompile 'entry' or 'main' to understand initialization
+2. Search for crypto functions (*crypt*, *encode*, *decode*, *hash*) — these reveal \
+encryption, encoding, and data protection mechanisms
+3. Search for network functions (*http*, *socket*, *connect*, *send*) — these reveal \
+C2 communication patterns
+4. Follow cross-references — if a function calls WriteProcessMemory or CreateRemoteThread, \
+trace backward to understand the injection flow
+5. Read strings at suspicious addresses — hardcoded C2 URLs, registry paths, mutex names
+6. Look for anti-analysis — VM detection (registry reads for VBox/VMware), debugger \
+checks (IsDebuggerPresent, timing), sandbox evasion (sleep, mouse movement checks)
+7. Prioritize depth over breadth — fully trace one interesting code path rather than \
+skimming many functions
+
 When you have sufficient evidence, produce your final analysis. You do not need to \
 use all available tool calls — stop early if the evidence is clear.
 

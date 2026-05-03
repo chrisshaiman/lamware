@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""
+analyze-dotnet.py — Decompile .NET assemblies with ILSpy.
+
+Produces structured JSON output with:
+- Decompiled C# source code (full or per-class)
+- Assembly metadata (references, entry point, target framework)
+- Class/method listing for the LLM to explore
+
+Usage: python3 analyze-dotnet.py /sample/binary.exe
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def get_assembly_info(binary_path: str) -> dict:
+    """Extract assembly metadata using ilspycmd."""
+    try:
+        result = subprocess.run(
+            ["ilspycmd", "--list", binary_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:200]}
+
+        # Parse the type listing
+        types = []
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                types.append(line)
+
+        return {"types": types, "type_count": len(types)}
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout listing types"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def decompile_full(binary_path: str) -> dict:
+    """Decompile the full assembly to C# source."""
+    try:
+        result = subprocess.run(
+            ["ilspycmd", binary_path],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:300]}
+
+        source = result.stdout
+        # Truncate very large decompilations for LLM context limits
+        if len(source) > 100000:
+            source = source[:100000] + "\n\n// ... truncated (source too large) ..."
+
+        return {
+            "source": source,
+            "source_length": len(result.stdout),
+            "truncated": len(result.stdout) > 100000,
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout (90s) — assembly too large or obfuscated"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def extract_strings_of_interest(source: str) -> list[dict]:
+    """Extract interesting strings from decompiled C# source."""
+    import re
+    findings = []
+
+    # IP addresses
+    for match in re.finditer(r'"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"', source):
+        ip = match.group(1)
+        parts = ip.split(".")
+        if all(0 <= int(p) <= 255 for p in parts):
+            findings.append({"type": "ip", "value": ip})
+
+    # URLs
+    for match in re.finditer(r'"(https?://[^"]+)"', source):
+        findings.append({"type": "url", "value": match.group(1)})
+
+    # Email addresses
+    for match in re.finditer(r'"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"', source):
+        findings.append({"type": "email", "value": match.group(1)})
+
+    # Registry paths
+    for match in re.finditer(r'"((?:HKLM|HKCU|SOFTWARE|CurrentVersion|Run)[^"]*)"', source, re.IGNORECASE):
+        findings.append({"type": "registry", "value": match.group(1)})
+
+    # File paths (Windows)
+    for match in re.finditer(r'"([A-Z]:\\[^"]{5,})"', source):
+        findings.append({"type": "path", "value": match.group(1)})
+
+    # Port numbers in assignments
+    for match in re.finditer(r'(?:port|Port)\s*=\s*(\d{2,5})', source):
+        findings.append({"type": "port", "value": match.group(1)})
+
+    # Mutex patterns
+    for match in re.finditer(r'"((?:Global\\|Local\\)?[A-Za-z0-9_-]{8,})"', source):
+        val = match.group(1)
+        if any(kw in val.lower() for kw in ["mutex", "global\\", "local\\"]):
+            findings.append({"type": "mutex", "value": val})
+
+    # Base64 strings (>20 chars)
+    for match in re.finditer(r'"([A-Za-z0-9+/]{20,}={0,2})"', source):
+        findings.append({"type": "base64", "value": match.group(1)[:100]})
+
+    # Dedup
+    seen = set()
+    unique = []
+    for f in findings:
+        key = (f["type"], f["value"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+
+    return unique
+
+
+def extract_class_summary(source: str) -> list[dict]:
+    """Extract class names and their methods from C# source."""
+    import re
+    classes = []
+    current_class = None
+
+    for line in source.splitlines():
+        # Class declarations
+        class_match = re.match(r'\s*(?:public|private|internal|protected)?\s*(?:static\s+)?class\s+(\w+)', line)
+        if class_match:
+            current_class = {"name": class_match.group(1), "methods": []}
+            classes.append(current_class)
+            continue
+
+        # Method declarations
+        if current_class:
+            method_match = re.match(
+                r'\s*(?:public|private|internal|protected)?\s*(?:static\s+)?'
+                r'(?:override\s+)?(?:virtual\s+)?(?:async\s+)?'
+                r'(\w+(?:<[^>]+>)?)\s+(\w+)\s*\(', line)
+            if method_match:
+                current_class["methods"].append({
+                    "return_type": method_match.group(1),
+                    "name": method_match.group(2),
+                })
+
+    return classes
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: analyze-dotnet.py <binary_path>"}))
+        sys.exit(1)
+
+    binary_path = sys.argv[1]
+    if not os.path.exists(binary_path):
+        print(json.dumps({"error": f"File not found: {binary_path}"}))
+        sys.exit(1)
+
+    result = {
+        "binary": binary_path,
+        "binary_size": os.path.getsize(binary_path),
+        "analysis_type": "dotnet_ilspy",
+    }
+
+    # Get assembly info
+    info = get_assembly_info(binary_path)
+    result["assembly_info"] = info
+
+    # Full decompilation
+    decompiled = decompile_full(binary_path)
+    result["decompilation"] = decompiled
+
+    if decompiled.get("source"):
+        source = decompiled["source"]
+
+        # Extract class summary
+        result["classes"] = extract_class_summary(source)
+        result["class_count"] = len(result["classes"])
+
+        # Extract strings of interest
+        result["strings_of_interest"] = extract_strings_of_interest(source)
+
+        result["analysis_success"] = True
+    else:
+        result["analysis_success"] = False
+
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()

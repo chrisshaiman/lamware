@@ -2,6 +2,7 @@
 # =============================================================================
 # run-pipeline — convenience wrapper
 # Passes sample path to the pipeline orchestrator script.
+# Catches crashes and marks the pipeline as failed in the database.
 #
 # Usage: run-pipeline <sample_path> [--task-id <id>]
 #
@@ -9,9 +10,40 @@
 # License: Apache 2.0
 # =============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 # Unbuffered output so progress is visible in real time
 export PYTHONUNBUFFERED=1
 
-exec python3 {{ pipeline_install_dir }}/run-pipeline.py "$@"
+python3 {{ pipeline_install_dir }}/run-pipeline.py "$@"
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "[!] Pipeline exited with code $EXIT_CODE — marking stale runs as failed"
+    python3 -c "
+import psycopg2
+try:
+    conn = psycopg2.connect(
+        host='{{ postgres_listen_address | default('127.0.0.1') }}',
+        port={{ postgres_port | default(5432) }},
+        dbname='{{ postgres_db_name | default('malware_analysis') }}',
+        user='{{ postgres_db_user | default('pipeline') }}',
+        password='{{ pipeline_db_password | default('') }}',
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute(\"\"\"
+        UPDATE analyses
+        SET pipeline_status = 'failed', current_stage = NULL
+        WHERE pipeline_status = 'running'
+          AND (completed_at IS NULL OR completed_at < NOW() - INTERVAL '5 minutes')
+    \"\"\")
+    print(f'  Marked {cur.rowcount} stale run(s) as failed')
+    cur.close()
+    conn.close()
+except Exception as e:
+    print(f'  [!] Failed to update DB: {e}')
+" 2>&1
+fi
+
+exit $EXIT_CODE
