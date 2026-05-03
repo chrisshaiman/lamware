@@ -113,6 +113,12 @@ tr:hover { background: #161b22; }
 .narrative ul, .narrative ol { margin: 8px 0 8px 20px; }
 .narrative code { background: #30363d; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
 .narrative strong { color: #f0f6fc; }
+.method-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 600; margin-left: 4px; vertical-align: middle;
+}
+.method-programmatic { background: #388bfd; color: white; }
+.method-llm { background: #e91e63; color: white; border: 1px dashed #ff80ab; }
 .tag {
     display: inline-block; background: #30363d; color: #c9d1d9;
     padding: 2px 8px; border-radius: 12px; font-size: 11px; margin: 2px;
@@ -276,7 +282,7 @@ def index():
     </head><body>
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
             <form action="/" method="get" style="margin-left:auto;">
                 <input class="search-box" name="q" placeholder="Search hash, filename, family..." value="{{ search }}">
             </form>
@@ -309,7 +315,7 @@ def analysis_detail(analysis_id):
 
         # IOCs
         cur.execute("""
-            SELECT iv.type, iv.value, ai.source_stage, ai.context
+            SELECT iv.id AS ioc_id, iv.type, iv.value, ai.source_stage, ai.context
             FROM analysis_iocs ai
             JOIN ioc_values iv ON iv.id = ai.ioc_id
             WHERE ai.analysis_id = %s
@@ -340,6 +346,24 @@ def analysis_detail(analysis_id):
             WHERE analysis_id = %s ORDER BY severity DESC LIMIT 20
         """, (analysis_id,))
         signatures = cur.fetchall()
+
+        # IOC-technique mappings
+        cur.execute("""
+            SELECT itm.ioc_id, tv.technique_id, tv.technique_name,
+                   itm.evidence, itm.method, itm.confidence
+            FROM ioc_technique_mappings itm
+            JOIN technique_values tv ON tv.id = itm.technique_id
+            WHERE itm.analysis_id = %s
+        """, (analysis_id,))
+        ioc_tech_maps = cur.fetchall()
+
+        # Build lookup: ioc_id → list of technique mappings
+        ioc_techniques = {}
+        for m in ioc_tech_maps:
+            ioc_id = m["ioc_id"]
+            if ioc_id not in ioc_techniques:
+                ioc_techniques[ioc_id] = []
+            ioc_techniques[ioc_id].append(m)
 
         # Network events
         cur.execute("""
@@ -380,22 +404,51 @@ def analysis_detail(analysis_id):
                 extra += escape(str(detail)[:300])
             corr_rows += f"""<tr><td colspan="4" style="padding-left:24px;font-size:11px;color:#8b949e;border-bottom:1px solid #30363d;">{extra}</td></tr>"""
 
-    # Build IOC rows
+    # Build IOC rows with linked MITRE techniques
     ioc_rows = ""
     for ioc in iocs:
+        # Linked techniques for this IOC
+        linked = ioc_techniques.get(ioc["ioc_id"], [])
+        tech_badges = ""
+        for m in linked:
+            method_class = "method-llm" if m["method"] == "llm" else "method-programmatic"
+            method_label = "AI" if m["method"] == "llm" else ""
+            tech_badges += (
+                f'<span class="tag" title="{escape(m["evidence"] or "")}">'
+                f'{escape(m["technique_id"])}'
+                f'<span class="method-badge {method_class}">{method_label}</span>'
+                f'</span> '
+            )
+
         ioc_rows += f"""<tr>
             <td>{source_badge(ioc['source_stage'])}</td>
             <td>{escape(ioc['type'])}</td>
             <td class="mono">{escape(ioc['value'])}</td>
-            <td style="font-size:11px;color:#8b949e;">{escape(ioc['context'] or '')}</td>
+            <td style="font-size:11px;color:#8b949e;">{escape(ioc['context'] or '')}{' ' + tech_badges if tech_badges else ''}</td>
         </tr>"""
 
-    # Build technique rows
-    tech_rows = ""
+    # Build technique rows — merge duplicates, show multiple source badges
+    tech_merged = {}
     for t in techniques:
+        tid = t["technique_id"]
+        if tid not in tech_merged:
+            tech_merged[tid] = {
+                "technique_id": tid,
+                "technique_name": t["technique_name"],
+                "tactics": t["tactics"] or [],
+                "sources": [],
+            }
+        tech_merged[tid]["sources"].append(t["source_stage"])
+        # Keep the longer/better name
+        if len(t["technique_name"] or "") > len(tech_merged[tid]["technique_name"] or ""):
+            tech_merged[tid]["technique_name"] = t["technique_name"]
+
+    tech_rows = ""
+    for t in tech_merged.values():
         tactics = ", ".join(t["tactics"]) if t["tactics"] else ""
+        sources = " ".join(source_badge(s) for s in sorted(set(t["sources"])))
         tech_rows += f"""<tr>
-            <td>{source_badge(t['source_stage'])}</td>
+            <td>{sources}</td>
             <td><strong>{escape(t['technique_id'])}</strong></td>
             <td>{escape(t['technique_name'])}</td>
             <td style="font-size:11px;">{escape(tactics)}</td>
@@ -448,7 +501,7 @@ def analysis_detail(analysis_id):
     </head><body>
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
         </header>
         <div class="container">
             <h2>Analysis: {{ task_id }}</h2>
@@ -610,7 +663,7 @@ def iocs_list():
     </head><body>
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
             <form action="/iocs" method="get" style="margin-left:auto;display:flex;gap:8px;">
                 <select name="type" class="search-box" style="width:150px;">
                     <option value="">All types</option>{{ type_options }}
@@ -666,7 +719,7 @@ def techniques_list():
     </head><body>
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
         </header>
         <div class="container">
             <h2>MITRE ATT&CK Techniques</h2>
@@ -694,6 +747,121 @@ def download_pdf(task_id):
     safe_name = "".join(c for c in task_id if c.isalnum() or c in "-_.")
     return Response(pdf_bytes, mimetype="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={safe_name}-report.pdf"})
+
+
+PIPELINE_STAGES = [
+    "triage", "cape", "pcap", "volatility", "ghidra",
+    "interpret", "summary", "db", "pdf",
+]
+
+
+@app.route("/status")
+def pipeline_status():
+    """Show running and recently completed pipeline analyses."""
+    with db_connection() as cur:
+        cur.execute("""
+            SELECT a.id, a.task_id, a.pipeline_status, a.current_stage,
+                   a.started_at, a.completed_at, a.stage_timings,
+                   s.sha256, s.filename, a.severity, a.malware_family_guess
+            FROM analyses a
+            JOIN samples s ON s.id = a.sample_id
+            WHERE a.pipeline_status IN ('running', 'pending')
+               OR a.completed_at > NOW() - INTERVAL '2 hours'
+               OR a.started_at > NOW() - INTERVAL '2 hours'
+            ORDER BY a.started_at DESC
+            LIMIT 20
+        """)
+        analyses = cur.fetchall()
+
+        # Fetch events for running analyses
+        running_events = {}
+        for a in analyses:
+            if a["pipeline_status"] in ("running", "pending"):
+                cur.execute("""
+                    SELECT stage, status, detail, created_at
+                    FROM pipeline_stage_events
+                    WHERE analysis_id = %s
+                    ORDER BY created_at
+                """, (a["id"],))
+                running_events[a["id"]] = cur.fetchall()
+
+    rows = ""
+    for a in analyses:
+        status = a["pipeline_status"] or "completed"
+        status_color = {
+            "running": "#f9a825", "completed": "#3fb950",
+            "failed": "#da3633", "pending": "#8b949e",
+        }.get(status, "#8b949e")
+
+        sha_short = a["sha256"][:12] + "..." if a["sha256"] else "?"
+        started = a["started_at"].strftime("%H:%M:%S") if a["started_at"] else "?"
+        current = a["current_stage"] or ""
+
+        # Build progress bar
+        timings = a["stage_timings"] or {}
+        events = running_events.get(a["id"], [])
+        completed_stages = set()
+        for ev in events:
+            if ev["status"] == "completed":
+                completed_stages.add(ev["stage"])
+
+        progress = ""
+        for stage in PIPELINE_STAGES:
+            timing = timings.get(stage, "")
+            if stage in completed_stages or (status == "completed" and timing):
+                color = "#3fb950"
+                title = f"{stage}: {timing}s" if timing else stage
+            elif stage == current:
+                color = "#f9a825"
+                title = f"{stage}: running..."
+            else:
+                color = "#30363d"
+                title = stage
+            progress += f'<span title="{title}" style="display:inline-block;width:24px;height:12px;background:{color};border-radius:2px;margin:1px;"></span>'
+
+        elapsed = ""
+        if a["started_at"] and status == "running":
+            from datetime import datetime, timezone
+            delta = datetime.now(timezone.utc) - a["started_at"].replace(tzinfo=timezone.utc) if a["started_at"].tzinfo is None else datetime.now(timezone.utc) - a["started_at"]
+            elapsed = f"{int(delta.total_seconds())}s"
+        elif timings.get("total"):
+            elapsed = f"{timings['total']:.0f}s"
+
+        rows += f"""<tr>
+            <td><span style="color:{status_color};font-weight:bold;text-transform:uppercase;">{escape(status)}</span></td>
+            <td><a href="/analysis/{a['id']}">{escape(a['task_id'])}</a></td>
+            <td class="mono" style="font-size:11px;">{escape(sha_short)}</td>
+            <td>{escape(a['filename'] or '?')}</td>
+            <td>{escape(current)}</td>
+            <td>{progress}</td>
+            <td>{elapsed}</td>
+            <td>{started}</td>
+        </tr>"""
+
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
+        <title>Pipeline Status — Dashboard</title>
+        <style>{{ css }}</style>
+        <meta http-equiv="refresh" content="10">
+    </head><body>
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav>
+                <a href="/">Analyses</a>
+                <a href="/status">Status</a>
+                <a href="/iocs">IOCs</a>
+                <a href="/techniques">ATT&CK</a>
+            </nav>
+        </header>
+        <div class="container">
+            <h2>Pipeline Status</h2>
+            <p style="font-size:11px;color:#8b949e;">Auto-refreshes every 10 seconds. Shows running and recent analyses.</p>
+            <table>
+                <tr><th>Status</th><th>Task</th><th>SHA256</th><th>Filename</th>
+                    <th>Current Stage</th><th>Progress</th><th>Elapsed</th><th>Started</th></tr>
+                {{ rows }}
+            </table>
+        </div>
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows))
 
 
 if __name__ == "__main__":

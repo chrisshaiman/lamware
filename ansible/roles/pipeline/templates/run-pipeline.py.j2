@@ -37,8 +37,9 @@ from stages.volatility import (
 from stages.pcap import get_cape_pcap, run_pcap_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
-from ioc_extract import extract_iocs
+from ioc_extract import extract_iocs, map_iocs_to_techniques
 from db_ingest import ingest_to_db, mark_pdf_generated
+from pipeline_status import create_analysis_row, update_stage, complete_pipeline
 
 
 # -------------------------------------------------------------------------
@@ -161,6 +162,13 @@ def determine_family(report: dict) -> str:
             family = cfg.get("family", "") or cfg.get("malware", "")
             if family:
                 candidates[family.lower()] = candidates.get(family.lower(), 0) + 15
+
+    # LLM family guess as fallback (lower weight — code analysis, not signatures)
+    llm_family = (report.get("llm_interpretation", {})
+                  .get("analysis", {})
+                  .get("malware_family_guess", ""))
+    if llm_family and llm_family.lower() != "unknown":
+        candidates[llm_family.lower()] = candidates.get(llm_family.lower(), 0) + 3
 
     if candidates:
         return max(candidates, key=candidates.get)
@@ -437,16 +445,28 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     pipeline_start = _time.time()
     stage_timings = {}
 
+    # Create DB row at pipeline start for real-time status tracking
+    analysis_id_early = create_analysis_row(task_id, str(sample_path),
+                                            filename=original_name)
+
     def stage_timer(name):
-        """Context manager to time a pipeline stage."""
+        """Context manager to time a pipeline stage and update status."""
         class Timer:
             def __enter__(self):
                 self.start = _time.time()
+                update_stage(analysis_id_early, name, "started")
                 return self
-            def __exit__(self, *args):
+            def __exit__(self, exc_type, exc_val, *args):
                 elapsed = _time.time() - self.start
                 stage_timings[name] = round(elapsed, 1)
-                print(f"  [{name} completed in {elapsed:.0f}s]")
+                if exc_type:
+                    update_stage(analysis_id_early, name, "failed",
+                                detail=str(exc_val)[:200])
+                    print(f"  [{name} FAILED in {elapsed:.0f}s]")
+                else:
+                    update_stage(analysis_id_early, name, "completed",
+                                detail=f"{elapsed:.0f}s")
+                    print(f"  [{name} completed in {elapsed:.0f}s]")
         return Timer()
 
     report = {
@@ -475,6 +495,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     # Stage 2: Cape (always, with triage-informed tags, package, and filename)
     print(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
     _cape_start = _time.time()
+    update_stage(analysis_id_early, "cape", "started")
     try:
         cape_task_id = submit_to_cape(
             sample_path,
@@ -511,6 +532,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
         cape_data = {}
     stage_timings["cape"] = round(_time.time() - _cape_start, 1)
+    update_stage(analysis_id_early, "cape", "completed", f"{stage_timings['cape']:.0f}s")
     print(f"  [cape completed in {stage_timings['cape']:.0f}s]")
 
     # Stage 2.5: Process Cape injection buffers
@@ -581,6 +603,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 2.7: PCAP analysis — Zeek + Suricata on Cape's network capture
     _pcap_start = _time.time()
+    update_stage(analysis_id_early, "pcap", "started")
     cape_task_id = report.get("cape", {}).get("task_id")
     pcap_path = get_cape_pcap(cape_task_id) if PCAP_ENABLED else None
     if pcap_path:
@@ -609,9 +632,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         report["pcap_analysis"] = {"enabled": False}
     stage_timings["pcap"] = round(_time.time() - _pcap_start, 1)
+    update_stage(analysis_id_early, "pcap", "completed", f"{stage_timings['pcap']:.0f}s")
 
     # Stage 3: Volatility (triggered by Cape signatures)
     _vol_start = _time.time()
+    update_stage(analysis_id_early, "volatility", "started")
     print(f"\n[Stage 3] Volatility: checking triggers...")
     if should_run_volatility(cape_data, volatility_cmd=VOLATILITY_CMD,
                              volatility_triggers=VOLATILITY_TRIGGERS,
@@ -644,6 +669,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print("  Not triggered (stub — awaiting sub-project 3)")
         report["volatility"] = {"triggered": False}
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
+    update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
 
     # Stage 3.5: Shellcode analysis (dump already extracted during Volatility stage)
     # The two-pass approach runs inside run_volatility: JSON filter right after
@@ -687,6 +713,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 4: Ghidra (triggered by dropped payloads)
     _ghidra_start = _time.time()
+    update_stage(analysis_id_early, "ghidra", "started")
     print(f"\n[Stage 4] Ghidra: checking triggers...")
     if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                          get_cape_signatures_fn=get_cape_signatures):
@@ -701,9 +728,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         print("  Not triggered")
         report["ghidra"] = {"triggered": False}
     stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
+    update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
     # Stage 4.5: LLM Interpretation (agentic, after Ghidra)
     _interp_start = _time.time()
+    update_stage(analysis_id_early, "interpret", "started")
     ghidra_data = report.get("ghidra", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
@@ -735,6 +764,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
                                             "reason": "ghidra_not_triggered"}
     stage_timings["interpret"] = round(_time.time() - _interp_start, 1)
+    update_stage(analysis_id_early, "interpret", "completed", f"{stage_timings['interpret']:.0f}s")
 
     # Stage 4.6: Log shellcode artifacts summary (no Ghidra needed)
     # Small injection buffers (< 1KB) with artifacts — data already in
@@ -783,6 +813,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         ioc_types[t] = ioc_types.get(t, 0) + 1
     print(f"  Found {ioc_count} IOCs: {ioc_types}")
 
+    # IOC-to-MITRE technique mapping (programmatic rules)
+    report["ioc_technique_mappings"] = map_iocs_to_techniques(report, report["extracted_iocs"])
+    if report["ioc_technique_mappings"]:
+        print(f"  Mapped {len(report['ioc_technique_mappings'])} IOCs to MITRE techniques")
+
     # Clean internal keys with non-serializable objects (Path) before summary/report
     vol_data = report.get("volatility", {})
     for key in list(vol_data.keys()):
@@ -791,6 +826,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 5: Executive summary (single-shot LLM, after all stages)
     _summary_start = _time.time()
+    update_stage(analysis_id_early, "summary", "started")
     if INTERPRET_ENABLED:
         print(f"\n[Stage 5] Executive Summary: generating...")
         report["executive_summary"] = run_summarize(
@@ -809,6 +845,27 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         report["executive_summary"] = {"enabled": False, "reason": "disabled_by_config"}
     stage_timings["summary"] = round(_time.time() - _summary_start, 1)
+    update_stage(analysis_id_early, "summary", "completed", f"{stage_timings['summary']:.0f}s")
+
+    # Merge LLM-generated IOC-technique links from executive summary
+    llm_links = report.get("executive_summary", {}).get("ioc_technique_links", [])
+    if llm_links:
+        existing_keys = {(m["ioc_value"], m["technique_id"])
+                         for m in report.get("ioc_technique_mappings", [])}
+        for link in llm_links:
+            key = (link.get("ioc_value", ""), link.get("technique_id", ""))
+            if key[0] and key[1] and key not in existing_keys:
+                report["ioc_technique_mappings"].append({
+                    "ioc_type": link.get("ioc_type", ""),
+                    "ioc_value": link["ioc_value"],
+                    "technique_id": link["technique_id"],
+                    "technique_name": link.get("technique_name", ""),
+                    "evidence": link.get("evidence", ""),
+                    "method": "llm",
+                    "confidence": "medium",
+                })
+                existing_keys.add(key)
+        print(f"  LLM added {len(llm_links)} IOC-technique links")
 
     # Timing summary
     total_elapsed = round(_time.time() - pipeline_start, 1)
@@ -824,7 +881,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Database ingestion — write structured data to PostgreSQL
     print(f"\n[DB Ingestion] Writing to database...")
-    analysis_id = ingest_to_db(report)
+    analysis_id = ingest_to_db(report, existing_analysis_id=analysis_id_early)
+
+    # Mark pipeline complete
+    complete_pipeline(analysis_id or analysis_id_early, "completed",
+                      stage_timings=stage_timings)
 
     # Stage 6: PDF report generation
     print(f"\n[Stage 6] PDF Report: generating...")

@@ -343,3 +343,107 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("ipv4-addr", ip, "AI Reverse Engineering", f"Mentioned in capability: {cap[:80]}")
 
     return iocs
+
+
+# -------------------------------------------------------------------------
+# IOC-to-MITRE technique mapping
+# -------------------------------------------------------------------------
+
+# Programmatic mapping rules — deterministic, high confidence
+IOC_TECHNIQUE_RULES = [
+    # Network IOCs → C2 / exfiltration
+    {"ioc_type": "domain-name", "source": "Cape",
+     "technique": "T1071", "technique_name": "Application Layer Protocol",
+     "evidence": "Domain contacted during detonation"},
+    {"ioc_type": "url", "source": "Cape",
+     "technique": "T1071.001", "technique_name": "Web Protocols",
+     "evidence": "HTTP request during detonation"},
+    {"ioc_type": "ipv4-addr", "source": "Cape", "context_contains": "TCP connection",
+     "technique": "T1095", "technique_name": "Non-Application Layer Protocol",
+     "evidence": "Direct TCP connection to remote host"},
+
+    # Mutex → execution guardrails
+    {"ioc_type": "mutex",
+     "technique": "T1480", "technique_name": "Execution Guardrails",
+     "evidence": "Mutex used as singleton/execution guard"},
+
+    # Injection-related file IOCs
+    {"ioc_type": "file:name", "context_contains": "injected",
+     "technique": "T1055", "technique_name": "Process Injection",
+     "evidence": "File associated with process injection activity"},
+
+    # DLLs from unusual paths
+    {"ioc_type": "file:name", "context_contains": "unusual path",
+     "technique": "T1574", "technique_name": "Hijack Execution Flow",
+     "evidence": "DLL loaded from non-standard path"},
+
+    # YARA packer/obfuscation rules
+    {"ioc_type": "yara-rule", "value_contains": "packer",
+     "technique": "T1027", "technique_name": "Obfuscated Files or Information",
+     "evidence": "Packed binary detected by YARA"},
+    {"ioc_type": "yara-rule", "value_contains": "crypt",
+     "technique": "T1027", "technique_name": "Obfuscated Files or Information",
+     "evidence": "Encrypted/crypted binary detected by YARA"},
+
+    # JA3 fingerprints → encrypted C2
+    {"ioc_type": "ja3",
+     "technique": "T1573", "technique_name": "Encrypted Channel",
+     "evidence": "TLS fingerprint from network traffic"},
+
+    # Suricata IDS alerts
+    {"ioc_type": "ids-alert",
+     "technique": "T1071", "technique_name": "Application Layer Protocol",
+     "evidence": "IDS signature matched network traffic"},
+
+    # User-agent strings → C2 over HTTP
+    {"ioc_type": "user-agent",
+     "technique": "T1071.001", "technique_name": "Web Protocols",
+     "evidence": "HTTP user-agent used in network communication"},
+]
+
+
+def map_iocs_to_techniques(report: dict, iocs: list[dict]) -> list[dict]:
+    """Map IOCs to MITRE techniques using programmatic rules.
+
+    Returns list of mapping dicts ready for db_ingest:
+    {ioc_type, ioc_value, technique_id, technique_name, evidence, method, confidence}
+    """
+    mappings = []
+    seen = set()  # dedup by (ioc_value, technique_id)
+
+    for ioc in iocs:
+        ioc_type = ioc.get("type", "")
+        ioc_value = ioc.get("value", "")
+        ioc_source = ioc.get("source", "")
+        ioc_context = ioc.get("context", "").lower()
+
+        for rule in IOC_TECHNIQUE_RULES:
+            # Match IOC type
+            if rule.get("ioc_type") and rule["ioc_type"] != ioc_type:
+                continue
+            # Match source (if specified)
+            if rule.get("source") and rule["source"] != ioc_source:
+                continue
+            # Match context substring (if specified)
+            if rule.get("context_contains") and rule["context_contains"].lower() not in ioc_context:
+                continue
+            # Match value substring (if specified)
+            if rule.get("value_contains") and rule["value_contains"].lower() not in ioc_value.lower():
+                continue
+
+            key = (ioc_value, rule["technique"])
+            if key in seen:
+                continue
+            seen.add(key)
+
+            mappings.append({
+                "ioc_type": ioc_type,
+                "ioc_value": ioc_value,
+                "technique_id": rule["technique"],
+                "technique_name": rule.get("technique_name", ""),
+                "evidence": rule["evidence"],
+                "method": "programmatic",
+                "confidence": "high",
+            })
+
+    return mappings
