@@ -74,7 +74,11 @@
     - role: podman
       tags: [podman]
 
-    # 11. Triage — containerized YARA/ssdeep/FLOSS analysis
+    # 11. PCAP analysis — containerized Zeek + Suricata for network traffic
+    - role: pcap-analysis
+      tags: [pcap-analysis]
+
+    # 12. Triage — containerized YARA/ssdeep/FLOSS analysis
     - role: triage
       tags: [triage]
 

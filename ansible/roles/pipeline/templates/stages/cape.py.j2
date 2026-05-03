@@ -397,6 +397,17 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
         if large_payloads:
             intel["large_payloads"] = large_payloads
 
+    # Process command lines — used by cross_correlate for cmdline spoofing detection
+    behavior = full_report.get("behavior", {})
+    process_cmdlines = {}
+    for proc in behavior.get("processes", []):
+        pid = proc.get("process_id", 0)
+        cmdline = proc.get("environ", {}).get("CommandLine", "") or proc.get("command_line", "")
+        if pid and cmdline:
+            process_cmdlines[pid] = cmdline
+    if process_cmdlines:
+        intel["process_cmdlines"] = process_cmdlines
+
     # Malscore
     intel["malscore"] = full_report.get("malscore", 0)
 

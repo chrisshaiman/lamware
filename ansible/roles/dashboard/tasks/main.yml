@@ -10,10 +10,11 @@
 # License: Apache 2.0
 # =============================================================================
 
-- name: Install Flask
+- name: Install Flask and dependencies
   ansible.builtin.pip:
     name:
       - flask
+      - markdown
     state: present
     break_system_packages: true
     extra_args: "--ignore-installed blinker"

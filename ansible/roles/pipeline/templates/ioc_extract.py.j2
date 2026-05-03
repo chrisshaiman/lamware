@@ -8,6 +8,99 @@ License: Apache 2.0
 import re
 
 
+# Known benign domains/IPs — Windows telemetry, update services, connectivity
+# checks. These appear in every sandbox run and are not actionable IOCs.
+BENIGN_DOMAINS = {
+    # Microsoft connectivity / telemetry
+    "connectivity.microsoft.com",
+    "settings-win.data.microsoft.com",
+    "mobile.events.data.microsoft.com",
+    "msedge.api.cdp.microsoft.com",
+    "storeedge.microsoft.com",
+    "login.live.com",
+    "login.microsoftonline.com",
+    "v10.events.data.microsoft.com",
+    "v20.events.data.microsoft.com",
+    "self.events.data.microsoft.com",
+    "watson.telemetry.microsoft.com",
+    "watson.microsoft.com",
+    "umwatsonc.events.data.microsoft.com",
+    "ceuswatcab01.blob.core.windows.net",
+    "ceuswatcab02.blob.core.windows.net",
+    "vortex.data.microsoft.com",
+    "vortex-win.data.microsoft.com",
+    "telecommand.telemetry.microsoft.com",
+    # Windows Update
+    "windowsupdate.com",
+    "update.microsoft.com",
+    "download.windowsupdate.com",
+    "ctldl.windowsupdate.com",
+    "ntservicepack.microsoft.com",
+    # OCSP / certificate validation
+    "ocsp.digicert.com",
+    "ocsp.verisign.com",
+    "ocsp.globalsign.com",
+    "crl.microsoft.com",
+    "www.microsoft.com",
+    # Bing / Edge
+    "www.bing.com",
+    "bing.com",
+    "edge.microsoft.com",
+    # Connectivity checks
+    "dns.msftncsi.com",
+    "www.msftconnecttest.com",
+    "ipv6.msftconnecttest.com",
+    "msftconnecttest.com",
+    # NTP
+    "time.windows.com",
+    "time.nist.gov",
+}
+
+# Known benign IPs — link-local, broadcast, multicast, loopback
+BENIGN_IPS = {
+    "0.0.0.0", "127.0.0.1", "255.255.255.255",
+    "::1", "::", "fe80::1",
+}
+
+# Benign IP prefixes — multicast, link-local, APIPA
+BENIGN_IP_PREFIXES = ("239.", "224.", "169.254.", "fe80:")
+
+
+def is_benign_domain(domain: str) -> bool:
+    """Check if a domain is known benign (Windows noise)."""
+    d = domain.lower().strip()
+    if d in BENIGN_DOMAINS:
+        return True
+    for benign in BENIGN_DOMAINS:
+        if d.endswith("." + benign):
+            return True
+    return False
+
+
+def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
+    """Check if an indicator is known benign (Windows noise)."""
+    v = value.lower().strip()
+    if ioc_type in ("domain-name", "url"):
+        domain = v
+        if "://" in domain:
+            domain = domain.split("://", 1)[1].split("/")[0]
+        if is_benign_domain(domain):
+            return True
+    elif ioc_type == "ipv4-addr":
+        if v in BENIGN_IPS:
+            return True
+        if any(v.startswith(p) for p in BENIGN_IP_PREFIXES):
+            return True
+        # Filter IPs resolved from benign domains
+        if context:
+            ctx_lower = context.lower()
+            if "resolved from" in ctx_lower:
+                for benign in BENIGN_DOMAINS:
+                    if benign in ctx_lower:
+                        return True
+    return False
+
+
 def extract_iocs(report: dict) -> list[dict]:
     """Extract all actionable IOCs from every pipeline stage.
 
@@ -18,8 +111,10 @@ def extract_iocs(report: dict) -> list[dict]:
     seen = set()  # dedup by (type, value)
 
     def add_ioc(ioc_type: str, value: str, source: str, context: str = ""):
-        """Add an IOC if not already seen."""
+        """Add an IOC if not already seen or known benign."""
         if not value or len(value) < 3:
+            return
+        if is_benign_indicator(ioc_type, value, context):
             return
         key = (ioc_type, value.lower().strip())
         if key in seen:
@@ -211,6 +306,34 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("file:name", path, "Volatility",
                      f"Open file handle by {fh.get('process', '?')}")
 
+    # --- PCAP analysis IOCs (Zeek + Suricata) ---
+    pcap = report.get("pcap_analysis", {})
+    zeek = pcap.get("zeek", {})
+
+    # JA3 fingerprints — unique TLS client identification
+    for ioc in zeek.get("iocs", []):
+        ioc_type = ioc.get("type", "")
+        value = ioc.get("value", "")
+        if ioc_type == "ja3" and value:
+            server = ioc.get("server", "")
+            add_ioc("ja3", value, "PCAP (Zeek)",
+                    f"TLS fingerprint{' for ' + server if server else ''}")
+        elif ioc_type == "user-agent" and value:
+            add_ioc("user-agent", value, "PCAP (Zeek)", "HTTP user-agent string")
+        elif ioc_type == "url" and value:
+            add_ioc("url", value, "PCAP (Zeek)",
+                    f"HTTP {ioc.get('method', '')} request")
+
+    # Suricata IDS alerts — signature-based detections
+    for alert in pcap.get("suricata", {}).get("alerts", []):
+        sig = alert.get("signature", "")
+        if sig:
+            dst_ip = alert.get("dst_ip", "")
+            add_ioc("ids-alert", sig, "PCAP (Suricata)",
+                    f"Severity {alert.get('severity', '?')}, "
+                    f"category: {alert.get('category', '?')}"
+                    f"{', dst: ' + dst_ip if dst_ip else ''}")
+
     # --- AI RE IOCs (from structured analysis output) ---
     interp = report.get("llm_interpretation", {})
     analysis = interp.get("analysis", {})
@@ -220,3 +343,107 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("ipv4-addr", ip, "AI Reverse Engineering", f"Mentioned in capability: {cap[:80]}")
 
     return iocs
+
+
+# -------------------------------------------------------------------------
+# IOC-to-MITRE technique mapping
+# -------------------------------------------------------------------------
+
+# Programmatic mapping rules — deterministic, high confidence
+IOC_TECHNIQUE_RULES = [
+    # Network IOCs → C2 / exfiltration
+    {"ioc_type": "domain-name", "source": "Cape",
+     "technique": "T1071", "technique_name": "Application Layer Protocol",
+     "evidence": "Domain contacted during detonation"},
+    {"ioc_type": "url", "source": "Cape",
+     "technique": "T1071.001", "technique_name": "Web Protocols",
+     "evidence": "HTTP request during detonation"},
+    {"ioc_type": "ipv4-addr", "source": "Cape", "context_contains": "TCP connection",
+     "technique": "T1095", "technique_name": "Non-Application Layer Protocol",
+     "evidence": "Direct TCP connection to remote host"},
+
+    # Mutex → execution guardrails
+    {"ioc_type": "mutex",
+     "technique": "T1480", "technique_name": "Execution Guardrails",
+     "evidence": "Mutex used as singleton/execution guard"},
+
+    # Injection-related file IOCs
+    {"ioc_type": "file:name", "context_contains": "injected",
+     "technique": "T1055", "technique_name": "Process Injection",
+     "evidence": "File associated with process injection activity"},
+
+    # DLLs from unusual paths
+    {"ioc_type": "file:name", "context_contains": "unusual path",
+     "technique": "T1574", "technique_name": "Hijack Execution Flow",
+     "evidence": "DLL loaded from non-standard path"},
+
+    # YARA packer/obfuscation rules
+    {"ioc_type": "yara-rule", "value_contains": "packer",
+     "technique": "T1027", "technique_name": "Obfuscated Files or Information",
+     "evidence": "Packed binary detected by YARA"},
+    {"ioc_type": "yara-rule", "value_contains": "crypt",
+     "technique": "T1027", "technique_name": "Obfuscated Files or Information",
+     "evidence": "Encrypted/crypted binary detected by YARA"},
+
+    # JA3 fingerprints → encrypted C2
+    {"ioc_type": "ja3",
+     "technique": "T1573", "technique_name": "Encrypted Channel",
+     "evidence": "TLS fingerprint from network traffic"},
+
+    # Suricata IDS alerts
+    {"ioc_type": "ids-alert",
+     "technique": "T1071", "technique_name": "Application Layer Protocol",
+     "evidence": "IDS signature matched network traffic"},
+
+    # User-agent strings → C2 over HTTP
+    {"ioc_type": "user-agent",
+     "technique": "T1071.001", "technique_name": "Web Protocols",
+     "evidence": "HTTP user-agent used in network communication"},
+]
+
+
+def map_iocs_to_techniques(report: dict, iocs: list[dict]) -> list[dict]:
+    """Map IOCs to MITRE techniques using programmatic rules.
+
+    Returns list of mapping dicts ready for db_ingest:
+    {ioc_type, ioc_value, technique_id, technique_name, evidence, method, confidence}
+    """
+    mappings = []
+    seen = set()  # dedup by (ioc_value, technique_id)
+
+    for ioc in iocs:
+        ioc_type = ioc.get("type", "")
+        ioc_value = ioc.get("value", "")
+        ioc_source = ioc.get("source", "")
+        ioc_context = ioc.get("context", "").lower()
+
+        for rule in IOC_TECHNIQUE_RULES:
+            # Match IOC type
+            if rule.get("ioc_type") and rule["ioc_type"] != ioc_type:
+                continue
+            # Match source (if specified)
+            if rule.get("source") and rule["source"] != ioc_source:
+                continue
+            # Match context substring (if specified)
+            if rule.get("context_contains") and rule["context_contains"].lower() not in ioc_context:
+                continue
+            # Match value substring (if specified)
+            if rule.get("value_contains") and rule["value_contains"].lower() not in ioc_value.lower():
+                continue
+
+            key = (ioc_value, rule["technique"])
+            if key in seen:
+                continue
+            seen.add(key)
+
+            mappings.append({
+                "ioc_type": ioc_type,
+                "ioc_value": ioc_value,
+                "technique_id": rule["technique"],
+                "technique_name": rule.get("technique_name", ""),
+                "evidence": rule["evidence"],
+                "method": "programmatic",
+                "confidence": "high",
+            })
+
+    return mappings

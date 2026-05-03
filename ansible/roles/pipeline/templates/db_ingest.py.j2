@@ -8,6 +8,67 @@ License: Apache 2.0
 import sys
 
 
+# MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
+# Covers common techniques seen in malware analysis. Techniques not in this
+# dict get no tactics (dashboard shows empty). Expand as needed.
+MITRE_TACTICS = {
+    "T1007": ["discovery"],
+    "T1012": ["discovery"],
+    "T1014": ["defense-evasion"],
+    "T1016": ["discovery"],
+    "T1018": ["discovery"],
+    "T1021": ["lateral-movement"],
+    "T1027": ["defense-evasion"],
+    "T1027.002": ["defense-evasion"],
+    "T1033": ["discovery"],
+    "T1036": ["defense-evasion"],
+    "T1041": ["exfiltration"],
+    "T1047": ["execution"],
+    "T1053": ["execution", "persistence", "privilege-escalation"],
+    "T1055": ["defense-evasion", "privilege-escalation"],
+    "T1055.003": ["defense-evasion", "privilege-escalation"],
+    "T1055.012": ["defense-evasion", "privilege-escalation"],
+    "T1057": ["discovery"],
+    "T1059": ["execution"],
+    "T1059.001": ["execution"],
+    "T1059.003": ["execution"],
+    "T1059.005": ["execution"],
+    "T1059.006": ["execution"],
+    "T1071": ["command-and-control"],
+    "T1071.001": ["command-and-control"],
+    "T1082": ["discovery"],
+    "T1083": ["discovery"],
+    "T1095": ["command-and-control"],
+    "T1105": ["command-and-control"],
+    "T1106": ["execution"],
+    "T1112": ["defense-evasion"],
+    "T1134": ["defense-evasion", "privilege-escalation"],
+    "T1134.001": ["defense-evasion", "privilege-escalation"],
+    "T1140": ["defense-evasion"],
+    "T1204": ["execution"],
+    "T1218": ["defense-evasion"],
+    "T1486": ["impact"],
+    "T1489": ["impact"],
+    "T1490": ["impact"],
+    "T1497": ["defense-evasion", "discovery"],
+    "T1497.001": ["defense-evasion", "discovery"],
+    "T1518": ["discovery"],
+    "T1543": ["persistence", "privilege-escalation"],
+    "T1547": ["persistence", "privilege-escalation"],
+    "T1547.001": ["persistence", "privilege-escalation"],
+    "T1548": ["defense-evasion", "privilege-escalation"],
+    "T1548.002": ["defense-evasion", "privilege-escalation"],
+    "T1553": ["defense-evasion"],
+    "T1555": ["credential-access"],
+    "T1560": ["collection"],
+    "T1562": ["defense-evasion"],
+    "T1571": ["command-and-control"],
+    "T1573": ["command-and-control"],
+    "T1574": ["persistence", "privilege-escalation", "defense-evasion"],
+    "T1480": ["defense-evasion"],
+}
+
+
 # -------------------------------------------------------------------------
 # Configuration (injected by Ansible template)
 # -------------------------------------------------------------------------
@@ -19,11 +80,14 @@ DB_USER = "{{ postgres_db_user | default('pipeline') }}"
 DB_PASSWORD = "{{ pipeline_db_password | default('') }}"
 
 
-def ingest_to_db(report: dict) -> bool:
+def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     """Write structured analysis data to PostgreSQL.
 
+    If existing_analysis_id is provided (from pipeline_status early creation),
+    updates that row instead of inserting a new one.
+
     Inserts/updates samples, analyses, IOCs, techniques, capabilities,
-    signatures, and network events. Returns True on success.
+    signatures, and network events. Returns analysis_id on success.
     """
     if not DB_PASSWORD:
         print("  [!] DB ingestion skipped — no database password configured")
@@ -77,51 +141,62 @@ def ingest_to_db(report: dict) -> bool:
         analysis = interp.get("analysis", {})
         summary = report.get("executive_summary", {})
 
-        cur.execute("""
-            INSERT INTO analyses (
-                sample_id, task_id, started_at, completed_at,
-                severity, malscore, malware_family_guess,
-                triage_completed, cape_completed, cape_task_id,
-                volatility_completed, volatility_triggered,
-                ghidra_completed, ghidra_triggered,
-                interpret_completed, summary_completed,
-                interpret_model, interpret_tool_calls, interpret_duration_secs,
-                interpret_escalated, possible_prompt_influence,
-                narrative, working_notes, executive_summary,
-                report_json
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
-            ) RETURNING id
-        """, (
-            sample_id,
-            report.get("task_id", ""),
-            report.get("started_at"),
-            report.get("completed_at"),
-            summary.get("severity") or analysis.get("risk_assessment"),
-            report.get("cape", {}).get("malscore"),
-            analysis.get("malware_family_guess"),
-            bool(triage),
-            report.get("cape", {}).get("status") == "reported",
-            report.get("cape", {}).get("task_id"),
-            bool(report.get("volatility", {}).get("plugins")),
-            report.get("volatility", {}).get("triggered", False),
-            bool(ghidra_files),
-            report.get("ghidra", {}).get("triggered", False),
-            interp.get("enabled", False) and "error" not in interp,
-            bool(summary.get("executive_summary")),
-            interp.get("model_final", interp.get("model_initial")),
-            interp.get("tool_calls_used", 0),
-            interp.get("duration_seconds"),
-            interp.get("escalated", False),
-            interp.get("possible_prompt_influence", False),
-            analysis.get("narrative", ""),
-            analysis.get("working_notes", ""),
-            summary.get("executive_summary", ""),
-            psycopg2.extras.Json(report),
-        ))
-        analysis_id = cur.fetchone()[0]
+        # Programmatic analysis is authoritative for severity/family;
+        # LLM values are fallback only
+        severity = (report.get("severity")
+                    or summary.get("severity")
+                    or analysis.get("risk_assessment"))
+        family = (report.get("family")
+                  or analysis.get("malware_family_guess"))
+
+        # Analysis row values (shared between INSERT and UPDATE)
+        analysis_values = {
+            "sample_id": sample_id,
+            "task_id": report.get("task_id", ""),
+            "started_at": report.get("started_at"),
+            "completed_at": report.get("completed_at"),
+            "severity": severity,
+            "malscore": report.get("cape", {}).get("malscore"),
+            "malware_family_guess": family,
+            "triage_completed": bool(triage),
+            "cape_completed": report.get("cape", {}).get("status") == "reported",
+            "cape_task_id": report.get("cape", {}).get("task_id"),
+            "volatility_completed": bool(report.get("volatility", {}).get("plugins")),
+            "volatility_triggered": report.get("volatility", {}).get("triggered", False),
+            "ghidra_completed": bool(ghidra_files),
+            "ghidra_triggered": report.get("ghidra", {}).get("triggered", False),
+            "interpret_completed": interp.get("enabled", False) and "error" not in interp,
+            "summary_completed": bool(summary.get("executive_summary")),
+            "interpret_model": interp.get("model_final", interp.get("model_initial")),
+            "interpret_tool_calls": interp.get("tool_calls_used", 0),
+            "interpret_duration_secs": interp.get("duration_seconds"),
+            "interpret_escalated": interp.get("escalated", False),
+            "possible_prompt_influence": interp.get("possible_prompt_influence", False),
+            "narrative": analysis.get("narrative", ""),
+            "working_notes": analysis.get("working_notes", ""),
+            "executive_summary": summary.get("executive_summary", ""),
+            "pipeline_status": "completed",
+            "stage_timings": psycopg2.extras.Json(report.get("timing", {})),
+            "report_json": psycopg2.extras.Json(report),
+        }
+
+        if existing_analysis_id:
+            # Update the early-created row
+            set_clause = ", ".join(f"{k} = %s" for k in analysis_values)
+            cur.execute(
+                f"UPDATE analyses SET {set_clause} WHERE id = %s",
+                list(analysis_values.values()) + [existing_analysis_id],
+            )
+            analysis_id = existing_analysis_id
+        else:
+            # Insert new row (backward compatible)
+            cols = ", ".join(analysis_values.keys())
+            placeholders = ", ".join(["%s"] * len(analysis_values))
+            cur.execute(
+                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",
+                list(analysis_values.values()),
+            )
+            analysis_id = cur.fetchone()[0]
 
         # --- Insert IOCs ---
         for ioc in report.get("extracted_iocs", []):
@@ -143,12 +218,15 @@ def ingest_to_db(report: dict) -> bool:
         # --- Insert MITRE techniques ---
         # From AI RE
         for t in analysis.get("attack_techniques", []):
+            tid = t.get("id", "")
+            tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name)
-                VALUES (%s, %s)
-                ON CONFLICT (technique_id) DO NOTHING
+                INSERT INTO technique_values (technique_id, technique_name, tactics)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (technique_id) DO UPDATE SET
+                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (t.get("id", ""), t.get("name", "")))
+            """, (tid, t.get("name", ""), tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
@@ -165,12 +243,15 @@ def ingest_to_db(report: dict) -> bool:
 
         # From Cape TTPs
         for t in report.get("cape", {}).get("mitre_ttps", []):
+            tid = t.get("id", "")
+            tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name)
-                VALUES (%s, %s)
-                ON CONFLICT (technique_id) DO NOTHING
+                INSERT INTO technique_values (technique_id, technique_name, tactics)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (technique_id) DO UPDATE SET
+                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (t.get("id", ""), t.get("source_signature", "")))
+            """, (tid, t.get("source_signature", ""), tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
@@ -226,14 +307,73 @@ def ingest_to_db(report: dict) -> bool:
             """, (analysis_id, src_ip, int(src_port) if src_port.isdigit() else 0,
                   dst_ip, int(dst_port) if dst_port.isdigit() else 0))
 
+        # --- Insert IOC-technique mappings ---
+        for mapping in report.get("ioc_technique_mappings", []):
+            # Look up ioc_id
+            cur.execute("SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+                        (mapping["ioc_type"], mapping["ioc_value"]))
+            ioc_row = cur.fetchone()
+            if not ioc_row:
+                continue
+
+            # Ensure technique exists
+            cur.execute("""
+                INSERT INTO technique_values (technique_id, technique_name)
+                VALUES (%s, %s)
+                ON CONFLICT (technique_id) DO NOTHING
+                RETURNING id
+            """, (mapping["technique_id"], mapping.get("technique_name", "")))
+            tech_row = cur.fetchone()
+            if not tech_row:
+                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                            (mapping["technique_id"],))
+                tech_row = cur.fetchone()
+
+            if tech_row:
+                cur.execute("""
+                    INSERT INTO ioc_technique_mappings
+                        (analysis_id, ioc_id, technique_id, evidence, method, confidence)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING
+                """, (analysis_id, ioc_row[0], tech_row[0],
+                      mapping.get("evidence", ""),
+                      mapping.get("method", "programmatic"),
+                      mapping.get("confidence", "high")))
+
         conn.commit()
         print(f"  DB: ingested analysis {analysis_id} for sample {sample_id}")
-        return True
+        return analysis_id
 
     except Exception as e:
         conn.rollback()
         print(f"  [!] DB ingestion error: {e}")
-        return False
+        return None
     finally:
         cur.close()
         conn.close()
+
+
+def mark_pdf_generated(analysis_id: int) -> bool:
+    """Set pdf_generated=True for the given analysis row."""
+    if not DB_PASSWORD or not analysis_id:
+        return False
+
+    try:
+        import psycopg2
+    except ImportError:
+        return False
+
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
+            user=DB_USER, password=DB_PASSWORD,
+        )
+        cur = conn.cursor()
+        cur.execute("UPDATE analyses SET pdf_generated = TRUE WHERE id = %s", (analysis_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"  [!] Failed to update pdf_generated: {e}")
+        return False

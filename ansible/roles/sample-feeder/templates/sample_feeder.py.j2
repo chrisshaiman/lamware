@@ -407,7 +407,7 @@ def main() -> None:
                 pipe_result = subprocess.run(
                     [pipeline_cmd, str(tmp_path), "--filename", extracted_name],
                     capture_output=False,
-                    timeout=1500,
+                    timeout=3600,
                 )
                 if pipe_result.returncode != 0:
                     raise RuntimeError(f"Pipeline exited with code {pipe_result.returncode}")
