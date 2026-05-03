@@ -1,0 +1,7 @@
+---
+# roles/dotnet-analysis/defaults/main.yml
+
+dotnet_analysis_install_dir: /opt/dotnet-analysis
+dotnet_analysis_container_memory: "1g"
+dotnet_analysis_container_cpus: "1"
+dotnet_analysis_container_timeout: "120"

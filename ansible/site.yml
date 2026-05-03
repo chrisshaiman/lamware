@@ -90,6 +90,10 @@
     - role: ghidra
       tags: [ghidra]
 
+    # 13b. .NET analysis — containerized ILSpy decompilation
+    - role: dotnet-analysis
+      tags: [dotnet-analysis]
+
     # 14. LLM interpretation — agentic Claude analysis of Ghidra output
     - role: interpret
       tags: [interpret]
