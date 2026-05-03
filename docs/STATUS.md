@@ -90,6 +90,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
 | Item | Effort | Notes |
 |------|--------|-------|
+| Route Cape unpacked .NET payloads to ILSpy | 1-2 hrs | NanoCore is packed in VB6 — outer binary is native, inner payload is .NET. Check Cape extractions for .NET, not just original sample. |
 | Go binary support (GoReSym) | 2-3 hrs | Same container pattern as ILSpy. Sliver, BianLian. |
 | Unified logging framework | 2-3 hrs | Replace print() with Python logging module |
 
