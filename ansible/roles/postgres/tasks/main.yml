@@ -61,6 +61,24 @@
   changed_when: true
   when: not postgres_schema_check.query_result[0].exists
 
+- name: Deploy migration SQL
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/pipeline/files/migration_001_ioc_mappings_and_status.sql"
+    dest: /tmp/pipeline-migration-001.sql
+    mode: "0644"
+
+- name: Apply migration (idempotent — uses IF NOT EXISTS)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: psql -d {{ postgres_db_name }} -f /tmp/pipeline-migration-001.sql
+  changed_when: true
+
+- name: Clean up migration file
+  ansible.builtin.file:
+    path: /tmp/pipeline-migration-001.sql
+    state: absent
+
 - name: Grant table privileges to pipeline user
   become: true
   become_user: postgres

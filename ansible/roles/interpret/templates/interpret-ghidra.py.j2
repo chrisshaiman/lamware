@@ -138,6 +138,13 @@ objects for each observed kill chain phase
 search for in logs or block
 - mitre_techniques: list of {"id": "T1055.003", "name": "...", \
 "sources": ["Cape", "Volatility"]} — note ALL sources that confirmed each
+- ioc_technique_links: list of {"ioc_value": "...", "ioc_type": "...", \
+"technique_id": "T1071", "evidence": "..."} — map specific IOCs to the \
+MITRE techniques they evidence. Focus on connections that require code \
+analysis or behavioral context to identify (the obvious type-based mappings \
+are handled programmatically). Examples: a specific domain linked to C2 \
+beacon behavior, an API import linked to a specific injection technique, \
+a registry path linked to a persistence mechanism.
 - recommended_actions: list of strings (specific, prioritized)
 - severity: "low" | "medium" | "high" | "critical"\
 """
