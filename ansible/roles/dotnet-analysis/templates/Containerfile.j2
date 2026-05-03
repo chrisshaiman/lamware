@@ -1,7 +1,7 @@
 # .NET analysis container — ILSpy decompiler for .NET/MSIL binaries
 # Decompiles .NET assemblies to C# source code for LLM analysis.
 # Built locally by Ansible. Never pulled from a registry.
-FROM mcr.microsoft.com/dotnet/sdk:8.0-jammy
+FROM mcr.microsoft.com/dotnet/sdk:10.0
 
 RUN dotnet tool install -g ilspycmd
 
