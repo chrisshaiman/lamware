@@ -86,7 +86,11 @@ that could become detection signatures
 When you have sufficient evidence, produce your final analysis. You do not need to \
 use all available tool calls — stop early if the evidence is clear.
 
-Respond with a JSON object containing:
+CRITICAL: Your final response MUST be a single valid JSON object with NO text before \
+or after it. Do not write any preamble, explanation, or markdown — ONLY the JSON object. \
+If tools are unavailable, produce the JSON based on whatever data you have.
+
+The JSON object must contain:
 - malware_family_guess: string (your assessment — may confirm or refine the programmatic guess)
 - capabilities: list of strings (what the code CAN do based on decompilation)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects (ONLY techniques \
@@ -134,9 +138,28 @@ objects for each observed kill chain phase
 search for in logs or block
 - mitre_techniques: list of {"id": "T1055.003", "name": "...", \
 "sources": ["Cape", "Volatility"]} — note ALL sources that confirmed each
+- ioc_technique_links: list of {"ioc_value": "...", "ioc_type": "...", \
+"technique_id": "T1071", "evidence": "..."} — map specific IOCs to the \
+MITRE techniques they evidence. Focus on connections that require code \
+analysis or behavioral context to identify (the obvious type-based mappings \
+are handled programmatically). Examples: a specific domain linked to C2 \
+beacon behavior, an API import linked to a specific injection technique, \
+a registry path linked to a persistence mechanism.
 - recommended_actions: list of strings (specific, prioritized)
 - severity: "low" | "medium" | "high" | "critical"\
 """
+
+# ---------------------------------------------------------------------------
+# Cached system prompts — reused across multi-turn agentic loop
+# cache_control tells the API to cache the system prompt server-side,
+# saving ~90% on input tokens for subsequent turns within the 5-min TTL.
+# ---------------------------------------------------------------------------
+
+CACHED_SYSTEM = [{"type": "text", "text": SYSTEM_PROMPT,
+                  "cache_control": {"type": "ephemeral"}}]
+
+CACHED_SUMMARY_SYSTEM = [{"type": "text", "text": SUMMARY_SYSTEM_PROMPT,
+                          "cache_control": {"type": "ephemeral"}}]
 
 # ---------------------------------------------------------------------------
 # Tool definitions — 6 tools matching GhidraTool.java
@@ -425,6 +448,16 @@ def parse_final_response(text: str) -> dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 continue
 
+    # Try finding a JSON object in free text — the LLM sometimes writes
+    # preamble before the JSON (e.g., "Here is my analysis:\n{...}")
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(text[first_brace:last_brace + 1])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     # Fall back — wrap raw text so the pipeline always gets structured output
     return {
         "malware_family_guess": "unknown",
@@ -567,6 +600,33 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
             parts.append(f"- {s['name']}: {s.get('description', '')[:100]} [Cape]")
         parts.append("")
 
+    # --- PCAP analysis (Zeek + Suricata) ---
+    pcap = report.get("pcap_analysis", {})
+    zeek = pcap.get("zeek", {})
+    suricata = pcap.get("suricata", {})
+    zeek_summary = zeek.get("summary", {})
+    suricata_alerts = suricata.get("alerts", [])
+
+    if zeek_summary or suricata_alerts:
+        parts.append("## Network Traffic Analysis (PCAP)")
+        if zeek_summary:
+            parts.append(f"Zeek analysis: {zeek_summary.get('total_connections', 0)} connections, "
+                        f"{zeek_summary.get('dns_queries', 0)} DNS queries, "
+                        f"{zeek_summary.get('http_transactions', 0)} HTTP transactions, "
+                        f"{zeek_summary.get('tls_sessions', 0)} TLS sessions [Zeek]")
+        zeek_iocs = zeek.get("iocs", [])
+        ja3_iocs = [i for i in zeek_iocs if i.get("type") == "ja3"]
+        if ja3_iocs:
+            parts.append(f"\nJA3 TLS fingerprints ({len(ja3_iocs)}) [Zeek]:")
+            for j in ja3_iocs[:5]:
+                parts.append(f"  - {j['value']} (server: {j.get('server', '?')})")
+        if suricata_alerts:
+            parts.append(f"\nIDS alerts ({len(suricata_alerts)} unique) [Suricata]:")
+            for a in suricata_alerts[:8]:
+                parts.append(f"  - [{a.get('severity', '?')}] {a.get('signature', '?')} "
+                           f"({a.get('src_ip', '?')} → {a.get('dst_ip', '?')}:{a.get('dst_port', '?')})")
+        parts.append("")
+
     # --- Anomalous behaviors from Volatility ---
     anomalous = vol_insights.get("anomalous_parents", [])
     sus_cmdlines = vol_insights.get("suspicious_cmdlines", [])
@@ -637,7 +697,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=SUMMARY_SYSTEM_PROMPT,
+            system=CACHED_SUMMARY_SYSTEM,
             messages=[{"role": "user", "content": prompt_text}],
         )
         text = "".join(b.text for b in response.content if b.type == "text")
@@ -716,7 +776,7 @@ def main() -> None:
             response = client.messages.create(
                 model=current_model,
                 max_tokens=max_output_tokens,
-                system=SYSTEM_PROMPT,
+                system=CACHED_SYSTEM,
                 tools=TOOLS,
                 messages=messages,
             )
@@ -817,7 +877,7 @@ def main() -> None:
                         final_response = client.messages.create(
                             model=current_model,
                             max_tokens=max_output_tokens,
-                            system=SYSTEM_PROMPT,
+                            system=CACHED_SYSTEM,
                             messages=messages,
                         )
                         final_text = "".join(
@@ -880,7 +940,7 @@ def main() -> None:
                     final_response = client.messages.create(
                         model=current_model,
                         max_tokens=max_output_tokens,
-                        system=SYSTEM_PROMPT,
+                        system=CACHED_SYSTEM,
                         messages=messages,
                     )
                     final_text = "".join(

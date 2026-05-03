@@ -15,7 +15,7 @@ interpret_escalation_threshold: 5
 interpret_escalation_model: "claude-opus-4-6"
 
 # Token budgets
-interpret_max_output_tokens: 2048
+interpret_max_output_tokens: 4096
 interpret_context_compression_tokens: 30000
 
 # Agentic loop limits

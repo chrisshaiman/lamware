@@ -334,6 +334,64 @@ CREATE INDEX idx_sample_tags_tag ON sample_tags(tag_id);
 
 
 -- =============================================================================
+-- IOC ↔ Technique mapping — links IOCs to the MITRE techniques they evidence
+--
+-- Per-analysis: the same IOC may evidence different techniques in different
+-- samples (e.g., a mutex used as execution guard in one sample, singleton
+-- check in another).
+--
+-- method distinguishes programmatic (deterministic rules) from LLM-generated
+-- mappings. Programmatic mappings get confidence='high' by default; LLM
+-- mappings get confidence='medium'. This distinction is surfaced in the
+-- dashboard with different badge styles so analysts know what's AI-generated.
+-- =============================================================================
+
+CREATE TABLE ioc_technique_mappings (
+    id              BIGSERIAL PRIMARY KEY,
+    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+    ioc_id          BIGINT NOT NULL REFERENCES ioc_values(id) ON DELETE CASCADE,
+    technique_id    BIGINT NOT NULL REFERENCES technique_values(id) ON DELETE CASCADE,
+    evidence        TEXT,                  -- "C2 domain for beacon callback"
+    method          VARCHAR(20) NOT NULL DEFAULT 'programmatic',  -- programmatic, llm
+    confidence      VARCHAR(20) DEFAULT 'high',  -- high, medium, low
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE(analysis_id, ioc_id, technique_id)
+);
+
+CREATE INDEX idx_ioc_tech_map_analysis ON ioc_technique_mappings(analysis_id);
+CREATE INDEX idx_ioc_tech_map_ioc ON ioc_technique_mappings(ioc_id);
+CREATE INDEX idx_ioc_tech_map_technique ON ioc_technique_mappings(technique_id);
+CREATE INDEX idx_ioc_tech_map_method ON ioc_technique_mappings(method);
+
+
+-- =============================================================================
+-- Pipeline stage events — real-time status tracking for running analyses
+--
+-- Append-only event log: each stage start/complete is a single INSERT.
+-- The most recent 'started' event without a 'completed' is the current stage.
+-- Designed for fast writes (single INSERT, no contention) so the pipeline
+-- is not slowed down by status tracking.
+--
+-- The analyses table also gets denormalized pipeline_status/current_stage
+-- columns for fast dashboard queries without scanning the event log.
+-- =============================================================================
+
+CREATE TABLE pipeline_stage_events (
+    id              BIGSERIAL PRIMARY KEY,
+    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+    stage           VARCHAR(50) NOT NULL,
+    status          VARCHAR(20) NOT NULL,  -- started, completed, failed, skipped
+    detail          TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_pipeline_events_analysis ON pipeline_stage_events(analysis_id);
+CREATE INDEX idx_pipeline_events_stage ON pipeline_stage_events(stage);
+CREATE INDEX idx_pipeline_events_created ON pipeline_stage_events(created_at);
+
+
+-- =============================================================================
 -- Views — prebuilt queries for common analytical tasks
 -- =============================================================================
 

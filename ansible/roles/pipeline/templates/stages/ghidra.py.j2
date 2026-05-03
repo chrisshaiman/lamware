@@ -261,4 +261,13 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
             sc_result = run_ghidra_shellcode(candidate, output_dir, ghidra_cmd)
             result["analyzed_files"].append(sc_result)
 
+    # Propagate project_dir and program_name from the first successful
+    # analysis to the top-level result — the interpret stage needs these
+    # to broker tool calls back to Ghidra.
+    for af in result["analyzed_files"]:
+        if af.get("analysis_success") and af.get("project_dir"):
+            result["project_dir"] = af["project_dir"]
+            result["program_name"] = af.get("program_name", "")
+            break
+
     return result

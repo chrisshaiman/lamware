@@ -240,24 +240,82 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
     except OSError as e:
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
 
-    # Send summarize message
+    # Send summarize message — use communicate() to avoid deadlock on
+    # large reports (42MB+ when malfind/volatility data is included)
     msg = json.dumps({"type": "summarize", "report": report, "config": interpret_config}, default=str)
-    proc.stdin.write(msg + "\n")
-    proc.stdin.flush()
 
     try:
-        # Read single response
-        line = proc.stdout.readline().strip()
-        if line:
-            result = json.loads(line)
-            return result.get("summary", {"error": "No summary in response"})
+        stdout, stderr = proc.communicate(input=msg + "\n", timeout=300)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return {"error": "Summary generation timed out (300s)"}
     except Exception as e:
-        return {"error": f"Summary parse error: {e}"}
-    finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        proc.kill()
+        return {"error": f"Summary communication error: {e}"}
 
-    return {"error": "No response from summarize"}
+    # Parse the last JSON line from stdout (container may emit status lines too)
+    for line in reversed(stdout.strip().splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            result = json.loads(line)
+            summary = result.get("summary", {"error": "No summary in response"})
+
+            # If parse_final_response hit the fallback, the summary fields
+            # (executive_summary, key_findings, etc.) end up inside "narrative"
+            # as a raw JSON string. Extract them.
+            if "executive_summary" not in summary and "narrative" in summary:
+                raw = summary["narrative"]
+                # Try full JSON parse (code blocks, bare JSON)
+                import re
+                cb_match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", raw, re.DOTALL)
+                if cb_match:
+                    try:
+                        parsed = json.loads(cb_match.group(1))
+                        if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                first = raw.find("{")
+                last = raw.rfind("}")
+                if first != -1 and last > first:
+                    try:
+                        parsed = json.loads(raw[first:last + 1])
+                        if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # JSON malformed — extract executive_summary value directly
+                es_match = re.search(r'"executive_summary"\s*:\s*"', raw)
+                if es_match:
+                    start = es_match.end()
+                    extracted = []
+                    i = start
+                    while i < len(raw):
+                        ch = raw[i]
+                        if ch == '\\' and i + 1 < len(raw):
+                            next_ch = raw[i + 1]
+                            if next_ch == 'n':
+                                extracted.append('\n')
+                            elif next_ch == '"':
+                                extracted.append('"')
+                            elif next_ch == '\\':
+                                extracted.append('\\')
+                            else:
+                                extracted.append(ch + next_ch)
+                            i += 2
+                        elif ch == '"':
+                            break
+                        else:
+                            extracted.append(ch)
+                            i += 1
+                    if extracted:
+                        summary["executive_summary"] = ''.join(extracted)
+
+            return summary
+        except json.JSONDecodeError:
+            continue
+
+    return {"error": f"No valid JSON in summarize output. stderr: {stderr[:300]}"}
