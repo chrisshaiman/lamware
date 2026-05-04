@@ -779,7 +779,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         # Original sample is not .NET — check Cape extractions for .NET payloads
         cape_task_id = report.get("cape", {}).get("task_id")
-        dotnet_extractions = find_dotnet_extractions(cape_data, cape_task_id)
+        dotnet_extractions = find_dotnet_extractions(cape_data, cape_task_id,
+                                                      report_dir=output_dir)
 
         if dotnet_extractions:
             dotnet_origin = "extraction"

@@ -423,7 +423,9 @@ def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
     short_name = plugin.replace("windows.", "").replace("malware.", "")
     if short_name == "malfind" and extra_args and "--dump" in extra_args:
         plugin_timeout = 1800  # 30 min for malfind with disk dump
-    elif short_name in ("malfind", "vadinfo", "handles"):
+    elif short_name == "malfind":
+        plugin_timeout = 120   # 2 min cap — partial results acceptable, revisit later
+    elif short_name in ("vadinfo", "handles"):
         plugin_timeout = 900   # 15 min for heavy plugins
     else:
         plugin_timeout = 300   # 5 min for standard plugins
@@ -603,6 +605,32 @@ def run_volatility(cape_data: dict, output_dir: Path,
                 else:
                     result["_malfind_selected"] = selected_regions
                     result["_malfind_dump_dir"] = ""
+
+    # Dump hollowed process images — when Cape detected injection, use
+    # Volatility's pslist --dump to reconstruct PE images from the memory dump.
+    # This recovers .NET payloads that CAPE's monitor fails to dump.
+    if cape_injection_pids and active_dump.exists():
+        procdump_dir = output_dir / "vol_procdump"
+        procdump_dir.mkdir(parents=True, exist_ok=True)
+        unique_pids = sorted(set(cape_injection_pids))
+        print(f"    Dumping {len(unique_pids)} injection target process images...")
+        before_files = set(procdump_dir.iterdir())
+        for pid in unique_pids:
+            try:
+                run_single_plugin(
+                    active_dump, "windows.pslist.PsList", procdump_dir,
+                    volatility_cmd, extra_args=["--pid", str(pid), "--dump"])
+            except Exception as e:
+                print(f"      pid {pid}: error: {e}")
+        after_files = set(procdump_dir.iterdir())
+        new_files = after_files - before_files
+        if new_files:
+            print(f"    Dumped {len(new_files)} process image(s)")
+            for f in sorted(new_files):
+                print(f"      {f.name} ({f.stat().st_size} bytes)")
+        else:
+            print(f"    No process images dumped")
+        result["_vol_procdump_dir"] = str(procdump_dir)
 
     # Clean up ramdisk copy first (free RAM)
     if ramdisk_dump and ramdisk_dump.exists():

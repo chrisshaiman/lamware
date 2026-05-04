@@ -62,6 +62,7 @@ def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
     data = {
         "tags": ",".join(tags),
         "memory": "1",
+        "options": "procmemdump=1,procdump=1",
         "custom": custom,
     }
     if package:
