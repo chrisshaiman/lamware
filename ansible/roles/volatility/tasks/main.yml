@@ -128,7 +128,7 @@
     paths: "{{ volatility_install_dir }}/cache"
     patterns: "*.cache"
     recurse: true
-  register: vol_cache_check
+  register: volatility_cache_check
 
 - name: Pre-build Volatility ISF cache
   ansible.builtin.command:
@@ -153,5 +153,5 @@
       frameworkinfo
   become: true
   become_user: "{{ cape_user }}"
-  when: vol_cache_check.matched == 0
+  when: volatility_cache_check.matched == 0
   changed_when: true

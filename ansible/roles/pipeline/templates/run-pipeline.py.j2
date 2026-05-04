@@ -92,6 +92,7 @@ INTERPRET_CONFIG = {
     "max_imports": {{ interpret_max_imports | default(200) }},
     "max_strings": {{ interpret_max_strings | default(100) }},
     "max_string_length": {{ interpret_max_string_length | default(500) }},
+    "summary_model": "{{ interpret_summary_model | default('claude-haiku-4-5') }}",
 }
 REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
 CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
@@ -969,7 +970,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     _summary_start = _time.time()
     update_stage(analysis_id_early, "summary", "started")
     if INTERPRET_ENABLED:
-        log.info(f"\n[Stage 5] Executive Summary: generating...")
+        summary_model = INTERPRET_CONFIG.get("summary_model", INTERPRET_CONFIG.get("model", "?"))
+        log.info(f"\n[Stage 5] Executive Summary: generating with {summary_model}...")
         report["executive_summary"] = run_summarize(
             report,
             interpret_cmd=INTERPRET_CMD,
