@@ -109,3 +109,49 @@
     src: "{{ volatility_install_dir }}/run-volatility"
     dest: /usr/local/bin/run-volatility
     state: link
+
+# -------------------------------------------------------------------------
+# Plugin cache — pre-built so containers don't rebuild on every run.
+# Mounted read-write into containers at the Volatility plugins path.
+# -------------------------------------------------------------------------
+
+- name: Create Volatility cache directory
+  ansible.builtin.file:
+    path: "{{ volatility_install_dir }}/cache"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Check if Volatility ISF cache is already built
+  ansible.builtin.find:
+    paths: "{{ volatility_install_dir }}/cache"
+    patterns: "*.cache"
+    recurse: true
+  register: volatility_cache_check
+
+- name: Pre-build Volatility ISF cache
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm
+      --network=none
+      --read-only
+      --cap-drop=ALL
+      --security-opt=no-new-privileges
+      --memory=4g
+      --cpus=2
+      --timeout=300
+      --tmpfs /tmp:size=1g
+      --tmpfs /root:size=100m
+      --tmpfs /home:size=100m
+      --tmpfs /var/cache:size=100m
+      -v "{{ volatility_install_dir }}/cache:/vol-cache:rw"
+      -v "{{ volatility_symbols_dir }}:/symbols:ro"
+      localhost/volatility3:latest
+      -s /symbols
+      --cache-path /vol-cache
+      frameworkinfo
+  become: true
+  become_user: "{{ cape_user }}"
+  when: volatility_cache_check.matched == 0
+  changed_when: true

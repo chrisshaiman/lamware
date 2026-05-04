@@ -22,6 +22,46 @@ import sys
 from pathlib import Path
 
 
+def deobfuscate(binary_path: str) -> dict:
+    """Run de4dotEx to deobfuscate the .NET assembly.
+
+    de4dotEx is GPL-3.0 licensed and invoked as a subprocess only.
+    Returns dict with 'output_path' on success or 'error' on failure.
+    Falls back gracefully — deobfuscation failure is non-fatal.
+    """
+    output_path = "/tmp/deobfuscated.exe"
+    try:
+        result = subprocess.run(
+            ["de4dot", binary_path, "-o", output_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return {"error": result.stderr[:300], "deobfuscated": False}
+
+        if not os.path.exists(output_path):
+            return {"error": "de4dot produced no output", "deobfuscated": False}
+
+        # Check if de4dot actually changed anything
+        original_size = os.path.getsize(binary_path)
+        deobfuscated_size = os.path.getsize(output_path)
+
+        return {
+            "output_path": output_path,
+            "deobfuscated": True,
+            "original_size": original_size,
+            "deobfuscated_size": deobfuscated_size,
+            "stdout": result.stdout[:500],
+        }
+    except FileNotFoundError:
+        return {"error": "de4dot not found", "deobfuscated": False}
+    except subprocess.TimeoutExpired:
+        return {"error": "de4dot timed out (60s)", "deobfuscated": False}
+    except Exception as e:
+        return {"error": str(e), "deobfuscated": False}
+
+
 def get_assembly_info(binary_path: str) -> dict:
     """Extract assembly metadata using ilspycmd."""
     try:
@@ -81,12 +121,17 @@ def extract_strings_of_interest(source: str) -> list[dict]:
     import re
     findings = []
 
-    # IP addresses
+    # IP addresses — filter out version strings from assembly attributes
     for match in re.finditer(r'"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"', source):
         ip = match.group(1)
         parts = ip.split(".")
-        if all(0 <= int(p) <= 255 for p in parts):
-            findings.append({"type": "ip", "value": ip})
+        if not all(0 <= int(p) <= 255 for p in parts):
+            continue
+        context_start = max(0, match.start() - 100)
+        context = source[context_start:match.start()]
+        if "AssemblyVersion" in context or "AssemblyFileVersion" in context:
+            continue
+        findings.append({"type": "ip", "value": ip})
 
     # URLs
     for match in re.finditer(r'"(https?://[^"]+)"', source):
@@ -175,12 +220,21 @@ def main():
         "analysis_type": "dotnet_ilspy",
     }
 
+    # Step 1: Deobfuscate with de4dotEx (GPL-3.0, subprocess only)
+    deobfuscation = deobfuscate(binary_path)
+    result["deobfuscation"] = deobfuscation
+
+    # Use deobfuscated binary for subsequent analysis if available
+    analysis_path = binary_path
+    if deobfuscation.get("deobfuscated"):
+        analysis_path = deobfuscation["output_path"]
+
     # Get assembly info
-    info = get_assembly_info(binary_path)
+    info = get_assembly_info(analysis_path)
     result["assembly_info"] = info
 
     # Full decompilation
-    decompiled = decompile_full(binary_path)
+    decompiled = decompile_full(analysis_path)
     result["decompilation"] = decompiled
 
     if decompiled.get("source"):

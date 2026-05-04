@@ -16,7 +16,9 @@ open-source use.
 | [pefile](https://github.com/erocarrera/pefile) | MIT | PE file parsing | Container dependency |
 | [python-magic](https://github.com/ahupp/python-magic) | MIT | File type detection | Container dependency |
 | [Volatility 3](https://github.com/volatilityfoundation/volatility3) | **Volatility Software License (VSL)** | Memory forensics | See note below |
-| [Ghidra](https://ghidra-sre.org/) | Apache 2.0 | Static analysis / disassembly | Not yet deployed |
+| [Ghidra](https://ghidra-sre.org/) | Apache 2.0 | Static analysis / disassembly | Containerized headless mode |
+| [ILSpy / ilspycmd](https://github.com/icsharpcode/ILSpy) | MIT | .NET decompilation to C# | Container dependency |
+| [de4dotEx](https://github.com/GDATAAdvancedAnalytics/de4dotEx) | **GPL-3.0** | .NET deobfuscation | See note below |
 
 ## YARA Rule Sets
 
@@ -54,6 +56,20 @@ an actively maintained open-source alternative that mounts memory dumps as a
 virtual filesystem. No commercial licensing restrictions. Smaller plugin
 ecosystem than Volatility but growing. Evaluate as a migration path if
 Volatility licensing becomes a constraint.
+
+### de4dotEx — GPL-3.0
+
+de4dotEx is a .NET deobfuscation tool licensed under GPL-3.0-or-later. It is
+a fork of the original de4dot by 0xd4d, maintained by G DATA Advanced
+Analytics. This project invokes de4dotEx **as a subprocess only** — it is not
+linked, imported, or compiled into the project's Apache 2.0 code. de4dotEx
+runs inside an isolated Podman container and communicates only via stdin/stdout
+and exit codes.
+
+The de4dotEx source is cloned and compiled at container build time by Ansible.
+It is not distributed with this project's source code.
+
+Reference: https://github.com/GDATAAdvancedAnalytics/de4dotEx
 
 ### YARA-Rules/rules — GPL v2
 
