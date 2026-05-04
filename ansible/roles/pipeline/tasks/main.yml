@@ -61,7 +61,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
-  no_log: true
+  no_log: true  # contains cape_api_key
 
 - name: Deploy pipeline stage modules
   ansible.builtin.template:
@@ -70,16 +70,24 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0640"
-  no_log: true
   loop:
     - __init__.py.j2
     - triage.py.j2
-    - cape.py.j2
     - volatility.py.j2
     - pcap.py.j2
     - dotnet.py.j2
     - ghidra.py.j2
     - interpret.py.j2
+
+# cape.py.j2 contains cape_api_key — deploy separately with no_log
+- name: Deploy cape stage module (contains API key)
+  ansible.builtin.template:
+    src: "stages/cape.py.j2"
+    dest: "{{ pipeline_install_dir }}/stages/cape.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0640"
+  no_log: true
 
 - name: Deploy pipeline helper modules
   ansible.builtin.template:
@@ -88,9 +96,18 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0640"
-  no_log: true
   loop:
     - ioc_extract.py.j2
+
+- name: Deploy pipeline helper modules (contain DB password)
+  ansible.builtin.template:
+    src: "{{ item }}"
+    dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0640"
+  no_log: true
+  loop:
     - db_ingest.py.j2
     - pipeline_status.py.j2
 
@@ -101,7 +118,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
-  no_log: true
+  no_log: true  # contains DB password
 
 - name: Deploy generate-report.py
   ansible.builtin.template:
