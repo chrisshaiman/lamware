@@ -53,7 +53,7 @@ exec podman run --rm \
     --tmpfs /root:size=100m \
     --tmpfs /home:size=100m \
     --tmpfs /var/cache:size=100m \
-    --tmpfs /usr/local/lib/python3.12/site-packages/volatility3/framework/plugins:size=50m \
+    -v "{{ volatility_install_dir }}/cache:/vol-cache:ro" \
     -v "$DUMP_DIR:/dump:ro" \
     -v "{{ volatility_symbols_dir }}:/symbols:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
@@ -61,6 +61,7 @@ exec podman run --rm \
     localhost/volatility3:latest \
     -f "/dump/$DUMP_NAME" \
     -s /symbols \
+    --cache-path /vol-cache \
     -r json \
     -o /output \
     "$PLUGIN" \

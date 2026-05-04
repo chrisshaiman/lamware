@@ -113,6 +113,16 @@
     value: "{{ cape_result_ip }}"
     mode: "0640"
 
+# Cache procdumps so the pipeline can scan them for .NET payloads
+# extracted from dropper scenarios (process hollowing, injection).
+- name: Enable procdump caching in processing.conf
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/processing.conf"
+    section: CAPE
+    option: cache_procdump
+    value: "yes"
+    mode: "0640"
+
 # api.conf [api] url is the display URL shown in the web UI — not the bind address.
 # Set it to the WireGuard address so Cape links and callbacks use the correct host.
 - name: Set Cape API display URL to WireGuard interface
@@ -276,9 +286,9 @@
   changed_when: cape_api_token.stdout | length > 0
   failed_when: false
 
-- name: Display Cape API token (save to secrets.yml if new)
+- name: Notify if new Cape API token was generated
   ansible.builtin.debug:
-    msg: "Cape API token: {{ cape_api_token.stdout }}"
+    msg: "New Cape API token generated — update secrets.yml with: ansible-vault edit ansible/vars/secrets.yml"
   when: cape_api_token.stdout | length > 0
 
 # -------------------------------------------------------------------------

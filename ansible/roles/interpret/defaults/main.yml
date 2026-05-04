@@ -7,10 +7,13 @@ interpret_enabled: true
 # Provider (future: "local" for ollama/vllm)
 interpret_provider: "anthropic"
 
-# Model selection
+# Model selection — interpret (agentic code analysis)
 interpret_model: "claude-sonnet-4-6"
 
-# Escalation
+# Model selection — executive summary (structured reformatting, no tools)
+interpret_summary_model: "claude-haiku-4-5"
+
+# Escalation (interpret stage only)
 interpret_escalation_threshold: 5
 interpret_escalation_model: "claude-opus-4-6"
 
