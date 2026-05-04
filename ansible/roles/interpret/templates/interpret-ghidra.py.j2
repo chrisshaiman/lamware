@@ -620,7 +620,7 @@ def parse_final_response(text: str) -> dict[str, Any]:
 
 def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: dict[str, Any]) -> None:
     """Summarize the full pipeline report in a single Claude call (no tools)."""
-    model = config.get("model", DEFAULT_CONFIG["model"])
+    model = config.get("summary_model", config.get("model", DEFAULT_CONFIG["model"]))
     max_tokens = config.get("max_output_tokens", DEFAULT_CONFIG["max_output_tokens"])
 
     # Build a behavior-organized view of the report.
