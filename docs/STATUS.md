@@ -5,9 +5,9 @@ For design rationale see ARCHITECTURE.md. For decisions see docs/DECISIONS.md.
 
 ---
 
-## Platform Status (2026-05-03)
+## Platform Status (2026-05-04)
 
-**Fully operational.** Five-stage malware analysis pipeline with AI-assisted reverse
+**Fully operational.** Seven-stage malware analysis pipeline with AI-assisted reverse
 engineering, cross-tool correlation, and web dashboard. Tested on Emotet (VB6 packer),
 CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
@@ -21,9 +21,9 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 2.7 PCAP | Zeek + Suricata | Podman (--network=none) | Complete |
 | 3. Memory forensics | Volatility 3 | Podman (--network=none) | Complete |
 | 4. Static analysis | Ghidra headless (native PE) | Podman (--network=none) | Complete |
-| 4. Static analysis | ILSpy (`.NET` binaries) | Podman (--network=none) | PR #37 |
-| 4.5 AI RE | Claude tool_use (agentic) | Podman (--network=host) | Complete |
-| 5. Executive summary | Claude (single-shot) | Podman (--network=host) | Complete |
+| 4. Static analysis | de4dotEx + ILSpy (.NET) | Podman (--network=none) | Complete |
+| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET) | Podman (--network=host) | Complete |
+| 5. Executive summary | Claude Haiku (single-shot) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Host-side | Complete |
 
 ### Supporting Infrastructure — 20 Ansible roles
@@ -42,10 +42,10 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | podman | Container runtime | Complete |
 | pcap-analysis | Zeek + Suricata container | Complete |
 | triage | YARA/ssdeep/FLOSS container | Complete |
-| volatility | Volatility 3 container | Complete |
-| dotnet-analysis | ILSpy .NET decompiler container | PR #37 |
+| volatility | Volatility 3 container + ISF cache | Complete |
+| dotnet-analysis | de4dotEx deobfuscation + ILSpy decompiler | Complete |
 | ghidra | Ghidra headless container | Complete |
-| interpret | Claude LLM container | Complete |
+| interpret | Claude LLM container (agentic + summary) | Complete |
 | postgres | Analysis database | Complete |
 | pipeline | Orchestrator + modules | Complete |
 | dashboard | Flask web UI | Complete |
@@ -73,14 +73,24 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | /iocs (IOC browser) | Complete |
 | /techniques (ATT&CK browser) | Complete |
 | /pdf/<task_id> (PDF download) | Complete |
+| /logs/<task_id> (pipeline log viewer) | Complete |
 
 ### Performance Optimizations
 
 - Volatility ramdisk (tmpfs) — 4GB dump copied in 1.0s
-- Parallel plugin execution — 7 plugins with 3 workers, 3x speedup (28min → 9.5min)
+- Parallel plugin execution — 7 plugins with 7 workers, all run concurrently
+- Pre-built Volatility ISF cache — mounted :ro, eliminates 210s cache rebuild
 - Pipeline replay mode — re-run post-collection stages in <10s
-- Per-stage timing instrumentation
+- Per-stage timing instrumentation with per-task log files
 - Prompt caching on Claude API calls
+- Haiku for executive summaries (3x cheaper, ~30s faster than Sonnet)
+
+### Logging
+
+- Unified Python logging module (replaced 106 print() calls)
+- Per-task log files at `reports/<task_id>/pipeline.log`
+- `--verbose` flag for debug-level output
+- Flask `/logs/<task_id>` route with links on status + detail pages
 
 ---
 
@@ -90,9 +100,9 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Route Cape unpacked .NET payloads to ILSpy | 1-2 hrs | NanoCore is packed in VB6 — outer binary is native, inner payload is .NET. Check Cape extractions for .NET, not just original sample. |
+| Cape procdump for .NET extraction | Investigation | procdump enabled + cached but CAPE monitor not generating dumps for hollowed processes. Need to investigate monitor config. |
 | Go binary support (GoReSym) | 2-3 hrs | Same container pattern as ILSpy. Sliver, BianLian. |
-| Unified logging framework | 2-3 hrs | Replace print() with Python logging module |
+| malfind performance | 2 hrs | 15K+ regions = 600s+. Cap region count or filter benign processes. |
 
 ### Medium Priority
 
@@ -100,9 +110,10 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 |------|--------|-------|
 | Cape screenshots in report | 30 min | Flask endpoint + PDF embed |
 | Mutex IOCs from Cape API traces | 1 hr | CreateMutexA/W with timestamps |
+| Cape enforce_timeout | 30 min | Exit early when sample stops producing activity. Saves 50-70s per run. |
 | Evasion hunter mode | Design + 2 hrs | Second LLM prompt for sandbox evasion detection |
 | Java JAR support (CFR) | 1-2 hrs | Same container pattern as ILSpy |
-| OVH Canada migration | Research + deploy | RISE-5 $30/mo vs current $92/mo |
+| OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
 | PyInstaller support | 1-2 hrs | pyinstxtractor + decompile |
 
 ### Future — React/FastAPI Rebuild
@@ -192,7 +203,8 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 |--------|------|-------------------|-------|
 | Emotet | VB6 packer/loader | Full (all stages) | 130+ IOCs, cross-correlation findings |
 | CobaltStrike/DidYouRansome | Native C beacon + ransomware | Full (all stages) | 174 IOCs, 43 MITRE techniques, LLM identified family |
-| NanoCore | .NET RAT | Partial (no ILSpy yet) | YARA identified, Ghidra poor on .NET. ILSpy in PR #37 |
+| NanoCore | .NET RAT (clean sample) | Full (all stages) | ILSpy decompiled 324K chars C#, LLM identified NanoCore, 10 MITRE techniques |
+| NanoCore | .NET RAT (VB6 dropper) | Partial (no .NET extraction) | Dropper analyzed by Ghidra, .NET payload not extracted — CAPE procdump investigation needed |
 
 ---
 
