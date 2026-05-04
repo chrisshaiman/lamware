@@ -217,13 +217,17 @@ def run_dotnet_analysis(binary_path: Path, output_dir: Path,
         return {"error": f"dotnet analysis timed out ({timeout}s)",
                 "analysis_success": False}
 
-    if result.returncode != 0:
-        return {"error": f"dotnet analysis failed: {result.stderr[:300]}",
-                "analysis_success": False}
-
+    # Try parsing stdout as JSON first — de4dotEx may return non-zero
+    # for "Unknown Obfuscator" even when deobfuscation succeeded.
     try:
         output = json.loads(result.stdout)
         return output
     except json.JSONDecodeError:
-        return {"error": f"Failed to parse dotnet output: {result.stdout[:200]}",
+        pass
+
+    if result.returncode != 0:
+        return {"error": f"dotnet analysis failed: {result.stderr[:300]}",
                 "analysis_success": False}
+
+    return {"error": f"No valid JSON in dotnet output: {result.stdout[:200]}",
+            "analysis_success": False}
