@@ -61,6 +61,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
+  no_log: true
 
 - name: Deploy pipeline stage modules
   ansible.builtin.template:
@@ -69,6 +70,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0640"
+  no_log: true
   loop:
     - __init__.py.j2
     - triage.py.j2
@@ -86,6 +88,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0640"
+  no_log: true
   loop:
     - ioc_extract.py.j2
     - db_ingest.py.j2
@@ -98,6 +101,7 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0750"
+  no_log: true
 
 - name: Deploy generate-report.py
   ansible.builtin.template:

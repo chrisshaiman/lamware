@@ -5,11 +5,16 @@ Detects .NET assemblies via YARA matches and file type, then runs
 ILSpy to decompile to C# source code. Produces much better output
 than Ghidra for .NET binaries since ILSpy understands IL natively.
 
+Also scans Cape-extracted payloads for .NET binaries — handles
+dropper scenarios where the original sample is native PE but the
+payload extracted during detonation is .NET.
+
 Author: Christopher Shaiman
 License: Apache 2.0
 """
 
 import json
+import struct
 import subprocess
 from pathlib import Path
 
@@ -17,6 +22,9 @@ from pathlib import Path
 DOTNET_YARA_INDICATORS = [
     "isnet", "net_exe", "netexecutable", "msil", "dotnet", "csharp",
 ]
+
+# Max number of extracted .NET payloads to analyze per run
+MAX_DOTNET_EXTRACTIONS = 3
 
 
 def is_dotnet_binary(report: dict) -> bool:
@@ -35,6 +43,151 @@ def is_dotnet_binary(report: dict) -> bool:
             return True
 
     return False
+
+
+def _has_clr_header(file_path: Path) -> bool:
+    """Check if a PE file has a CLR runtime header (i.e., is .NET)."""
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read(1024)
+        if len(data) < 64 or data[:2] != b"MZ":
+            return False
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+        if pe_offset + 24 > len(data):
+            return False
+        if data[pe_offset:pe_offset + 4] != b"PE\x00\x00":
+            return False
+        magic = struct.unpack_from("<H", data, pe_offset + 24)[0]
+        if magic == 0x10b:  # PE32
+            clr_offset = pe_offset + 24 + 208
+        elif magic == 0x20b:  # PE32+
+            clr_offset = pe_offset + 24 + 224
+        else:
+            return False
+        if clr_offset + 8 > len(data):
+            return False
+        clr_rva = struct.unpack_from("<I", data, clr_offset)[0]
+        return clr_rva > 0
+    except (OSError, struct.error):
+        return False
+
+
+def _find_embedded_dotnet(file_path: Path) -> Path | None:
+    """Search a binary blob for an embedded .NET PE and carve it out.
+
+    Returns path to carved PE in /tmp, or None if not found.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+
+    # Search for MZ headers
+    offset = 0
+    while offset < len(data) - 64:
+        pos = data.find(b"MZ", offset)
+        if pos == -1:
+            break
+        # Check if this MZ leads to a valid PE with CLR header
+        chunk = data[pos:]
+        if len(chunk) < 512:
+            offset = pos + 2
+            continue
+        try:
+            pe_offset = struct.unpack_from("<I", chunk, 0x3C)[0]
+            if pe_offset + 24 > len(chunk) or pe_offset > 4096:
+                offset = pos + 2
+                continue
+            if chunk[pe_offset:pe_offset + 4] != b"PE\x00\x00":
+                offset = pos + 2
+                continue
+            magic = struct.unpack_from("<H", chunk, pe_offset + 24)[0]
+            if magic == 0x10b:
+                clr_off = pe_offset + 24 + 208
+            elif magic == 0x20b:
+                clr_off = pe_offset + 24 + 224
+            else:
+                offset = pos + 2
+                continue
+            if clr_off + 8 > len(chunk):
+                offset = pos + 2
+                continue
+            clr_rva = struct.unpack_from("<I", chunk, clr_off)[0]
+            if clr_rva > 0:
+                # Found embedded .NET PE — carve it out
+                carved_path = Path(f"/tmp/carved_dotnet_{file_path.name[:16]}.exe")
+                with open(carved_path, "wb") as out:
+                    out.write(chunk)
+                return carved_path
+        except (struct.error, IndexError):
+            pass
+        offset = pos + 2
+
+    return None
+
+
+def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None) -> list[dict]:
+    """Scan Cape extraction directories for .NET binaries.
+
+    Checks CAPE/ (extracted payloads) and dropped/ directories. First
+    checks for proper PE files with CLR headers, then scans larger blobs
+    for embedded .NET PEs (handles dropper scenarios where the payload
+    is carved from an injection buffer).
+
+    Returns a list of dicts with path and metadata for each .NET binary
+    found, capped at MAX_DOTNET_EXTRACTIONS.
+    """
+    if not cape_task_id:
+        return []
+
+    results = []
+    base_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id}")
+
+    # Pass 1: check for proper PE files with CLR headers
+    for subdir_name in ["procdump", "CAPE", "dropped"]:
+        subdir = base_dir / subdir_name
+        if not subdir.is_dir():
+            continue
+        for entry in sorted(subdir.iterdir()):
+            if not entry.is_file() or entry.stat().st_size < 4096:
+                continue
+            if _has_clr_header(entry):
+                results.append({
+                    "path": str(entry),
+                    "source_dir": subdir_name,
+                    "sha256": entry.name,
+                    "size": entry.stat().st_size,
+                })
+                if len(results) >= MAX_DOTNET_EXTRACTIONS:
+                    return results
+
+    # Pass 2: scan large blobs for embedded .NET PEs (dropper payloads)
+    if not results:
+        for subdir_name in ["CAPE", "dropped"]:
+            subdir = base_dir / subdir_name
+            if not subdir.is_dir():
+                continue
+            # Only check files > 50KB (plausible .NET payload size)
+            large_files = sorted(
+                [e for e in subdir.iterdir() if e.is_file() and e.stat().st_size > 51200],
+                key=lambda e: e.stat().st_size,
+                reverse=True,
+            )
+            for entry in large_files[:10]:  # cap scan to 10 largest
+                carved = _find_embedded_dotnet(entry)
+                if carved:
+                    results.append({
+                        "path": str(carved),
+                        "source_dir": subdir_name,
+                        "sha256": entry.name,
+                        "size": carved.stat().st_size,
+                        "carved_from": str(entry),
+                    })
+                    if len(results) >= MAX_DOTNET_EXTRACTIONS:
+                        return results
+
+    return results
 
 
 def run_dotnet_analysis(binary_path: Path, output_dir: Path,

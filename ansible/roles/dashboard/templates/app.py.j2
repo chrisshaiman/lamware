@@ -494,6 +494,7 @@ def analysis_detail(analysis_id):
 
     sha_short = a["sha256"][:16] + "..." if a["sha256"] else "?"
     pdf_link = f"/pdf/{a['task_id']}" if a["pdf_generated"] else ""
+    logs_link = f"/logs/{a['task_id']}"
 
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Analysis {{ task_id }} — Dashboard</title>
@@ -522,6 +523,7 @@ def analysis_detail(analysis_id):
                     <tr><td style="color:#8b949e;">Family</td><td><strong>{{ family }}</strong></td></tr>
                     <tr><td style="color:#8b949e;">File Type</td><td>{{ file_type }}</td></tr>
                     {% if pdf_link %}<tr><td style="color:#8b949e;">PDF Report</td><td><a href="{{ pdf_link }}">Download PDF</a></td></tr>{% endif %}
+                    <tr><td style="color:#8b949e;">Pipeline Log</td><td><a href="{{ logs_link }}">View Logs</a></td></tr>
                 </table>
             </div>
 
@@ -590,7 +592,7 @@ def analysis_detail(analysis_id):
         sha256=escape(a["sha256"]), filename=escape(a["filename"] or "?"),
         family=escape(a["malware_family_guess"] or "?"),
         file_type=escape(a["file_type"] or "?"),
-        pdf_link=pdf_link,
+        pdf_link=pdf_link, logs_link=logs_link,
         executive_summary=Markup(render_markdown(a["executive_summary"] or "")),
         narrative=Markup(render_markdown(a["narrative"] or "")),
         corr_rows=Markup(corr_rows),
@@ -749,6 +751,46 @@ def download_pdf(task_id):
                     headers={"Content-Disposition": f"attachment; filename={safe_name}-report.pdf"})
 
 
+@app.route("/logs/<task_id>")
+def view_logs(task_id):
+    """View pipeline logs for an analysis run."""
+    import os
+    log_path = os.path.realpath(os.path.join(REPORTS_DIR, task_id, "pipeline.log"))
+    if not log_path.startswith(os.path.realpath(REPORTS_DIR)):
+        abort(404)
+    if not os.path.exists(log_path):
+        abort(404, description="No log file found for this task.")
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        log_content = f.read()
+    return render_template_string(LOG_PAGE, task_id=task_id,
+                                   log_content=log_content, css=CSS)
+
+
+LOG_PAGE = """{% raw %}<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>Pipeline Log — {{ task_id }}</title>
+<style>{{ css }}
+pre.log {
+    background: #1a1a2e; color: #c8d6e5; padding: 1.5rem;
+    border-radius: 8px; overflow-x: auto; font-size: 0.85rem;
+    line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;
+    max-height: 80vh; overflow-y: auto;
+}
+.log-header { display: flex; justify-content: space-between; align-items: center;
+              margin-bottom: 1rem; }
+.log-header a { color: #74b9ff; }
+</style>
+</head><body>
+<div style="max-width:1200px;margin:0 auto;padding:2rem">
+  <div class="log-header">
+    <h1>Pipeline Log: {{ task_id }}</h1>
+    <a href="/">&#8592; Back to analyses</a>
+  </div>
+  <pre class="log">{{ log_content }}</pre>
+</div>
+</body></html>{% endraw %}"""
+
+
 PIPELINE_STAGES = [
     "triage", "cape", "pcap", "volatility", "ghidra",
     "interpret", "summary", "db", "pdf",
@@ -843,6 +885,7 @@ def pipeline_status():
             <td>{progress}</td>
             <td>{elapsed}</td>
             <td>{started}</td>
+            <td><a href="/logs/{escape(a['task_id'])}" style="font-size:12px;color:#74b9ff;">logs</a></td>
         </tr>"""
 
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
@@ -864,7 +907,7 @@ def pipeline_status():
             <p style="font-size:11px;color:#8b949e;">Auto-refreshes every 10 seconds. Shows running and recent analyses.</p>
             <table>
                 <tr><th>Status</th><th>Task</th><th>SHA256</th><th>Filename</th>
-                    <th>Current Stage</th><th>Progress</th><th>Elapsed</th><th>Started</th></tr>
+                    <th>Current Stage</th><th>Progress</th><th>Elapsed</th><th>Started</th><th></th></tr>
                 {{ rows }}
             </table>
         </div>
