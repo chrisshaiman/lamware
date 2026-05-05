@@ -127,28 +127,37 @@ def _find_embedded_dotnet(file_path: Path) -> Path | None:
     return None
 
 
-def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None) -> list[dict]:
-    """Scan Cape extraction directories for .NET binaries.
+def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None,
+                            report_dir: Path | None = None) -> list[dict]:
+    """Scan Cape extraction directories and Volatility procdumps for .NET binaries.
 
-    Checks CAPE/ (extracted payloads) and dropped/ directories. First
-    checks for proper PE files with CLR headers, then scans larger blobs
-    for embedded .NET PEs (handles dropper scenarios where the payload
-    is carved from an injection buffer).
+    Checks procdump/, CAPE/, dropped/ in the Cape storage, plus vol_procdump/
+    in the pipeline report directory. First checks for proper PE files with
+    CLR headers, then scans larger blobs for embedded .NET PEs.
 
     Returns a list of dicts with path and metadata for each .NET binary
     found, capped at MAX_DOTNET_EXTRACTIONS.
     """
-    if not cape_task_id:
+    results = []
+
+    # Build list of directories to scan
+    scan_dirs: list[tuple[str, Path]] = []
+    if report_dir:
+        vol_procdump = report_dir / "vol_procdump"
+        if vol_procdump.is_dir():
+            scan_dirs.append(("vol_procdump", vol_procdump))
+    if cape_task_id:
+        base_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id}")
+        for subdir_name in ["procdump", "CAPE", "dropped"]:
+            subdir = base_dir / subdir_name
+            if subdir.is_dir():
+                scan_dirs.append((subdir_name, subdir))
+
+    if not scan_dirs:
         return []
 
-    results = []
-    base_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id}")
-
     # Pass 1: check for proper PE files with CLR headers
-    for subdir_name in ["procdump", "CAPE", "dropped"]:
-        subdir = base_dir / subdir_name
-        if not subdir.is_dir():
-            continue
+    for subdir_name, subdir in scan_dirs:
         for entry in sorted(subdir.iterdir()):
             if not entry.is_file() or entry.stat().st_size < 4096:
                 continue
@@ -164,10 +173,7 @@ def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None) -> 
 
     # Pass 2: scan large blobs for embedded .NET PEs (dropper payloads)
     if not results:
-        for subdir_name in ["CAPE", "dropped"]:
-            subdir = base_dir / subdir_name
-            if not subdir.is_dir():
-                continue
+        for subdir_name, subdir in scan_dirs:
             # Only check files > 50KB (plausible .NET payload size)
             large_files = sorted(
                 [e for e in subdir.iterdir() if e.is_file() and e.stat().st_size > 51200],
@@ -211,13 +217,17 @@ def run_dotnet_analysis(binary_path: Path, output_dir: Path,
         return {"error": f"dotnet analysis timed out ({timeout}s)",
                 "analysis_success": False}
 
-    if result.returncode != 0:
-        return {"error": f"dotnet analysis failed: {result.stderr[:300]}",
-                "analysis_success": False}
-
+    # Try parsing stdout as JSON first — de4dotEx may return non-zero
+    # for "Unknown Obfuscator" even when deobfuscation succeeded.
     try:
         output = json.loads(result.stdout)
         return output
     except json.JSONDecodeError:
-        return {"error": f"Failed to parse dotnet output: {result.stdout[:200]}",
+        pass
+
+    if result.returncode != 0:
+        return {"error": f"dotnet analysis failed: {result.stderr[:300]}",
                 "analysis_success": False}
+
+    return {"error": f"No valid JSON in dotnet output: {result.stdout[:200]}",
+            "analysis_success": False}
