@@ -24,6 +24,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 4. Static analysis | de4dotEx + ILSpy (.NET) | Podman (--network=none) | Complete |
 | 4. Static analysis | GoReSym (Go binaries) | Podman (--network=none) | Complete |
 | 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go) | Podman (--network=host) | Complete |
+| 4.7 Evasion hunter | Claude (single-shot) — triggers on low-activity samples | Podman (--network=host) | Complete |
 | 5. Executive summary | Claude Haiku (single-shot) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Host-side | Complete |
 
@@ -107,12 +108,9 @@ No items — all resolved.
 | Item | Effort | Notes |
 |------|--------|-------|
 | Cape screenshots in report | 1-2 hrs | Fix guest VM screenshot capture first (Pillow/display issue). Then: Flask endpoint, PDF embed, diff detection (identical screenshots = evasion signal). Most valuable for ransomware (ransom notes), banking trojans (form overlays), and evasion detection (static desktop = sandbox-aware sample). |
-| Mutex IOCs from Cape API traces | 1 hr | CreateMutexA/W with timestamps |
-
-| Evasion hunter mode | Design + 2 hrs | Second LLM prompt for sandbox evasion detection |
-| Java JAR support (CFR) | 1-2 hrs | Same container pattern as ILSpy |
+| Java JAR support (CFR) | 1-2 hrs | Same container pattern as ILSpy/GoReSym. MIT licensed. |
+| PyInstaller support | 1-2 hrs | pyinstxtractor + decompyle3 (both GPL-3.0, subprocess). More common than Java in commodity malware. |
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
-| PyInstaller support | 1-2 hrs | pyinstxtractor + decompile |
 
 ### Future — React/FastAPI Rebuild
 
@@ -120,7 +118,7 @@ No items — all resolved.
 |------|--------|-------|
 | FastAPI backend | 1-2 sessions | Replace Flask, REST + WebSocket |
 | React frontend | 2-3 sessions | SPA, interactive MITRE map, real-time status |
-| Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild |
+| Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
 | WebSocket real-time updates | 1 session | Builds on pipeline_stage_events table |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
@@ -139,7 +137,6 @@ No items — all resolved.
 | YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
-| Inline imports cleanup | 1 hr | Move to module level in .j2 templates. Do during FastAPI rebuild. |
 
 ---
 
