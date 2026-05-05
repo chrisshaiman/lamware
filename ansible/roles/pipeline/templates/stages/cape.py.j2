@@ -409,6 +409,57 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
     if process_cmdlines:
         intel["process_cmdlines"] = process_cmdlines
 
+    # Mutex IOCs from API traces — CreateMutex/OpenMutex calls with
+    # process attribution and create-vs-check distinction.
+    mutex_iocs = []
+    benign_mutex_prefixes = [
+        "\\BaseNamedObjects\\SM0:", "\\Sessions\\", "\\BaseNamedObjects\\DBWinMutex",
+        "\\BaseNamedObjects\\_SHuassist.", "\\BaseNamedObjects\\MSCTF.",
+        "\\BaseNamedObjects\\ZonesCacheCounterMutex",
+        "\\BaseNamedObjects\\ZonesLockedCacheCounterMutex",
+        "\\BaseNamedObjects\\CTF.", "\\BaseNamedObjects\\WininetConnectionMutex",
+        "\\BaseNamedObjects\\WininetProxyRegistryMutex",
+        "\\BaseNamedObjects\\WininetStartupMutex",
+        "\\BaseNamedObjects\\RasPbFile",
+    ]
+    seen_mutexes = set()
+    for proc in behavior.get("processes", []):
+        pid = proc.get("process_id", 0)
+        proc_name = proc.get("process_name", "?")
+        for call in proc.get("calls", []):
+            api = call.get("api", "")
+            if api not in ("NtCreateMutant", "NtOpenMutant",
+                           "CreateMutexA", "CreateMutexW",
+                           "OpenMutexA", "OpenMutexW"):
+                continue
+            # Extract mutex name from arguments
+            mutex_name = ""
+            for arg in call.get("arguments", []):
+                if isinstance(arg, dict) and arg.get("name") in ("MutexName", "Name", "lpName"):
+                    mutex_name = arg.get("value", "")
+                    break
+            if not mutex_name:
+                continue
+            # Skip known Windows noise
+            if any(mutex_name.startswith(prefix) for prefix in benign_mutex_prefixes):
+                continue
+            # Dedup
+            dedup_key = (proc_name, mutex_name)
+            if dedup_key in seen_mutexes:
+                continue
+            seen_mutexes.add(dedup_key)
+            is_create = "Create" in api or "NtCreateMutant" == api
+            mutex_iocs.append({
+                "name": mutex_name,
+                "process": proc_name,
+                "pid": pid,
+                "action": "create" if is_create else "check",
+                "api": api,
+                "timestamp": call.get("time", 0),
+            })
+    if mutex_iocs:
+        intel["mutex_iocs"] = mutex_iocs[:50]
+
     # Malscore
     intel["malscore"] = full_report.get("malscore", 0)
 

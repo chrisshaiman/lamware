@@ -641,7 +641,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             net_keys = list(cape_intel.get("network", {}).keys())
             payloads = cape_intel.get("payloads_extracted", 0)
             injection_bufs = cape_intel.get("injection_buffers", [])
-            log.info(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}")
+            mutex_count = len(cape_intel.get("mutex_iocs", []))
+            log.info(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}, Mutexes: {mutex_count}")
+            if mutex_count:
+                for m in cape_intel["mutex_iocs"][:5]:
+                    log.info(f"    Mutex: {m['name'][:60]} ({m['action']} by {m['process']})")
             if injection_bufs:
                 log.info(f"  Injection buffers captured: {len(injection_bufs)}")
                 for inj in injection_bufs:
