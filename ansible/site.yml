@@ -94,6 +94,10 @@
     - role: dotnet-analysis
       tags: [dotnet-analysis]
 
+    # 13c. Go analysis — containerized GoReSym metadata extraction
+    - role: go-analysis
+      tags: [go-analysis]
+
     # 14. LLM interpretation — agentic Claude analysis of Ghidra output
     - role: interpret
       tags: [interpret]

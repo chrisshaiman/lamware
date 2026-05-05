@@ -76,6 +76,7 @@
     - volatility.py.j2
     - pcap.py.j2
     - dotnet.py.j2
+    - go.py.j2
     - ghidra.py.j2
     - interpret.py.j2
 

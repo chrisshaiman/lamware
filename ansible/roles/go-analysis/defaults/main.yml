@@ -1,0 +1,11 @@
+---
+# roles/go-analysis/defaults/main.yml
+
+go_analysis_install_dir: /opt/go-analysis
+go_analysis_container_memory: "1g"
+go_analysis_container_cpus: "1"
+go_analysis_container_timeout: "120"
+
+# GoReSym release — MIT licensed
+goresym_version: "2.7.4"
+goresym_url: "https://github.com/mandiant/GoReSym/releases/download/v{{ goresym_version }}/GoReSym_{{ goresym_version }}_linux_amd64.tar.gz"

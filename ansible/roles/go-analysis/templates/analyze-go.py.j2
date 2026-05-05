@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""
+analyze-go.py — Extract metadata from Go binaries with GoReSym.
+
+Produces structured JSON output with:
+- Recovered function names and packages
+- Type information (structs, interfaces)
+- Build metadata (Go version, build ID, module path)
+- Strings of interest (C2 URLs, IPs, paths)
+
+Usage: python3 analyze-go.py /sample/binary.exe
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def run_goresym(binary_path: str) -> dict:
+    """Run GoReSym to extract Go binary metadata."""
+    try:
+        result = subprocess.run(
+            ["GoReSym", "-t", "-d", "-p", binary_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        # GoReSym outputs JSON to stdout
+        # Try parsing even on non-zero exit (partial results)
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            pass
+
+        if result.returncode != 0:
+            return {"error": result.stderr[:300]}
+
+        return {"error": f"No valid JSON from GoReSym: {result.stdout[:200]}"}
+    except FileNotFoundError:
+        return {"error": "GoReSym not found"}
+    except subprocess.TimeoutExpired:
+        return {"error": "GoReSym timed out (60s)"}
+
+
+def extract_packages(goresym_data: dict) -> list[dict]:
+    """Extract unique package names from GoReSym output."""
+    packages = set()
+    for func in goresym_data.get("UserFunctions", []):
+        pkg = func.get("PackageName", "")
+        if pkg:
+            packages.add(pkg)
+    for func in goresym_data.get("StdFunctions", []):
+        pkg = func.get("PackageName", "")
+        if pkg:
+            packages.add(pkg)
+
+    # Categorize packages
+    result = []
+    for pkg in sorted(packages):
+        category = "user"
+        if pkg.startswith("runtime") or pkg.startswith("internal"):
+            category = "runtime"
+        elif pkg.startswith("crypto") or pkg.startswith("net") or pkg.startswith("os"):
+            category = "stdlib"
+        elif pkg.startswith("golang.org") or pkg.startswith("github.com"):
+            category = "third_party"
+        result.append({"name": pkg, "category": category})
+    return result
+
+
+def extract_function_summary(goresym_data: dict) -> dict:
+    """Summarize functions by category."""
+    user_funcs = goresym_data.get("UserFunctions", [])
+    std_funcs = goresym_data.get("StdFunctions", [])
+
+    # Extract user function details
+    user_summary = []
+    for func in user_funcs[:200]:
+        entry = {
+            "name": func.get("FullName", func.get("Name", "?")),
+            "package": func.get("PackageName", "?"),
+            "start": func.get("Start", 0),
+            "end": func.get("End", 0),
+        }
+        user_summary.append(entry)
+
+    return {
+        "user_count": len(user_funcs),
+        "stdlib_count": len(std_funcs),
+        "user_functions": user_summary,
+    }
+
+
+def extract_types(goresym_data: dict) -> list[dict]:
+    """Extract type definitions from GoReSym output."""
+    types = []
+    for t in goresym_data.get("Types", []):
+        if isinstance(t, dict):
+            entry = {
+                "name": t.get("Str", t.get("Name", "?")),
+                "kind": t.get("Kind", "?"),
+            }
+            # Include fields for structs
+            fields = t.get("Fields", [])
+            if fields:
+                entry["fields"] = [
+                    {"name": f.get("FieldName", "?"), "type": f.get("FieldType", "?")}
+                    for f in fields[:20]
+                ]
+            types.append(entry)
+    return types[:100]
+
+
+def extract_build_info(goresym_data: dict) -> dict:
+    """Extract build metadata."""
+    build_info = goresym_data.get("BuildInfo", {})
+    return {
+        "go_version": build_info.get("GoVersion", goresym_data.get("Version", "?")),
+        "module_path": build_info.get("Path", "?"),
+        "build_id": goresym_data.get("BuildID", "?"),
+        "os": goresym_data.get("OS", "?"),
+        "arch": goresym_data.get("Arch", "?"),
+    }
+
+
+def extract_strings_of_interest(goresym_data: dict) -> list[dict]:
+    """Extract interesting strings from Go binary metadata."""
+    findings = []
+
+    # Check user function names for suspicious patterns
+    suspicious_packages = [
+        "c2", "beacon", "implant", "agent", "shell", "reverse",
+        "keylog", "screen", "camera", "exfil", "crypt", "ransom",
+        "inject", "hollow", "persist", "socks", "proxy", "tunnel",
+    ]
+    for func in goresym_data.get("UserFunctions", []):
+        name = func.get("FullName", "").lower()
+        for pattern in suspicious_packages:
+            if pattern in name:
+                findings.append({
+                    "type": "suspicious_function",
+                    "value": func.get("FullName", "?"),
+                    "context": f"Function name contains '{pattern}'"
+                })
+                break
+
+    # Check module path for C2 framework indicators
+    build_info = goresym_data.get("BuildInfo", {})
+    module_path = build_info.get("Path", "")
+    deps = build_info.get("Deps", [])
+
+    # Known Go offensive tool module paths. These are build-time provenance
+    # indicators, not behavioral signatures. Limitations:
+    # - Only matches default upstream builds — attackers can fork to private
+    #   repos and change the module path to bypass this check.
+    # - Function/package name analysis by the LLM is the deeper detection.
+    # - This list is informational only — never used for automated verdicts.
+    # - Match case-insensitively (Go module proxy normalizes some paths).
+    known_offensive_modules = {
+        # C2 frameworks
+        "github.com/bishopfox/sliver": "Sliver C2 implant",
+        "github.com/ne0nd0g/merlin": "Merlin C2 agent",
+        "github.com/ne0nd0g/merlin-agent": "Merlin C2 agent",
+        "github.com/deimosc2/deimosc2": "DeimosC2 framework",
+        "github.com/idigitalflame/xmt": "XMT offensive toolkit",
+        "github.com/idigitalflame/thunderstorm": "ThunderStorm C2",
+        "github.com/p3nt4/nuages": "Nuages C2",
+        # CobaltStrike reimplementations
+        "github.com/darkr4y/geacon": "Geacon (CS beacon in Go)",
+        "github.com/z3ratu1/geacon_plus": "Geacon Plus (CS beacon in Go)",
+        # Mythic agents
+        "github.com/mythicagents/poseidon": "Poseidon Mythic agent",
+        "github.com/mythicmeta/mythiccontainer": "Mythic C2 SDK",
+        "github.com/an00brektn/gopher47": "Gopher47 Havoc agent",
+        # .NET loader
+        "github.com/ropnop/go-clr": "go-clr (.NET assembly loader)",
+        # Credential theft
+        "github.com/jfjallid/go-secdump": "go-secdump credential dumper",
+        "github.com/latortuga71/gosecretsdump": "GoSecretsDump credential dumper",
+        # Stealers
+        "github.com/hackirby/skuld": "Skuld info stealer",
+        # Ransomware
+        "github.com/oakkaya/prince-ransomware": "Prince Ransomware",
+        "github.com/mauri870/ransomware": "mauri870 ransomware PoC",
+        # Tunneling (dual-use, contextually suspicious)
+        "github.com/jpillora/chisel": "Chisel tunnel (dual-use)",
+        "github.com/fatedier/frp": "frp reverse proxy (dual-use)",
+        "github.com/nicocha30/ligolo-ng": "Ligolo-ng pivoting (dual-use)",
+        # Offensive libraries
+        "github.com/mrtuxx/offensivegolang": "OffensiveGolang toolkit",
+    }
+    all_paths = [module_path.lower()]
+    for dep in deps:
+        dep_path = dep.get("Path", "") if isinstance(dep, dict) else str(dep)
+        all_paths.append(dep_path.lower())
+    for path_lower in all_paths:
+        for known_path, description in known_offensive_modules.items():
+            if known_path in path_lower:
+                findings.append({
+                    "type": "offensive_tool",
+                    "value": path_lower,
+                    "context": f"Known offensive tool: {description}",
+                })
+
+    if module_path:
+        findings.append({
+            "type": "module_path",
+            "value": module_path,
+            "context": "Go module path — may reveal origin repo"
+        })
+
+    # Check for suspicious stdlib usage patterns
+    std_packages = set()
+    for func in goresym_data.get("StdFunctions", []):
+        pkg = func.get("PackageName", "")
+        std_packages.add(pkg)
+
+    suspicious_stdlib = {
+        "crypto/aes": "AES encryption — possible data encryption/ransomware",
+        "crypto/rsa": "RSA encryption — possible key exchange",
+        "net/http": "HTTP client/server — possible C2 communication",
+        "os/exec": "Command execution — possible shell access",
+        "syscall": "Direct syscalls — possible evasion or low-level access",
+        "debug/pe": "PE parsing — possible process injection/loading",
+        "reflect": "Reflection — possible dynamic dispatch or obfuscation",
+        "unsafe": "Unsafe operations — possible memory manipulation",
+    }
+    for pkg, context in suspicious_stdlib.items():
+        if pkg in std_packages:
+            findings.append({
+                "type": "stdlib_usage",
+                "value": pkg,
+                "context": context,
+            })
+
+    return findings
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: analyze-go.py <binary_path>"}))
+        sys.exit(1)
+
+    binary_path = sys.argv[1]
+    if not os.path.exists(binary_path):
+        print(json.dumps({"error": f"File not found: {binary_path}"}))
+        sys.exit(1)
+
+    result = {
+        "binary": binary_path,
+        "binary_size": os.path.getsize(binary_path),
+        "analysis_type": "go_goresym",
+    }
+
+    # Run GoReSym
+    goresym_data = run_goresym(binary_path)
+
+    if "error" in goresym_data:
+        result["error"] = goresym_data["error"]
+        result["analysis_success"] = False
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    # Extract structured data
+    result["build_info"] = extract_build_info(goresym_data)
+    result["packages"] = extract_packages(goresym_data)
+    result["functions"] = extract_function_summary(goresym_data)
+    result["types"] = extract_types(goresym_data)
+    result["strings_of_interest"] = extract_strings_of_interest(goresym_data)
+    result["analysis_success"] = True
+
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()

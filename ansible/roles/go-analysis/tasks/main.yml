@@ -1,0 +1,81 @@
+---
+# =============================================================================
+# roles/go-analysis/tasks/main.yml
+# Builds the GoReSym Go binary analysis container.
+#
+# GoReSym (MIT licensed) extracts function names, types, and build info
+# from Go binaries by parsing the pclntab metadata structure.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create go-analysis directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ go_analysis_install_dir }}"
+    - "{{ go_analysis_install_dir }}/build"
+    - "{{ go_analysis_install_dir }}/output"
+
+- name: Download GoReSym release
+  ansible.builtin.get_url:
+    url: "{{ goresym_url }}"
+    dest: "{{ go_analysis_install_dir }}/build/GoReSym.tar.gz"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Extract GoReSym binary
+  ansible.builtin.unarchive:
+    src: "{{ go_analysis_install_dir }}/build/GoReSym.tar.gz"
+    dest: "{{ go_analysis_install_dir }}/build/"
+    remote_src: true
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ go_analysis_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy analyze-go.py
+  ansible.builtin.template:
+    src: analyze-go.py.j2
+    dest: "{{ go_analysis_install_dir }}/build/analyze-go.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build go-analysis container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/go-analysis:latest
+      -f {{ go_analysis_install_dir }}/build/Containerfile
+      {{ go_analysis_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+- name: Deploy go-analysis wrapper script
+  ansible.builtin.template:
+    src: run-go-analysis-wrapper.sh.j2
+    dest: "{{ go_analysis_install_dir }}/run-go-analysis"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ go_analysis_install_dir }}/run-go-analysis"
+    dest: /usr/local/bin/run-go-analysis
+    state: link
