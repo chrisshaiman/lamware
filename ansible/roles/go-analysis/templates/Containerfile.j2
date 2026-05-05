@@ -1,0 +1,20 @@
+# Go binary analysis container — GoReSym + custom analysis script
+# Extracts function names, types, and metadata from Go binaries.
+# Built locally by Ansible. Never pulled from a registry.
+#
+# GoReSym is MIT licensed.
+# https://github.com/mandiant/GoReSym
+FROM docker.io/library/python:3.12-slim
+
+# GoReSym binary is downloaded at build time by Ansible
+# and placed in the build context
+COPY GoReSym /usr/local/bin/GoReSym
+RUN chmod +x /usr/local/bin/GoReSym
+
+COPY analyze-go.py /opt/analyze-go.py
+RUN chmod +x /opt/analyze-go.py
+
+RUN mkdir -p /output /nonexistent && chmod 777 /nonexistent /output
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-go.py"]

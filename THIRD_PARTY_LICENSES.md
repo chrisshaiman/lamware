@@ -19,6 +19,7 @@ open-source use.
 | [Ghidra](https://ghidra-sre.org/) | Apache 2.0 | Static analysis / disassembly | Containerized headless mode |
 | [ILSpy / ilspycmd](https://github.com/icsharpcode/ILSpy) | MIT | .NET decompilation to C# | Container dependency |
 | [de4dotEx](https://github.com/GDATAAdvancedAnalytics/de4dotEx) | **GPL-3.0** | .NET deobfuscation | See note below |
+| [GoReSym](https://github.com/mandiant/GoReSym) | MIT | Go binary metadata extraction | Container dependency |
 
 ## YARA Rule Sets
 
