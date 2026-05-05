@@ -106,7 +106,7 @@ No items — all resolved.
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Cape screenshots in report | 30 min | Flask endpoint + PDF embed |
+| Cape screenshots in report | 1-2 hrs | Fix guest VM screenshot capture first (Pillow/display issue). Then: Flask endpoint, PDF embed, diff detection (identical screenshots = evasion signal). Most valuable for ransomware (ransom notes), banking trojans (form overlays), and evasion detection (static desktop = sandbox-aware sample). |
 | Mutex IOCs from Cape API traces | 1 hr | CreateMutexA/W with timestamps |
 
 | Evasion hunter mode | Design + 2 hrs | Second LLM prompt for sandbox evasion detection |
