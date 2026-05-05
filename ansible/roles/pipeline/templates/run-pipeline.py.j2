@@ -201,11 +201,13 @@ def determine_family(report: dict) -> str:
     if cape_families:
         return _result(max(cape_families, key=cape_families.get), "cape_signatures")
 
-    # --- Priority 3: Go offensive module match ---
+    # --- Priority 3: Go offensive module/function match ---
     go_data = report.get("go_analysis", {})
     if go_data.get("analysis_success"):
         for s in go_data.get("strings_of_interest", []):
-            if isinstance(s, dict) and s.get("type") == "offensive_tool":
+            if not isinstance(s, dict):
+                continue
+            if s.get("type") == "offensive_tool":
                 # Extract family name from the description
                 context = s.get("context", "")
                 if "sliver" in context.lower():
@@ -222,6 +224,20 @@ def determine_family(report: dict) -> str:
                     return _result("skuld stealer", "go_module")
                 # Generic offensive tool
                 return _result(s.get("value", "unknown go tool").split("/")[-1].lower(), "go_module")
+
+    # --- Priority 3b: Evasion hunter likely behavior ---
+    evasion = report.get("evasion_analysis", {})
+    if evasion.get("enabled") and evasion.get("analysis"):
+        likely = evasion["analysis"].get("likely_behavior_if_not_evading", "").lower()
+        if likely:
+            known_names = [
+                "sliver", "merlin", "cobaltstrike", "cobalt strike",
+                "emotet", "asyncrat", "nanocore", "remcos",
+                "bianlian", "lockbit", "blackcat",
+            ]
+            for name in known_names:
+                if name in likely:
+                    return _result(name.replace(" ", ""), "evasion_analysis")
 
     # --- Priority 4: .NET namespace match ---
     dotnet_data = report.get("dotnet_analysis", {})
