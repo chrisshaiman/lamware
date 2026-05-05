@@ -101,8 +101,9 @@ When you have sufficient evidence, produce your final analysis. You do not need 
 use all available tool calls — stop early if the evidence is clear.
 
 CRITICAL: Your final response MUST be a single valid JSON object with NO text before \
-or after it. Do not write any preamble, explanation, or markdown — ONLY the JSON object. \
-If tools are unavailable, produce the JSON based on whatever data you have.
+or after it. Do not write any preamble, explanation, or markdown. Do not wrap the JSON \
+in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON object \
+starting with { and ending with }.
 
 The JSON object must contain:
 - malware_family_guess: string (your assessment — may confirm or refine the programmatic guess)
@@ -715,7 +716,8 @@ def parse_final_response(text: str) -> dict[str, Any]:
     """
     # Try direct parse
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        return _promote_nested_analysis(result)
     except (json.JSONDecodeError, TypeError):
         pass
 
@@ -729,7 +731,8 @@ def parse_final_response(text: str) -> dict[str, Any]:
         match = re.search(pattern, text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
+                result = json.loads(match.group(1))
+                return _promote_nested_analysis(result)
             except (json.JSONDecodeError, TypeError):
                 continue
 
@@ -739,7 +742,8 @@ def parse_final_response(text: str) -> dict[str, Any]:
     last_brace = text.rfind("}")
     if first_brace != -1 and last_brace > first_brace:
         try:
-            return json.loads(text[first_brace:last_brace + 1])
+            result = json.loads(text[first_brace:last_brace + 1])
+            return _promote_nested_analysis(result)
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -753,6 +757,42 @@ def parse_final_response(text: str) -> dict[str, Any]:
         "working_notes": "",
         "parse_note": "Failed to parse structured JSON from model response; raw text preserved in narrative.",
     }
+
+
+def _promote_nested_analysis(result: dict[str, Any]) -> dict[str, Any]:
+    """Fix LLM responses where the real analysis is nested inside narrative.
+
+    Sometimes the LLM returns a wrapper JSON with "malware_family_guess": "unknown"
+    but puts the actual detailed analysis as a JSON string inside the "narrative"
+    field. Detect this and promote the inner analysis.
+    """
+    if result.get("malware_family_guess", "").lower() not in ("unknown", ""):
+        return result
+    narrative = result.get("narrative", "")
+    if not isinstance(narrative, str) or "{" not in narrative:
+        return result
+    # Try extracting JSON from the narrative
+    # Check for code blocks first
+    for pattern in [r"```json\s*\n(.*?)\n\s*```", r"```\s*\n(.*?)\n\s*```"]:
+        match = re.search(pattern, narrative, re.DOTALL)
+        if match:
+            try:
+                inner = json.loads(match.group(1))
+                if isinstance(inner, dict) and inner.get("malware_family_guess"):
+                    return inner
+            except (json.JSONDecodeError, TypeError):
+                continue
+    # Try raw JSON extraction
+    first = narrative.find("{")
+    last = narrative.rfind("}")
+    if first != -1 and last > first:
+        try:
+            inner = json.loads(narrative[first:last + 1])
+            if isinstance(inner, dict) and inner.get("malware_family_guess"):
+                return inner
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return result
 
 
 # ---------------------------------------------------------------------------
