@@ -121,7 +121,7 @@ def extract_types(goresym_data: dict) -> list[dict]:
 
 def extract_build_info(goresym_data: dict) -> dict:
     """Extract build metadata."""
-    build_info = goresym_data.get("BuildInfo", {})
+    build_info = goresym_data.get("BuildInfo") or {}
     return {
         "go_version": build_info.get("GoVersion", goresym_data.get("Version", "?")),
         "module_path": build_info.get("Path", "?"),
@@ -153,9 +153,9 @@ def extract_strings_of_interest(goresym_data: dict) -> list[dict]:
                 break
 
     # Check module path for C2 framework indicators
-    build_info = goresym_data.get("BuildInfo", {})
-    module_path = build_info.get("Path", "")
-    deps = build_info.get("Deps", [])
+    build_info = goresym_data.get("BuildInfo") or {}
+    module_path = build_info.get("Path", "") or ""
+    deps = build_info.get("Deps") or []
 
     # Known Go offensive tool module paths. These are build-time provenance
     # indicators, not behavioral signatures. Limitations:
