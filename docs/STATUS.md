@@ -100,9 +100,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
 ### High Priority
 
-| Item | Effort | Notes |
-|------|--------|-------|
-| Family detection tuning | 1-2 hrs | BianLian misidentified as meterpreter by YARA rules. Review rule specificity. |
+No items — all resolved.
 
 ### Medium Priority
 
@@ -110,7 +108,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 |------|--------|-------|
 | Cape screenshots in report | 30 min | Flask endpoint + PDF embed |
 | Mutex IOCs from Cape API traces | 1 hr | CreateMutexA/W with timestamps |
-| Cape enforce_timeout | 30 min | Exit early when sample stops producing activity. Saves 50-70s per run. |
+
 | Evasion hunter mode | Design + 2 hrs | Second LLM prompt for sandbox evasion detection |
 | Java JAR support (CFR) | 1-2 hrs | Same container pattern as ILSpy |
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
@@ -208,7 +206,7 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 | NanoCore | .NET RAT (clean sample) | Full (all stages) | ILSpy decompiled 324K chars C#, LLM identified NanoCore, 10 MITRE techniques |
 | NanoCore | .NET RAT (VB6 dropper) | Partial (no .NET extraction) | Dropper analyzed by Ghidra, .NET payload not extracted — CAPE procdump investigation needed |
 | BianLian | Go ransomware | Full (GoReSym + LLM) | 138 user functions, 98 packages recovered. LLM identified SOCKS5 proxy architecture. |
-| Sliver | Go C2 implant (garble-obfuscated) | Partial (triage only) | GoReSym cannot parse garble-stripped pclntab. CAPE submission also failed. |
+| Sliver | Go C2 implant (garble-obfuscated) | Full (GoReSym + LLM) | 8,708 user functions, 282 packages recovered despite garble. LLM identified Sliver from function patterns. CAPE upload limit fixed (was 30MB, now 100MB). |
 
 ---
 
