@@ -788,11 +788,32 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             pkg_count = len(go_result.get("packages", []))
             strings_count = len(go_result.get("strings_of_interest", []))
             log.info(f"  Go {build.get('go_version', '?')}, {func_count} user functions, {pkg_count} packages, {strings_count} interesting strings")
+            report["ghidra"] = {"triggered": True, "go_routed": True,
+                                "analyzed_files": []}
         else:
+            # GoReSym failed — likely garble-obfuscated. Fall back to Ghidra
+            # for raw pseudocode analysis without function name metadata.
             log.warning(f"GoReSym failed: {go_result.get('error', 'unknown')}")
-
-        report["ghidra"] = {"triggered": True, "go_routed": True,
-                            "analyzed_files": []}
+            log.info(f"  Falling back to Ghidra for obfuscated Go binary...")
+            if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
+                                 get_cape_signatures_fn=get_cape_signatures):
+                report["ghidra"] = run_ghidra(
+                    cape_data, output_dir, sample_path,
+                    ghidra_cmd=GHIDRA_CMD,
+                    get_cape_signatures_fn=get_cape_signatures,
+                    shellcode_candidates=shellcode_candidates,
+                )
+                report["ghidra"]["go_goresym_failed"] = True
+            else:
+                # Force Ghidra even if not triggered — we need SOME analysis
+                log.info(f"  Ghidra not triggered but forcing for Go fallback...")
+                report["ghidra"] = run_ghidra(
+                    cape_data, output_dir, sample_path,
+                    ghidra_cmd=GHIDRA_CMD,
+                    get_cape_signatures_fn=get_cape_signatures,
+                    shellcode_candidates=shellcode_candidates,
+                )
+                report["ghidra"]["go_goresym_failed"] = True
     else:
         # Original sample is not .NET or Go — check Cape extractions for .NET payloads
         cape_task_id = report.get("cape", {}).get("task_id")
