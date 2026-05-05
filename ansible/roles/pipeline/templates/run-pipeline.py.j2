@@ -37,6 +37,7 @@ from stages.volatility import (
 )
 from stages.pcap import get_cape_pcap, run_pcap_analysis
 from stages.dotnet import is_dotnet_binary, find_dotnet_extractions, run_dotnet_analysis
+from stages.go import is_go_binary, run_go_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
 from ioc_extract import extract_iocs, map_iocs_to_techniques
@@ -79,6 +80,7 @@ TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
 VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
 GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
 DOTNET_CMD = "{{ dotnet_analysis_install_dir | default('/opt/dotnet-analysis') }}/run-dotnet-analysis"
+GO_CMD = "{{ go_analysis_install_dir | default('/opt/go-analysis') }}/run-go-analysis"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
 INTERPRET_ENABLED = {% if interpret_enabled | default(true) %}True{% else %}False{% endif %}
 
@@ -776,8 +778,23 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
         report["ghidra"] = {"triggered": True, "dotnet_routed": True,
                             "analyzed_files": []}
+    elif is_go_binary(report):
+        log.info(f"\n[Stage 4] Go binary detected — running GoReSym analysis...")
+        go_result = run_go_analysis(sample_path, output_dir, go_cmd=GO_CMD)
+        report["go_analysis"] = go_result
+        if go_result.get("analysis_success"):
+            build = go_result.get("build_info", {})
+            func_count = go_result.get("functions", {}).get("user_count", 0)
+            pkg_count = len(go_result.get("packages", []))
+            strings_count = len(go_result.get("strings_of_interest", []))
+            log.info(f"  Go {build.get('go_version', '?')}, {func_count} user functions, {pkg_count} packages, {strings_count} interesting strings")
+        else:
+            log.warning(f"GoReSym failed: {go_result.get('error', 'unknown')}")
+
+        report["ghidra"] = {"triggered": True, "go_routed": True,
+                            "analyzed_files": []}
     else:
-        # Original sample is not .NET — check Cape extractions for .NET payloads
+        # Original sample is not .NET or Go — check Cape extractions for .NET payloads
         cape_task_id = report.get("cape", {}).get("task_id")
         dotnet_extractions = find_dotnet_extractions(cape_data, cape_task_id,
                                                       report_dir=output_dir)
@@ -830,11 +847,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
     update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
-    # Stage 4.5: LLM Interpretation (agentic for Ghidra, single-shot for .NET)
+    # Stage 4.5: LLM Interpretation (agentic for Ghidra, single-shot for .NET/Go)
     _interp_start = _time.time()
     update_stage(analysis_id_early, "interpret", "started")
     ghidra_data = report.get("ghidra", {})
     dotnet_data = report.get("dotnet_analysis", {})
+    go_data = report.get("go_analysis", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
@@ -865,6 +883,34 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         }
         report["llm_interpretation"] = run_interpret(
             dotnet_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        interp = report["llm_interpretation"]
+        if interp.get("enabled") and interp.get("analysis"):
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            log.info(f"  Family guess: {family}")
+            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+        elif interp.get("error"):
+            log.warning(f"Error: {interp['error']}")
+
+    elif go_data.get("analysis_success") and INTERPRET_ENABLED:
+        # Go path — send GoReSym metadata directly to LLM (no tools needed)
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Go binary metadata...")
+        go_init = {
+            "analysis_type": "go_goresym",
+            "build_info": go_data.get("build_info", {}),
+            "packages": go_data.get("packages", []),
+            "functions": go_data.get("functions", {}),
+            "types": go_data.get("types", []),
+            "strings_of_interest": go_data.get("strings_of_interest", []),
+            "analysis_success": True,
+        }
+        report["llm_interpretation"] = run_interpret(
+            go_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
