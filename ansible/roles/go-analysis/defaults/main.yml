@@ -7,5 +7,5 @@ go_analysis_container_cpus: "1"
 go_analysis_container_timeout: "120"
 
 # GoReSym release — MIT licensed
-goresym_version: "2.7.4"
-goresym_url: "https://github.com/mandiant/GoReSym/releases/download/v{{ goresym_version }}/GoReSym_{{ goresym_version }}_linux_amd64.tar.gz"
+goresym_version: "3.3"
+goresym_url: "https://github.com/mandiant/GoReSym/releases/download/v{{ goresym_version }}/GoReSym-linux.zip"
