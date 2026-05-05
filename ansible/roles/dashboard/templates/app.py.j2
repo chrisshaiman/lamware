@@ -496,6 +496,40 @@ def analysis_detail(analysis_id):
     pdf_link = f"/pdf/{a['task_id']}" if a["pdf_generated"] else ""
     logs_link = f"/logs/{a['task_id']}"
 
+    # Load evasion analysis from JSON report (not in DB)
+    import os
+    evasion_html = ""
+    report_json = os.path.join(REPORTS_DIR, a["task_id"], "report.json")
+    if os.path.exists(report_json):
+        try:
+            import json as _json
+            with open(report_json) as _f:
+                _report = _json.load(_f)
+            evasion = _report.get("evasion_analysis", {})
+            if evasion.get("enabled") and evasion.get("analysis"):
+                ea = evasion["analysis"]
+                confidence = ea.get("confidence", "?")
+                conf_color = {"high": "#e74c3c", "medium": "#f39c12", "low": "#3fb950"}.get(confidence, "#8b949e")
+                evasion_html = f'<div class="card"><h3>Evasion Analysis <span style="color:{conf_color};font-weight:bold;">({confidence} confidence)</span></h3>'
+                techniques = ea.get("evasion_techniques", [])
+                if techniques:
+                    evasion_html += '<table><tr><th>MITRE ID</th><th>Technique</th><th>Evidence</th></tr>'
+                    for t in techniques:
+                        evasion_html += f"<tr><td>{escape(str(t.get('mitre_id', '?')))}</td><td>{escape(str(t.get('technique', '?')))}</td><td>{escape(str(t.get('evidence', ''))[:150])}</td></tr>"
+                    evasion_html += '</table>'
+                summary = ea.get("evasion_summary", "")
+                if summary:
+                    evasion_html += f'<p style="margin-top:1rem;color:#c8d6e5;">{escape(summary[:500])}</p>'
+                recommendations = ea.get("sandbox_recommendations", [])
+                if recommendations:
+                    evasion_html += '<h4 style="margin-top:1rem;">Sandbox Hardening Recommendations</h4><ul>'
+                    for r in recommendations:
+                        evasion_html += f'<li>{escape(str(r)[:200])}</li>'
+                    evasion_html += '</ul>'
+                evasion_html += '</div>'
+        except Exception:
+            pass
+
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Analysis {{ task_id }} — Dashboard</title>
         <style>{{ css }}</style>
@@ -548,6 +582,10 @@ def analysis_detail(analysis_id):
             </div>
             {% endif %}
 
+            {% if evasion_html %}
+            {{ evasion_html }}
+            {% endif %}
+
             {% if ioc_rows %}
             <div class="card">
                 <h3>Indicators of Compromise ({{ ioc_count }})</h3>
@@ -592,7 +630,7 @@ def analysis_detail(analysis_id):
         sha256=escape(a["sha256"]), filename=escape(a["filename"] or "?"),
         family=escape(a["malware_family_guess"] or "?"),
         file_type=escape(a["file_type"] or "?"),
-        pdf_link=pdf_link, logs_link=logs_link,
+        pdf_link=pdf_link, logs_link=logs_link, evasion_html=Markup(evasion_html),
         executive_summary=Markup(render_markdown(a["executive_summary"] or "")),
         narrative=Markup(render_markdown(a["narrative"] or "")),
         corr_rows=Markup(corr_rows),
