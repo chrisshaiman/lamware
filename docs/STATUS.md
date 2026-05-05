@@ -110,6 +110,7 @@ No items — all resolved.
 | Cape screenshots in report | 1-2 hrs | Fix guest VM screenshot capture first (Pillow/display issue). Then: Flask endpoint, PDF embed, diff detection (identical screenshots = evasion signal). Most valuable for ransomware (ransom notes), banking trojans (form overlays), and evasion detection (static desktop = sandbox-aware sample). |
 | Java JAR support (CFR) | 1-2 hrs | Same container pattern as ILSpy/GoReSym. MIT licensed. |
 | PyInstaller support | 1-2 hrs | pyinstxtractor + decompyle3 (both GPL-3.0, subprocess). More common than Java in commodity malware. |
+| Dashboard evasion table CSS | 15 min | Evidence column truncating, recommendations need word wrap. Data renders correctly, just formatting. |
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
 
 ### Future — React/FastAPI Rebuild
