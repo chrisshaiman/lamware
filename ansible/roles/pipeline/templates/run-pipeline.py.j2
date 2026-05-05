@@ -295,13 +295,15 @@ def determine_family(report: dict) -> str:
 
 
 def calculate_severity(report: dict) -> str:
-    """Calculate severity from structured data — no LLM needed.
+    """Calculate severity from all pipeline stages.
 
-    Scoring:
-    - Cape malscore (0-10) is the primary input
-    - High-severity Cape signatures add weight
-    - Injection behavior = critical
-    - Network C2 activity = high
+    Scoring sources:
+    - Cape malscore and behavioral signatures
+    - YARA match count and rule severity
+    - Known malware family identification
+    - Evasion detection (evasive = likely sophisticated)
+    - LLM capabilities assessment
+    - Go offensive module detection
     """
     score = 0
     cape = report.get("cape", {})
@@ -309,9 +311,9 @@ def calculate_severity(report: dict) -> str:
     # Cape malscore (0-10)
     malscore = cape.get("malscore", 0)
     if isinstance(malscore, (int, float)):
-        score += malscore * 3  # 0-30 points (malscore 10 = critical by itself)
+        score += malscore * 3  # 0-30 points
 
-    # High-severity signatures
+    # High-severity Cape signatures
     for sig in cape.get("signatures", []):
         sev = sig.get("severity", 0)
         if sev >= 3:
@@ -336,6 +338,47 @@ def calculate_severity(report: dict) -> str:
             score += 10
         elif finding.get("severity") == "high":
             score += 5
+
+    # --- Additional signals beyond Cape ---
+
+    # Known malware family = at least medium severity
+    family = report.get("family", "unknown")
+    if family != "unknown":
+        score += 10
+
+    # YARA match count — many matches = well-known malicious
+    triage = report.get("triage", {})
+    yara_count = len(triage.get("yara_matches", []))
+    if yara_count >= 10:
+        score += 5
+    elif yara_count >= 5:
+        score += 3
+
+    # Evasion detected — sandbox-aware samples are typically sophisticated
+    evasion = report.get("evasion_analysis", {})
+    if evasion.get("enabled") and evasion.get("analysis"):
+        confidence = evasion["analysis"].get("confidence", "")
+        if confidence == "high":
+            score += 15  # confirmed evasion = at least high severity
+        elif confidence == "medium":
+            score += 10
+
+    # Go offensive tool module detected (Sliver, Merlin, etc.)
+    go_data = report.get("go_analysis", {})
+    for s in go_data.get("strings_of_interest", []):
+        if isinstance(s, dict) and s.get("type") == "offensive_tool":
+            score += 15
+            break
+
+    # LLM identified capabilities
+    llm = report.get("llm_interpretation", {}).get("analysis", {})
+    capabilities = llm.get("capabilities", [])
+    if len(capabilities) >= 10:
+        score += 5
+    elif len(capabilities) >= 5:
+        score += 3
+
+    report["_severity_score"] = score
 
     if score >= 30:
         return "critical"
@@ -1169,7 +1212,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     report["severity"] = calculate_severity(report)
     report["mitre_mapping"] = build_mitre_mapping(report)
     log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
-    log.info(f"  Severity: {report['severity']}")
+    log.info(f"  Severity: {report['severity']} (score: {report.get('_severity_score', '?')})")
     log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     # IOC extraction — pull actionable indicators from all stages
@@ -1329,7 +1372,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         report["severity"] = calculate_severity(report)
         report["mitre_mapping"] = build_mitre_mapping(report)
         log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
-        log.info(f"  Severity: {report['severity']}")
+        log.info(f"  Severity: {report['severity']} (score: {report.get('_severity_score', '?')})")
         log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     if "iocs" in run_stages:
