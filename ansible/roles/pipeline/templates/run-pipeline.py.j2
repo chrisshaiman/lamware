@@ -115,6 +115,12 @@ PCAP_ENABLED = {% if pipeline_pcap_enabled | default(true) %}True{% else %}False
 PCAP_CMD = "{{ pcap_analysis_install_dir | default('/opt/pcap-analysis') }}/run-pcap-analysis"
 PCAP_TIMEOUT = {{ pipeline_pcap_timeout | default(120) }}
 
+# Evasion hunter — LLM analysis of low-activity samples
+EVASION_HUNTER_ENABLED = {% if pipeline_evasion_hunter_enabled | default(true) %}True{% else %}False{% endif %}
+
+EVASION_MAX_SIGNATURES = {{ pipeline_evasion_max_signatures | default(5) }}
+EVASION_MIN_BINARY_SIZE = {{ pipeline_evasion_min_binary_size | default(51200) }}
+
 # Volatility performance — ramdisk and parallel execution
 VOLATILITY_RAMDISK = "{{ pipeline_volatility_ramdisk | default('') }}"
 VOLATILITY_PARALLEL_WORKERS = {{ pipeline_volatility_parallel_workers | default(3) }}
@@ -1072,6 +1078,74 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             paths = arts.get("file_paths", [])
             if apis or paths:
                 log.info(f"    {sc.get('source_process', '?')} → pid {sc.get('pid')}: {len(apis)} APIs, {len(paths)} paths")
+
+    # Stage 4.7: Evasion hunter — when CAPE produces suspiciously low activity,
+    # run a focused LLM analysis to identify sandbox evasion techniques.
+    cape_sig_count = len(report.get("cape", {}).get("signatures", []))
+    sample_size = report.get("triage", {}).get("file_size", 0)
+    cape_status = report.get("cape", {}).get("status", "")
+
+    if (EVASION_HUNTER_ENABLED and INTERPRET_ENABLED
+            and cape_status == "reported"
+            and cape_sig_count < EVASION_MAX_SIGNATURES
+            and sample_size > EVASION_MIN_BINARY_SIZE):
+        log.info(f"\n[Stage 4.7] Evasion Hunter: {cape_sig_count} signatures on a "
+                 f"{sample_size // 1024}KB binary — investigating sandbox evasion...")
+
+        # Build behavioral data for the evasion prompt
+        cape_data_local = report.get("cape", {})
+        triage = report.get("triage", {})
+        beh_processes = []
+        # Extract API call summary from Cape signatures
+        api_summary = set()
+        for sig in cape_data_local.get("signatures", []):
+            for data_item in sig.get("data", []):
+                if isinstance(data_item, dict):
+                    api = data_item.get("api", "")
+                    if api:
+                        api_summary.add(api)
+
+        evasion_init = {
+            "analysis_type": "evasion_hunter",
+            "binary_size": sample_size,
+            "file_type": triage.get("file_type", "unknown"),
+            "signature_count": cape_sig_count,
+            "network_activity": "none" if not cape_data_local.get("network", {}).get("dns_queries") else "some",
+            "duration": cape_data_local.get("duration", "?"),
+            "signatures": [{"name": s.get("name", ""), "description": s.get("description", "")}
+                          for s in cape_data_local.get("signatures", [])],
+            "api_summary": sorted(api_summary)[:100],
+            "processes": beh_processes,
+            "yara_matches": [m.get("rule", "") for m in triage.get("yara_matches", [])],
+            "sections": triage.get("sections", []),
+        }
+
+        report["evasion_analysis"] = run_interpret(
+            evasion_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        evasion = report["evasion_analysis"]
+        if evasion.get("enabled") and evasion.get("analysis"):
+            ea = evasion["analysis"]
+            confidence = ea.get("confidence", "?")
+            techniques = ea.get("evasion_techniques", [])
+            recommendations = ea.get("sandbox_recommendations", [])
+            log.info(f"  Confidence: {confidence}")
+            log.info(f"  Evasion techniques: {len(techniques)}")
+            for t in techniques[:5]:
+                log.info(f"    {t.get('mitre_id', '?')}: {t.get('technique', '?')}")
+            if recommendations:
+                log.info(f"  Recommendations: {len(recommendations)}")
+                for r in recommendations[:3]:
+                    log.info(f"    - {r[:100]}")
+        elif evasion.get("error"):
+            log.warning(f"Evasion hunter error: {evasion['error']}")
+    else:
+        report["evasion_analysis"] = {"enabled": False, "reason": "not_triggered"}
 
     # Cross-tool correlation — must run BEFORE severity calculation
     # (severity reads cross_correlations to boost score for critical findings)
