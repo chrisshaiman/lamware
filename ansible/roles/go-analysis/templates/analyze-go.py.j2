@@ -53,11 +53,11 @@ def run_goresym(binary_path: str) -> dict:
 def extract_packages(goresym_data: dict) -> list[dict]:
     """Extract unique package names from GoReSym output."""
     packages = set()
-    for func in goresym_data.get("UserFunctions", []):
+    for func in (goresym_data.get("UserFunctions") or []):
         pkg = func.get("PackageName", "")
         if pkg:
             packages.add(pkg)
-    for func in goresym_data.get("StdFunctions", []):
+    for func in (goresym_data.get("StdFunctions") or []):
         pkg = func.get("PackageName", "")
         if pkg:
             packages.add(pkg)
@@ -78,8 +78,8 @@ def extract_packages(goresym_data: dict) -> list[dict]:
 
 def extract_function_summary(goresym_data: dict) -> dict:
     """Summarize functions by category."""
-    user_funcs = goresym_data.get("UserFunctions", [])
-    std_funcs = goresym_data.get("StdFunctions", [])
+    user_funcs = goresym_data.get("UserFunctions") or []
+    std_funcs = goresym_data.get("StdFunctions") or []
 
     # Extract user function details
     user_summary = []
@@ -102,7 +102,7 @@ def extract_function_summary(goresym_data: dict) -> dict:
 def extract_types(goresym_data: dict) -> list[dict]:
     """Extract type definitions from GoReSym output."""
     types = []
-    for t in goresym_data.get("Types", []):
+    for t in (goresym_data.get("Types") or []):
         if isinstance(t, dict):
             entry = {
                 "name": t.get("Str", t.get("Name", "?")),
@@ -141,7 +141,7 @@ def extract_strings_of_interest(goresym_data: dict) -> list[dict]:
         "keylog", "screen", "camera", "exfil", "crypt", "ransom",
         "inject", "hollow", "persist", "socks", "proxy", "tunnel",
     ]
-    for func in goresym_data.get("UserFunctions", []):
+    for func in (goresym_data.get("UserFunctions") or []):
         name = func.get("FullName", "").lower()
         for pattern in suspicious_packages:
             if pattern in name:
@@ -219,7 +219,7 @@ def extract_strings_of_interest(goresym_data: dict) -> list[dict]:
 
     # Check for suspicious stdlib usage patterns
     std_packages = set()
-    for func in goresym_data.get("StdFunctions", []):
+    for func in (goresym_data.get("StdFunctions") or []):
         pkg = func.get("PackageName", "")
         std_packages.add(pkg)
 
