@@ -123,6 +123,16 @@
     value: "yes"
     mode: "0640"
 
+# Go binaries are routinely 10-50MB due to static linking.
+# Default 30MB is too low — match cuckoo.conf upload_max_size.
+- name: Increase web upload size limit for large binaries
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/web.conf"
+    section: general
+    option: max_sample_size
+    value: "100000000"
+    mode: "0640"
+
 # api.conf [api] url is the display URL shown in the web UI — not the bind address.
 # Set it to the WireGuard address so Cape links and callbacks use the correct host.
 - name: Set Cape API display URL to WireGuard interface
