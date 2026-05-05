@@ -279,6 +279,16 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("mutex", mutex_name, "Volatility",
                      f"Mutex held by {m.get('process', '?')} (pid {m.get('pid', '?')})")
 
+    # Mutex IOCs from Cape API traces — process-attributed with create/check distinction
+    cape = report.get("cape", {})
+    for m in cape.get("mutex_iocs", []):
+        mutex_name = m.get("name", "")
+        if mutex_name and not is_benign_indicator("mutex", mutex_name):
+            action = m.get("action", "?")
+            process = m.get("process", "?")
+            add_ioc("mutex", mutex_name, "Cape",
+                     f"{action} by {process} (pid {m.get('pid', '?')}) via {m.get('api', '?')}")
+
     # Active connections from memory
     for conn in vol_insights.get("active_connections", []):
         ip = conn.get("foreign_addr", "")
