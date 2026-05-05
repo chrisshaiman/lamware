@@ -155,56 +155,137 @@ def write_report(task_id: str, report: dict, reports_dir: Path) -> Path:
 # -------------------------------------------------------------------------
 
 def determine_family(report: dict) -> str:
-    """Determine malware family from YARA rules and Cape signatures.
+    """Determine malware family using a priority chain of signals.
 
-    Faster, cheaper, and more consistent than LLM guessing.
-    The LLM can refine this, but the programmatic answer is the primary.
+    Priority order (highest confidence first):
+    1. Cape extracted configs — curated family tag from config extraction
+    2. Cape malfamily — CAPE's own signature-based family detection
+    3. Go offensive module match — definitive build provenance
+    4. .NET namespace match — distinctive namespace patterns
+    5. LLM family guess — highest intelligence, full context analysis
+    6. YARA rule-derived — broadest match, most false positives
+
+    Each level is tried in order. If a high-confidence signal exists,
+    lower signals are ignored to avoid false positives from generic
+    YARA rules overriding accurate LLM or Cape detection.
     """
-    candidates = {}
-
-    # Cape's own family detection (highest confidence)
     cape = report.get("cape", {})
+    triage = report.get("triage", {})
+
+    def _result(family: str, source: str) -> str:
+        """Tag the report with the detection source for logging."""
+        report["_family_source"] = source
+        return family
+
+    # --- Priority 1: Cape extracted configs (highest confidence) ---
+    for cfg in cape.get("extracted_configs", []):
+        if isinstance(cfg, dict):
+            family = cfg.get("family", "") or cfg.get("malware", "")
+            if family:
+                return _result(family.lower(), "cape_config")
+
+    # --- Priority 2: Cape signature families ---
+    cape_families = {}
     for sig in cape.get("signatures", []):
         families = sig.get("families", [])
         if isinstance(families, list):
             for fam in families:
                 if fam:
-                    candidates[fam.lower()] = candidates.get(fam.lower(), 0) + 10
+                    cape_families[fam.lower()] = cape_families.get(fam.lower(), 0) + 1
+    if cape_families:
+        return _result(max(cape_families, key=cape_families.get), "cape_signatures")
 
-    # YARA rule names often contain family names
-    triage = report.get("triage", {})
-    known_families = [
-        "emotet", "trickbot", "qakbot", "qbot", "icedid", "dridex",
-        "cobalt", "cobaltstrike", "metasploit", "meterpreter",
-        "agenttesla", "formbook", "lokibot", "remcos", "njrat", "asyncrat", "nanocore",
-        "darkcomet", "quasar", "warzone", "netwire", "poisonivy", "orcus",
-        "raccoon", "redline", "vidar", "lumma", "stealc",
-        "lockbit", "blackcat", "alphv", "conti", "ryuk", "revil",
-        "guloader", "smokeloader", "amadey", "systembc",
-    ]
-    for match in triage.get("yara_matches", []):
-        rule = match.get("rule", "").lower()
-        for family in known_families:
-            if family in rule:
-                candidates[family] = candidates.get(family, 0) + 5
+    # --- Priority 3: Go offensive module match ---
+    go_data = report.get("go_analysis", {})
+    if go_data.get("analysis_success"):
+        for s in go_data.get("strings_of_interest", []):
+            if isinstance(s, dict) and s.get("type") == "offensive_tool":
+                # Extract family name from the description
+                context = s.get("context", "")
+                if "sliver" in context.lower():
+                    return _result("sliver", "go_module")
+                if "merlin" in context.lower():
+                    return _result("merlin", "go_module")
+                if "geacon" in context.lower():
+                    return _result("cobaltstrike (geacon)", "go_module")
+                if "chisel" in context.lower():
+                    return _result("chisel", "go_module")
+                if "prince" in context.lower():
+                    return _result("prince ransomware", "go_module")
+                if "skuld" in context.lower():
+                    return _result("skuld stealer", "go_module")
+                # Generic offensive tool
+                return _result(s.get("value", "unknown go tool").split("/")[-1].lower(), "go_module")
 
-    # Cape extracted configs often have a family tag
-    for cfg in cape.get("extracted_configs", []):
-        if isinstance(cfg, dict):
-            family = cfg.get("family", "") or cfg.get("malware", "")
-            if family:
-                candidates[family.lower()] = candidates.get(family.lower(), 0) + 15
+    # --- Priority 4: .NET namespace match ---
+    dotnet_data = report.get("dotnet_analysis", {})
+    if dotnet_data.get("analysis_success"):
+        source = dotnet_data.get("decompilation", {}).get("source", "")
+        dotnet_families = {
+            "nanocore": ["NanoCore", "NanoCore.ClientPlugin"],
+            "asyncrat": ["AsyncRAT", "AsyncClient"],
+            "quasar": ["Quasar.Client", "Quasar.Common"],
+            "njrat": ["njRAT", "njRat"],
+            "darkcomet": ["DarkComet"],
+            "agenttesla": ["AgentTesla"],
+            "remcos": ["Remcos"],
+            "warzone": ["Warzone", "Ave_Maria"],
+            "orcus": ["Orcus"],
+        }
+        for family, patterns in dotnet_families.items():
+            for pattern in patterns:
+                if pattern in source:
+                    return _result(family, "dotnet_namespace")
 
-    # LLM family guess as fallback (lower weight — code analysis, not signatures)
+    # --- Priority 5: LLM family guess ---
     llm_family = (report.get("llm_interpretation", {})
                   .get("analysis", {})
                   .get("malware_family_guess", ""))
-    if llm_family and llm_family.lower() != "unknown":
-        candidates[llm_family.lower()] = candidates.get(llm_family.lower(), 0) + 3
+    if llm_family and llm_family.lower() not in ("unknown", ""):
+        # Normalize long LLM descriptions to a short family name
+        llm_lower = llm_family.lower()
+        # Check for known families in the LLM's verbose description
+        known_names = [
+            "sliver", "merlin", "cobaltstrike", "cobalt strike",
+            "emotet", "trickbot", "qakbot", "asyncrat", "nanocore",
+            "remcos", "agenttesla", "formbook", "lokibot",
+            "lockbit", "blackcat", "alphv", "conti", "ryuk",
+            "guloader", "smokeloader", "bianlian",
+            "raccoon", "redline", "vidar", "lumma",
+        ]
+        for name in known_names:
+            if name in llm_lower:
+                return _result(name.replace(" ", ""), "llm_interpretation")
+        # Use the raw LLM guess if no known name matched
+        # Truncate to first 50 chars for reasonable display
+        return _result(llm_family[:50].lower(), "llm_interpretation")
 
-    if candidates:
-        return max(candidates, key=candidates.get)
-    return "unknown"
+    # --- Priority 6: YARA rule-derived (last resort) ---
+    yara_families = {}
+    known_yara_families = [
+        "emotet", "trickbot", "qakbot", "qbot", "icedid", "dridex",
+        "cobalt", "cobaltstrike", "agenttesla", "formbook",
+        "lokibot", "remcos", "njrat", "asyncrat", "nanocore",
+        "darkcomet", "quasar", "warzone", "netwire", "orcus",
+        "raccoon", "redline", "vidar", "lumma", "stealc",
+        "lockbit", "blackcat", "alphv", "conti", "ryuk", "revil",
+        "guloader", "smokeloader", "amadey", "systembc",
+        "bianlian", "sliver",
+    ]
+    # Exclude overly generic rules that cause false positives
+    generic_rules = ["meterpreter", "metasploit", "hacktool", "generic", "suspicious"]
+    for match in triage.get("yara_matches", []):
+        rule = match.get("rule", "").lower()
+        # Skip generic rules
+        if any(g in rule for g in generic_rules):
+            continue
+        for family in known_yara_families:
+            if family in rule:
+                yara_families[family] = yara_families.get(family, 0) + 1
+    if yara_families:
+        return _result(max(yara_families, key=yara_families.get), "yara_rules")
+
+    return _result("unknown", "none")
 
 
 def calculate_severity(report: dict) -> str:
@@ -1009,7 +1090,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     report["family"] = determine_family(report)
     report["severity"] = calculate_severity(report)
     report["mitre_mapping"] = build_mitre_mapping(report)
-    log.info(f"  Family: {report['family']}")
+    log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
     log.info(f"  Severity: {report['severity']}")
     log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
@@ -1169,7 +1250,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         report["family"] = determine_family(report)
         report["severity"] = calculate_severity(report)
         report["mitre_mapping"] = build_mitre_mapping(report)
-        log.info(f"  Family: {report['family']}")
+        log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
         log.info(f"  Severity: {report['severity']}")
         log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
