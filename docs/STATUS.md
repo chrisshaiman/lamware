@@ -102,7 +102,6 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF to emulate garble's XOR/seed/split/shuffle decryption stubs. No existing OSS tool works headless. Would be a novel community contribution. Reference: ungarble_ida (hexamine22, MIT) technique. |
 | Family detection tuning | 1-2 hrs | BianLian misidentified as meterpreter by YARA rules. Review rule specificity. |
 
 ### Medium Priority
@@ -130,17 +129,19 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 
 ### Low Priority / Ideas
 
-| Item | Notes |
-|------|-------|
-| Interactive investigation agent | Conversational analyst workbench with Ghidra MCP |
-| Dashboard honeypot | Canary, decoy endpoint, fake analysis results |
-| Automated tests | Pure functions are trivially testable |
-| Inline imports cleanup | Move to module level in .j2 templates |
-| Configurable dump cleanup | Make retention configurable |
-| Linux guest VMs | ELF binary analysis, different Volatility symbols |
-| AutoIt script support | Exe2Aut decompiler |
-| Threat intel enrichment | VirusTotal, AbuseIPDB, Shodan lookups |
-| YARA rule auto-update | Cron job for community rule repos |
+| Item | Effort | Notes |
+|------|--------|-------|
+| Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
+| Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP. Full design needed. |
+| Rust binary analysis | 2-3 weeks | Demangle names, identify stdlib functions, reconstruct common types. Research project. |
+| Linux guest VMs | 1-2 sessions | ELF binary analysis, different Volatility symbols. New Packer build + CAPE guest config. |
+| Threat intel enrichment | 2-3 hrs | VirusTotal, AbuseIPDB, Shodan lookups. API integrations per provider. |
+| Dashboard honeypot | 1-2 hrs | Canary, decoy endpoint, fake analysis results. |
+| Automated tests | 2-3 hrs | Pure functions in ioc_extract, cross_correlate are trivially testable. |
+| YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
+| AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
+| Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
+| Inline imports cleanup | 1 hr | Move to module level in .j2 templates. Do during FastAPI rebuild. |
 
 ---
 
