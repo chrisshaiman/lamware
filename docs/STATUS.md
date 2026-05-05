@@ -103,7 +103,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | Item | Effort | Notes |
 |------|--------|-------|
 | Cape procdump for .NET extraction | Investigation | procdump enabled + cached but CAPE monitor not generating dumps for hollowed processes. Need to investigate monitor config. |
-| Garble-obfuscated Go binaries | Research | Sliver uses garble to strip pclntab. GoReSym fails. Need Ghidra fallback or garble-aware parser. |
+| Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF to emulate garble's XOR/seed/split/shuffle decryption stubs. No existing OSS tool works headless. Would be a novel community contribution. Reference: ungarble_ida (hexamine22, MIT) technique. |
 | CAPE large sample submission | Investigation | Sliver (33MB) fails with "Error adding task to database". Size or tag issue. |
 | Family detection tuning | 1-2 hrs | BianLian misidentified as meterpreter by YARA rules. Review rule specificity. |
 
