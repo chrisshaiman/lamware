@@ -25,14 +25,14 @@
 - name: Download GoReSym release
   ansible.builtin.get_url:
     url: "{{ goresym_url }}"
-    dest: "{{ go_analysis_install_dir }}/build/GoReSym.tar.gz"
+    dest: "{{ go_analysis_install_dir }}/build/GoReSym-linux.zip"
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0644"
 
 - name: Extract GoReSym binary
   ansible.builtin.unarchive:
-    src: "{{ go_analysis_install_dir }}/build/GoReSym.tar.gz"
+    src: "{{ go_analysis_install_dir }}/build/GoReSym-linux.zip"
     dest: "{{ go_analysis_install_dir }}/build/"
     remote_src: true
     owner: "{{ cape_user }}"
