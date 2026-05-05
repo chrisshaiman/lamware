@@ -5,7 +5,7 @@ For design rationale see ARCHITECTURE.md. For decisions see docs/DECISIONS.md.
 
 ---
 
-## Platform Status (2026-05-04)
+## Platform Status (2026-05-05)
 
 **Fully operational.** Seven-stage malware analysis pipeline with AI-assisted reverse
 engineering, cross-tool correlation, and web dashboard. Tested on Emotet (VB6 packer),
@@ -22,7 +22,8 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 3. Memory forensics | Volatility 3 | Podman (--network=none) | Complete |
 | 4. Static analysis | Ghidra headless (native PE) | Podman (--network=none) | Complete |
 | 4. Static analysis | de4dotEx + ILSpy (.NET) | Podman (--network=none) | Complete |
-| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET) | Podman (--network=host) | Complete |
+| 4. Static analysis | GoReSym (Go binaries) | Podman (--network=none) | Complete |
+| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go) | Podman (--network=host) | Complete |
 | 5. Executive summary | Claude Haiku (single-shot) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Host-side | Complete |
 
@@ -44,6 +45,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | triage | YARA/ssdeep/FLOSS container | Complete |
 | volatility | Volatility 3 container + ISF cache | Complete |
 | dotnet-analysis | de4dotEx deobfuscation + ILSpy decompiler | Complete |
+| go-analysis | GoReSym Go binary metadata extraction | Complete |
 | ghidra | Ghidra headless container | Complete |
 | interpret | Claude LLM container (agentic + summary) | Complete |
 | postgres | Analysis database | Complete |
@@ -101,8 +103,9 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | Item | Effort | Notes |
 |------|--------|-------|
 | Cape procdump for .NET extraction | Investigation | procdump enabled + cached but CAPE monitor not generating dumps for hollowed processes. Need to investigate monitor config. |
-| Go binary support (GoReSym) | 2-3 hrs | Same container pattern as ILSpy. Sliver, BianLian. |
-| malfind performance | 2 hrs | 15K+ regions = 600s+. Cap region count or filter benign processes. |
+| Garble-obfuscated Go binaries | Research | Sliver uses garble to strip pclntab. GoReSym fails. Need Ghidra fallback or garble-aware parser. |
+| CAPE large sample submission | Investigation | Sliver (33MB) fails with "Error adding task to database". Size or tag issue. |
+| Family detection tuning | 1-2 hrs | BianLian misidentified as meterpreter by YARA rules. Review rule specificity. |
 
 ### Medium Priority
 
@@ -205,6 +208,8 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 | CobaltStrike/DidYouRansome | Native C beacon + ransomware | Full (all stages) | 174 IOCs, 43 MITRE techniques, LLM identified family |
 | NanoCore | .NET RAT (clean sample) | Full (all stages) | ILSpy decompiled 324K chars C#, LLM identified NanoCore, 10 MITRE techniques |
 | NanoCore | .NET RAT (VB6 dropper) | Partial (no .NET extraction) | Dropper analyzed by Ghidra, .NET payload not extracted — CAPE procdump investigation needed |
+| BianLian | Go ransomware | Full (GoReSym + LLM) | 138 user functions, 98 packages recovered. LLM identified SOCKS5 proxy architecture. |
+| Sliver | Go C2 implant (garble-obfuscated) | Partial (triage only) | GoReSym cannot parse garble-stripped pclntab. CAPE submission also failed. |
 
 ---
 
