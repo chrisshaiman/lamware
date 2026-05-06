@@ -41,7 +41,7 @@ def derive_tags_from_triage(triage_result: dict) -> list[str]:
     return tags
 
 
-def derive_package_from_triage(triage_result: dict) -> str:
+def derive_package_from_triage(triage_result: dict, filename: str = "") -> str:
     """Derive Cape analysis package from triage file type detection.
 
     Cape uses the 'package' field to select the right analysis module.
@@ -51,6 +51,11 @@ def derive_package_from_triage(triage_result: dict) -> str:
     triage = triage_result.get("triage", {})
     file_type = triage.get("file_type", "").lower()
     file_mime = triage.get("file_mime", "").lower()
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    # JAR files — check early since file/magic returns "Zip archive"
+    if ext == "jar" or "java" in file_type or file_mime == "application/java-archive":
+        return "jar"
 
     # PE executables
     if "pe32" in file_type or file_mime == "application/x-dosexec":
@@ -80,17 +85,15 @@ def derive_package_from_triage(triage_result: dict) -> str:
     if "rtf" in file_type:
         return "doc"
 
+    # .NET
+    if "msil" in file_type or ".net" in file_type:
+        return "exe"
+
     # Archives
     if "zip" in file_type or file_mime == "application/zip":
         return "zip"
     if "rar" in file_type:
         return "rar"
-
-    # .NET / Java
-    if "msil" in file_type or ".net" in file_type:
-        return "exe"
-    if "java" in file_type or file_mime == "application/java-archive":
-        return "jar"
 
     # If triage detected it as ASCII text, check YARA for hints
     if "ascii text" in file_type or "text/plain" in file_mime:

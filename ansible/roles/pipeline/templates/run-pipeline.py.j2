@@ -668,7 +668,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         triage_result = run_triage(sample_path, output_dir, triage_cmd=TRIAGE_CMD)
         report.update(triage_result)
         cape_tags = derive_tags_from_triage(triage_result)
-        cape_package = derive_package_from_triage(triage_result)
+        cape_package = derive_package_from_triage(triage_result, filename=original_name or sample_path.name)
         cape_filename = derive_filename(sample_path, cape_package, original_name)
         log.info(f"  Tags: {cape_tags}")
         if cape_package:
