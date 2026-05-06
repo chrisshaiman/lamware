@@ -214,13 +214,13 @@ def parse_entry(entry: dict) -> dict:
 
 def print_preview(samples: list[dict], seen: set) -> None:
     """Print a table of samples for operator review."""
-    print(f"\n{'#':<4} {'SHA256':<20} {'Filename':<30} {'Family':<20} {'Size':>10} {'Tags':<20} {'Status'}")
-    print("-" * 130)
+    print(f"\n{'#':<4} {'SHA256':<66} {'Filename':<30} {'Family':<20} {'Size':>10} {'Tags':<20} {'Status'}")
+    print("-" * 175)
     for i, s in enumerate(samples, 1):
         tags = ",".join(s["tags"][:3]) or "-"
         size = f"{s['file_size'] / 1024:.1f} KB"
         status = "SKIP (already submitted)" if s["sha256"] in seen else "NEW"
-        print(f"{i:<4} {s['sha256'][:16]}...  {s['filename']:<30s} {s['signature']:<20s} {size:>10s} {tags:<20s} {status}")
+        print(f"{i:<4} {s['sha256']:<66s} {s['filename']:<30s} {s['signature']:<20s} {size:>10s} {tags:<20s} {status}")
     print()
 
 # ---------------------------------------------------------------------------
