@@ -272,25 +272,90 @@ def main():
     result["pyc_count"] = pyc_count
     result["dll_count"] = dll_count
 
-    # Step 3: Find and decompile main script
+    # Step 3: Find and decompile main script + top bundled .pyc files
     main_pyc = find_main_script(extract_dir)
+    all_source = ""
+
     if main_pyc:
         result["main_script"] = os.path.basename(main_pyc)
         decompiled = decompile_pyc(main_pyc)
-        result["decompilation"] = decompiled
-
         if decompiled.get("source"):
-            source = decompiled["source"]
-            result["imports"] = extract_imports(source)
-            result["strings_of_interest"] = extract_strings_of_interest(source)
-            result["analysis_success"] = True
-        else:
-            result["analysis_success"] = False
-            result["error"] = decompiled.get("error", "decompilation produced no source")
+            all_source = f"# === ENTRY POINT: {os.path.basename(main_pyc)} ===\n{decompiled['source']}\n\n"
     else:
         result["main_script"] = None
+        decompiled = {"source": "", "source_length": 0}
+
+    # Step 4: Decompile top bundled .pyc files (skip PyInstaller internals)
+    extract_path = Path(extract_dir)
+    # Skip PyInstaller internals and Python standard library modules.
+    # Only decompile files that are likely user/malware code.
+    skip_prefixes = (
+        "pyi_", "pyimod", "pyiboot",
+        "_", "abc", "ast", "base64", "bisect", "calendar",
+        "cmd", "code", "codecs", "collections", "configparser",
+        "contextlib", "copy", "csv", "ctypes", "datetime",
+        "decimal", "difflib", "dis", "email", "encodings",
+        "enum", "fnmatch", "fractions", "ftplib", "functools",
+        "getopt", "getpass", "gettext", "glob", "gzip",
+        "hashlib", "heapq", "hmac", "html", "http",
+        "imaplib", "importlib", "inspect", "io", "ipaddress",
+        "itertools", "json", "keyword", "linecache", "locale",
+        "logging", "lzma", "mailbox", "math", "mimetypes",
+        "multiprocessing", "netrc", "numbers", "operator",
+        "optparse", "os", "pathlib", "pkgutil", "platform",
+        "plistlib", "poplib", "posixpath", "pprint", "queue",
+        "quopri", "random", "re", "reprlib", "select",
+        "selectors", "shelve", "shlex", "shutil", "signal",
+        "site", "smtplib", "sndhdr", "socket", "socketserver",
+        "sqlite3", "sre", "ssl", "stat", "string", "struct",
+        "subprocess", "sunau", "symtable", "sys", "sysconfig",
+        "tarfile", "tempfile", "textwrap", "threading", "time",
+        "timeit", "token", "tokenize", "traceback",
+        "tracemalloc", "turtle", "types", "typing",
+        "unicodedata", "unittest", "urllib", "uu", "uuid",
+        "venv", "warnings", "wave", "weakref", "webbrowser",
+        "winreg", "winsound", "wsgiref", "xml", "xmlrpc",
+        "zipfile", "zipimport", "zlib",
+    )
+    bundled_pyc = sorted(
+        [f for f in extract_path.rglob("*.pyc")
+         if not any(f.name.startswith(p) for p in skip_prefixes)
+         and str(f) != main_pyc],
+        key=lambda f: f.stat().st_size,
+        reverse=True,
+    )
+
+    decompiled_files = []
+    remaining_budget = 100000 - len(all_source)
+    for pyc_file in bundled_pyc[:20]:  # top 20 non-stdlib files
+        if remaining_budget <= 0:
+            break
+        dec = decompile_pyc(str(pyc_file))
+        if dec.get("source") and len(dec["source"]) > 50:
+            rel_name = str(pyc_file.relative_to(extract_path))
+            chunk = f"# === {rel_name} ===\n{dec['source']}\n\n"
+            all_source += chunk[:remaining_budget]
+            remaining_budget -= len(chunk)
+            decompiled_files.append({
+                "path": rel_name,
+                "length": len(dec["source"]),
+            })
+
+    result["decompiled_files"] = decompiled_files
+    result["decompilation"] = {
+        "source": all_source,
+        "source_length": len(all_source),
+        "truncated": remaining_budget <= 0,
+        "files_decompiled": 1 + len(decompiled_files),
+    }
+
+    if all_source:
+        result["imports"] = extract_imports(all_source)
+        result["strings_of_interest"] = extract_strings_of_interest(all_source)
+        result["analysis_success"] = True
+    else:
         result["analysis_success"] = False
-        result["error"] = "Could not identify main script in extracted archive"
+        result["error"] = decompiled.get("error", "no decompilable .pyc files found")
 
     print(json.dumps(result, indent=2, default=str))
 
