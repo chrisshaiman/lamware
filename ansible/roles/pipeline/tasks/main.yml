@@ -78,6 +78,7 @@
     - dotnet.py.j2
     - go.py.j2
     - pyinstaller.py.j2
+    - java.py.j2
     - ghidra.py.j2
     - interpret.py.j2
 

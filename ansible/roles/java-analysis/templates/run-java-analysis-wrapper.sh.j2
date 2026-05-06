@@ -1,0 +1,49 @@
+#!/bin/bash
+# =============================================================================
+# run-java-analysis — host-side wrapper for containerized Java decompilation
+# Runs CFR decompiler against a JAR file inside a Podman container.
+#
+# Usage: run-java-analysis <jar_path> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-java-analysis <jar_path> [output_dir]" >&2
+    exit 1
+fi
+
+BINARY_PATH="$(realpath "$1")"
+BINARY_NAME="$(basename "$BINARY_PATH")"
+OUTPUT_DIR="${2:-{{ java_analysis_install_dir }}/output}"
+
+if [ ! -f "$BINARY_PATH" ]; then
+    echo "Error: binary not found: $BINARY_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# Copy sample to temp dir with world-readable permissions
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
+cp "$BINARY_PATH" "$WORK_DIR/$BINARY_NAME"
+chmod 644 "$WORK_DIR/$BINARY_NAME"
+
+exec podman run --rm \
+    --network=none \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ java_analysis_container_memory }} \
+    --cpus={{ java_analysis_container_cpus }} \
+    --timeout={{ java_analysis_container_timeout }} \
+    --tmpfs /tmp:size=500m \
+    --tmpfs /nonexistent:size=10m \
+    -v "$WORK_DIR:/sample:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/java-analysis:latest \
+    "/sample/$BINARY_NAME"
