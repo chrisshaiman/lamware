@@ -102,6 +102,10 @@
     - role: pyinstaller-analysis
       tags: [pyinstaller-analysis]
 
+    # 13e. Java analysis — containerized CFR decompiler
+    - role: java-analysis
+      tags: [java-analysis]
+
     # 14. LLM interpretation — agentic Claude analysis of Ghidra output
     - role: interpret
       tags: [interpret]

@@ -1,0 +1,11 @@
+---
+# roles/java-analysis/defaults/main.yml
+
+java_analysis_install_dir: /opt/java-analysis
+java_analysis_container_memory: "1g"
+java_analysis_container_cpus: "1"
+java_analysis_container_timeout: "120"
+
+# CFR decompiler release — MIT licensed
+cfr_version: "0.152"
+cfr_url: "https://github.com/leibnitz27/cfr/releases/download/{{ cfr_version }}/cfr-{{ cfr_version }}.jar"
