@@ -20,6 +20,8 @@ open-source use.
 | [ILSpy / ilspycmd](https://github.com/icsharpcode/ILSpy) | MIT | .NET decompilation to C# | Container dependency |
 | [de4dotEx](https://github.com/GDATAAdvancedAnalytics/de4dotEx) | **GPL-3.0** | .NET deobfuscation | See note below |
 | [GoReSym](https://github.com/mandiant/GoReSym) | MIT | Go binary metadata extraction | Container dependency |
+| [pyinstxtractor](https://github.com/extremecoders-re/pyinstxtractor) | **GPL-3.0** | PyInstaller archive extraction | See note below |
+| [decompyle3](https://github.com/rocky/python-decompile3) | **GPL-3.0** | Python bytecode decompilation | See note below |
 
 ## YARA Rule Sets
 

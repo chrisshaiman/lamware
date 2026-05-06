@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""
+analyze-pyinstaller.py — Extract and decompile PyInstaller executables.
+
+Uses pyinstxtractor (GPL-3.0, subprocess) to unpack the archive, then
+decompyle3 (GPL-3.0, subprocess) to decompile the main .pyc to Python source.
+
+Produces structured JSON output with:
+- Decompiled Python source code
+- List of bundled modules/files
+- Extracted strings of interest (C2 URLs, IPs, commands)
+- PyInstaller metadata (Python version, archive info)
+
+Usage: python3 analyze-pyinstaller.py /sample/binary.exe
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def extract_archive(binary_path: str, work_dir: str) -> dict:
+    """Run pyinstxtractor to unpack the PyInstaller archive."""
+    try:
+        result = subprocess.run(
+            ["python3", "/opt/pyinstxtractor.py", binary_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=work_dir,
+        )
+        stdout = result.stdout
+
+        # Parse pyinstxtractor output for metadata
+        info = {
+            "extracted": result.returncode == 0 or "extracted" in stdout.lower(),
+            "stdout": stdout[:500],
+        }
+
+        # Extract Python version from output
+        ver_match = re.search(r"Python version:\s*(\d+\.\d+)", stdout)
+        if ver_match:
+            info["python_version"] = ver_match.group(1)
+
+        # Find the extraction directory
+        extract_dir = None
+        for d in Path(work_dir).iterdir():
+            if d.is_dir() and "_extracted" in d.name:
+                extract_dir = str(d)
+                break
+        info["extract_dir"] = extract_dir
+
+        if not info["extracted"] or not extract_dir:
+            info["error"] = result.stderr[:300] if result.stderr else "extraction failed"
+
+        return info
+    except subprocess.TimeoutExpired:
+        return {"error": "pyinstxtractor timed out (60s)", "extracted": False}
+    except Exception as e:
+        return {"error": str(e), "extracted": False}
+
+
+def find_main_script(extract_dir: str) -> str | None:
+    """Find the main .pyc script in the extracted archive.
+
+    PyInstaller puts the entry point script alongside the PYZ archive.
+    It's typically a .pyc file without the standard 16-byte header,
+    or a file matching common entry point names.
+    """
+    extract_path = Path(extract_dir)
+
+    # Common entry point names
+    entry_names = []
+    struct_file = extract_path / "pyimod01_archive.pyc"
+
+    # List all .pyc files at the top level (not inside PYZ)
+    top_pyc = [f for f in extract_path.iterdir()
+               if f.suffix == ".pyc" and f.name not in (
+                   "pyimod01_archive.pyc", "pyimod02_importers.pyc",
+                   "pyimod03_ctypes.pyc", "pyimod04_pywin32.pyc",
+                   "pyiboot01_bootstrap.pyc", "pyi_rth_inspect.pyc",
+                   "pyi_rth_multiprocessing.pyc", "pyi_rth_pkgutil.pyc",
+                   "pyi_rth_subprocess.pyc",
+               )]
+
+    # The main script is usually the .pyc that's NOT a pyinstaller module
+    if top_pyc:
+        # Prefer files that don't start with pyi_ or pyimod
+        user_scripts = [f for f in top_pyc
+                        if not f.name.startswith(("pyi_", "pyimod"))]
+        if user_scripts:
+            # Return the largest one (most likely the main script)
+            return str(max(user_scripts, key=lambda f: f.stat().st_size))
+        return str(top_pyc[0])
+
+    return None
+
+
+def decompile_pyc(pyc_path: str) -> dict:
+    """Decompile a .pyc file to Python source using decompyle3."""
+    try:
+        result = subprocess.run(
+            ["decompyle3", pyc_path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        # decompyle3 outputs source to stdout
+        source = result.stdout
+        if not source and result.returncode != 0:
+            # Try with uncompyle6-compatible mode
+            return {"error": result.stderr[:300], "source": ""}
+
+        # Truncate very large sources
+        truncated = len(source) > 100000
+        if truncated:
+            source = source[:100000] + "\n\n# ... truncated (source too large) ..."
+
+        return {
+            "source": source,
+            "source_length": len(result.stdout),
+            "truncated": truncated,
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "decompyle3 timed out (60s)", "source": ""}
+    except FileNotFoundError:
+        return {"error": "decompyle3 not found", "source": ""}
+
+
+def list_bundled_files(extract_dir: str) -> list[dict]:
+    """List all files extracted from the PyInstaller archive."""
+    files = []
+    extract_path = Path(extract_dir)
+
+    for f in sorted(extract_path.rglob("*")):
+        if not f.is_file():
+            continue
+        rel = str(f.relative_to(extract_path))
+        size = f.stat().st_size
+        category = "unknown"
+        if f.suffix == ".pyc":
+            category = "python_bytecode"
+        elif f.suffix in (".pyd", ".dll", ".so"):
+            category = "native_library"
+        elif f.suffix in (".pem", ".crt", ".key"):
+            category = "certificate"
+        elif f.suffix in (".json", ".yaml", ".yml", ".ini", ".cfg", ".conf"):
+            category = "config"
+        elif f.name.startswith("pyi_") or f.name.startswith("pyimod"):
+            category = "pyinstaller_internal"
+
+        files.append({"path": rel, "size": size, "category": category})
+
+    return files
+
+
+def extract_strings_of_interest(source: str) -> list[dict]:
+    """Extract interesting strings from decompiled Python source."""
+    findings = []
+
+    # URLs
+    for match in re.finditer(r'["\']+(https?://[^"\']+)["\']+', source):
+        findings.append({"type": "url", "value": match.group(1)})
+
+    # IP addresses
+    for match in re.finditer(r'["\'](\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})["\']', source):
+        ip = match.group(1)
+        parts = ip.split(".")
+        if all(0 <= int(p) <= 255 for p in parts):
+            # Skip loopback/broadcast
+            if ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
+                findings.append({"type": "ip", "value": ip})
+
+    # Email addresses
+    for match in re.finditer(r'["\']+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']+', source):
+        findings.append({"type": "email", "value": match.group(1)})
+
+    # Command execution
+    for match in re.finditer(r'(?:subprocess|os\.system|os\.popen|exec|eval)\s*\(([^)]{5,80})\)', source):
+        findings.append({"type": "command_exec", "value": match.group(0)[:100],
+                         "context": "Command execution call"})
+
+    # File paths
+    for match in re.finditer(r'["\']([A-Z]:\\[^"\']{5,})["\']', source):
+        findings.append({"type": "path", "value": match.group(1)})
+
+    # Registry paths
+    for match in re.finditer(r'["\']((?:HKLM|HKCU|SOFTWARE|CurrentVersion|Run)[^"\']*)["\']', source, re.IGNORECASE):
+        findings.append({"type": "registry", "value": match.group(1)})
+
+    # Discord webhook / token patterns
+    for match in re.finditer(r'["\'](https://discord(?:app)?\.com/api/webhooks/[^"\']+)["\']', source):
+        findings.append({"type": "discord_webhook", "value": match.group(1)[:80],
+                         "context": "Discord webhook — data exfiltration"})
+    for match in re.finditer(r'["\']+([A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})["\']+', source):
+        findings.append({"type": "discord_token", "value": match.group(1)[:30] + "...",
+                         "context": "Possible Discord bot token"})
+
+    # Base64 strings (>20 chars)
+    for match in re.finditer(r'["\']+([A-Za-z0-9+/]{20,}={0,2})["\']+', source):
+        findings.append({"type": "base64", "value": match.group(1)[:100]})
+
+    # Crypto wallet addresses (Bitcoin)
+    for match in re.finditer(r'["\']+([13][a-km-zA-HJ-NP-Z1-9]{25,34})["\']+', source):
+        findings.append({"type": "btc_address", "value": match.group(1),
+                         "context": "Possible Bitcoin wallet address"})
+
+    # Dedup
+    seen = set()
+    unique = []
+    for f in findings:
+        key = (f["type"], f["value"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+
+    return unique
+
+
+def extract_imports(source: str) -> list[str]:
+    """Extract import statements from Python source."""
+    imports = []
+    for match in re.finditer(r'^(?:from\s+\S+\s+)?import\s+.+$', source, re.MULTILINE):
+        imports.append(match.group(0).strip())
+    return imports[:100]
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: analyze-pyinstaller.py <binary_path>"}))
+        sys.exit(1)
+
+    binary_path = sys.argv[1]
+    if not os.path.exists(binary_path):
+        print(json.dumps({"error": f"File not found: {binary_path}"}))
+        sys.exit(1)
+
+    result = {
+        "binary": binary_path,
+        "binary_size": os.path.getsize(binary_path),
+        "analysis_type": "pyinstaller",
+    }
+
+    # Step 1: Extract the PyInstaller archive
+    work_dir = "/work"
+    extraction = extract_archive(binary_path, work_dir)
+    result["extraction"] = extraction
+
+    if not extraction.get("extracted") or not extraction.get("extract_dir"):
+        result["error"] = extraction.get("error", "extraction failed")
+        result["analysis_success"] = False
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    extract_dir = extraction["extract_dir"]
+    result["python_version"] = extraction.get("python_version", "unknown")
+
+    # Step 2: List bundled files
+    bundled = list_bundled_files(extract_dir)
+    result["bundled_files"] = bundled
+    result["bundled_count"] = len(bundled)
+    pyc_count = len([f for f in bundled if f["category"] == "python_bytecode"])
+    dll_count = len([f for f in bundled if f["category"] == "native_library"])
+    result["pyc_count"] = pyc_count
+    result["dll_count"] = dll_count
+
+    # Step 3: Find and decompile main script
+    main_pyc = find_main_script(extract_dir)
+    if main_pyc:
+        result["main_script"] = os.path.basename(main_pyc)
+        decompiled = decompile_pyc(main_pyc)
+        result["decompilation"] = decompiled
+
+        if decompiled.get("source"):
+            source = decompiled["source"]
+            result["imports"] = extract_imports(source)
+            result["strings_of_interest"] = extract_strings_of_interest(source)
+            result["analysis_success"] = True
+        else:
+            result["analysis_success"] = False
+            result["error"] = decompiled.get("error", "decompilation produced no source")
+    else:
+        result["main_script"] = None
+        result["analysis_success"] = False
+        result["error"] = "Could not identify main script in extracted archive"
+
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()

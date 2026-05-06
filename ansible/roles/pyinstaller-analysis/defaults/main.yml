@@ -1,0 +1,7 @@
+---
+# roles/pyinstaller-analysis/defaults/main.yml
+
+pyinstaller_analysis_install_dir: /opt/pyinstaller-analysis
+pyinstaller_analysis_container_memory: "1g"
+pyinstaller_analysis_container_cpus: "1"
+pyinstaller_analysis_container_timeout: "120"
