@@ -1,0 +1,26 @@
+# PyInstaller analysis container — pyinstxtractor + decompyle3
+# Extracts and decompiles Python bytecode from PyInstaller executables.
+# Built locally by Ansible. Never pulled from a registry.
+#
+# LICENSING NOTE:
+# - pyinstxtractor is GPL-3.0 licensed, invoked as a subprocess only.
+# - decompyle3 is GPL-3.0 licensed, invoked as a subprocess only.
+# Neither is linked or imported into the Apache 2.0 project code.
+FROM docker.io/library/python:3.12-slim
+
+RUN pip install --no-cache-dir decompyle3 xdis
+
+# pyinstxtractor is a single-file script — download from GitHub
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && wget -O /opt/pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py \
+    && chmod +x /opt/pyinstxtractor.py \
+    && apt-get purge -y wget && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY analyze-pyinstaller.py /opt/analyze-pyinstaller.py
+RUN chmod +x /opt/analyze-pyinstaller.py
+
+RUN mkdir -p /output /nonexistent /work && chmod 777 /nonexistent /output /work
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-pyinstaller.py"]
