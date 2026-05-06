@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# roles/pyinstaller-analysis/tasks/main.yml
+# Builds the PyInstaller decompilation container.
+#
+# pyinstxtractor (GPL-3.0) unpacks PyInstaller archives.
+# decompyle3 (GPL-3.0) decompiles Python bytecode to source.
+# Both invoked as subprocesses — not linked into Apache 2.0 code.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create pyinstaller-analysis directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ pyinstaller_analysis_install_dir }}"
+    - "{{ pyinstaller_analysis_install_dir }}/build"
+    - "{{ pyinstaller_analysis_install_dir }}/output"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ pyinstaller_analysis_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy analyze-pyinstaller.py
+  ansible.builtin.template:
+    src: analyze-pyinstaller.py.j2
+    dest: "{{ pyinstaller_analysis_install_dir }}/build/analyze-pyinstaller.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build pyinstaller-analysis container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/pyinstaller-analysis:latest
+      -f {{ pyinstaller_analysis_install_dir }}/build/Containerfile
+      {{ pyinstaller_analysis_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+- name: Deploy pyinstaller-analysis wrapper script
+  ansible.builtin.template:
+    src: run-pyinstaller-analysis-wrapper.sh.j2
+    dest: "{{ pyinstaller_analysis_install_dir }}/run-pyinstaller-analysis"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ pyinstaller_analysis_install_dir }}/run-pyinstaller-analysis"
+    dest: /usr/local/bin/run-pyinstaller-analysis
+    state: link
