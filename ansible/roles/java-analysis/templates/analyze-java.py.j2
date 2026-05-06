@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""
+analyze-java.py — Decompile Java JAR/class files with CFR.
+
+Produces structured JSON output with:
+- Decompiled Java source code
+- Class listing with methods
+- Manifest metadata (Main-Class, permissions)
+- Extracted strings of interest (C2 URLs, IPs, commands)
+
+Usage: python3 analyze-java.py /sample/malware.jar
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+
+def decompile_jar(jar_path: str, output_dir: str) -> dict:
+    """Run CFR to decompile a JAR file to Java source."""
+    try:
+        result = subprocess.run(
+            ["java", "-jar", "/opt/cfr.jar", jar_path,
+             "--outputdir", output_dir],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        # CFR writes decompiled .java files to outputdir
+        # Collect all source files
+        source_files = []
+        output_path = Path(output_dir)
+        for java_file in sorted(output_path.rglob("*.java")):
+            rel_path = str(java_file.relative_to(output_path))
+            try:
+                content = java_file.read_text(errors="replace")
+                source_files.append({
+                    "path": rel_path,
+                    "content": content,
+                    "length": len(content),
+                })
+            except OSError:
+                continue
+
+        # Combine all source into a single string for LLM analysis
+        combined = ""
+        for sf in source_files:
+            combined += f"// === {sf['path']} ===\n{sf['content']}\n\n"
+
+        # Truncate if too large
+        truncated = len(combined) > 100000
+        if truncated:
+            combined = combined[:100000] + "\n\n// ... truncated (source too large) ..."
+
+        return {
+            "source": combined,
+            "source_length": len(combined) if not truncated else sum(sf["length"] for sf in source_files),
+            "source_files": [{"path": sf["path"], "length": sf["length"]} for sf in source_files],
+            "file_count": len(source_files),
+            "truncated": truncated,
+            "stderr": result.stderr[:300] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "CFR timed out (90s)", "source": ""}
+    except FileNotFoundError:
+        return {"error": "java or CFR not found", "source": ""}
+
+
+def extract_manifest(jar_path: str) -> dict:
+    """Extract MANIFEST.MF metadata from the JAR."""
+    try:
+        with zipfile.ZipFile(jar_path, "r") as zf:
+            if "META-INF/MANIFEST.MF" in zf.namelist():
+                manifest_text = zf.read("META-INF/MANIFEST.MF").decode("utf-8", errors="replace")
+                manifest = {}
+                for line in manifest_text.splitlines():
+                    if ":" in line:
+                        key, _, value = line.partition(":")
+                        manifest[key.strip()] = value.strip()
+                return manifest
+    except (zipfile.BadZipFile, OSError):
+        pass
+    return {}
+
+
+def list_jar_contents(jar_path: str) -> list[dict]:
+    """List files inside the JAR archive."""
+    files = []
+    try:
+        with zipfile.ZipFile(jar_path, "r") as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                category = "unknown"
+                name = info.filename
+                if name.endswith(".class"):
+                    category = "class"
+                elif name.endswith(".java"):
+                    category = "source"
+                elif name.endswith((".properties", ".xml", ".yml", ".yaml", ".json", ".cfg")):
+                    category = "config"
+                elif name.startswith("META-INF/"):
+                    category = "manifest"
+                elif name.endswith((".dll", ".so", ".dylib")):
+                    category = "native_library"
+                elif name.endswith((".jar")):
+                    category = "embedded_jar"
+
+                files.append({
+                    "path": name,
+                    "size": info.file_size,
+                    "category": category,
+                })
+    except (zipfile.BadZipFile, OSError):
+        pass
+    return files
+
+
+def extract_classes(source: str) -> list[dict]:
+    """Extract class names and methods from Java source."""
+    classes = []
+    current_class = None
+
+    for line in source.splitlines():
+        class_match = re.match(
+            r'\s*(?:public|private|protected)?\s*(?:static\s+)?'
+            r'(?:abstract\s+)?(?:final\s+)?class\s+(\w+)', line)
+        if class_match:
+            current_class = {"name": class_match.group(1), "methods": []}
+            classes.append(current_class)
+            continue
+
+        if current_class:
+            method_match = re.match(
+                r'\s*(?:public|private|protected)?\s*(?:static\s+)?'
+                r'(?:synchronized\s+)?(?:final\s+)?'
+                r'(\w+(?:<[^>]+>)?(?:\[\])?)\s+(\w+)\s*\(', line)
+            if method_match:
+                current_class["methods"].append({
+                    "return_type": method_match.group(1),
+                    "name": method_match.group(2),
+                })
+
+    return classes
+
+
+def extract_strings_of_interest(source: str) -> list[dict]:
+    """Extract interesting strings from decompiled Java source."""
+    findings = []
+
+    # URLs
+    for match in re.finditer(r'"(https?://[^"]+)"', source):
+        findings.append({"type": "url", "value": match.group(1)})
+
+    # IP addresses
+    for match in re.finditer(r'"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"', source):
+        ip = match.group(1)
+        parts = ip.split(".")
+        if all(0 <= int(p) <= 255 for p in parts):
+            if ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
+                findings.append({"type": "ip", "value": ip})
+
+    # Command execution
+    for match in re.finditer(r'Runtime\.getRuntime\(\)\.exec\(([^)]{5,80})\)', source):
+        findings.append({"type": "command_exec", "value": match.group(0)[:100],
+                         "context": "Runtime command execution"})
+    for match in re.finditer(r'ProcessBuilder\s*\(([^)]{5,80})\)', source):
+        findings.append({"type": "command_exec", "value": match.group(0)[:100],
+                         "context": "ProcessBuilder command execution"})
+
+    # File paths
+    for match in re.finditer(r'"([A-Z]:\\[^"]{5,})"', source):
+        findings.append({"type": "path", "value": match.group(1)})
+    for match in re.finditer(r'"(/(?:tmp|etc|var|home|usr)[^"]{3,})"', source):
+        findings.append({"type": "path", "value": match.group(1)})
+
+    # Registry paths (Windows)
+    for match in re.finditer(r'"((?:HKLM|HKCU|SOFTWARE|CurrentVersion|Run)[^"]*)"', source, re.IGNORECASE):
+        findings.append({"type": "registry", "value": match.group(1)})
+
+    # Base64 strings (>20 chars)
+    for match in re.finditer(r'"([A-Za-z0-9+/]{20,}={0,2})"', source):
+        findings.append({"type": "base64", "value": match.group(1)[:100]})
+
+    # Crypto/encryption patterns
+    for match in re.finditer(r'Cipher\.getInstance\("([^"]+)"\)', source):
+        findings.append({"type": "crypto", "value": match.group(1),
+                         "context": "Cipher algorithm"})
+
+    # Network patterns
+    for match in re.finditer(r'new\s+Socket\("([^"]+)",\s*(\d+)\)', source):
+        findings.append({"type": "c2_endpoint", "value": f"{match.group(1)}:{match.group(2)}",
+                         "context": "TCP socket connection"})
+    for match in re.finditer(r'new\s+URL\("([^"]+)"\)', source):
+        findings.append({"type": "url", "value": match.group(1)})
+
+    # Dedup
+    seen = set()
+    unique = []
+    for f in findings:
+        key = (f["type"], f["value"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+
+    return unique
+
+
+def extract_imports(source: str) -> list[str]:
+    """Extract import statements from Java source."""
+    imports = set()
+    for match in re.finditer(r'^import\s+([\w.]+);', source, re.MULTILINE):
+        imports.add(match.group(1))
+    return sorted(imports)[:100]
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(json.dumps({"error": "Usage: analyze-java.py <jar_path>"}))
+        sys.exit(1)
+
+    jar_path = sys.argv[1]
+    if not os.path.exists(jar_path):
+        print(json.dumps({"error": f"File not found: {jar_path}"}))
+        sys.exit(1)
+
+    result = {
+        "binary": jar_path,
+        "binary_size": os.path.getsize(jar_path),
+        "analysis_type": "java_cfr",
+    }
+
+    # Extract manifest
+    manifest = extract_manifest(jar_path)
+    result["manifest"] = manifest
+    result["main_class"] = manifest.get("Main-Class", "unknown")
+
+    # List JAR contents
+    contents = list_jar_contents(jar_path)
+    result["jar_contents"] = contents
+    result["class_count"] = len([f for f in contents if f["category"] == "class"])
+    result["file_count"] = len(contents)
+
+    # Decompile with CFR
+    work_dir = "/work/decompiled"
+    os.makedirs(work_dir, exist_ok=True)
+    decompiled = decompile_jar(jar_path, work_dir)
+    result["decompilation"] = decompiled
+
+    if decompiled.get("source"):
+        source = decompiled["source"]
+        result["classes"] = extract_classes(source)
+        result["class_summary_count"] = len(result["classes"])
+        result["imports"] = extract_imports(source)
+        result["strings_of_interest"] = extract_strings_of_interest(source)
+        result["analysis_success"] = True
+    else:
+        result["analysis_success"] = False
+        result["error"] = decompiled.get("error", "decompilation produced no source")
+
+    print(json.dumps(result, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()
