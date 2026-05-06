@@ -43,6 +43,8 @@ exec podman run --rm \
     --timeout={{ java_analysis_container_timeout }} \
     --tmpfs /tmp:size=500m \
     --tmpfs /nonexistent:size=10m \
+    --tmpfs /work:size=500m \
+    --user 65534:65534 \
     -v "$WORK_DIR:/sample:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/java-analysis:latest \

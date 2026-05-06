@@ -1451,7 +1451,7 @@ def main() -> None:
             })
         sys.exit(0)
 
-    # ---- Go path — single-shot, no tools ----
+    # ---- Java path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "java_cfr":
         emit_status(f"Starting Java analysis with {model}", 0)
         java_text = build_java_message(ghidra_data, config)
