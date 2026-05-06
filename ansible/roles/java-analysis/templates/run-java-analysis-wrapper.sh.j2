@@ -27,12 +27,18 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Copy sample to temp dir with world-readable permissions
+# Copy sample to temp dir with world-readable permissions.
+# Ensure .jar extension — CFR requires it but CAPE stores binaries by SHA256 hash.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 chmod 755 "$WORK_DIR"
-cp "$BINARY_PATH" "$WORK_DIR/$BINARY_NAME"
-chmod 644 "$WORK_DIR/$BINARY_NAME"
+JAR_NAME="$BINARY_NAME"
+case "$JAR_NAME" in
+    *.jar) ;;
+    *) JAR_NAME="${BINARY_NAME}.jar" ;;
+esac
+cp "$BINARY_PATH" "$WORK_DIR/$JAR_NAME"
+chmod 644 "$WORK_DIR/$JAR_NAME"
 
 exec podman run --rm \
     --network=none \
@@ -48,4 +54,4 @@ exec podman run --rm \
     -v "$WORK_DIR:/sample:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/java-analysis:latest \
-    "/sample/$BINARY_NAME"
+    "/sample/$JAR_NAME"
