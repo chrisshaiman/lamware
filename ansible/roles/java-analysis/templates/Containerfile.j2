@@ -1,0 +1,22 @@
+# Java analysis container — CFR decompiler for JAR/class files
+# Decompiles Java bytecode to readable Java source code.
+# Built locally by Ansible. Never pulled from a registry.
+#
+# CFR is MIT licensed.
+# https://github.com/leibnitz27/cfr
+FROM docker.io/library/eclipse-temurin:21-jre-jammy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# CFR decompiler JAR is downloaded at build time by Ansible
+COPY cfr.jar /opt/cfr.jar
+
+COPY analyze-java.py /opt/analyze-java.py
+RUN chmod +x /opt/analyze-java.py
+
+RUN mkdir -p /output /nonexistent /work && chmod 777 /nonexistent /output /work
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-java.py"]

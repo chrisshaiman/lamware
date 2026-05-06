@@ -22,6 +22,7 @@ open-source use.
 | [GoReSym](https://github.com/mandiant/GoReSym) | MIT | Go binary metadata extraction | Container dependency |
 | [pyinstxtractor](https://github.com/extremecoders-re/pyinstxtractor) | **GPL-3.0** | PyInstaller archive extraction | See note below |
 | [decompyle3](https://github.com/rocky/python-decompile3) | **GPL-3.0** | Python bytecode decompilation | See note below |
+| [CFR](https://github.com/leibnitz27/cfr) | MIT | Java bytecode decompilation | Container dependency |
 
 ## YARA Rule Sets
 
