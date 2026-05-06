@@ -1,0 +1,49 @@
+#!/bin/bash
+# =============================================================================
+# run-pyinstaller-analysis — host-side wrapper for PyInstaller decompilation
+# Extracts and decompiles PyInstaller executables inside a Podman container.
+#
+# Usage: run-pyinstaller-analysis <binary_path> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-pyinstaller-analysis <binary_path> [output_dir]" >&2
+    exit 1
+fi
+
+BINARY_PATH="$(realpath "$1")"
+BINARY_NAME="$(basename "$BINARY_PATH")"
+OUTPUT_DIR="${2:-{{ pyinstaller_analysis_install_dir }}/output}"
+
+if [ ! -f "$BINARY_PATH" ]; then
+    echo "Error: binary not found: $BINARY_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# Copy sample to temp dir with world-readable permissions
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
+cp "$BINARY_PATH" "$WORK_DIR/$BINARY_NAME"
+chmod 644 "$WORK_DIR/$BINARY_NAME"
+
+exec podman run --rm \
+    --network=none \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ pyinstaller_analysis_container_memory }} \
+    --cpus={{ pyinstaller_analysis_container_cpus }} \
+    --timeout={{ pyinstaller_analysis_container_timeout }} \
+    --tmpfs /tmp:size=500m \
+    --tmpfs /nonexistent:size=10m \
+    -v "$WORK_DIR:/sample:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/pyinstaller-analysis:latest \
+    "/sample/$BINARY_NAME"
