@@ -81,7 +81,8 @@ th {
     background: #161b22; color: #8b949e; font-size: 12px; text-transform: uppercase;
     padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d;
 }
-td { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px; }
+td { padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px;
+     word-wrap: break-word; overflow-wrap: break-word; max-width: 500px; }
 tr:hover { background: #161b22; }
 .badge {
     display: inline-block; padding: 2px 8px; border-radius: 12px;
@@ -515,16 +516,16 @@ def analysis_detail(analysis_id):
                 if techniques:
                     evasion_html += '<table><tr><th>MITRE ID</th><th>Technique</th><th>Evidence</th></tr>'
                     for t in techniques:
-                        evasion_html += f"<tr><td>{escape(str(t.get('mitre_id', '?')))}</td><td>{escape(str(t.get('technique', '?')))}</td><td>{escape(str(t.get('evidence', ''))[:150])}</td></tr>"
+                        evasion_html += f"<tr><td style='white-space:nowrap'>{escape(str(t.get('mitre_id', '?')))}</td><td style='white-space:nowrap'>{escape(str(t.get('technique', '?')))}</td><td>{escape(str(t.get('evidence', '')))}</td></tr>"
                     evasion_html += '</table>'
                 summary = ea.get("evasion_summary", "")
                 if summary:
-                    evasion_html += f'<p style="margin-top:1rem;color:#c8d6e5;">{escape(summary[:500])}</p>'
+                    evasion_html += f'<p style="margin-top:1rem;color:#c8d6e5;line-height:1.6;">{escape(summary)}</p>'
                 recommendations = ea.get("sandbox_recommendations", [])
                 if recommendations:
                     evasion_html += '<h4 style="margin-top:1rem;">Sandbox Hardening Recommendations</h4><ul>'
                     for r in recommendations:
-                        evasion_html += f'<li>{escape(str(r)[:200])}</li>'
+                        evasion_html += f'<li style="margin-bottom:0.5rem;">{escape(str(r))}</li>'
                     evasion_html += '</ul>'
                 evasion_html += '</div>'
         except Exception:
