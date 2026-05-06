@@ -32,6 +32,12 @@ def is_java_binary(report: dict) -> bool:
     if file_mime in ("application/java-archive", "application/x-java-archive"):
         return True
 
+    # Check filename extension — JARs are ZIP archives internally,
+    # so file/magic often returns "Zip archive" instead of "Java archive"
+    sample_name = report.get("sample_name", "")
+    if sample_name.lower().endswith(".jar"):
+        return True
+
     # Check YARA matches
     for match in triage.get("yara_matches", []):
         rule = match.get("rule", "").lower()
