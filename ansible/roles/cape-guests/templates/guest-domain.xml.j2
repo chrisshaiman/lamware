@@ -9,7 +9,8 @@
   Anti-evasion (ADR-012):
     CPU host-passthrough with hypervisor bit disabled.
     TPM present (real machines have TPMs, VMs often don't).
-    2 vCPUs, 4096 MB RAM, 1920x1080 resolution.
+    4 vCPUs, 8192 MB RAM, 1920x1080 resolution.
+    MAC OUI from real hardware vendor (not VM-identifiable).
 
   Network: guest NIC on {{ detonation_bridge }} (virbr-det, air-gapped).
   Display: VNC on 127.0.0.1 (Cape screenshot capture).
@@ -29,7 +30,7 @@
   <memory unit='KiB'>{{ item.memory_kb | default(cape_guest_memory_kb) }}</memory>
   <currentMemory unit='KiB'>{{ item.memory_kb | default(cape_guest_memory_kb) }}</currentMemory>
 
-  <!-- vCPU count: 2 (ADR-012) -->
+  <!-- vCPU count: 4 for realistic workstation profile (ADR-012) -->
   <vcpu placement='static'>{{ item.vcpus | default(cape_guest_vcpus) }}</vcpu>
 
   <!-- CPU: host-passthrough + hypervisor bit disabled.

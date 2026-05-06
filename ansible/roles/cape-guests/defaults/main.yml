@@ -6,7 +6,9 @@
 # Directory where guest qcow2 images are stored on the bare metal host.
 cape_guest_image_dir: /var/lib/libvirt/images
 
-# Default guest VM resources (ADR-012).
-# Override per-guest in the cape_guests list in vars/main.yml.
-cape_guest_memory_kb: 4194304   # 4096 MB
-cape_guest_vcpus: 2
+# Default guest VM resources.
+# 4 vCPUs + 8 GB RAM matches a realistic Windows 11 workstation.
+# Malware checks CPU count and RAM size to detect sandboxes —
+# low values (1-2 vCPUs, 2-4 GB) are a detection signal.
+cape_guest_memory_kb: 8388608   # 8192 MB
+cape_guest_vcpus: 4
