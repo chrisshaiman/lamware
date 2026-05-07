@@ -23,12 +23,14 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 4. Static analysis | Ghidra headless (native PE) | Podman (--network=none) | Complete |
 | 4. Static analysis | de4dotEx + ILSpy (.NET) | Podman (--network=none) | Complete |
 | 4. Static analysis | GoReSym (Go binaries) | Podman (--network=none) | Complete |
-| 4. Static analysis | pyinstxtractor + decompyle3 (PyInstaller) | Podman (--network=none) | Complete |
-| 4. Static analysis | CFR (Java JAR) | Podman (--network=none) | Untested |
+| 4. Static analysis | pyinstxtractor + pycdc (PyInstaller) | Podman (--network=none) | Complete |
+| 4. Static analysis | java-deobfuscator + CFR (Java JAR) | Podman (--network=none) | Complete |
 | 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go/Python/Java) | Podman (--network=host) | Complete |
 | 4.7 Evasion hunter | Claude (single-shot) — triggers on low-activity samples | Podman (--network=host) | Complete |
+| 5.5 Screenshot analysis | Perceptual dedup + QR detection | Podman (--network=none) | Complete |
+| 5.7 Visual analysis | Claude multimodal (screenshot interpretation) | Podman (--network=host) | Complete |
 | 5. Executive summary | Claude Haiku (single-shot) | Podman (--network=host) | Complete |
-| 6. PDF report | WeasyPrint | Host-side | Complete |
+| 6. PDF report | WeasyPrint | Podman (--network=none) | Complete |
 
 ### Supporting Infrastructure — 20 Ansible roles
 
@@ -49,8 +51,10 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | volatility | Volatility 3 container + ISF cache | Complete |
 | dotnet-analysis | de4dotEx deobfuscation + ILSpy decompiler | Complete |
 | go-analysis | GoReSym Go binary metadata extraction | Complete |
-| pyinstaller-analysis | pyinstxtractor + decompyle3 decompilation | Complete |
-| java-analysis | CFR Java bytecode decompiler | Untested |
+| pyinstaller-analysis | pyinstxtractor + pycdc decompilation (Python 3.11/3.12) | Complete |
+| java-analysis | java-deobfuscator + CFR decompiler | Complete |
+| screenshot-analysis | Perceptual dedup + QR detection | Complete |
+| pdf-generation | Containerized WeasyPrint rendering | Complete |
 | ghidra | Ghidra headless container | Complete |
 | interpret | Claude LLM container (agentic + summary) | Complete |
 | postgres | Analysis database | Complete |
@@ -111,9 +115,10 @@ No items — all resolved.
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| Cape screenshots in report | 1-2 hrs | Fix guest VM screenshot capture first (Pillow/display issue). Then: Flask endpoint, PDF embed, diff detection (identical screenshots = evasion signal). Most valuable for ransomware (ransom notes), banking trojans (form overlays), and evasion detection (static desktop = sandbox-aware sample). |
-| Java JAR testing | 30 min | Container built, pipeline routing done. Need a jRAT/STRRAT sample to validate end-to-end. |
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
+| Automated MalwareBazaar ingestion | 2-3 hrs | Scheduled pulls, concurrent pipeline runs, adaptive evasion threshold |
+| VM user artifacts | 1-2 hrs (Packer) | Browser history, documents, installed software — defeats liveness heuristics. Requires Packer image rebuild. |
+| VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
 
 ### Future — React/FastAPI Rebuild
 
@@ -208,7 +213,8 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 | NanoCore | .NET RAT (VB6 dropper) | Partial (no .NET extraction) | Dropper analyzed by Ghidra, .NET payload not extracted — CAPE procdump investigation needed |
 | BianLian | Go ransomware | Full (GoReSym + LLM) | 138 user functions, 98 packages recovered. LLM identified SOCKS5 proxy architecture. |
 | Sliver | Go C2 implant (garble-obfuscated) | Full (GoReSym + LLM) | 8,708 user functions, 282 packages recovered despite garble. LLM identified Sliver from function patterns. Evasion hunter identified 7 anti-sandbox techniques. |
-| ExelaStealer | PyInstaller stealer | Full (pyinstxtractor + LLM) | 713 bundled files, LLM identified Discord token stealer. Multi-file decompilation pending re-test. |
+| ExelaStealer | PyInstaller stealer | Full (pycdc + LLM) | 100K chars Python source decompiled, LLM identified Discord/browser credential stealer |
+| jRAT/Jacksbot | Java RAT | Full (java-deobfuscator + CFR + LLM) | 2.1M chars Java source, 70 classes, LLM identified Ratty variant |
 
 ---
 
