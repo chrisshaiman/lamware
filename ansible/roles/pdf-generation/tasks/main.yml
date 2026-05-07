@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# roles/pdf-generation/tasks/main.yml
+# Builds the PDF generation container (WeasyPrint + Markdown).
+#
+# Containerizes report rendering to isolate HTML/CSS processing
+# from untrusted malware-derived strings (IOC values, LLM output,
+# sample names that could contain XSS-like payloads).
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create pdf-generation directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ pdf_generation_install_dir }}"
+    - "{{ pdf_generation_install_dir }}/build"
+    - "{{ pdf_generation_install_dir }}/output"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ pdf_generation_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy generate-report.py
+  ansible.builtin.template:
+    src: "{{ pipeline_install_dir | default('/opt/pipeline') }}/../../ansible/roles/pipeline/templates/generate-report.py.j2"
+    dest: "{{ pdf_generation_install_dir }}/build/generate-report.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build pdf-generation container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --no-cache
+      --network=host
+      -t localhost/pdf-generation:latest
+      -f {{ pdf_generation_install_dir }}/build/Containerfile
+      {{ pdf_generation_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+- name: Deploy pdf-generation wrapper script
+  ansible.builtin.template:
+    src: run-pdf-generation-wrapper.sh.j2
+    dest: "{{ pdf_generation_install_dir }}/run-pdf-generation"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ pdf_generation_install_dir }}/run-pdf-generation"
+    dest: /usr/local/bin/run-pdf-generation
+    state: link

@@ -1,0 +1,43 @@
+#!/bin/bash
+# =============================================================================
+# run-screenshot-analysis — host-side wrapper for containerized screenshot analysis
+# Deduplicates CAPE screenshots and detects QR codes.
+#
+# Usage: run-screenshot-analysis <shots_dir> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-screenshot-analysis <shots_dir> [output_dir]" >&2
+    exit 1
+fi
+
+SHOTS_DIR="$(realpath "$1")"
+OUTPUT_DIR="${2:-{{ screenshot_analysis_install_dir }}/output}"
+
+if [ ! -d "$SHOTS_DIR" ]; then
+    echo "Error: directory not found: $SHOTS_DIR" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ screenshot_analysis_container_memory }} \
+    --cpus={{ screenshot_analysis_container_cpus }} \
+    --timeout={{ screenshot_analysis_container_timeout }} \
+    --tmpfs /tmp:size=100m \
+    --tmpfs /nonexistent:size=10m \
+    --user 65534:65534 \
+    -v "$SHOTS_DIR:/shots:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/screenshot-analysis:latest \
+    "/shots"

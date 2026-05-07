@@ -1,0 +1,7 @@
+---
+# roles/pdf-generation/defaults/main.yml
+
+pdf_generation_install_dir: /opt/pdf-generation
+pdf_generation_container_memory: "512m"
+pdf_generation_container_cpus: "1"
+pdf_generation_container_timeout: "120"
