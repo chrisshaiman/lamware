@@ -50,6 +50,7 @@
   ansible.builtin.command:
     cmd: >
       podman build
+      --no-cache
       --network=host
       -t localhost/java-analysis:latest
       -f {{ java_analysis_install_dir }}/build/Containerfile
