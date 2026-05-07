@@ -33,11 +33,12 @@
 
 - name: Deploy generate-report.py
   ansible.builtin.template:
-    src: "{{ pipeline_install_dir | default('/opt/pipeline') }}/../../ansible/roles/pipeline/templates/generate-report.py.j2"
+    src: "../../pipeline/templates/generate-report.py.j2"
     dest: "{{ pdf_generation_install_dir }}/build/generate-report.py"
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     mode: "0755"
+  no_log: true
 
 - name: Build pdf-generation container image
   ansible.builtin.command:
