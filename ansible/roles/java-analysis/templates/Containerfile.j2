@@ -1,17 +1,22 @@
-# Java analysis container — CFR decompiler for JAR/class files
-# Decompiles Java bytecode to readable Java source code.
+# Java analysis container — java-deobfuscator + CFR decompiler
+# Deobfuscates and decompiles Java bytecode to readable source code.
 # Built locally by Ansible. Never pulled from a registry.
 #
+# java-deobfuscator is Apache 2.0 licensed.
 # CFR is MIT licensed.
-# https://github.com/leibnitz27/cfr
 FROM docker.io/library/eclipse-temurin:21-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
+    python3 wget \
     && rm -rf /var/lib/apt/lists/*
 
 # CFR decompiler JAR is downloaded at build time by Ansible
 COPY cfr.jar /opt/cfr.jar
+
+# java-deobfuscator — Apache 2.0, handles ZKM, Allatori, Stringer, etc.
+RUN wget -O /opt/java-deobfuscator.jar \
+    https://github.com/java-deobfuscator/deobfuscator/releases/download/1.1.0/deobfuscator-1.1.0.jar \
+    && apt-get purge -y wget && apt-get autoremove -y
 
 COPY analyze-java.py /opt/analyze-java.py
 RUN chmod +x /opt/analyze-java.py
