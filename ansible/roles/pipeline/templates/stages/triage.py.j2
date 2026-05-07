@@ -57,6 +57,20 @@ def derive_package_from_triage(triage_result: dict, filename: str = "") -> str:
     if ext == "jar" or "java" in file_type or file_mime == "application/java-archive":
         return "jar"
 
+    # Office documents — route to correct application in CAPE guest
+    if ext in ("doc", "docm", "dot", "dotm"):
+        return "doc"
+    if ext in ("xls", "xlsm", "xlt", "xltm"):
+        return "xls"
+    if ext in ("ppt", "pptm"):
+        return "ppt"
+    if "microsoft word" in file_type or "msword" in file_mime:
+        return "doc"
+    if "microsoft excel" in file_type or "ms-excel" in file_mime:
+        return "xls"
+    if "microsoft powerpoint" in file_type:
+        return "ppt"
+
     # PE executables
     if "pe32" in file_type or file_mime == "application/x-dosexec":
         if "dll" in file_type:
