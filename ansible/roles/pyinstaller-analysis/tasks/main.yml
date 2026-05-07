@@ -43,6 +43,7 @@
   ansible.builtin.command:
     cmd: >
       podman build
+      --no-cache
       --network=host
       -t localhost/pyinstaller-analysis:latest
       -f {{ pyinstaller_analysis_install_dir }}/build/Containerfile
