@@ -1,0 +1,7 @@
+---
+# roles/office-macro-analysis/defaults/main.yml
+
+office_macro_analysis_install_dir: /opt/office-macro-analysis
+office_macro_analysis_container_memory: "512m"
+office_macro_analysis_container_cpus: "1"
+office_macro_analysis_container_timeout: "120"

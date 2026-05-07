@@ -40,6 +40,7 @@ from stages.dotnet import is_dotnet_binary, find_dotnet_extractions, run_dotnet_
 from stages.go import is_go_binary, run_go_analysis
 from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
 from stages.java import is_java_binary, run_java_analysis
+from stages.office import is_office_document, run_office_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
 from ioc_extract import extract_iocs, map_iocs_to_techniques
@@ -85,6 +86,7 @@ DOTNET_CMD = "{{ dotnet_analysis_install_dir | default('/opt/dotnet-analysis') }
 GO_CMD = "{{ go_analysis_install_dir | default('/opt/go-analysis') }}/run-go-analysis"
 PYINSTALLER_CMD = "{{ pyinstaller_analysis_install_dir | default('/opt/pyinstaller-analysis') }}/run-pyinstaller-analysis"
 JAVA_CMD = "{{ java_analysis_install_dir | default('/opt/java-analysis') }}/run-java-analysis"
+OFFICE_CMD = "{{ office_macro_analysis_install_dir | default('/opt/office-macro-analysis') }}/run-office-analysis"
 SCREENSHOT_CMD = "{{ screenshot_analysis_install_dir | default('/opt/screenshot-analysis') }}/run-screenshot-analysis"
 PDF_CMD = "{{ pdf_generation_install_dir | default('/opt/pdf-generation') }}/run-pdf-generation"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
@@ -384,6 +386,19 @@ def calculate_severity(report: dict) -> str:
             score += 15  # confirmed evasion = at least high severity
         elif confidence == "medium":
             score += 10
+
+    # Office macro mraptor flags — auto_exec + write + execute = high confidence
+    office_data = report.get("office_analysis", {})
+    if office_data.get("has_macros"):
+        mraptor = office_data.get("mraptor_flags", {})
+        if mraptor.get("auto_exec") and mraptor.get("execute"):
+            score += 10  # auto-exec + execute = likely malicious
+        if mraptor.get("write"):
+            score += 3  # file write capability
+        if office_data.get("obfuscation_indicators"):
+            score += 5  # legitimate macros are rarely obfuscated
+        if office_data.get("xlm_detected"):
+            score += 5  # XLM macros are almost exclusively malicious
 
     # Go offensive tool module detected (Sliver, Merlin, etc.)
     go_data = report.get("go_analysis", {})
@@ -916,9 +931,37 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     _ghidra_start = _time.time()
     update_stage(analysis_id_early, "ghidra", "started")
 
-    # Check if this is a .NET binary — route to ILSpy instead
+    # Check if this is an Office document — route to olevba
     dotnet_origin = None
-    if is_dotnet_binary(report):
+    if is_office_document(report):
+        log.info(f"\n[Stage 4] Office document detected — running macro extraction...")
+        office_result = run_office_analysis(sample_path, output_dir, office_cmd=OFFICE_CMD)
+        report["office_analysis"] = office_result
+        if office_result.get("analysis_success"):
+            has_macros = office_result.get("has_macros", False)
+            module_count = len(office_result.get("vba_modules", []))
+            source_len = len(office_result.get("vba_source", ""))
+            auto_exec = office_result.get("auto_exec_triggers", [])
+            suspicious = len(office_result.get("suspicious_keywords", []))
+            mraptor = office_result.get("mraptor_flags", {})
+            if has_macros:
+                log.info(f"  Macros: {module_count} modules, {source_len} chars VBA source")
+                log.info(f"  Auto-exec: {', '.join(auto_exec) if auto_exec else 'none'}")
+                log.info(f"  Suspicious keywords: {suspicious}")
+                log.info(f"  mraptor: A={'Y' if mraptor.get('auto_exec') else 'N'} "
+                         f"W={'Y' if mraptor.get('write') else 'N'} "
+                         f"X={'Y' if mraptor.get('execute') else 'N'}")
+                if office_result.get("xlm_detected"):
+                    log.info(f"  XLM/Excel 4.0 macros detected (no deobfuscation)")
+            else:
+                log.info(f"  Valid Office document but no macros found")
+        else:
+            log.warning(f"olevba failed: {office_result.get('error', 'unknown')}")
+
+        report["ghidra"] = {"triggered": True, "office_routed": True,
+                            "analyzed_files": []}
+    # Check if this is a .NET binary — route to ILSpy instead
+    elif is_dotnet_binary(report):
         dotnet_origin = "original"
         log.info(f"\n[Stage 4] .NET detected — running ILSpy decompilation...")
         dotnet_result = run_dotnet_analysis(
@@ -1063,6 +1106,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     go_data = report.get("go_analysis", {})
     pyinstaller_data = report.get("pyinstaller_analysis", {})
     java_data = report.get("java_analysis", {})
+    office_data = report.get("office_analysis", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
@@ -1124,6 +1168,42 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         }
         report["llm_interpretation"] = run_interpret(
             java_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        interp = report["llm_interpretation"]
+        if interp.get("enabled") and interp.get("analysis"):
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            log.info(f"  Family guess: {family}")
+            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+        elif interp.get("error"):
+            log.warning(f"Error: {interp['error']}")
+
+    elif office_data.get("analysis_success") and office_data.get("has_macros") and INTERPRET_ENABLED:
+        # Office macro path — send VBA source to LLM for deobfuscation + analysis
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Office macros...")
+        cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
+        office_init = {
+            "analysis_type": "office_macro",
+            "source_language": "vba",
+            "vba_source": office_data.get("vba_source", "")[:50000],
+            "vba_modules": office_data.get("vba_modules", []),
+            "auto_exec_triggers": office_data.get("auto_exec_triggers", []),
+            "suspicious_keywords": office_data.get("suspicious_keywords", []),
+            "iocs_extracted": office_data.get("iocs_extracted", {}),
+            "obfuscation_indicators": office_data.get("obfuscation_indicators", []),
+            "mraptor_flags": office_data.get("mraptor_flags", {}),
+            "metadata": office_data.get("metadata", {}),
+            "xlm_detected": office_data.get("xlm_detected", False),
+            "file_format": office_data.get("file_format", ""),
+            "cape_signatures": cape_sigs[:20],
+            "analysis_success": True,
+        }
+        report["llm_interpretation"] = run_interpret(
+            office_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,

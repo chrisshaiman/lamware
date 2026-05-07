@@ -25,7 +25,8 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 4. Static analysis | GoReSym (Go binaries) | Podman (--network=none) | Complete |
 | 4. Static analysis | pyinstxtractor + pycdc (PyInstaller) | Podman (--network=none) | Complete |
 | 4. Static analysis | java-deobfuscator + CFR (Java JAR) | Podman (--network=none) | Complete |
-| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go/Python/Java) | Podman (--network=host) | Complete |
+| 4. Static analysis | olevba macro extraction (Office docs) | Podman (--network=none) | Complete |
+| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go/Python/Java/VBA) | Podman (--network=host) | Complete |
 | 4.7 Evasion hunter | Claude (single-shot) — triggers on low-activity samples | Podman (--network=host) | Complete |
 | 5.5 Screenshot analysis | Perceptual dedup + QR detection | Podman (--network=none) | Complete |
 | 5.7 Visual analysis | Claude multimodal (screenshot interpretation) | Podman (--network=host) | Complete |
@@ -53,6 +54,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | go-analysis | GoReSym Go binary metadata extraction | Complete |
 | pyinstaller-analysis | pyinstxtractor + pycdc decompilation (Python 3.11/3.12) | Complete |
 | java-analysis | java-deobfuscator + CFR decompiler | Complete |
+| office-macro-analysis | olevba VBA extraction + mraptor classification | Complete |
 | screenshot-analysis | Perceptual dedup + QR detection | Complete |
 | pdf-generation | Containerized WeasyPrint rendering | Complete |
 | ghidra | Ghidra headless container | Complete |
@@ -121,7 +123,6 @@ No items — all resolved.
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
 | PowerShell deobfuscation | 2-3 hrs | Common in initial access. Script extraction + deobfuscation. ~3-5% of samples. |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
-| Office macro extraction (olevba) | 1-2 hrs | VBA macro analysis for phishing documents. olevba is BSD. ~3-5% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 
@@ -141,6 +142,7 @@ No items — all resolved.
 
 | Item | Effort | Notes |
 |------|--------|-------|
+| Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP. Full design needed. |
 | Rust binary analysis | 2-3 weeks | Demangle names, identify stdlib functions, reconstruct common types. Research project. |
@@ -151,6 +153,13 @@ No items — all resolved.
 | YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
+| RTF exploit extraction | 2-3 hrs | rtfobj for CVE-2017-11882/CVE-2018-0802 shellcode extraction. Different from macro analysis — parser exploits, not code. |
+| DDE injection detection | 1-2 hrs | Pattern matching for DDE/DDEAUTO fields in OOXML/OLE. Not macros — formula abuse. |
+| Embedded OLE object extraction | 1-2 hrs | Packager object extraction from Office docs. File dropping, not code execution. |
+| XLM macro deobfuscation | 1-2 hrs | XLMMacroDeobfuscator (Apache 2.0) for Excel 4.0 macros. Complements olevba which only detects XLM presence. Unmaintained since Sep 2022 but stable. |
+| VBA p-code disassembly | 1-2 hrs | pcodedmp (GPL v3, subprocess only) catches VBA stomping where source is wiped but bytecode remains. Unmaintained since 2019 but stable. |
+| Office macro extraction from CAPE drops | 1-2 hrs | Detect Office docs in CAPE dropped/extracted files and route to olevba. Currently only handles submitted samples. |
+| PII scrubber for DB/reports | 3-4 hrs | Strip stolen credentials, emails, PII from IOCs/strings/LLM narratives before DB ingestion. Needed if dashboard or reports are ever shared publicly. Tricky: distinguishing PII from IOCs (e.g., attacker email vs victim email). |
 
 ---
 
@@ -220,6 +229,7 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 | Sliver | Go C2 implant (garble-obfuscated) | Full (GoReSym + LLM) | 8,708 user functions, 282 packages recovered despite garble. LLM identified Sliver from function patterns. Evasion hunter identified 7 anti-sandbox techniques. |
 | ExelaStealer | PyInstaller stealer | Full (pycdc + LLM) | 100K chars Python source decompiled, LLM identified Discord/browser credential stealer |
 | jRAT/Jacksbot | Java RAT | Full (java-deobfuscator + CFR + LLM) | 2.1M chars Java source, 70 classes, LLM identified Ratty variant |
+| LodaRAT | Office macro dropper | Full (olevba + LLM) | 2 VBA modules, LLM deobfuscated Chr() cipher to reveal `mshta` download cradle. 7 evasion techniques detected. Macro evaded CAPE but static analysis recovered full payload. |
 
 ---
 

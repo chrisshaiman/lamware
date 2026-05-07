@@ -106,6 +106,10 @@
     - role: java-analysis
       tags: [java-analysis]
 
+    # 13f. Office macro analysis — containerized olevba extraction
+    - role: office-macro-analysis
+      tags: [office-macro-analysis]
+
     # 13f. Screenshot analysis — dedup + QR detection
     - role: screenshot-analysis
       tags: [screenshot-analysis]

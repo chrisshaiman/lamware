@@ -128,6 +128,7 @@ The pipeline detects the binary type and routes to the right tool:
 | Go (garble) | GoReSym partial + Ghidra fallback | Garbled names but structural metadata |
 | PyInstaller | pyinstxtractor + pycdc | Python 3.11/3.12 source, multi-file decompilation |
 | Java JAR | java-deobfuscator + CFR | Deobfuscated Java source, manifest, class listing |
+| Office (VBA macros) | olevba extraction + mraptor | VBA source, auto-exec triggers, IOCs, deobfuscation |
 
 Each path has its own LLM prompt optimized for that language's patterns.
 
@@ -272,6 +273,7 @@ OVH Bare Metal
 | Sliver | Go C2 (garble-obfuscated) | GoReSym partial + evasion hunter: 7 anti-sandbox techniques |
 | ExelaStealer | PyInstaller stealer | pycdc: 100K chars Python, Discord/browser credential stealer |
 | jRAT/Jacksbot | Java RAT | java-deobfuscator + CFR: 2.1M chars Java, 70 classes |
+| LodaRAT | Office macro dropper | olevba: VBA deobfuscation, mshta download cradle recovered |
 
 ---
 
