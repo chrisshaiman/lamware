@@ -151,6 +151,13 @@ No items — all resolved.
 | YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
+| RTF exploit extraction | 2-3 hrs | rtfobj for CVE-2017-11882/CVE-2018-0802 shellcode extraction. Different from macro analysis — parser exploits, not code. |
+| DDE injection detection | 1-2 hrs | Pattern matching for DDE/DDEAUTO fields in OOXML/OLE. Not macros — formula abuse. |
+| Embedded OLE object extraction | 1-2 hrs | Packager object extraction from Office docs. File dropping, not code execution. |
+| XLM macro deobfuscation | 1-2 hrs | XLMMacroDeobfuscator (Apache 2.0) for Excel 4.0 macros. Complements olevba which only detects XLM presence. Unmaintained since Sep 2022 but stable. |
+| VBA p-code disassembly | 1-2 hrs | pcodedmp (GPL v3, subprocess only) catches VBA stomping where source is wiped but bytecode remains. Unmaintained since 2019 but stable. |
+| Office macro extraction from CAPE drops | 1-2 hrs | Detect Office docs in CAPE dropped/extracted files and route to olevba. Currently only handles submitted samples. |
+| PII scrubber for DB/reports | 3-4 hrs | Strip stolen credentials, emails, PII from IOCs/strings/LLM narratives before DB ingestion. Needed if dashboard or reports are ever shared publicly. Tricky: distinguishing PII from IOCs (e.g., attacker email vs victim email). |
 
 ---
 
