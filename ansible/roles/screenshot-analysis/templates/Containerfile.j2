@@ -1,0 +1,22 @@
+# Screenshot analysis container — perceptual dedup + QR code detection
+# Processes CAPE/QEMU screenshots: removes duplicates via perceptual
+# hashing and decodes any QR codes found in screenshots.
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libzbar0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    imagehash \
+    pyzbar \
+    Pillow
+
+COPY analyze-screenshots.py /opt/analyze-screenshots.py
+RUN chmod +x /opt/analyze-screenshots.py
+
+RUN mkdir -p /output /nonexistent && chmod 777 /nonexistent /output
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/analyze-screenshots.py"]

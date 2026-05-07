@@ -1,0 +1,47 @@
+#!/bin/bash
+# =============================================================================
+# run-pdf-generation — host-side wrapper for containerized PDF report generation
+# Renders pipeline JSON reports to PDF using WeasyPrint in a Podman container.
+#
+# Usage: run-pdf-generation <report.json> [output.pdf]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-pdf-generation <report.json> [output.pdf]" >&2
+    exit 1
+fi
+
+REPORT_PATH="$(realpath "$1")"
+REPORT_DIR="$(dirname "$REPORT_PATH")"
+REPORT_NAME="$(basename "$REPORT_PATH")"
+OUTPUT_PDF="${2:-${REPORT_DIR}/report.pdf}"
+OUTPUT_DIR="$(dirname "$(realpath -m "$OUTPUT_PDF")")"
+OUTPUT_NAME="$(basename "$OUTPUT_PDF")"
+
+if [ ! -f "$REPORT_PATH" ]; then
+    echo "Error: report not found: $REPORT_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ pdf_generation_container_memory }} \
+    --cpus={{ pdf_generation_container_cpus }} \
+    --timeout={{ pdf_generation_container_timeout }} \
+    --tmpfs /tmp:size=100m \
+    --tmpfs /nonexistent:size=10m \
+    --user 65534:65534 \
+    -v "$REPORT_DIR:/report:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/pdf-generation:latest \
+    "/report/$REPORT_NAME" "/output/$OUTPUT_NAME"

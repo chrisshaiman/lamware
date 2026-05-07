@@ -1,0 +1,63 @@
+---
+# =============================================================================
+# roles/screenshot-analysis/tasks/main.yml
+# Builds the screenshot analysis container (dedup + QR detection).
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create screenshot-analysis directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+  loop:
+    - "{{ screenshot_analysis_install_dir }}"
+    - "{{ screenshot_analysis_install_dir }}/build"
+    - "{{ screenshot_analysis_install_dir }}/output"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ screenshot_analysis_install_dir }}/build/Containerfile"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+
+- name: Deploy analyze-screenshots.py
+  ansible.builtin.template:
+    src: analyze-screenshots.py.j2
+    dest: "{{ screenshot_analysis_install_dir }}/build/analyze-screenshots.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
+- name: Build screenshot-analysis container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --no-cache
+      --network=host
+      -t localhost/screenshot-analysis:latest
+      -f {{ screenshot_analysis_install_dir }}/build/Containerfile
+      {{ screenshot_analysis_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
+
+- name: Deploy screenshot-analysis wrapper script
+  ansible.builtin.template:
+    src: run-screenshot-analysis-wrapper.sh.j2
+    dest: "{{ screenshot_analysis_install_dir }}/run-screenshot-analysis"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ screenshot_analysis_install_dir }}/run-screenshot-analysis"
+    dest: /usr/local/bin/run-screenshot-analysis
+    state: link
