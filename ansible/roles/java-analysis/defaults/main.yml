@@ -4,7 +4,7 @@
 java_analysis_install_dir: /opt/java-analysis
 java_analysis_container_memory: "1g"
 java_analysis_container_cpus: "1"
-java_analysis_container_timeout: "240"
+java_analysis_container_timeout: "360"   # deobfuscation (120s) + decompilation (180s) + buffer
 
 # CFR decompiler release — MIT licensed
 cfr_version: "0.152"
