@@ -113,7 +113,6 @@ No items — all resolved.
 |------|--------|-------|
 | Cape screenshots in report | 1-2 hrs | Fix guest VM screenshot capture first (Pillow/display issue). Then: Flask endpoint, PDF embed, diff detection (identical screenshots = evasion signal). Most valuable for ransomware (ransom notes), banking trojans (form overlays), and evasion detection (static desktop = sandbox-aware sample). |
 | Java JAR testing | 30 min | Container built, pipeline routing done. Need a jRAT/STRRAT sample to validate end-to-end. |
-| Dashboard evasion table CSS | 15 min | Evidence column truncating, recommendations need word wrap. Data renders correctly, just formatting. |
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
 
 ### Future — React/FastAPI Rebuild
