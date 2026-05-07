@@ -122,6 +122,7 @@ No items — all resolved.
 | FastAPI backend | 1-2 sessions | Replace Flask, REST + WebSocket |
 | React frontend | 2-3 sessions | SPA, interactive MITRE map, real-time status |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
+| Selective stage execution | Design + build | --skip, --only, --rerun flags with dependency tracking. Avoids re-running Cape/Volatility when only static analysis changed. |
 | WebSocket real-time updates | 1 session | Builds on pipeline_stage_events table |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
