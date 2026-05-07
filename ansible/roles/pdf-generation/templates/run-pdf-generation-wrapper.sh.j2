@@ -17,9 +17,8 @@ if [ $# -lt 1 ]; then
 fi
 
 REPORT_PATH="$(realpath "$1")"
-REPORT_DIR="$(dirname "$REPORT_PATH")"
 REPORT_NAME="$(basename "$REPORT_PATH")"
-OUTPUT_PDF="${2:-${REPORT_DIR}/report.pdf}"
+OUTPUT_PDF="${2:-$(dirname "$REPORT_PATH")/report.pdf}"
 OUTPUT_DIR="$(dirname "$(realpath -m "$OUTPUT_PDF")")"
 OUTPUT_NAME="$(basename "$OUTPUT_PDF")"
 
@@ -29,6 +28,14 @@ if [ ! -f "$REPORT_PATH" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+
+# Copy report to temp dir with world-readable permissions
+# so the container's nobody user (65534) can read it
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
+cp "$REPORT_PATH" "$WORK_DIR/$REPORT_NAME"
+chmod 644 "$WORK_DIR/$REPORT_NAME"
 
 exec podman run --rm \
     --network=none \
@@ -41,7 +48,7 @@ exec podman run --rm \
     --tmpfs /tmp:size=100m \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
-    -v "$REPORT_DIR:/report:ro" \
+    -v "$WORK_DIR:/report:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/pdf-generation:latest \
     "/report/$REPORT_NAME" "/output/$OUTPUT_NAME"
