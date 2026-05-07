@@ -119,6 +119,11 @@ No items — all resolved.
 | Automated MalwareBazaar ingestion | 2-3 hrs | Scheduled pulls, concurrent pipeline runs, adaptive evasion threshold |
 | VM user artifacts | 1-2 hrs (Packer) | Browser history, documents, installed software — defeats liveness heuristics. Requires Packer image rebuild. |
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
+| PowerShell deobfuscation | 2-3 hrs | Common in initial access. Script extraction + deobfuscation. ~3-5% of samples. |
+| AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
+| Office macro extraction (olevba) | 1-2 hrs | VBA macro analysis for phishing documents. olevba is BSD. ~3-5% of samples. |
+| NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
+| ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 
 ### Future — React/FastAPI Rebuild
 
