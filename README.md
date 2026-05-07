@@ -47,14 +47,26 @@ Sample
   |  (containerized, --network=none)   Native PE: Ghidra headless (functions, pseudocode, xrefs)
   |                                    .NET: de4dotEx deobfuscation + ILSpy (C# source)
   |                                    Go: GoReSym (functions, types, build metadata)
+  |                                    PyInstaller: pyinstxtractor + pycdc (Python 3.11/3.12)
+  |                                    Java JAR: java-deobfuscator + CFR (Java source)
   |
   +- Stage 4.5: AI Investigation -- Language-aware LLM analysis:
   |  (containerized, --network=host)   Native PE: agentic with 6 Ghidra query tools
-  |  Orchestrator validates args       .NET: single-shot C# source analysis
-  |  Model escalation: Sonnet->Opus    Go: single-shot metadata analysis
+  |  Orchestrator validates args       .NET/Go/Python/Java: single-shot source analysis
+  |  Model escalation: Sonnet->Opus    Garble-obfuscated Go: Ghidra fallback
+  |
+  +- Stage 4.7: Evasion Hunter ---- Triggers when CAPE produces < 10 signatures:
+  |  (containerized, --network=host)   Identifies sandbox detection techniques
+  |                                    Recommends sandbox hardening measures
+  |
+  +- Stage 5.5: Screenshots ------- QEMU VNC capture (host-side, invisible):
+  |  (containerized, --network=none)   Perceptual hash dedup, QR code detection
+  |
+  +- Stage 5.7: Visual Analysis --- Multimodal LLM screenshot interpretation:
+  |  (containerized, --network=host)   Ransom notes, dialogs, evasion signals
   |
   +- IOC Extraction ---------------- Structured indicators from all stages
-  |                                    STIX 2.1 types, source attribution, context
+  |                                    STIX 2.1 types, mutex IOCs from Cape API traces
   |
   +- Kill Chain Summary ------------ LLM narrative organized by attack phase
   |  (Haiku for cost efficiency)       Each claim cites corroborating tool sources
@@ -62,7 +74,7 @@ Sample
   +- Database Ingestion ------------ PostgreSQL with normalized IOCs, techniques,
   |                                    capabilities, network events, MISP-style tags
   |
-  +- PDF Report -------------------- Formatted report with source attribution badges
+  +- PDF Report -------------------- Containerized WeasyPrint (isolated from untrusted data)
 ```
 
 ---
@@ -113,6 +125,9 @@ The pipeline detects the binary type and routes to the right tool:
 | Native PE (C/C++) | Ghidra headless | Pseudocode, imports, xrefs |
 | .NET (C#) | de4dotEx deobfuscation + ILSpy | Deobfuscated C# source |
 | Go | GoReSym | Recovered function names, types, packages, build info |
+| Go (garble) | GoReSym partial + Ghidra fallback | Garbled names but structural metadata |
+| PyInstaller | pyinstxtractor + pycdc | Python 3.11/3.12 source, multi-file decompilation |
+| Java JAR | java-deobfuscator + CFR | Deobfuscated Java source, manifest, class listing |
 
 Each path has its own LLM prompt optimized for that language's patterns.
 
@@ -252,7 +267,11 @@ OVH Bare Metal
 | Emotet | VB6 packer/loader | Full pipeline, 130+ IOCs, cross-correlation findings |
 | CobaltStrike/DidYouRansome | Native C beacon + ransomware | Full pipeline, 174 IOCs, 43 MITRE techniques |
 | NanoCore | .NET RAT | ILSpy decompiled, LLM identified family + 15 capabilities |
-| AsyncRAT | .NET RAT | de4dotEx deobfuscation + ILSpy analysis |
+| AsyncRAT | .NET RAT | de4dotEx deobfuscation + ILSpy, 23 classes extracted |
+| BianLian | Go ransomware | GoReSym: 138 functions, 98 packages, SOCKS5 proxy architecture |
+| Sliver | Go C2 (garble-obfuscated) | GoReSym partial + evasion hunter: 7 anti-sandbox techniques |
+| ExelaStealer | PyInstaller stealer | pycdc: 100K chars Python, Discord/browser credential stealer |
+| jRAT/Jacksbot | Java RAT | java-deobfuscator + CFR: 2.1M chars Java, 70 classes |
 
 ---
 
