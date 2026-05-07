@@ -105,18 +105,21 @@ def find_main_script(extract_dir: str) -> str | None:
 
 
 def decompile_pyc(pyc_path: str) -> dict:
-    """Decompile a .pyc file to Python source using decompyle3."""
+    """Decompile a .pyc file to Python source using pycdc (Decompyle++).
+
+    pycdc supports Python 3.11/3.12 bytecode, unlike decompyle3 which
+    only handles up to 3.8. GPL-3.0 licensed, invoked as subprocess.
+    """
     try:
         result = subprocess.run(
-            ["decompyle3", pyc_path],
+            ["pycdc", pyc_path],
             capture_output=True,
             text=True,
             timeout=60,
         )
-        # decompyle3 outputs source to stdout
+        # pycdc outputs source to stdout
         source = result.stdout
         if not source and result.returncode != 0:
-            # Try with uncompyle6-compatible mode
             return {"error": result.stderr[:300], "source": ""}
 
         # Truncate very large sources

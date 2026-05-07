@@ -106,6 +106,14 @@
     - role: java-analysis
       tags: [java-analysis]
 
+    # 13f. Screenshot analysis — dedup + QR detection
+    - role: screenshot-analysis
+      tags: [screenshot-analysis]
+
+    # 13g. PDF generation — containerized WeasyPrint rendering
+    - role: pdf-generation
+      tags: [pdf-generation]
+
     # 14. LLM interpretation — agentic Claude analysis of Ghidra output
     - role: interpret
       tags: [interpret]

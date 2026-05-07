@@ -133,6 +133,24 @@
     value: "100000000"
     mode: "0640"
 
+# Enable QEMU-based screenshots (host-side VNC capture, invisible to guest).
+# Disable in-guest PIL screenshots since they fail without desktop session.
+- name: Enable QEMU screenshots
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/auxiliary.conf"
+    section: QemuScreenshots
+    option: enabled
+    value: "yes"
+    mode: "0640"
+
+- name: Disable in-guest PIL screenshots
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/auxiliary.conf"
+    section: screenshots
+    option: screenshots_windows
+    value: "no"
+    mode: "0640"
+
 # api.conf [api] url is the display URL shown in the web UI — not the bind address.
 # Set it to the WireGuard address so Cape links and callbacks use the correct host.
 - name: Set Cape API display URL to WireGuard interface

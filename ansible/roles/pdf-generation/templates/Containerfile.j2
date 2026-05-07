@@ -1,0 +1,25 @@
+# PDF report generation container — WeasyPrint + Markdown
+# Renders pipeline JSON reports to formatted PDF documents.
+# Isolates HTML/CSS rendering from untrusted malware-derived strings.
+# Built locally by Ansible. Never pulled from a registry.
+FROM docker.io/library/python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
+    libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    weasyprint \
+    markdown
+
+COPY generate-report.py /opt/generate-report.py
+RUN chmod +x /opt/generate-report.py
+
+RUN mkdir -p /output /nonexistent && chmod 777 /nonexistent /output
+ENV HOME=/nonexistent
+
+ENTRYPOINT ["python3", "/opt/generate-report.py"]
