@@ -1,0 +1,113 @@
+"""Office document detection and macro analysis execution.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import json
+import logging
+import subprocess
+from pathlib import Path
+
+log = logging.getLogger("pipeline")
+
+OFFICE_YARA_INDICATORS = ["macro", "vba", "ole", "maldoc", "office", "emotet_doc"]
+
+
+def is_office_document(report: dict) -> bool:
+    """Detect Office documents with potential macros."""
+    triage = report.get("triage", {})
+    file_type = (triage.get("file_type", "") or "").lower()
+
+    # OLE Compound Document (legacy Office)
+    if any(s in file_type for s in (
+        "composite document file", "microsoft word",
+        "microsoft excel", "microsoft powerpoint",
+    )):
+        return True
+
+    # OOXML and macro-enabled formats
+    file_mime = (triage.get("file_mime", "") or "").lower()
+    office_mimes = (
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.ms-word.document.macroenabled.12",
+        "application/vnd.ms-excel.sheet.macroenabled.12",
+    )
+    if file_mime in office_mimes:
+        return True
+
+    # Extension check
+    sample_name = report.get("sample_name", "")
+    office_exts = (
+        ".doc", ".docm", ".dot", ".dotm",
+        ".xls", ".xlsm", ".xlt", ".xltm",
+        ".ppt", ".pptm",
+    )
+    if sample_name.lower().endswith(office_exts):
+        return True
+
+    # YARA indicators
+    for match in triage.get("yara_matches", []):
+        rule = match.get("rule", "").lower()
+        if any(ind in rule for ind in OFFICE_YARA_INDICATORS):
+            return True
+
+    return False
+
+
+def run_office_analysis(
+    binary_path: Path,
+    output_dir: Path,
+    office_cmd: str,
+    timeout: int = 120,
+) -> dict:
+    """Run containerized olevba macro analysis.
+
+    Args:
+        binary_path: Path to the Office document
+        output_dir: Directory for output artifacts
+        office_cmd: Path to the wrapper script
+        timeout: Subprocess timeout in seconds
+
+    Returns:
+        dict with analysis results (analysis_success, vba_source, etc.)
+    """
+    try:
+        proc = subprocess.run(
+            [office_cmd, str(binary_path), str(output_dir)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd="/tmp",
+        )
+        if proc.returncode != 0:
+            return {
+                "analysis_success": False,
+                "analysis_type": "office_macro",
+                "error": f"olevba exited {proc.returncode}: {proc.stderr[:500]}",
+            }
+        # Parse JSON from stdout
+        result = json.loads(proc.stdout)
+        return result
+    except subprocess.TimeoutExpired:
+        return {
+            "analysis_success": False,
+            "analysis_type": "office_macro",
+            "error": f"olevba timed out after {timeout}s",
+        }
+    except json.JSONDecodeError as e:
+        return {
+            "analysis_success": False,
+            "analysis_type": "office_macro",
+            "error": f"Failed to parse olevba JSON output: {e}",
+        }
+    except Exception as e:
+        return {
+            "analysis_success": False,
+            "analysis_type": "office_macro",
+            "error": f"Office analysis error: {e}",
+        }
