@@ -531,6 +531,41 @@ def analysis_detail(analysis_id):
         except Exception:
             pass
 
+    # Load screenshots from JSON report
+    screenshots_html = ""
+    if os.path.exists(report_json):
+        try:
+            with open(report_json) as _f:
+                _report = _json.load(_f)
+            screenshots = _report.get("screenshots", {})
+            if screenshots.get("unique_count", 0) > 0:
+                frames = screenshots.get("frames_base64", [])
+                screenshots_html = '<div class="card"><h3>Screenshots'
+                screenshots_html += f' ({screenshots.get("unique_count", 0)} unique of {screenshots.get("total_screenshots", 0)} captured)'
+                screenshots_html += '</h3><div style="display:flex;flex-wrap:wrap;gap:8px;">'
+                for frame in frames[:10]:
+                    b64 = frame.get("base64", "")
+                    if b64:
+                        screenshots_html += f'<img src="data:image/png;base64,{b64}" style="max-width:300px;max-height:200px;border:1px solid #30363d;border-radius:4px;cursor:pointer;" onclick="window.open(this.src)" title="{escape(frame.get("filename", ""))}">'
+                screenshots_html += '</div>'
+                # QR codes
+                qr_codes = screenshots.get("qr_codes", [])
+                if qr_codes:
+                    screenshots_html += '<h4 style="margin-top:1rem;">QR Codes Detected</h4><table><tr><th>Type</th><th>Value</th><th>Frame</th></tr>'
+                    for qr in qr_codes:
+                        screenshots_html += f"<tr><td>{escape(str(qr.get('type', '?')))}</td><td>{escape(str(qr.get('value', ''))[:100])}</td><td>{escape(str(qr.get('frame', '?')))}</td></tr>"
+                    screenshots_html += '</table>'
+                # Visual analysis
+                visual = _report.get("visual_analysis", {})
+                if visual.get("enabled") and visual.get("analysis"):
+                    va = visual["analysis"]
+                    summary = va.get("visual_summary", "")
+                    if summary:
+                        screenshots_html += f'<h4 style="margin-top:1rem;">Visual Analysis</h4><p style="color:#c8d6e5;line-height:1.6;">{escape(summary)}</p>'
+                screenshots_html += '</div>'
+        except Exception:
+            pass
+
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Analysis {{ task_id }} — Dashboard</title>
         <style>{{ css }}</style>
@@ -587,6 +622,10 @@ def analysis_detail(analysis_id):
             {{ evasion_html }}
             {% endif %}
 
+            {% if screenshots_html %}
+            {{ screenshots_html }}
+            {% endif %}
+
             {% if ioc_rows %}
             <div class="card">
                 <h3>Indicators of Compromise ({{ ioc_count }})</h3>
@@ -631,7 +670,8 @@ def analysis_detail(analysis_id):
         sha256=escape(a["sha256"]), filename=escape(a["filename"] or "?"),
         family=escape(a["malware_family_guess"] or "?"),
         file_type=escape(a["file_type"] or "?"),
-        pdf_link=pdf_link, logs_link=logs_link, evasion_html=Markup(evasion_html),
+        pdf_link=pdf_link, logs_link=logs_link,
+        evasion_html=Markup(evasion_html), screenshots_html=Markup(screenshots_html),
         executive_summary=Markup(render_markdown(a["executive_summary"] or "")),
         narrative=Markup(render_markdown(a["narrative"] or "")),
         corr_rows=Markup(corr_rows),

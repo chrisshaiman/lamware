@@ -1392,6 +1392,41 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             del vol_data[key]
 
     # Stage 5: Executive summary (single-shot LLM, after all stages)
+    # Stage 5.7: Visual screenshot analysis (multimodal LLM)
+    screenshot_data = report.get("screenshots", {})
+    if (INTERPRET_ENABLED
+            and screenshot_data.get("analysis_success")
+            and screenshot_data.get("unique_count", 0) > 0
+            and screenshot_data.get("frames_base64")):
+        log.info(f"\n[Stage 5.7] Visual Analysis: analyzing {screenshot_data['unique_count']} unique screenshots...")
+        visual_init = {
+            "analysis_type": "visual_analysis",
+            "total_screenshots": screenshot_data.get("total_screenshots", 0),
+            "unique_count": screenshot_data.get("unique_count", 0),
+            "qr_codes": screenshot_data.get("qr_codes", []),
+            "frames_base64": screenshot_data.get("frames_base64", []),
+        }
+        report["visual_analysis"] = run_interpret(
+            visual_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        visual = report["visual_analysis"]
+        if visual.get("enabled") and visual.get("analysis"):
+            va = visual["analysis"]
+            ransom = va.get("ransom_note_detected", False)
+            events = len(va.get("notable_events", []))
+            evasion = va.get("evasion_signal", False)
+            log.info(f"  Notable events: {events}, Ransom note: {ransom}, Evasion signal: {evasion}")
+            if va.get("payment_info"):
+                for p in va["payment_info"]:
+                    log.info(f"  Payment [{p.get('type')}]: {p.get('value', '')[:60]}")
+        elif visual.get("error"):
+            log.warning(f"Visual analysis error: {visual['error']}")
+
     _summary_start = _time.time()
     update_stage(analysis_id_early, "summary", "started")
     if INTERPRET_ENABLED:

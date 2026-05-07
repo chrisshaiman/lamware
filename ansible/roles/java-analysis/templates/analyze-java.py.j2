@@ -25,6 +25,44 @@ import zipfile
 from pathlib import Path
 
 
+def deobfuscate_jar(jar_path: str) -> dict:
+    """Run java-deobfuscator to clean an obfuscated JAR.
+
+    java-deobfuscator (Apache 2.0) handles ZKM, Allatori, Stringer,
+    DashO, ProGuard, ClassGuard, and 20+ other obfuscators.
+    Falls back gracefully — deobfuscation failure is non-fatal.
+    """
+    output_path = "/work/deobfuscated.jar"
+    try:
+        # Run with auto-detect mode (tries all known transformers)
+        result = subprocess.run(
+            ["java", "-jar", "/opt/java-deobfuscator.jar",
+             "-input", jar_path,
+             "-output", output_path,
+             "-detect"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return {
+                "output_path": output_path,
+                "deobfuscated": True,
+                "stdout": result.stdout[:500],
+                "stderr": result.stderr[:500],
+            }
+        return {
+            "deobfuscated": False,
+            "error": result.stderr[:300] if result.stderr else "no output produced",
+        }
+    except FileNotFoundError:
+        return {"deobfuscated": False, "error": "java-deobfuscator not found"}
+    except subprocess.TimeoutExpired:
+        return {"deobfuscated": False, "error": "deobfuscation timed out (120s)"}
+    except Exception as e:
+        return {"deobfuscated": False, "error": str(e)}
+
+
 def decompile_jar(jar_path: str, output_dir: str) -> dict:
     """Run CFR to decompile a JAR file to Java source."""
     try:
@@ -250,10 +288,19 @@ def main():
     result["class_count"] = len([f for f in contents if f["category"] == "class"])
     result["file_count"] = len(contents)
 
-    # Decompile with CFR
+    # Step 1: Deobfuscate with java-deobfuscator (Apache 2.0)
+    deobfuscation = deobfuscate_jar(jar_path)
+    result["deobfuscation"] = deobfuscation
+
+    # Use deobfuscated JAR for decompilation if available
+    analysis_jar = jar_path
+    if deobfuscation.get("deobfuscated"):
+        analysis_jar = deobfuscation["output_path"]
+
+    # Step 2: Decompile with CFR
     work_dir = "/work/decompiled"
     os.makedirs(work_dir, exist_ok=True)
-    decompiled = decompile_jar(jar_path, work_dir)
+    decompiled = decompile_jar(analysis_jar, work_dir)
     result["decompilation"] = decompiled
 
     if decompiled.get("source"):
