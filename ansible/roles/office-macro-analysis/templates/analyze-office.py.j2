@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Office macro extraction and analysis using olevba.
+
+Extracts VBA macros, detects XLM macros, runs mraptor classification,
+and extracts IOCs from Office documents.
+
+Input:  Office document at /sample/<filename> (mounted read-only)
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import json
+import os
+import sys
+import traceback
+
+MAX_VBA_SOURCE = 100_000  # chars
+
+
+def analyze_office(file_path: str) -> dict:
+    """Extract and analyze macros from an Office document."""
+    from oletools.olevba import VBA_Parser, TYPE_OLE, TYPE_OpenXML
+    from oletools.mraptor import MacroRaptor
+
+    result = {
+        "analysis_success": False,
+        "analysis_type": "office_macro",
+        "file_format": None,
+        "has_macros": False,
+        "macro_type": "none",
+        "vba_source": "",
+        "vba_modules": [],
+        "auto_exec_triggers": [],
+        "suspicious_keywords": [],
+        "iocs_extracted": {
+            "urls": [],
+            "ips": [],
+            "file_paths": [],
+            "registry_keys": [],
+            "executable_names": [],
+        },
+        "obfuscation_indicators": [],
+        "mraptor_flags": {
+            "suspicious": False,
+            "auto_exec": False,
+            "write": False,
+            "execute": False,
+        },
+        "metadata": {},
+        "xlm_detected": False,
+        "xlm_note": None,
+    }
+
+    try:
+        vba_parser = VBA_Parser(file_path)
+    except Exception as e:
+        result["error"] = f"Failed to parse Office document: {e}"
+        return result
+
+    # Determine file format
+    if vba_parser.type == "OLE":
+        result["file_format"] = "OLE"
+    elif vba_parser.type == "OpenXML":
+        result["file_format"] = "OOXML"
+    else:
+        result["file_format"] = str(vba_parser.type)
+
+    # Check for macros
+    if not vba_parser.detect_vba_macros() and not vba_parser.detect_xlm_macros():
+        result["analysis_success"] = True
+        result["has_macros"] = False
+        vba_parser.close()
+        return result
+
+    result["has_macros"] = True
+
+    # --- Extract VBA macros ---
+    has_vba = False
+    has_xlm = False
+    all_vba_source = []
+    modules = []
+
+    try:
+        for (filename, stream_path, vba_filename, vba_code) in vba_parser.extract_macros():
+            if vba_code and vba_code.strip():
+                has_vba = True
+                modules.append({
+                    "name": vba_filename or filename or "unknown",
+                    "type": _classify_module(stream_path or ""),
+                    "code": vba_code[:20000],  # per-module cap
+                })
+                all_vba_source.append(
+                    f"' === Module: {vba_filename or filename} ===\n{vba_code}"
+                )
+    except Exception as e:
+        result["vba_extraction_error"] = str(e)
+
+    result["vba_modules"] = modules
+    combined_source = "\n\n".join(all_vba_source)
+    result["vba_source"] = combined_source[:MAX_VBA_SOURCE]
+
+    # --- Detect XLM macros ---
+    try:
+        if vba_parser.detect_xlm_macros():
+            has_xlm = True
+            result["xlm_detected"] = True
+            result["xlm_note"] = (
+                "XLM/Excel 4.0 macros detected. olevba flags presence but "
+                "full deobfuscation requires XLMMacroDeobfuscator (not installed)."
+            )
+    except Exception:
+        pass
+
+    # Set macro type
+    if has_vba and has_xlm:
+        result["macro_type"] = "both"
+    elif has_vba:
+        result["macro_type"] = "VBA"
+    elif has_xlm:
+        result["macro_type"] = "XLM"
+
+    # --- Analyze VBA code for suspicious patterns ---
+    try:
+        analysis_results = vba_parser.analyze_macros()
+        for (kw_type, keyword, description) in analysis_results:
+            if kw_type == "AutoExec":
+                if keyword not in result["auto_exec_triggers"]:
+                    result["auto_exec_triggers"].append(keyword)
+            elif kw_type == "Suspicious":
+                result["suspicious_keywords"].append({
+                    "keyword": keyword,
+                    "description": description,
+                })
+            elif kw_type == "IOC":
+                _classify_ioc(keyword, description, result["iocs_extracted"])
+            elif kw_type == "Hex String":
+                result["obfuscation_indicators"].append("hex string encoding")
+            elif kw_type == "Base64 String":
+                result["obfuscation_indicators"].append("Base64 encoding")
+            elif kw_type == "Dridex String":
+                result["obfuscation_indicators"].append("Dridex-style string obfuscation")
+            elif kw_type == "VBA obfuscated Strings":
+                result["obfuscation_indicators"].append("VBA string obfuscation")
+    except Exception as e:
+        result["analysis_error"] = str(e)
+
+    # Detect chr() concatenation obfuscation
+    if combined_source:
+        chr_count = combined_source.lower().count("chr(") + combined_source.lower().count("chrw(")
+        if chr_count >= 10:
+            result["obfuscation_indicators"].append(f"chr() concatenation ({chr_count} calls)")
+
+    # Deduplicate obfuscation indicators
+    result["obfuscation_indicators"] = list(set(result["obfuscation_indicators"]))
+
+    # --- Run mraptor ---
+    try:
+        if combined_source:
+            mraptor = MacroRaptor(combined_source)
+            mraptor.scan()
+            result["mraptor_flags"] = {
+                "suspicious": mraptor.suspicious,
+                "auto_exec": mraptor.autoexec,
+                "write": mraptor.writefile,
+                "execute": mraptor.execute,
+            }
+    except Exception:
+        pass
+
+    # --- Extract document metadata ---
+    try:
+        if hasattr(vba_parser, 'ole_file') and vba_parser.ole_file:
+            meta = vba_parser.ole_file.get_metadata()
+            if meta:
+                result["metadata"] = {
+                    "author": _safe_str(meta.author),
+                    "last_saved_by": _safe_str(meta.last_saved_by),
+                    "create_date": _safe_str(meta.create_time),
+                    "modify_date": _safe_str(meta.last_saved_time),
+                    "company": _safe_str(meta.company),
+                    "title": _safe_str(meta.title),
+                }
+    except Exception:
+        pass
+
+    vba_parser.close()
+    result["analysis_success"] = True
+    return result
+
+
+def _classify_module(stream_path: str) -> str:
+    """Classify VBA module type from stream path."""
+    path_lower = stream_path.lower()
+    if "thisdocument" in path_lower or "thisworkbook" in path_lower:
+        return "Document"
+    if "userform" in path_lower:
+        return "UserForm"
+    if "class" in path_lower:
+        return "Class"
+    return "Module"
+
+
+def _classify_ioc(keyword: str, description: str, iocs: dict) -> None:
+    """Classify an IOC from olevba analysis into the appropriate bucket."""
+    desc_lower = (description or "").lower()
+    kw_lower = keyword.lower()
+
+    if "://" in keyword or "http" in kw_lower:
+        if keyword not in iocs["urls"]:
+            iocs["urls"].append(keyword)
+    elif _looks_like_ip(keyword):
+        if keyword not in iocs["ips"]:
+            iocs["ips"].append(keyword)
+    elif any(p in kw_lower for p in ("\\", "/tmp", "/var", "appdata", "programdata", "temp")):
+        if keyword not in iocs["file_paths"]:
+            iocs["file_paths"].append(keyword)
+    elif "hk" in kw_lower and "\\" in keyword:
+        if keyword not in iocs["registry_keys"]:
+            iocs["registry_keys"].append(keyword)
+    elif keyword.lower().endswith((".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".js")):
+        if keyword not in iocs["executable_names"]:
+            iocs["executable_names"].append(keyword)
+
+
+def _looks_like_ip(s: str) -> bool:
+    """Check if string looks like an IPv4 address."""
+    parts = s.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(p) <= 255 for p in parts)
+    except ValueError:
+        return False
+
+
+def _safe_str(val) -> str:
+    """Convert metadata value to string safely."""
+    if val is None:
+        return ""
+    return str(val).strip()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(json.dumps({"analysis_success": False, "error": "No input file"}))
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+    if not os.path.isfile(file_path):
+        print(json.dumps({"analysis_success": False, "error": f"File not found: {file_path}"}))
+        sys.exit(1)
+
+    try:
+        result = analyze_office(file_path)
+    except Exception as e:
+        result = {
+            "analysis_success": False,
+            "analysis_type": "office_macro",
+            "error": f"Unhandled error: {e}",
+            "traceback": traceback.format_exc(),
+        }
+
+    print(json.dumps(result))
