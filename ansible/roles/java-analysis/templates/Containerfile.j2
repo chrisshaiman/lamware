@@ -15,7 +15,7 @@ COPY cfr.jar /opt/cfr.jar
 
 # java-deobfuscator — Apache 2.0, handles ZKM, Allatori, Stringer, etc.
 RUN wget -O /opt/java-deobfuscator.jar \
-    https://github.com/java-deobfuscator/deobfuscator/releases/download/1.1.0/deobfuscator-1.1.0.jar \
+    https://github.com/java-deobfuscator/deobfuscator/releases/download/latest/deobfuscator.jar \
     && apt-get purge -y wget && apt-get autoremove -y
 
 COPY analyze-java.py /opt/analyze-java.py
