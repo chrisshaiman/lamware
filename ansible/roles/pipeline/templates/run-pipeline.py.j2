@@ -85,6 +85,8 @@ DOTNET_CMD = "{{ dotnet_analysis_install_dir | default('/opt/dotnet-analysis') }
 GO_CMD = "{{ go_analysis_install_dir | default('/opt/go-analysis') }}/run-go-analysis"
 PYINSTALLER_CMD = "{{ pyinstaller_analysis_install_dir | default('/opt/pyinstaller-analysis') }}/run-pyinstaller-analysis"
 JAVA_CMD = "{{ java_analysis_install_dir | default('/opt/java-analysis') }}/run-java-analysis"
+SCREENSHOT_CMD = "{{ screenshot_analysis_install_dir | default('/opt/screenshot-analysis') }}/run-screenshot-analysis"
+PDF_CMD = "{{ pdf_generation_install_dir | default('/opt/pdf-generation') }}/run-pdf-generation"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
 INTERPRET_ENABLED = {% if interpret_enabled | default(true) %}True{% else %}False{% endif %}
 
@@ -1311,6 +1313,42 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     else:
         report["evasion_analysis"] = {"enabled": False, "reason": "not_triggered"}
 
+    # Stage 5.5: Screenshot analysis — deduplicate + QR detection
+    cape_task_id = report.get("cape", {}).get("task_id")
+    if cape_task_id:
+        shots_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id}/shots")
+        if shots_dir.is_dir() and any(shots_dir.glob("*.png")):
+            log.info(f"\n[Stage 5.5] Screenshot Analysis: dedup + QR detection...")
+            try:
+                screenshot_result = subprocess.run(
+                    [SCREENSHOT_CMD, str(shots_dir), str(output_dir)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if screenshot_result.returncode == 0:
+                    try:
+                        screenshot_data = json.loads(screenshot_result.stdout)
+                        report["screenshots"] = screenshot_data
+                        total = screenshot_data.get("total_screenshots", 0)
+                        unique = screenshot_data.get("unique_count", 0)
+                        qr_count = len(screenshot_data.get("qr_codes", []))
+                        evasion = screenshot_data.get("evasion_signal", False)
+                        log.info(f"  {total} total → {unique} unique frames, {qr_count} QR codes")
+                        if evasion:
+                            log.info(f"  Evasion signal: all screenshots identical — no visual activity")
+                        for qr in screenshot_data.get("qr_codes", []):
+                            log.info(f"  QR [{qr.get('type')}]: {qr.get('value', '')[:80]}")
+                    except json.JSONDecodeError:
+                        log.warning(f"Screenshot analysis returned invalid JSON")
+                else:
+                    log.warning(f"Screenshot analysis failed: {screenshot_result.stderr[:200]}")
+            except subprocess.TimeoutExpired:
+                log.warning("Screenshot analysis timed out (60s)")
+            except FileNotFoundError:
+                log.warning("Screenshot analysis command not found — deploy screenshot-analysis role")
+        else:
+            report["screenshots"] = {"total_screenshots": 0, "unique_count": 0,
+                                     "note": "No screenshots captured (QEMU screenshots may not be enabled)"}
+
     # Cross-tool correlation — must run BEFORE severity calculation
     # (severity reads cross_correlations to boost score for critical findings)
     log.info(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
@@ -1417,15 +1455,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     complete_pipeline(analysis_id or analysis_id_early, "completed",
                       stage_timings=stage_timings)
 
-    # Stage 6: PDF report generation
+    # Stage 6: PDF report generation (containerized)
     log.info(f"\n[Stage 6] PDF Report: generating...")
     pdf_path = report_path.parent / "report.pdf"
     try:
         result = subprocess.run(
-            ["{{ pipeline_install_dir }}/generate-report.py", str(report_path), str(pdf_path)],
+            [PDF_CMD, str(report_path), str(pdf_path)],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120,
         )
         if result.returncode == 0:
             log.info(f"  PDF written to: {pdf_path}")
@@ -1434,7 +1472,23 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         else:
             log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
     except subprocess.TimeoutExpired:
-        log.error("  [!] PDF generation timed out (60s)")
+        log.error("  [!] PDF generation timed out (120s)")
+    except FileNotFoundError:
+        # Fallback to host-side generation if container not deployed
+        log.warning("  PDF container not found — falling back to host-side generation")
+        try:
+            result = subprocess.run(
+                ["{{ pipeline_install_dir }}/generate-report.py", str(report_path), str(pdf_path)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                log.info(f"  PDF written to: {pdf_path}")
+                if analysis_id:
+                    mark_pdf_generated(analysis_id)
+            else:
+                log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
+        except Exception as e:
+            log.error(f"  [!] PDF generation error: {e}")
     except Exception as e:
         log.error(f"  [!] PDF generation error: {e}")
 
@@ -1534,11 +1588,10 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         pdf_path = new_report_path.parent / "report.pdf"
         try:
             result = subprocess.run(
-                ["{{ pipeline_install_dir }}/generate-report.py",
-                 str(new_report_path), str(pdf_path)],
+                [PDF_CMD, str(new_report_path), str(pdf_path)],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=120,
             )
             if result.returncode == 0:
                 log.info(f"  PDF written to: {pdf_path}")
@@ -1547,7 +1600,21 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             else:
                 log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
         except subprocess.TimeoutExpired:
-            log.error("  [!] PDF generation timed out (60s)")
+            log.error("  [!] PDF generation timed out (120s)")
+        except FileNotFoundError:
+            log.warning("  PDF container not found — falling back to host")
+            try:
+                result = subprocess.run(
+                    ["{{ pipeline_install_dir }}/generate-report.py",
+                     str(new_report_path), str(pdf_path)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    log.info(f"  PDF written to: {pdf_path}")
+                    if analysis_id:
+                        mark_pdf_generated(analysis_id)
+            except Exception:
+                pass
         except Exception as e:
             log.error(f"  [!] PDF generation error: {e}")
 

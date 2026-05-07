@@ -48,7 +48,7 @@ def is_java_binary(report: dict) -> bool:
 
 
 def run_java_analysis(binary_path: Path, output_dir: Path,
-                      java_cmd: str, timeout: int = 120) -> dict:
+                      java_cmd: str, timeout: int = 240) -> dict:
     """Run CFR decompilation on a Java JAR file.
 
     Returns structured JSON with decompiled Java source, class listing,

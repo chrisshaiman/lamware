@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""
+analyze-screenshots.py — Deduplicate screenshots and detect QR codes.
+
+Processes CAPE/QEMU screenshots:
+1. Perceptual hash deduplication — keeps only frames where something changed
+2. QR code detection — decodes QR codes visible in screenshots
+3. Outputs JSON with unique frame paths and decoded QR values
+
+Usage: python3 analyze-screenshots.py /shots [hash_threshold] [max_unique]
+
+Output: JSON to stdout
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import base64
+import json
+import os
+import sys
+from pathlib import Path
+
+import imagehash
+from PIL import Image
+
+# pyzbar is optional — QR detection degrades gracefully
+try:
+    from pyzbar.pyzbar import decode as qr_decode
+    HAS_PYZBAR = True
+except ImportError:
+    HAS_PYZBAR = False
+
+
+def deduplicate_screenshots(shots_dir: Path, threshold: int = 5,
+                            max_unique: int = 20) -> list[dict]:
+    """Deduplicate screenshots using perceptual hashing.
+
+    Returns list of unique frames with metadata. Consecutive frames
+    with perceptual hash difference <= threshold are considered
+    duplicates and dropped.
+    """
+    # Sort by filename (CAPE names them 0001.png, 0002.png, etc.)
+    screenshots = sorted(
+        [f for f in shots_dir.iterdir()
+         if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg")],
+        key=lambda f: f.name,
+    )
+
+    if not screenshots:
+        return []
+
+    unique = []
+    prev_hash = None
+
+    for screenshot in screenshots:
+        try:
+            img = Image.open(screenshot)
+            h = imagehash.phash(img)
+        except (OSError, ValueError):
+            continue
+
+        if prev_hash is None or (h - prev_hash) > threshold:
+            # Read image as base64 for LLM consumption
+            img_bytes = screenshot.read_bytes()
+            unique.append({
+                "filename": screenshot.name,
+                "path": str(screenshot),
+                "hash": str(h),
+                "size": len(img_bytes),
+                "width": img.width if img else 0,
+                "height": img.height if img else 0,
+                "base64": base64.b64encode(img_bytes).decode("ascii"),
+            })
+
+        prev_hash = h
+
+        if len(unique) >= max_unique:
+            break
+
+    return unique
+
+
+def detect_qr_codes(unique_frames: list[dict]) -> list[dict]:
+    """Scan unique screenshots for QR codes and decode them."""
+    if not HAS_PYZBAR:
+        return []
+
+    qr_findings = []
+    seen_values = set()
+
+    for frame in unique_frames:
+        try:
+            img = Image.open(frame["path"])
+            codes = qr_decode(img)
+            for code in codes:
+                value = code.data.decode("utf-8", errors="replace")
+                if value and value not in seen_values:
+                    seen_values.add(value)
+
+                    # Classify the QR content
+                    qr_type = "text"
+                    if value.startswith(("http://", "https://")):
+                        qr_type = "url"
+                    elif value.startswith("bitcoin:") or len(value) in (25, 34, 42):
+                        qr_type = "crypto_address"
+                    elif ".onion" in value:
+                        qr_type = "onion_url"
+
+                    qr_findings.append({
+                        "value": value[:500],
+                        "type": qr_type,
+                        "frame": frame["filename"],
+                        "barcode_type": code.type,
+                    })
+        except (OSError, ValueError):
+            continue
+
+    return qr_findings
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: analyze-screenshots.py <shots_dir> [threshold] [max_unique]"}))
+        sys.exit(1)
+
+    shots_dir = Path(sys.argv[1])
+    threshold = int(sys.argv[2]) if len(sys.argv) > 2 else {{ screenshot_hash_threshold }}
+    max_unique = int(sys.argv[3]) if len(sys.argv) > 3 else {{ screenshot_max_unique }}
+
+    if not shots_dir.is_dir():
+        print(json.dumps({"error": f"Directory not found: {shots_dir}",
+                          "unique_count": 0, "qr_codes": []}))
+        sys.exit(0)
+
+    result = {
+        "total_screenshots": len(list(shots_dir.glob("*.png"))),
+    }
+
+    # Deduplicate
+    unique = deduplicate_screenshots(shots_dir, threshold, max_unique)
+    result["unique_count"] = len(unique)
+
+    # Strip base64 from the summary (keep it in the frames for LLM)
+    result["unique_frames"] = [
+        {k: v for k, v in f.items() if k != "base64"}
+        for f in unique
+    ]
+
+    # QR code detection
+    qr_codes = detect_qr_codes(unique)
+    result["qr_codes"] = qr_codes
+
+    # Evasion signal: all screenshots identical = sample didn't execute visually
+    if result["total_screenshots"] > 10 and result["unique_count"] <= 1:
+        result["evasion_signal"] = True
+        result["evasion_note"] = "All screenshots identical — sample produced no visual activity"
+    else:
+        result["evasion_signal"] = False
+
+    # Include base64 frames for LLM consumption (separate key to keep summary clean)
+    result["frames_base64"] = [
+        {"filename": f["filename"], "base64": f["base64"]}
+        for f in unique[:10]  # cap at 10 for LLM context
+    ]
+
+    result["analysis_success"] = True
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()

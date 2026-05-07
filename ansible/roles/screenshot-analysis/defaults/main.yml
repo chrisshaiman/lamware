@@ -1,0 +1,14 @@
+---
+# roles/screenshot-analysis/defaults/main.yml
+
+screenshot_analysis_install_dir: /opt/screenshot-analysis
+screenshot_analysis_container_memory: "512m"
+screenshot_analysis_container_cpus: "1"
+screenshot_analysis_container_timeout: "60"
+
+# Perceptual hash threshold — higher = more similar frames kept
+# 5 bits difference catches new windows/dialogs, ignores cursor blink
+screenshot_hash_threshold: 5
+
+# Maximum unique screenshots to keep (for LLM context budget)
+screenshot_max_unique: 20
