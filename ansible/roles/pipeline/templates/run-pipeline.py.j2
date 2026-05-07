@@ -1508,22 +1508,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
     except subprocess.TimeoutExpired:
         log.error("  [!] PDF generation timed out (120s)")
-    except FileNotFoundError:
-        # Fallback to host-side generation if container not deployed
-        log.warning("  PDF container not found — falling back to host-side generation")
-        try:
-            result = subprocess.run(
-                ["{{ pipeline_install_dir }}/generate-report.py", str(report_path), str(pdf_path)],
-                capture_output=True, text=True, timeout=60,
-            )
-            if result.returncode == 0:
-                log.info(f"  PDF written to: {pdf_path}")
-                if analysis_id:
-                    mark_pdf_generated(analysis_id)
-            else:
-                log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
-        except Exception as e:
-            log.error(f"  [!] PDF generation error: {e}")
     except Exception as e:
         log.error(f"  [!] PDF generation error: {e}")
 
@@ -1636,20 +1620,6 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
                 log.error(f"  [!] PDF generation failed: {result.stderr[:200]}")
         except subprocess.TimeoutExpired:
             log.error("  [!] PDF generation timed out (120s)")
-        except FileNotFoundError:
-            log.warning("  PDF container not found — falling back to host")
-            try:
-                result = subprocess.run(
-                    ["{{ pipeline_install_dir }}/generate-report.py",
-                     str(new_report_path), str(pdf_path)],
-                    capture_output=True, text=True, timeout=60,
-                )
-                if result.returncode == 0:
-                    log.info(f"  PDF written to: {pdf_path}")
-                    if analysis_id:
-                        mark_pdf_generated(analysis_id)
-            except Exception:
-                pass
         except Exception as e:
             log.error(f"  [!] PDF generation error: {e}")
 
