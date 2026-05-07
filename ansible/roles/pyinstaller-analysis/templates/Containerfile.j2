@@ -10,7 +10,7 @@ FROM docker.io/library/python:3.12-slim
 
 # Build pycdc from source — supports Python 3.11/3.12 bytecode
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake g++ \
+    git cmake make g++ \
     && git clone --depth 1 https://github.com/zrax/pycdc.git /tmp/pycdc \
     && cd /tmp/pycdc \
     && cmake . \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && cp pycdc /usr/local/bin/pycdc \
     && cp pycdas /usr/local/bin/pycdas \
     && rm -rf /tmp/pycdc \
-    && apt-get purge -y git cmake g++ && apt-get autoremove -y \
+    && apt-get purge -y git cmake make g++ && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # pyinstxtractor is a single-file script — download from GitHub
