@@ -5,9 +5,9 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: root
-    group: root
-    mode: "0755"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
   loop:
     - "{{ office_macro_analysis_install_dir }}"
     - "{{ office_macro_analysis_install_dir }}/build"
@@ -16,35 +16,38 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ office_macro_analysis_install_dir }}/build/Containerfile"
-    owner: root
-    group: root
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
     mode: "0644"
 
 - name: Deploy analysis script
   ansible.builtin.template:
     src: analyze-office.py.j2
     dest: "{{ office_macro_analysis_install_dir }}/build/analyze-office.py"
-    owner: root
-    group: root
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
     mode: "0644"
 
 - name: Build office-macro-analysis container
-  containers.podman.podman_image:
-    name: office-macro-analysis
-    tag: latest
-    path: "{{ office_macro_analysis_install_dir }}/build"
-    build:
-      file: Containerfile
-      extra_args: "--no-cache"
-    force: true
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      --no-cache
+      -t localhost/office-macro-analysis:latest
+      -f {{ office_macro_analysis_install_dir }}/build/Containerfile
+      {{ office_macro_analysis_install_dir }}/build
+  become: true
+  become_user: "{{ cape_user }}"
+  changed_when: true
 
 - name: Deploy wrapper script
   ansible.builtin.template:
     src: run-office-analysis-wrapper.sh.j2
     dest: "{{ office_macro_analysis_install_dir }}/run-office-analysis"
-    owner: root
-    group: root
-    mode: "0755"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0750"
 
 - name: Symlink wrapper to PATH
   ansible.builtin.file:
