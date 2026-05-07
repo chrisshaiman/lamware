@@ -212,12 +212,12 @@ def _classify_ioc(keyword: str, description: str, iocs: dict) -> None:
     elif _looks_like_ip(keyword):
         if keyword not in iocs["ips"]:
             iocs["ips"].append(keyword)
-    elif any(p in kw_lower for p in ("\\", "/tmp", "/var", "appdata", "programdata", "temp")):
-        if keyword not in iocs["file_paths"]:
-            iocs["file_paths"].append(keyword)
     elif "hk" in kw_lower and "\\" in keyword:
         if keyword not in iocs["registry_keys"]:
             iocs["registry_keys"].append(keyword)
+    elif any(p in kw_lower for p in ("\\", "/tmp", "/var", "appdata", "programdata", "temp")):
+        if keyword not in iocs["file_paths"]:
+            iocs["file_paths"].append(keyword)
     elif keyword.lower().endswith((".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".js")):
         if keyword not in iocs["executable_names"]:
             iocs["executable_names"].append(keyword)

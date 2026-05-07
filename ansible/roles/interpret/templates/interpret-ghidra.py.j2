@@ -1089,7 +1089,6 @@ def build_java_message(java_data: dict[str, Any], config: dict[str, Any]) -> str
 
 def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) -> str:
     """Construct the user message from olevba macro extraction output."""
-    max_string_length = config.get("max_string_length", DEFAULT_CONFIG["max_string_length"])
 
     parts: list[str] = []
 
