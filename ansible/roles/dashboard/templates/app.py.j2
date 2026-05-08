@@ -13,6 +13,7 @@ License: Apache 2.0
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import markdown as md
 import psycopg2
@@ -139,6 +140,17 @@ pre {
 }
 .cat-footer .cat:hover { color: #f0883e; cursor: default; }
 .cat-footer .cat-label { color: #484f58; font-size: 11px; margin-top: 4px; }
+.alert-banner {
+    padding: 8px 20px; font-size: 13px; font-weight: 600;
+    text-align: center; display: none;
+}
+.alert-banner.critical {
+    display: block; background: #da3633; color: white;
+}
+.alert-banner.warning {
+    display: block; background: #d29922; color: white;
+}
+.alert-banner a { color: white; text-decoration: underline; }
 """
 
 SOURCE_COLORS = {
@@ -168,6 +180,81 @@ def escape(s):
     if s is None:
         return ""
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---------------------------------------------------------------------------
+# Operational alerts — read from status files, no database
+# ---------------------------------------------------------------------------
+
+def get_alert_state() -> dict:
+    """Read operational alert state from status files."""
+    import shutil
+    alert = {
+        "level": "ok",  # ok, warning, critical
+        "message": "",
+        "paused": False,
+        "network_status": "unknown",
+        "disk_percent": 0,
+        "auto_feeder": {},
+    }
+
+    # Check PAUSE file
+    pause_path = Path("/opt/pipeline/PAUSE")
+    if pause_path.exists():
+        alert["paused"] = True
+        alert["level"] = "critical"
+        alert["message"] = "Auto-feeder paused"
+
+    # Check network monitor
+    net_status_path = Path("/opt/network-monitor/status.json")
+    if net_status_path.exists():
+        try:
+            with open(net_status_path) as f:
+                net = json.load(f)
+            alert["network_status"] = net.get("status", "unknown")
+            if net.get("status") == "alert":
+                alert["level"] = "critical"
+                alert["message"] = net.get("alert_message", "Network alert")
+        except Exception:
+            alert["network_status"] = "error"
+
+    # Check auto-feeder state
+    feeder_path = Path("/opt/auto-feeder/state.json")
+    if feeder_path.exists():
+        try:
+            with open(feeder_path) as f:
+                alert["auto_feeder"] = json.load(f)
+            failures = alert["auto_feeder"].get("consecutive_failures", 0)
+            if failures > 0 and alert["level"] != "critical":
+                alert["level"] = "warning"
+                alert["message"] = f"{failures} consecutive failure(s)"
+        except Exception:
+            pass
+
+    # Check disk usage
+    try:
+        usage = shutil.disk_usage("/opt/pipeline")
+        alert["disk_percent"] = round((usage.used / usage.total) * 100, 1)
+        if alert["disk_percent"] > 80:
+            if alert["level"] != "critical":
+                alert["level"] = "critical"
+            alert["message"] = f"Disk usage {alert['disk_percent']}%"
+        elif alert["disk_percent"] > 70:
+            if alert["level"] == "ok":
+                alert["level"] = "warning"
+    except Exception:
+        pass
+
+    return alert
+
+
+def render_alert_banner() -> str:
+    """Generate the alert banner HTML."""
+    alert = get_alert_state()
+    if alert["level"] == "ok":
+        return ""
+    msg = escape(alert["message"])
+    return f'<div class="alert-banner {alert["level"]}">{msg} — <a href="/alerts">Details</a></div>'
 
 
 def render_markdown(text):
@@ -292,9 +379,10 @@ def index():
         <title>Malware Analysis Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
+        {{ alert_banner }}
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a> <a href="/alerts">Alerts</a></nav>
             <form action="/" method="get" style="margin-left:auto;">
                 <input class="search-box" name="q" placeholder="Search hash, filename, family..." value="{{ search }}">
             </form>
@@ -314,7 +402,7 @@ def index():
   > ^ <</div>
             <div class="cat-label">security cat is watching</div>
         </div>
-    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search)
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search, alert_banner=Markup(render_alert_banner()))
 
 
 @app.route("/analysis/<int:analysis_id>")
@@ -587,9 +675,10 @@ def analysis_detail(analysis_id):
         <title>Analysis {{ task_id }} — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
+        {{ alert_banner }}
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a> <a href="/alerts">Alerts</a></nav>
         </header>
         <div class="container">
             <h2>Analysis: {{ task_id }}</h2>
@@ -680,6 +769,7 @@ def analysis_detail(analysis_id):
         </div>
     </body></html>{% endraw %}""",
         css=Markup(CSS), task_id=a["task_id"],
+        alert_banner=Markup(render_alert_banner()),
         severity_badge=Markup(severity_badge(a["severity"])),
         malscore=a["malscore"] or "?",
         ioc_count=len(iocs), tech_count=len(techniques), sig_count=len(signatures),
@@ -759,9 +849,10 @@ def iocs_list():
         <title>IOCs — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
+        {{ alert_banner }}
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a> <a href="/alerts">Alerts</a></nav>
             <form action="/iocs" method="get" style="margin-left:auto;display:flex;gap:8px;">
                 <select name="type" class="search-box" style="width:150px;">
                     <option value="">All types</option>{{ type_options }}
@@ -776,7 +867,7 @@ def iocs_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search, type_options=Markup(type_options))
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), search=search, type_options=Markup(type_options), alert_banner=Markup(render_alert_banner()))
 
 
 @app.route("/techniques")
@@ -815,9 +906,10 @@ def techniques_list():
         <title>ATT&CK — Dashboard</title>
         <style>{{ css }}</style>
     </head><body>
+        {{ alert_banner }}
         <header>
             <h1>Malware Analysis Dashboard</h1>
-            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a></nav>
+            <nav><a href="/">Analyses</a> <a href="/status">Status</a> <a href="/iocs">IOCs</a> <a href="/techniques">ATT&CK</a> <a href="/alerts">Alerts</a></nav>
         </header>
         <div class="container">
             <h2>MITRE ATT&CK Techniques</h2>
@@ -826,7 +918,7 @@ def techniques_list():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows))
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), alert_banner=Markup(render_alert_banner()))
 
 
 @app.route("/pdf/<task_id>")
@@ -989,6 +1081,7 @@ def pipeline_status():
         <style>{{ css }}</style>
         <meta http-equiv="refresh" content="10">
     </head><body>
+        {{ alert_banner }}
         <header>
             <h1>Malware Analysis Dashboard</h1>
             <nav>
@@ -996,6 +1089,7 @@ def pipeline_status():
                 <a href="/status">Status</a>
                 <a href="/iocs">IOCs</a>
                 <a href="/techniques">ATT&CK</a>
+                <a href="/alerts">Alerts</a>
             </nav>
         </header>
         <div class="container">
@@ -1007,7 +1101,155 @@ def pipeline_status():
                 {{ rows }}
             </table>
         </div>
-    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows))
+    </body></html>{% endraw %}""", css=Markup(CSS), rows=Markup(rows), alert_banner=Markup(render_alert_banner()))
+
+
+@app.route("/alerts")
+def alerts_page():
+    """Operational health and alerts dashboard."""
+    alert = get_alert_state()
+    feeder = alert.get("auto_feeder", {})
+
+    # Read recent auto-feeder log errors
+    log_errors = []
+    log_path = Path("/opt/auto-feeder/auto-feeder.log")
+    if log_path.exists():
+        try:
+            lines = log_path.read_text().splitlines()
+            log_errors = [l for l in lines[-50:] if "ERROR" in l or "WARNING" in l][-10:]
+        except Exception:
+            pass
+
+    # Read daily cost from database
+    daily_cost = 0.0
+    weekly_cost = 0.0
+    try:
+        with db_connection() as cur:
+            cur.execute("""
+                SELECT COALESCE(SUM(llm_cost_usd), 0)
+                FROM analyses
+                WHERE started_at > NOW() - INTERVAL '1 day'
+            """)
+            daily_cost = float(cur.fetchone()[0])
+            cur.execute("""
+                SELECT COALESCE(SUM(llm_cost_usd), 0)
+                FROM analyses
+                WHERE started_at > NOW() - INTERVAL '7 days'
+            """)
+            weekly_cost = float(cur.fetchone()[0])
+    except Exception:
+        pass
+
+    # Network monitor details
+    net = {}
+    net_path = Path("/opt/network-monitor/status.json")
+    if net_path.exists():
+        try:
+            with open(net_path) as f:
+                net = json.load(f)
+        except Exception:
+            pass
+
+    return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
+        <title>Operational Alerts — Dashboard</title>
+        <style>{{ css }}</style>
+    </head><body>
+        {{ alert_banner }}
+        <header>
+            <h1>Malware Analysis Dashboard</h1>
+            <nav>
+                <a href="/">Analyses</a>
+                <a href="/status">Status</a>
+                <a href="/iocs">IOCs</a>
+                <a href="/techniques">ATT&CK</a>
+                <a href="/alerts" style="color:#f0883e;">Alerts</a>
+            </nav>
+        </header>
+        <div class="container">
+            <h2>Operational Health</h2>
+
+            <div class="stat-grid">
+                <div class="stat-box">
+                    <div class="number" style="color:{{ '#da3633' if net_status == 'alert' else '#3fb950' if net_status == 'ok' else '#8b949e' }};">
+                        {{ net_status|upper }}</div>
+                    <div class="label">Network (Air-Gap)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number" style="color:{{ '#da3633' if paused else '#3fb950' }};">
+                        {{ 'PAUSED' if paused else 'ACTIVE' }}</div>
+                    <div class="label">Auto-Feeder</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number" style="color:{{ '#da3633' if disk > 80 else '#d29922' if disk > 70 else '#3fb950' }};">
+                        {{ disk }}%</div>
+                    <div class="label">Disk Usage</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number">${{ '%.2f'|format(daily_cost) }}</div>
+                    <div class="label">Cost Today</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Network Monitor</h3>
+                <p>Last check: {{ net_last_check or 'never' }}</p>
+                <p>Detonation → Internet: {{ net_det_internet_drop }} dropped, {{ net_det_internet_accept }} accepted</p>
+                <p>Detonation → Management: {{ net_det_mgmt_drop }} dropped, {{ net_det_mgmt_accept }} accepted</p>
+                {% if net_alert %}<p style="color:#da3633;font-weight:bold;">{{ net_alert }}</p>{% endif %}
+            </div>
+
+            <div class="card">
+                <h3>Auto-Feeder</h3>
+                <p>Samples today: {{ feeder_today_samples }} | Total: {{ feeder_total }}</p>
+                <p>Cost today: ${{ '%.2f'|format(feeder_today_cost) }} / ${{ '%.2f'|format(feeder_budget) }}</p>
+                <p>Consecutive failures: {{ feeder_failures }}</p>
+                {% if feeder_last_failure %}<p>Last failure: {{ feeder_last_failure_reason }} ({{ feeder_last_failure }})</p>{% endif %}
+                <p>Last success: {{ feeder_last_success or 'never' }}</p>
+            </div>
+
+            <div class="card">
+                <h3>Cost Summary</h3>
+                <p>Today: ${{ '%.2f'|format(daily_cost) }} | This week: ${{ '%.2f'|format(weekly_cost) }}</p>
+            </div>
+
+            {% if log_errors %}
+            <div class="card">
+                <h3>Recent Errors (auto-feeder log)</h3>
+                <pre>{{ log_errors_text }}</pre>
+            </div>
+            {% endif %}
+        </div>
+        <div class="cat-footer">
+            <div class="cat" title="Security cat is watching your malware">  /\\_/\\
+ ( o.o )
+  > ^ <</div>
+            <div class="cat-label">security cat is watching</div>
+        </div>
+    </body></html>{% endraw %}""",
+        css=Markup(CSS),
+        alert_banner=Markup(render_alert_banner()),
+        net_status=net.get("status", "unknown"),
+        net_last_check=net.get("last_check", ""),
+        net_det_internet_drop=net.get("detonation_to_internet", {}).get("drop_packets", 0),
+        net_det_internet_accept=net.get("detonation_to_internet", {}).get("accept_packets", 0),
+        net_det_mgmt_drop=net.get("detonation_to_management", {}).get("drop_packets", 0),
+        net_det_mgmt_accept=net.get("detonation_to_management", {}).get("accept_packets", 0),
+        net_alert=net.get("alert_message", ""),
+        paused=alert["paused"],
+        disk=alert["disk_percent"],
+        daily_cost=daily_cost,
+        weekly_cost=weekly_cost,
+        feeder_today_samples=feeder.get("today_samples", 0),
+        feeder_total=feeder.get("total_samples", 0),
+        feeder_today_cost=feeder.get("today_cost_usd", 0),
+        feeder_budget=10.0,
+        feeder_failures=feeder.get("consecutive_failures", 0),
+        feeder_last_failure=feeder.get("last_failure", ""),
+        feeder_last_failure_reason=feeder.get("last_failure_reason", ""),
+        feeder_last_success=feeder.get("last_success", ""),
+        log_errors=bool(log_errors),
+        log_errors_text="\n".join(log_errors),
+    )
 
 
 if __name__ == "__main__":
