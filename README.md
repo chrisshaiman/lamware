@@ -129,6 +129,7 @@ The pipeline detects the binary type and routes to the right tool:
 | PyInstaller | pyinstxtractor + pycdc | Python 3.11/3.12 source, multi-file decompilation |
 | Java JAR | java-deobfuscator + CFR | Deobfuscated Java source, manifest, class listing |
 | Office (VBA macros) | olevba extraction + mraptor | VBA source, auto-exec triggers, IOCs, deobfuscation |
+| PowerShell | pwsh + PSDecode | Multi-layer deobfuscation, CAPE encoded command extraction |
 
 Each path has its own LLM prompt optimized for that language's patterns.
 
@@ -274,6 +275,7 @@ OVH Bare Metal
 | ExelaStealer | PyInstaller stealer | pycdc: 100K chars Python, Discord/browser credential stealer |
 | jRAT/Jacksbot | Java RAT | java-deobfuscator + CFR: 2.1M chars Java, 70 classes |
 | LodaRAT | Office macro dropper | olevba: VBA deobfuscation, mshta download cradle recovered |
+| SnappyClient | PowerShell stager | PSDecode: CobaltStrike-like shellcode stager, ntdll unhooking |
 
 ---
 

@@ -1,0 +1,50 @@
+#!/bin/bash
+# =============================================================================
+# run-powershell-analysis — host-side wrapper for containerized PS deobfuscation
+# Deobfuscates PowerShell scripts using PSDecode in a Podman container.
+#
+# Usage: run-powershell-analysis <script_file> [output_dir]
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: run-powershell-analysis <script_file> [output_dir]" >&2
+    exit 1
+fi
+
+BINARY_PATH="$(realpath "$1")"
+BINARY_NAME="$(basename "$BINARY_PATH")"
+OUTPUT_DIR="${2:-$(dirname "$BINARY_PATH")}"
+
+if [ ! -f "$BINARY_PATH" ]; then
+    echo "Error: file not found: $BINARY_PATH" >&2
+    exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# Copy to temp dir with world-readable permissions
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
+cp "$BINARY_PATH" "$WORK_DIR/$BINARY_NAME"
+chmod 644 "$WORK_DIR/$BINARY_NAME"
+
+exec podman run --rm \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ powershell_analysis_container_memory }} \
+    --cpus={{ powershell_analysis_container_cpus }} \
+    --timeout={{ powershell_analysis_container_timeout }} \
+    --tmpfs /tmp:size=100m \
+    --user 65534:65534 \
+    -v "$WORK_DIR:/sample:ro" \
+    -v "$OUTPUT_DIR:/output:rw" \
+    localhost/powershell-analysis:latest \
+    "/sample/$BINARY_NAME"
