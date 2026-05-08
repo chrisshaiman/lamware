@@ -62,7 +62,7 @@ DISK_THRESHOLD = {{ auto_feeder_disk_threshold }}
 MAX_FAILURES = {{ auto_feeder_max_failures }}
 DAILY_BUDGET = {{ auto_feeder_daily_budget_usd }}
 MAX_SAMPLE_SIZE = {{ auto_feeder_max_sample_size_bytes }}
-RECENT_HOURS = {{ auto_feeder_recent_hours }}
+RECENT_COUNT = {{ auto_feeder_recent_count }}
 
 # Allowlists — empty = unfiltered
 FAMILY_ALLOWLIST = {{ auto_feeder_family_allowlist | to_json }}
@@ -206,10 +206,14 @@ def check_guardrails(state: dict) -> str | None:
 # MalwareBazaar API
 # ---------------------------------------------------------------------------
 
-def query_recent(api_url: str, hours: int, headers: dict) -> list[dict]:
-    """Query MalwareBazaar for recently uploaded samples."""
+def query_recent(api_url: str, count: int, headers: dict) -> list[dict]:
+    """Query MalwareBazaar for recently uploaded samples.
+
+    The selector is a sample count (e.g., 100 = most recent 100 samples),
+    not a time window. MalwareBazaar API docs: selector is numeric quantity.
+    """
     resp = requests.post(api_url, data={
-        "query": "get_recent", "selector": hours,
+        "query": "get_recent", "selector": count,
     }, headers=headers, timeout=30)
     resp.raise_for_status()
     result = resp.json()
@@ -340,7 +344,7 @@ def run_cycle() -> None:
 
     # Query MalwareBazaar
     try:
-        samples = query_recent(api_url, RECENT_HOURS, headers)
+        samples = query_recent(api_url, RECENT_COUNT, headers)
     except Exception as e:
         log.error(f"MalwareBazaar query failed: {e}")
         return

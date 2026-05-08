@@ -14,8 +14,9 @@ auto_feeder_interval_minutes: 5
 auto_feeder_family_allowlist: []
 auto_feeder_tag_allowlist: []
 
-# How many hours back to query MalwareBazaar
-auto_feeder_recent_hours: 24
+# How many recent samples to fetch from MalwareBazaar per cycle
+# (selector is a sample count, not a time window)
+auto_feeder_recent_count: 100
 
 # Guardrails
 auto_feeder_max_failures: 3
