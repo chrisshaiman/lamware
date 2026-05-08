@@ -110,11 +110,15 @@
     - role: office-macro-analysis
       tags: [office-macro-analysis]
 
-    # 13f. Screenshot analysis — dedup + QR detection
+    # 13g. PowerShell analysis — containerized PSDecode deobfuscation
+    - role: powershell-analysis
+      tags: [powershell-analysis]
+
+    # 13h. Screenshot analysis — dedup + QR detection
     - role: screenshot-analysis
       tags: [screenshot-analysis]
 
-    # 13g. PDF generation — containerized WeasyPrint rendering
+    # 13i. PDF generation — containerized WeasyPrint rendering
     - role: pdf-generation
       tags: [pdf-generation]
 
