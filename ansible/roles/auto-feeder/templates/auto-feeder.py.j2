@@ -395,6 +395,8 @@ def run_cycle() -> None:
 
     except Exception as e:
         log.error(f"Download failed: {e}")
+        # Mark as seen so we don't retry the same broken sample
+        save_seen_hash(sample["sha256"])
         state["consecutive_failures"] += 1
         state["last_failure"] = datetime.now(timezone.utc).isoformat()
         state["last_failure_reason"] = str(e)
