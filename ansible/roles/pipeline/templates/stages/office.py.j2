@@ -10,7 +10,7 @@ from pathlib import Path
 
 log = logging.getLogger("pipeline")
 
-OFFICE_YARA_INDICATORS = ["macro", "vba", "ole", "maldoc", "office", "emotet_doc"]
+OFFICE_YARA_INDICATORS = ["macro", "vba", "ole_", "oledoc", "maldoc", "office", "emotet_doc"]
 
 
 def is_office_document(report: dict) -> bool:
