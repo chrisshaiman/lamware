@@ -221,6 +221,25 @@
     mode: "0640"
 
 # -------------------------------------------------------------------------
+# Analyzer package overrides — LibreOffice fallback for Office documents
+# The default doc/xls/ppt packages only look for MS Office executables.
+# These patched versions try MS Office first, then fall back to
+# LibreOffice (soffice.exe) which is installed in the guest VM.
+# -------------------------------------------------------------------------
+
+- name: Deploy Office package overrides (LibreOffice fallback)
+  ansible.builtin.copy:
+    src: "packages/{{ item }}"
+    dest: "{{ cape_install_dir }}/analyzer/windows/modules/packages/{{ item }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+  loop:
+    - doc.py
+    - xls.py
+    - ppt.py
+
+# -------------------------------------------------------------------------
 # Database + service startup — ordered to avoid race conditions
 # -------------------------------------------------------------------------
 
