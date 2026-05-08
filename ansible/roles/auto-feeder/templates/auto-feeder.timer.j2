@@ -1,0 +1,14 @@
+# auto-feeder.timer — schedules periodic MalwareBazaar ingestion
+#
+# Managed by Ansible (auto-feeder role). Do not edit manually.
+
+[Unit]
+Description=Auto-feeder ingestion timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ auto_feeder_interval_minutes }}min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

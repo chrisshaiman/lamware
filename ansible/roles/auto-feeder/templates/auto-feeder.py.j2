@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""
+auto-feeder.py — unattended MalwareBazaar sample ingestion daemon.
+
+Each invocation runs one ingestion cycle:
+1. Check guardrails (pause file, disk, CAPE health, failures, budget, lock)
+2. Query MalwareBazaar for recent samples
+3. Filter by family/tag allowlist and dedup against seen_hashes
+4. Download one sample
+5. Run the analysis pipeline
+6. Update state (success/failure count, cost tracking)
+
+Designed to be triggered by a systemd timer every N minutes.
+Shares seen_hashes.json and config with the interactive sample-feeder CLI.
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import fcntl
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+try:
+    from pyzipper import AESZipFile as _ZipOpener
+except (ImportError, AttributeError):
+    try:
+        from pyzipper import ZipFile as _ZipOpener
+    except (ImportError, AttributeError):
+        from zipfile import ZipFile as _ZipOpener
+
+import requests
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+INSTALL_DIR = Path("{{ auto_feeder_install_dir }}")
+STATE_FILE = INSTALL_DIR / "state.json"
+LOCK_FILE = INSTALL_DIR / "run.lock"
+LOG_FILE = INSTALL_DIR / "auto-feeder.log"
+
+# Read shared config from sample-feeder
+SAMPLE_FEEDER_CONFIG = Path("{{ sample_feeder_dir | default('/opt/sample-feeder') }}/config.json")
+
+# Guardrail thresholds
+PAUSE_FILE = Path("{{ auto_feeder_pause_file }}")
+DISK_THRESHOLD = {{ auto_feeder_disk_threshold }}
+MAX_FAILURES = {{ auto_feeder_max_failures }}
+DAILY_BUDGET = {{ auto_feeder_daily_budget_usd }}
+MAX_SAMPLE_SIZE = {{ auto_feeder_max_sample_size_bytes }}
+RECENT_COUNT = {{ auto_feeder_recent_count }}
+
+# Allowlists — empty = unfiltered
+FAMILY_ALLOWLIST = {{ auto_feeder_family_allowlist | to_json }}
+TAG_ALLOWLIST = {{ auto_feeder_tag_allowlist | to_json }}
+
+PIPELINE_CMD = "{{ sample_feeder_pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
+ZIP_PASSWORD = b"infected"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+log = logging.getLogger("auto-feeder")
+log.setLevel(logging.INFO)
+handler = RotatingFileHandler(str(LOG_FILE), maxBytes=5_000_000, backupCount=3)
+handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+log.addHandler(handler)
+# Also log to stdout for systemd journal
+log.addHandler(logging.StreamHandler(sys.stdout))
+
+# ---------------------------------------------------------------------------
+# Shared config
+# ---------------------------------------------------------------------------
+
+def load_shared_config() -> dict:
+    """Load API credentials from shared sample-feeder config."""
+    if SAMPLE_FEEDER_CONFIG.exists():
+        with open(SAMPLE_FEEDER_CONFIG) as f:
+            return json.load(f)
+    return {}
+
+# ---------------------------------------------------------------------------
+# State management
+# ---------------------------------------------------------------------------
+
+def load_state() -> dict:
+    """Load auto-feeder state. Initialize if missing."""
+    defaults = {
+        "consecutive_failures": 0,
+        "last_success": None,
+        "last_failure": None,
+        "last_failure_reason": None,
+        "today": "",
+        "today_cost_usd": 0.0,
+        "today_samples": 0,
+        "total_samples": 0,
+    }
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE) as f:
+                state = json.load(f)
+            defaults.update(state)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return defaults
+
+
+def save_state(state: dict) -> None:
+    """Persist state to disk."""
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def load_seen_hashes() -> set:
+    """Load seen hashes from shared sample-feeder state file."""
+    cfg = load_shared_config()
+    state_file = cfg.get("state_file", "{{ sample_feeder_state_file }}")
+    if Path(state_file).exists():
+        with open(state_file) as f:
+            return set(json.load(f))
+    return set()
+
+
+def save_seen_hash(sha256: str) -> None:
+    """Add a hash to the shared seen_hashes file."""
+    cfg = load_shared_config()
+    state_file = cfg.get("state_file", "{{ sample_feeder_state_file }}")
+    seen = load_seen_hashes()
+    seen.add(sha256)
+    trimmed = sorted(seen)[-10000:]
+    with open(state_file, "w") as f:
+        json.dump(trimmed, f)
+
+# ---------------------------------------------------------------------------
+# Guardrails
+# ---------------------------------------------------------------------------
+
+def check_guardrails(state: dict) -> str | None:
+    """Check all guardrails. Returns skip reason string, or None if clear."""
+    # 1. Pause file (kill switch)
+    if PAUSE_FILE.exists():
+        return "Paused by operator (PAUSE file exists)"
+
+    # 2. Disk space
+    usage = shutil.disk_usage("/opt/pipeline")
+    percent = (usage.used / usage.total) * 100
+    if percent >= DISK_THRESHOLD:
+        PAUSE_FILE.touch()
+        return f"Disk usage {percent:.1f}% exceeds {DISK_THRESHOLD}% — PAUSE file created"
+
+    # 3. CAPE health
+    try:
+        cfg = load_shared_config()
+        cape_url = cfg.get("cape_api_url", "http://127.0.0.1:8000/apiv2")
+        cape_key = cfg.get("cape_api_key", "")
+        headers = {"Authorization": f"Token {cape_key}"} if cape_key else {}
+        r = requests.get(f"{cape_url}/cuckoo/status/", headers=headers, timeout=10)
+        if r.status_code != 200:
+            return f"CAPE API returned {r.status_code}"
+        status = r.json()
+        machines = status.get("data", {}).get("machines", {})
+        available = machines.get("available", 0)
+        if available < 1:
+            return "No CAPE machines available"
+    except Exception as e:
+        return f"CAPE health check failed: {e}"
+
+    # 4. Consecutive failures
+    if state["consecutive_failures"] >= MAX_FAILURES:
+        PAUSE_FILE.touch()
+        return f"{MAX_FAILURES} consecutive failures — PAUSE file created"
+
+    # 5. Daily budget
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if state["today"] != today:
+        state["today"] = today
+        state["today_cost_usd"] = 0.0
+        state["today_samples"] = 0
+    if state["today_cost_usd"] >= DAILY_BUDGET:
+        return f"Daily budget exhausted (${state['today_cost_usd']:.2f}/${DAILY_BUDGET})"
+
+    # 6. Pipeline already running
+    result = subprocess.run(["pgrep", "-f", "run-pipeline.py"],
+                            capture_output=True, timeout=5)
+    if result.returncode == 0:
+        return "Pipeline already running"
+
+    return None
+
+# ---------------------------------------------------------------------------
+# MalwareBazaar API
+# ---------------------------------------------------------------------------
+
+def query_recent(api_url: str, count: int, headers: dict) -> list[dict]:
+    """Query MalwareBazaar for recently uploaded samples.
+
+    The selector is a sample count (e.g., 100 = most recent 100 samples),
+    not a time window. MalwareBazaar API docs: selector is numeric quantity.
+    """
+    resp = requests.post(api_url, data={
+        "query": "get_recent", "selector": count,
+    }, headers=headers, timeout=30)
+    resp.raise_for_status()
+    result = resp.json()
+    if result.get("query_status") != "ok":
+        return []
+    return result.get("data", [])
+
+
+def download_sample(api_url: str, sha256: str, headers: dict) -> bytes:
+    """Download a sample zip from MalwareBazaar."""
+    resp = requests.post(api_url, data={
+        "query": "get_file", "sha256_hash": sha256,
+    }, headers=headers, timeout=60)
+    resp.raise_for_status()
+    if not resp.content[:2] == b"PK":
+        raise ValueError(f"Download returned non-zip content ({len(resp.content)} bytes)")
+    return resp.content
+
+
+def extract_sample(zip_bytes: bytes) -> tuple[str, bytes]:
+    """Extract sample from password-protected zip."""
+    with _ZipOpener(io.BytesIO(zip_bytes)) as zf:
+        names = zf.namelist()
+        if not names:
+            raise ValueError("Empty zip file")
+        info = zf.getinfo(names[0])
+        if info.file_size > MAX_SAMPLE_SIZE:
+            raise ValueError(f"Sample {info.file_size} bytes exceeds limit {MAX_SAMPLE_SIZE}")
+        content = zf.read(names[0], pwd=ZIP_PASSWORD)
+    safe_name = re.sub(r"[^\w.\-]", "_", Path(names[0]).name) or "sample.bin"
+    return safe_name, content
+
+# ---------------------------------------------------------------------------
+# Sample selection
+# ---------------------------------------------------------------------------
+
+def select_sample(samples: list[dict], seen: set) -> dict | None:
+    """Filter and select one sample from MalwareBazaar results."""
+    for entry in samples:
+        sha256 = (entry.get("sha256_hash", "") or "").lower()
+        if not sha256 or len(sha256) != 64:
+            continue
+
+        # Dedup
+        if sha256 in seen:
+            continue
+
+        # Skip Linux/non-Windows files (no Linux guest VM)
+        filename = entry.get("file_name", "")
+        file_type = (entry.get("file_type", "") or "").lower()
+        linux_exts = (".sh", ".elf", ".so", ".ko", ".deb", ".rpm", ".AppImage")
+        if filename.lower().endswith(linux_exts):
+            continue
+        if file_type in ("elf", "sh"):
+            continue
+
+        # Size filter
+        file_size = entry.get("file_size", 0)
+        if isinstance(file_size, str):
+            try:
+                file_size = int(file_size)
+            except ValueError:
+                continue
+        if file_size > MAX_SAMPLE_SIZE:
+            continue
+
+        # Family allowlist
+        if FAMILY_ALLOWLIST:
+            signature = (entry.get("signature") or "").lower()
+            if not any(f.lower() in signature for f in FAMILY_ALLOWLIST):
+                continue
+
+        # Tag allowlist
+        if TAG_ALLOWLIST:
+            tags = [t.lower() for t in (entry.get("tags") or []) if isinstance(t, str)]
+            if not any(t in tags for t in [a.lower() for a in TAG_ALLOWLIST]):
+                continue
+
+        return {
+            "sha256": sha256,
+            "filename": entry.get("file_name", "unknown"),
+            "signature": entry.get("signature") or "unknown",
+            "file_size": file_size,
+            "tags": [t for t in (entry.get("tags") or []) if isinstance(t, str)],
+        }
+
+    return None
+
+# ---------------------------------------------------------------------------
+# Cost estimation
+# ---------------------------------------------------------------------------
+
+def estimate_cost(report_path: Path) -> float:
+    """Extract or estimate LLM API cost from a pipeline report."""
+    try:
+        with open(report_path) as f:
+            report = json.load(f)
+        # Check for explicit cost in LLM interpretation
+        interp = report.get("llm_interpretation", {})
+        usage = interp.get("usage", {})
+        if "total_cost" in usage:
+            return float(usage["total_cost"])
+        # Estimate from token counts
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        # Rough estimate: Sonnet pricing (~$3/M input, ~$15/M output)
+        cost = (input_tokens * 3 / 1_000_000) + (output_tokens * 15 / 1_000_000)
+        # Add summary cost estimate (Haiku ~$0.25/M input, $1.25/M output)
+        summary = report.get("executive_summary", {})
+        s_usage = summary.get("usage", {})
+        cost += (s_usage.get("input_tokens", 0) * 0.25 / 1_000_000)
+        cost += (s_usage.get("output_tokens", 0) * 1.25 / 1_000_000)
+        return cost if cost > 0 else 0.50  # default estimate if no usage data
+    except Exception:
+        return 0.50  # conservative default
+
+# ---------------------------------------------------------------------------
+# Main cycle
+# ---------------------------------------------------------------------------
+
+def run_cycle() -> None:
+    """Run one ingestion cycle."""
+    state = load_state()
+
+    # Check guardrails
+    skip_reason = check_guardrails(state)
+    if skip_reason:
+        log.info(f"Skipping cycle: {skip_reason}")
+        save_state(state)
+        return
+
+    # Load shared config
+    cfg = load_shared_config()
+    api_url = cfg.get("bazaar_api_url", "https://mb-api.abuse.ch/api/v1/")
+    auth_key = cfg.get("bazaar_auth_key", "")
+    headers = {"Auth-Key": auth_key} if auth_key else {}
+
+    # Query MalwareBazaar
+    try:
+        samples = query_recent(api_url, RECENT_COUNT, headers)
+    except Exception as e:
+        log.error(f"MalwareBazaar query failed: {e}")
+        return
+
+    if not samples:
+        log.info("No samples returned from MalwareBazaar")
+        return
+
+    # Select a sample
+    seen = load_seen_hashes()
+    sample = select_sample(samples, seen)
+    if not sample:
+        log.info(f"No new samples matching filters ({len(samples)} checked, {len(seen)} already seen)")
+        return
+
+    log.info(f"Selected: {sample['sha256'][:16]}... "
+             f"{sample['filename']} ({sample['signature']}) "
+             f"{sample['file_size'] / 1024:.1f} KB "
+             f"tags={','.join(sample['tags'][:3])}")
+
+    # Download
+    tmp_path = None
+    try:
+        zip_bytes = download_sample(api_url, sample["sha256"], headers)
+        extracted_name, content = extract_sample(zip_bytes)
+
+        # Verify SHA256
+        actual_hash = hashlib.sha256(content).hexdigest().lower()
+        if actual_hash != sample["sha256"]:
+            raise ValueError(f"SHA256 mismatch: expected {sample['sha256']}, got {actual_hash}")
+
+        with tempfile.NamedTemporaryFile(
+            prefix="autofeeder_", suffix=f"_{extracted_name}", delete=False
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        log.info(f"Downloaded and extracted: {extracted_name} ({len(content)} bytes)")
+
+    except Exception as e:
+        log.error(f"Download failed: {e}")
+        # Mark as seen so we don't retry the same broken sample
+        save_seen_hash(sample["sha256"])
+        state["consecutive_failures"] += 1
+        state["last_failure"] = datetime.now(timezone.utc).isoformat()
+        state["last_failure_reason"] = str(e)
+        save_state(state)
+        return
+
+    # Run pipeline
+    try:
+        log.info(f"Starting pipeline for {extracted_name}...")
+        pipe_result = subprocess.run(
+            [PIPELINE_CMD, str(tmp_path), "--filename", extracted_name],
+            capture_output=False,
+            timeout=3600,
+            cwd="/tmp",
+        )
+        if pipe_result.returncode != 0:
+            raise RuntimeError(f"Pipeline exited with code {pipe_result.returncode}")
+
+        # Success
+        save_seen_hash(sample["sha256"])
+        state["consecutive_failures"] = 0
+        state["last_success"] = datetime.now(timezone.utc).isoformat()
+        state["today_samples"] += 1
+        state["total_samples"] += 1
+
+        # Estimate cost from report
+        report_dirs = sorted(Path("/opt/pipeline/reports").iterdir(),
+                             key=lambda p: p.stat().st_mtime, reverse=True)
+        if report_dirs:
+            report_path = report_dirs[0] / "report.json"
+            if report_path.exists():
+                cost = estimate_cost(report_path)
+                state["today_cost_usd"] += cost
+                log.info(f"Pipeline complete. Estimated cost: ${cost:.2f} "
+                         f"(daily total: ${state['today_cost_usd']:.2f}/${DAILY_BUDGET})")
+
+        log.info(f"Success: {sample['signature']} — "
+                 f"samples today: {state['today_samples']}, "
+                 f"total: {state['total_samples']}")
+
+    except subprocess.TimeoutExpired:
+        log.error("Pipeline timed out (3600s)")
+        state["consecutive_failures"] += 1
+        state["last_failure"] = datetime.now(timezone.utc).isoformat()
+        state["last_failure_reason"] = "Pipeline timeout"
+
+    except Exception as e:
+        log.error(f"Pipeline failed: {e}")
+        state["consecutive_failures"] += 1
+        state["last_failure"] = datetime.now(timezone.utc).isoformat()
+        state["last_failure_reason"] = str(e)
+
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+        save_state(state)
+
+
+def main() -> None:
+    """Acquire lock and run one cycle."""
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.info("Another auto-feeder cycle is running — exiting")
+        return
+    try:
+        run_cycle()
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+if __name__ == "__main__":
+    main()

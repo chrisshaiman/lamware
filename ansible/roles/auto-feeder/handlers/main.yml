@@ -1,0 +1,9 @@
+---
+# roles/auto-feeder/handlers/main.yml
+
+- name: Restart auto-feeder timer
+  ansible.builtin.systemd:
+    name: auto-feeder.timer
+    state: restarted
+    daemon_reload: true
+  when: auto_feeder_enabled
