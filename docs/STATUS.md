@@ -121,7 +121,7 @@ No items — all resolved.
 | Automated MalwareBazaar ingestion | 2-3 hrs | Scheduled pulls, concurrent pipeline runs, adaptive evasion threshold |
 | VM user artifacts | 1-2 hrs (Packer) | Browser history, documents, installed software — defeats liveness heuristics. Requires Packer image rebuild. |
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
-| PowerShell deobfuscation | 2-3 hrs | Common in initial access. Script extraction + deobfuscation. ~3-5% of samples. |
+| PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
@@ -143,6 +143,7 @@ No items — all resolved.
 | Item | Effort | Notes |
 |------|--------|-------|
 | Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
+| PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
 | Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP. Full design needed. |
 | Rust binary analysis | 2-3 weeks | Demangle names, identify stdlib functions, reconstruct common types. Research project. |
