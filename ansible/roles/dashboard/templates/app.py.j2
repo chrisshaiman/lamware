@@ -689,6 +689,7 @@ def analysis_detail(analysis_id):
                 <div class="stat-box"><div class="number">{{ tech_count }}</div><div class="label">ATT&CK</div></div>
                 <div class="stat-box"><div class="number">{{ sig_count }}</div><div class="label">Signatures</div></div>
                 <div class="stat-box"><div class="number">{{ tool_calls }}</div><div class="label">AI Tool Calls</div></div>
+                <div class="stat-box"><div class="number">${{ '%.2f'|format(cost) if cost else '?' }}</div><div class="label">LLM Cost</div></div>
             </div>
 
             <div class="card">
@@ -774,6 +775,7 @@ def analysis_detail(analysis_id):
         malscore=a["malscore"] or "?",
         ioc_count=len(iocs), tech_count=len(techniques), sig_count=len(signatures),
         tool_calls=a["interpret_tool_calls"] or 0,
+        cost=a.get("llm_cost_usd"),
         sha256=escape(a["sha256"]), filename=escape(a["filename"] or "?"),
         family=escape(a["malware_family_guess"] or "?"),
         file_type=escape(a["file_type"] or "?"),
