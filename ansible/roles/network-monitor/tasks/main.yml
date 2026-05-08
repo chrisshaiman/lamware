@@ -1,0 +1,31 @@
+---
+# roles/network-monitor/tasks/main.yml
+#
+# Deploys the air-gap integrity monitor.
+# Runs as root via cron every 5 minutes.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+- name: Create network-monitor directory
+  ansible.builtin.file:
+    path: "{{ network_monitor_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy network-monitor script
+  ansible.builtin.template:
+    src: network-monitor.sh.j2
+    dest: "{{ network_monitor_install_dir }}/network-monitor.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install cron job for network monitoring
+  ansible.builtin.cron:
+    name: "network-monitor air-gap check"
+    minute: "*/{{ network_monitor_interval_minutes }}"
+    user: root
+    job: "{{ network_monitor_install_dir }}/network-monitor.sh >> {{ network_monitor_install_dir }}/network-monitor.log 2>&1"
