@@ -26,7 +26,8 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 4. Static analysis | pyinstxtractor + pycdc (PyInstaller) | Podman (--network=none) | Complete |
 | 4. Static analysis | java-deobfuscator + CFR (Java JAR) | Podman (--network=none) | Complete |
 | 4. Static analysis | olevba macro extraction (Office docs) | Podman (--network=none) | Complete |
-| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go/Python/Java/VBA) | Podman (--network=host) | Complete |
+| 4. Static analysis | pwsh + PSDecode (PowerShell) | Podman (--network=none) | Complete |
+| 4.5 AI RE | Claude tool_use (agentic for native PE, single-shot for .NET/Go/Python/Java/VBA/PS) | Podman (--network=host) | Complete |
 | 4.7 Evasion hunter | Claude (single-shot) — triggers on low-activity samples | Podman (--network=host) | Complete |
 | 5.5 Screenshot analysis | Perceptual dedup + QR detection | Podman (--network=none) | Complete |
 | 5.7 Visual analysis | Claude multimodal (screenshot interpretation) | Podman (--network=host) | Complete |
@@ -55,6 +56,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | pyinstaller-analysis | pyinstxtractor + pycdc decompilation (Python 3.11/3.12) | Complete |
 | java-analysis | java-deobfuscator + CFR decompiler | Complete |
 | office-macro-analysis | olevba VBA extraction + mraptor classification | Complete |
+| powershell-analysis | pwsh + PSDecode multi-layer deobfuscation | Complete |
 | screenshot-analysis | Perceptual dedup + QR detection | Complete |
 | pdf-generation | Containerized WeasyPrint rendering | Complete |
 | ghidra | Ghidra headless container | Complete |
@@ -137,6 +139,9 @@ No items — all resolved.
 | WebSocket real-time updates | 1 session | Builds on pipeline_stage_events table |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
+| Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
+| HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
+| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Enterprise readiness. Depends on FastAPI + React rebuild. |
 
 ### Low Priority / Ideas
 
@@ -144,6 +149,7 @@ No items — all resolved.
 |------|--------|-------|
 | Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
+| Randomize UNTRUSTED_CODE delimiters | 15 min | Per-request random suffix on UNTRUSTED_CODE tags to prevent delimiter escape from malicious content. Low risk but easy hardening. |
 | Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP. Full design needed. |
 | Rust binary analysis | 2-3 weeks | Demangle names, identify stdlib functions, reconstruct common types. Research project. |
@@ -231,6 +237,7 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 | ExelaStealer | PyInstaller stealer | Full (pycdc + LLM) | 100K chars Python source decompiled, LLM identified Discord/browser credential stealer |
 | jRAT/Jacksbot | Java RAT | Full (java-deobfuscator + CFR + LLM) | 2.1M chars Java source, 70 classes, LLM identified Ratty variant |
 | LodaRAT | Office macro dropper | Full (olevba + LLM) | 2 VBA modules, LLM deobfuscated Chr() cipher to reveal `mshta` download cradle. 7 evasion techniques detected. Macro evaded CAPE but static analysis recovered full payload. |
+| SnappyClient | PowerShell stager | Full (PSDecode + LLM) | 4.4MB hex blob script, LLM identified CobaltStrike-like shellcode stager with ntdll unhooking. 12 MITRE techniques. |
 
 ---
 
