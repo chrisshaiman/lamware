@@ -1,0 +1,28 @@
+---
+# roles/auto-feeder/defaults/main.yml
+
+# Master switch — off by default, opt-in
+auto_feeder_enabled: false
+
+# Installation directory
+auto_feeder_install_dir: /opt/auto-feeder
+
+# Cooldown between ingestion cycles (minutes)
+auto_feeder_interval_minutes: 5
+
+# Sample selection — empty lists = unfiltered (all recent samples)
+auto_feeder_family_allowlist: []
+auto_feeder_tag_allowlist: []
+
+# How many hours back to query MalwareBazaar
+auto_feeder_recent_hours: 24
+
+# Guardrails
+auto_feeder_max_failures: 3
+auto_feeder_disk_threshold: 80
+auto_feeder_daily_budget_usd: 10.0
+auto_feeder_pause_file: /opt/pipeline/PAUSE
+auto_feeder_max_sample_size_bytes: 268435456  # 256 MB
+
+# Run as same user as pipeline
+auto_feeder_user: "{{ cape_user | default('cape') }}"
