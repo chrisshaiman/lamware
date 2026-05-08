@@ -1,0 +1,138 @@
+#!/bin/bash
+# =============================================================================
+# network-monitor.sh — air-gap integrity checker
+# Reads iptables packet counters to verify no traffic from the detonation
+# bridge (virbr-det) reaches the internet (eth0) or management (wg0) network.
+#
+# Run by cron every 5 minutes as root.
+# Writes status to /opt/network-monitor/status.json.
+# Creates PAUSE file if air-gap breach detected.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+INSTALL_DIR="{{ network_monitor_install_dir }}"
+STATUS_FILE="$INSTALL_DIR/status.json"
+BASELINE_FILE="$INSTALL_DIR/baseline.json"
+PAUSE_FILE="{{ network_monitor_pause_file }}"
+BRIDGE="{{ network_monitor_detonation_bridge }}"
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+mkdir -p "$INSTALL_DIR"
+
+# -------------------------------------------------------------------------
+# Read iptables counters for detonation bridge traffic
+# -------------------------------------------------------------------------
+
+# Get packet counts for FORWARD chain rules involving the detonation bridge
+# iptables -L FORWARD -v -n -x outputs: pkts bytes target prot opt in out source destination
+# We look for rules where in=$BRIDGE and target=DROP or ACCEPT
+
+get_counter() {
+    local direction="$1"  # "out_eth0" or "out_wg0"
+    local target="$2"     # "DROP" or "ACCEPT"
+    local iface
+
+    case "$direction" in
+        out_eth0) iface="eth0" ;;
+        out_wg0)  iface="wg0" ;;
+        *)        echo "0"; return ;;
+    esac
+
+    # Count packets where traffic comes from bridge and goes to iface
+    local count
+    count=$(iptables -L FORWARD -v -n -x 2>/dev/null \
+        | awk -v bridge="$BRIDGE" -v iface="$iface" -v tgt="$target" \
+          '$3 == tgt && $6 == bridge && $7 == iface { sum += $1 } END { print sum+0 }')
+    echo "$count"
+}
+
+# Current counters
+det_eth0_accept=$(get_counter out_eth0 ACCEPT)
+det_eth0_drop=$(get_counter out_eth0 DROP)
+det_wg0_accept=$(get_counter out_wg0 ACCEPT)
+det_wg0_drop=$(get_counter out_wg0 DROP)
+
+# -------------------------------------------------------------------------
+# Compare against baseline
+# -------------------------------------------------------------------------
+
+status="ok"
+alert_message=""
+
+if [ -f "$BASELINE_FILE" ]; then
+    # Read baseline ACCEPT counters
+    baseline_eth0_accept=$(python3 -c "import json; d=json.load(open('$BASELINE_FILE')); print(d.get('det_eth0_accept', 0))")
+    baseline_wg0_accept=$(python3 -c "import json; d=json.load(open('$BASELINE_FILE')); print(d.get('det_wg0_accept', 0))")
+
+    # Check if ACCEPT counters increased (breach indicator)
+    if [ "$det_eth0_accept" -gt "$baseline_eth0_accept" ]; then
+        new_packets=$((det_eth0_accept - baseline_eth0_accept))
+        status="alert"
+        alert_message="AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to eth0 since baseline"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
+        touch "$PAUSE_FILE"
+    fi
+
+    if [ "$det_wg0_accept" -gt "$baseline_wg0_accept" ]; then
+        new_packets=$((det_wg0_accept - baseline_wg0_accept))
+        status="alert"
+        alert_message="${alert_message:+$alert_message; }AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to wg0 since baseline"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
+        touch "$PAUSE_FILE"
+    fi
+else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) INFO: First run — saving baseline"
+fi
+
+# -------------------------------------------------------------------------
+# Save baseline (first run) and status (every run)
+# -------------------------------------------------------------------------
+
+# Always update baseline with current counters
+python3 -c "
+import json
+baseline = {
+    'det_eth0_accept': $det_eth0_accept,
+    'det_eth0_drop': $det_eth0_drop,
+    'det_wg0_accept': $det_wg0_accept,
+    'det_wg0_drop': $det_wg0_drop,
+    'timestamp': '$TIMESTAMP',
+}
+with open('$BASELINE_FILE', 'w') as f:
+    json.dump(baseline, f, indent=2)
+"
+
+# Write status file (read by dashboard)
+python3 -c "
+import json, os
+# Read previous check count
+checks = 0
+if os.path.exists('$STATUS_FILE'):
+    try:
+        checks = json.load(open('$STATUS_FILE')).get('checks_since_baseline', 0)
+    except Exception:
+        pass
+
+status = {
+    'status': '$status',
+    'last_check': '$TIMESTAMP',
+    'checks_since_baseline': checks + 1,
+    'detonation_to_internet': {
+        'accept_packets': $det_eth0_accept,
+        'drop_packets': $det_eth0_drop,
+        'status': 'alert' if $det_eth0_accept > 0 else 'ok',
+    },
+    'detonation_to_management': {
+        'accept_packets': $det_wg0_accept,
+        'drop_packets': $det_wg0_drop,
+        'status': 'alert' if $det_wg0_accept > 0 else 'ok',
+    },
+    'alert_message': '$alert_message' if '$status' == 'alert' else None,
+}
+with open('$STATUS_FILE', 'w') as f:
+    json.dump(status, f, indent=2)
+"
