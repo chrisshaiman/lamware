@@ -1,0 +1,7 @@
+---
+# roles/network-monitor/defaults/main.yml
+
+network_monitor_install_dir: /opt/network-monitor
+network_monitor_interval_minutes: 5
+network_monitor_pause_file: /opt/pipeline/PAUSE
+network_monitor_detonation_bridge: virbr-det

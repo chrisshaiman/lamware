@@ -145,3 +145,7 @@
     # 19. Auto-feeder — unattended MalwareBazaar ingestion (disabled by default)
     - role: auto-feeder
       tags: [auto-feeder]
+
+    # 20. Network monitor — air-gap integrity checking (cron, every 5 min)
+    - role: network-monitor
+      tags: [network-monitor]
