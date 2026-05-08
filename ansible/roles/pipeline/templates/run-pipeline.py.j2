@@ -41,6 +41,7 @@ from stages.go import is_go_binary, run_go_analysis
 from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
 from stages.java import is_java_binary, run_java_analysis
 from stages.office import is_office_document, run_office_analysis
+from stages.powershell import is_powershell_script, extract_powershell_from_cape, run_powershell_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize
 from ioc_extract import extract_iocs, map_iocs_to_techniques
@@ -87,6 +88,7 @@ GO_CMD = "{{ go_analysis_install_dir | default('/opt/go-analysis') }}/run-go-ana
 PYINSTALLER_CMD = "{{ pyinstaller_analysis_install_dir | default('/opt/pyinstaller-analysis') }}/run-pyinstaller-analysis"
 JAVA_CMD = "{{ java_analysis_install_dir | default('/opt/java-analysis') }}/run-java-analysis"
 OFFICE_CMD = "{{ office_macro_analysis_install_dir | default('/opt/office-macro-analysis') }}/run-office-analysis"
+POWERSHELL_CMD = "{{ powershell_analysis_install_dir | default('/opt/powershell-analysis') }}/run-powershell-analysis"
 SCREENSHOT_CMD = "{{ screenshot_analysis_install_dir | default('/opt/screenshot-analysis') }}/run-screenshot-analysis"
 PDF_CMD = "{{ pdf_generation_install_dir | default('/opt/pdf-generation') }}/run-pdf-generation"
 INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
@@ -399,6 +401,26 @@ def calculate_severity(report: dict) -> str:
             score += 5  # legitimate macros are rarely obfuscated
         if office_data.get("xlm_detected"):
             score += 5  # XLM macros are almost exclusively malicious
+
+    # PowerShell obfuscation and offensive tool indicators
+    ps_data = report.get("powershell_analysis", {})
+    if ps_data.get("analysis_success"):
+        # Encoded command from CAPE = suspicious
+        if ps_data.get("cape_extracted") or ps_data.get("input_mode") == "encoded_command":
+            score += 5
+        # Heavy obfuscation
+        if ps_data.get("layer_count", 0) > 2:
+            score += 5
+        # Offensive tool patterns
+        for s in ps_data.get("strings_of_interest", []):
+            if isinstance(s, dict) and s.get("type") in ("offensive_tool", "credential_access"):
+                score += 10
+                break
+        # Download cradle
+        for s in ps_data.get("strings_of_interest", []):
+            if isinstance(s, dict) and s.get("type") == "download_cradle":
+                score += 5
+                break
 
     # Go offensive tool module detected (Sliver, Merlin, etc.)
     go_data = report.get("go_analysis", {})
@@ -960,6 +982,25 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
         report["ghidra"] = {"triggered": True, "office_routed": True,
                             "analyzed_files": []}
+    elif is_powershell_script(report):
+        log.info(f"\n[Stage 4] PowerShell script detected — running deobfuscation...")
+        ps_result = run_powershell_analysis(sample_path, output_dir, powershell_cmd=POWERSHELL_CMD)
+        report["powershell_analysis"] = ps_result
+        if ps_result.get("analysis_success"):
+            layer_count = ps_result.get("layer_count", 0)
+            final_len = len(ps_result.get("final_decoded", ""))
+            obfuscation = ps_result.get("obfuscation_techniques", [])
+            psdecode_ok = ps_result.get("psdecode_success", False)
+            strings_count = len(ps_result.get("strings_of_interest", []))
+            log.info(f"  PSDecode: {'success' if psdecode_ok else 'failed (fallback)'}, {layer_count} layers, {final_len} chars decoded")
+            if obfuscation:
+                log.info(f"  Obfuscation: {', '.join(obfuscation)}")
+            log.info(f"  Interesting strings: {strings_count}")
+        else:
+            log.warning(f"PowerShell analysis failed: {ps_result.get('error', 'unknown')}")
+
+        report["ghidra"] = {"triggered": True, "powershell_routed": True,
+                            "analyzed_files": []}
     # Check if this is a .NET binary — route to ILSpy instead
     elif is_dotnet_binary(report):
         dotnet_origin = "original"
@@ -1095,6 +1136,36 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             log.info(f"\n[Stage 4] Ghidra: checking triggers...")
             log.info("  Not triggered")
             report["ghidra"] = {"triggered": False}
+
+    # Check CAPE logs for encoded PowerShell commands (any sample type)
+    if not report.get("powershell_analysis"):
+        ps_commands = extract_powershell_from_cape(report)
+        if ps_commands:
+            log.info(f"\n[Stage 4] Found {len(ps_commands)} encoded PowerShell command(s) in CAPE logs")
+            best = max(ps_commands, key=lambda x: len(x.get("decoded", "")))
+            log.info(f"  Largest: {len(best['decoded'])} chars from PID {best['pid']}")
+            # Write decoded script to temp file for container analysis
+            import os
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", dir=str(output_dir),
+                                              delete=False, encoding="utf-8")
+            tmp.write(best["decoded"])
+            tmp.close()
+            try:
+                ps_result = run_powershell_analysis(
+                    Path(tmp.name), output_dir, powershell_cmd=POWERSHELL_CMD)
+                ps_result["cape_extracted"] = True
+                ps_result["extraction_count"] = len(ps_commands)
+                ps_result["extraction_pid"] = best["pid"]
+                report["powershell_analysis"] = ps_result
+                if ps_result.get("analysis_success"):
+                    layer_count = ps_result.get("layer_count", 0)
+                    log.info(f"  PSDecode: {layer_count} layers decoded")
+                else:
+                    log.warning(f"  PowerShell analysis failed: {ps_result.get('error', 'unknown')}")
+            finally:
+                os.unlink(tmp.name)
+
     stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
     update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
@@ -1107,6 +1178,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     pyinstaller_data = report.get("pyinstaller_analysis", {})
     java_data = report.get("java_analysis", {})
     office_data = report.get("office_analysis", {})
+    ps_data = report.get("powershell_analysis", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
@@ -1204,6 +1276,42 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         }
         report["llm_interpretation"] = run_interpret(
             office_init, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        interp = report["llm_interpretation"]
+        if interp.get("enabled") and interp.get("analysis"):
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            log.info(f"  Family guess: {family}")
+            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+        elif interp.get("error"):
+            log.warning(f"Error: {interp['error']}")
+
+    elif ps_data.get("analysis_success") and INTERPRET_ENABLED:
+        # PowerShell path — send decoded script to LLM
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing PowerShell script...")
+        cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
+        ps_init = {
+            "analysis_type": "powershell",
+            "source_language": "powershell",
+            "original_script": ps_data.get("original_script", "")[:30000],
+            "decoded_layers": ps_data.get("decoded_layers", []),
+            "final_decoded": ps_data.get("final_decoded", "")[:50000],
+            "layer_count": ps_data.get("layer_count", 0),
+            "obfuscation_techniques": ps_data.get("obfuscation_techniques", []),
+            "iocs_extracted": ps_data.get("iocs_extracted", {}),
+            "strings_of_interest": ps_data.get("strings_of_interest", []),
+            "psdecode_success": ps_data.get("psdecode_success", False),
+            "cape_extracted": ps_data.get("cape_extracted", False),
+            "cape_signatures": cape_sigs[:20],
+            "input_mode": ps_data.get("input_mode", "file"),
+            "analysis_success": True,
+        }
+        report["llm_interpretation"] = run_interpret(
+            ps_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
