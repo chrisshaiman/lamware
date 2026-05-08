@@ -65,6 +65,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | pipeline | Orchestrator + modules | Complete |
 | dashboard | Flask web UI | Complete |
 | sample-feeder | MalwareBazaar CLI | Complete |
+| auto-feeder | Unattended MalwareBazaar ingestion with 6 guardrails | Complete |
 
 ### Database Features
 
@@ -120,7 +121,6 @@ No items — all resolved.
 | Item | Effort | Notes |
 |------|--------|-------|
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
-| Automated MalwareBazaar ingestion | 2-3 hrs | Scheduled pulls, concurrent pipeline runs, adaptive evasion threshold |
 | VM user artifacts | 1-2 hrs (Packer) | Browser history, documents, installed software — defeats liveness heuristics. Requires Packer image rebuild. |
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
 | PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |

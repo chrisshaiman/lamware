@@ -1,0 +1,62 @@
+---
+# roles/auto-feeder/tasks/main.yml
+#
+# Deploys the auto-feeder daemon for unattended MalwareBazaar ingestion.
+# Disabled by default (auto_feeder_enabled: false).
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+- name: Create auto-feeder directory
+  ansible.builtin.file:
+    path: "{{ auto_feeder_install_dir }}"
+    state: directory
+    owner: "{{ auto_feeder_user }}"
+    group: "{{ auto_feeder_user }}"
+    mode: "0750"
+
+- name: Deploy auto-feeder script
+  ansible.builtin.template:
+    src: auto-feeder.py.j2
+    dest: "{{ auto_feeder_install_dir }}/auto-feeder.py"
+    owner: "{{ auto_feeder_user }}"
+    group: "{{ auto_feeder_user }}"
+    mode: "0750"
+  notify: Restart auto-feeder timer
+
+- name: Deploy systemd service unit
+  ansible.builtin.template:
+    src: auto-feeder.service.j2
+    dest: /etc/systemd/system/auto-feeder.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart auto-feeder timer
+
+- name: Deploy systemd timer unit
+  ansible.builtin.template:
+    src: auto-feeder.timer.j2
+    dest: /etc/systemd/system/auto-feeder.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart auto-feeder timer
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start auto-feeder timer
+  ansible.builtin.systemd:
+    name: auto-feeder.timer
+    enabled: true
+    state: started
+  when: auto_feeder_enabled
+
+- name: Stop and disable auto-feeder timer (if disabled)
+  ansible.builtin.systemd:
+    name: auto-feeder.timer
+    enabled: false
+    state: stopped
+  when: not auto_feeder_enabled
+  failed_when: false

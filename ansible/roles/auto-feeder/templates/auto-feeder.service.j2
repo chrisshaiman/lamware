@@ -1,0 +1,27 @@
+# auto-feeder.service — one-shot MalwareBazaar ingestion cycle
+# Triggered by auto-feeder.timer. Each invocation runs one cycle:
+# check guardrails, query MalwareBazaar, download sample, run pipeline.
+#
+# Managed by Ansible (auto-feeder role). Do not edit manually.
+
+[Unit]
+Description=Auto-feeder MalwareBazaar ingestion cycle
+After=network-online.target cape.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ auto_feeder_user }}
+Group={{ auto_feeder_user }}
+WorkingDirectory=/tmp
+ExecStart=/usr/bin/python3 {{ auto_feeder_install_dir }}/auto-feeder.py
+TimeoutStartSec=4200
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{ auto_feeder_install_dir }}
+ReadWritePaths=/opt/pipeline
+ReadWritePaths=/opt/sample-feeder
+ReadWritePaths=/tmp
+PrivateTmp=true

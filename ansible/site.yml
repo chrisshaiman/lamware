@@ -141,3 +141,7 @@
     # 18. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
+
+    # 19. Auto-feeder — unattended MalwareBazaar ingestion (disabled by default)
+    - role: auto-feeder
+      tags: [auto-feeder]
