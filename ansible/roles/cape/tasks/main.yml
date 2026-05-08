@@ -202,6 +202,16 @@
     value: "yes"
     mode: "0640"
 
+# Enable the cuckoostatus API endpoint — used by auto-feeder health check
+# to verify CAPE is running and machines are available before submitting samples.
+- name: Enable cuckoostatus API endpoint
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/api.conf"
+    section: cuckoostatus
+    option: enabled
+    value: "yes"
+    mode: "0640"
+
 # KVM is the only supported machinery for bare metal analysis
 - name: Set Cape machinery to kvm
   community.general.ini_file:
