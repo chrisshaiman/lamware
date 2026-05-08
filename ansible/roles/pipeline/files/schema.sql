@@ -115,6 +115,9 @@ CREATE TABLE analyses (
     -- Full pipeline report JSON — escape hatch for unmodeled data
     report_json             JSONB,
 
+    -- Cost tracking
+    llm_cost_usd            NUMERIC(8,4),
+
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
