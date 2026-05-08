@@ -71,6 +71,10 @@ def derive_package_from_triage(triage_result: dict, filename: str = "") -> str:
     if "microsoft powerpoint" in file_type:
         return "ppt"
 
+    # PowerShell scripts
+    if ext in ("ps1", "psm1", "psd1"):
+        return "ps1"
+
     # PE executables
     if "pe32" in file_type or file_mime == "application/x-dosexec":
         if "dll" in file_type:
