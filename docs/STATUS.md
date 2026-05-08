@@ -66,6 +66,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | dashboard | Flask web UI | Complete |
 | sample-feeder | MalwareBazaar CLI | Complete |
 | auto-feeder | Unattended MalwareBazaar ingestion with 6 guardrails | Complete |
+| network-monitor | Air-gap integrity checking (iptables counter monitor) | Complete |
 
 ### Database Features
 
@@ -78,6 +79,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | Cross-sample IOC correlation | Complete |
 | MITRE tactics populated | Complete |
 | Sample relationship lineage | Schema ready, not populated |
+| Per-analysis LLM cost tracking | Complete |
 
 ### Dashboard Pages
 
@@ -90,6 +92,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | /techniques (ATT&CK browser) | Complete |
 | /pdf/<task_id> (PDF download) | Complete |
 | /logs/<task_id> (pipeline log viewer) | Complete |
+| /alerts (operational health) | Complete |
 
 ### Performance Optimizations
 
@@ -147,6 +150,7 @@ No items — all resolved.
 
 | Item | Effort | Notes |
 |------|--------|-------|
+| Host file integrity monitoring | 1-2 hrs | SHA256 baseline of iptables rules + QEMU binary. Low value for single-operator setup — only 2 files worth watching, and an attacker with root could disable the checker. |
 | Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
 | Randomize UNTRUSTED_CODE delimiters | 15 min | Per-request random suffix on UNTRUSTED_CODE tags to prevent delimiter escape from malicious content. Low risk but easy hardening. |
