@@ -114,6 +114,56 @@ DB_USER = "{{ postgres_db_user | default('pipeline') }}"
 DB_PASSWORD = "{{ pipeline_db_password | default('') }}"
 
 
+# LLM pricing per million tokens (update when model pricing changes)
+_LLM_PRICING = {
+    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+    "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
+    "default": {"input": 3.00, "output": 15.00},
+}
+
+
+def _calculate_llm_cost(report: dict) -> float:
+    """Calculate total LLM API cost from token usage across all stages.
+
+    Reads usage data from llm_interpretation, executive_summary,
+    evasion_analysis, and visual_analysis sections of the report.
+    Falls back to $0.50 estimate if no usage data available.
+    """
+    total_cost = 0.0
+    has_usage = False
+
+    llm_sections = [
+        ("llm_interpretation", None),
+        ("executive_summary", None),
+        ("evasion_analysis", "analysis"),
+        ("visual_analysis", None),
+    ]
+
+    for section_key, nested_key in llm_sections:
+        section = report.get(section_key, {})
+        if nested_key:
+            section = section.get(nested_key, {})
+
+        usage = section.get("usage", {})
+        if not usage:
+            continue
+
+        model = section.get("model_used", section.get("model", "default"))
+        pricing = _LLM_PRICING.get(model, _LLM_PRICING["default"])
+
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+
+        if input_tokens or output_tokens:
+            has_usage = True
+            cost = (input_tokens * pricing["input"] / 1_000_000) + \
+                   (output_tokens * pricing["output"] / 1_000_000)
+            total_cost += cost
+
+    return total_cost if has_usage else 0.50
+
+
 def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     """Write structured analysis data to PostgreSQL.
 
@@ -213,6 +263,10 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             "stage_timings": psycopg2.extras.Json(report.get("timing", {})),
             "report_json": psycopg2.extras.Json(report),
         }
+
+        # Calculate LLM API cost from token usage
+        llm_cost = _calculate_llm_cost(report)
+        analysis_values["llm_cost_usd"] = llm_cost
 
         if existing_analysis_id:
             # Update the early-created row
