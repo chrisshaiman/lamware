@@ -1,0 +1,14 @@
+FROM mcr.microsoft.com/powershell:lts-debian-12
+
+# Install Python 3 for the orchestration script
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install PSDecode module
+RUN pwsh -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
+    Install-Module -Name PSDecode -Scope AllUsers -Force"
+
+COPY analyze-powershell.py /opt/analyze-powershell.py
+
+ENTRYPOINT ["python3", "/opt/analyze-powershell.py"]
