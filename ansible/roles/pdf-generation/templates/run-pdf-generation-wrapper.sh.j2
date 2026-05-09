@@ -30,14 +30,16 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 # Copy report to temp dir with world-readable permissions
-# so the container's nobody user (65534) can read it
+# so the container's nobody user (65534) can read it.
+# Output also goes to the temp dir (nobody can't write to cape-owned dirs),
+# then we copy the PDF back to the real output dir after the container exits.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 chmod 755 "$WORK_DIR"
 cp "$REPORT_PATH" "$WORK_DIR/$REPORT_NAME"
 chmod 644 "$WORK_DIR/$REPORT_NAME"
 
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \
@@ -49,6 +51,15 @@ exec podman run --rm \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
     -v "$WORK_DIR:/report:ro" \
-    -v "$OUTPUT_DIR:/output:rw" \
+    -v "$WORK_DIR:/output:rw" \
     localhost/pdf-generation:latest \
     "/report/$REPORT_NAME" "/output/$OUTPUT_NAME"
+
+# Copy PDF from temp dir to the real output location
+if [ -f "$WORK_DIR/$OUTPUT_NAME" ]; then
+    cp "$WORK_DIR/$OUTPUT_NAME" "$OUTPUT_DIR/$OUTPUT_NAME"
+    echo "PDF report written to: $OUTPUT_DIR/$OUTPUT_NAME"
+else
+    echo "Error: PDF was not generated" >&2
+    exit 1
+fi
