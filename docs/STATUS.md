@@ -130,6 +130,7 @@ No items — all resolved.
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
 | Dynamic guest clock from PE timestamp | 1-2 hrs | Set guest VM clock to within 30 days of sample's PE compile timestamp before detonation. Defeats date/time expiration checks. Could be CAPE machinery option or pipeline pre-submission step. |
 | PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |
+| Actual LLM cost tracking | 1-2 hrs | Capture response.usage.input_tokens/output_tokens from Claude API in interpret container. Propagate through report JSON to db_ingest. Replace $0.50 default with real token-based cost calculation. |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
@@ -158,6 +159,7 @@ No items — all resolved.
 | WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
 | Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
 | Host file integrity monitoring | 1-2 hrs | SHA256 baseline of iptables rules + QEMU binary. Low value for single-operator setup — only 2 files worth watching, and an attacker with root could disable the checker. |
+| Evasion-to-hardening agent | Design + build | Aggregate evasion hunter recommendations across all samples, rank by frequency, categorize by fix type (Packer/CAPE/QEMU). Near-term: dashboard view of outstanding evasion techniques. Long-term: autonomous agent that generates Packer scripts and Ansible tasks from evasion findings. |
 | Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
 | Randomize UNTRUSTED_CODE delimiters | 15 min | Per-request random suffix on UNTRUSTED_CODE tags to prevent delimiter escape from malicious content. Low risk but easy hardening. |
