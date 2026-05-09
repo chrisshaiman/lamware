@@ -1,0 +1,9 @@
+---
+# roles/ntfy-alerts/defaults/main.yml
+
+ntfy_enabled: false
+ntfy_url: "https://ntfy.sh"
+ntfy_topic: ""  # set in Ansible Vault
+ntfy_install_dir: /opt/ntfy-alerts
+ntfy_digest_hour: 20  # 8pm local time
+ntfy_digest_enabled: true
