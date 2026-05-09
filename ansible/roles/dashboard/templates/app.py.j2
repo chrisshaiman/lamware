@@ -373,6 +373,7 @@ def index():
             <td>{a['technique_count']}</td>
             <td>{a['sig_count']}</td>
             <td>{started}</td>
+            <td><a href="/pdf/{escape(a['task_id'])}" style="font-size:11px;color:#74b9ff;">pdf</a> <a href="/logs/{escape(a['task_id'])}" style="font-size:11px;color:#74b9ff;">logs</a></td>
         </tr>"""
 
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
@@ -392,7 +393,7 @@ def index():
             <table>
                 <tr><th>Task</th><th>SHA256</th><th>Filename</th><th>Family</th>
                     <th>Severity</th><th>Score</th><th>IOCs</th><th>ATT&CK</th>
-                    <th>Sigs</th><th>Date</th></tr>
+                    <th>Sigs</th><th>Date</th><th></th></tr>
                 {{ rows }}
             </table>
         </div>
@@ -1232,10 +1233,10 @@ def alerts_page():
                 <p>Today: ${{ '%.2f'|format(daily_cost) }} | This week: ${{ '%.2f'|format(weekly_cost) }}</p>
             </div>
 
-            {% if digest_text %}
+            {% if digest_html %}
             <div class="card">
                 <h3>Latest Daily Digest</h3>
-                <pre style="white-space:pre-wrap;font-size:12px;">{{ digest_text }}</pre>
+                <div class="narrative" style="font-size:13px;">{{ digest_html }}</div>
                 <p style="font-size:11px;color:#8b949e;">Generated: {{ digest_time }}</p>
             </div>
             {% endif %}
@@ -1277,7 +1278,7 @@ def alerts_page():
         feeder_last_success=feeder.get("last_success", ""),
         log_errors=bool(log_errors),
         log_errors_text="\n".join(log_errors),
-        digest_text=digest.get("text", ""),
+        digest_html=Markup(render_markdown(digest.get("text", ""))),
         digest_time=digest.get("generated_at", ""),
     )
 
