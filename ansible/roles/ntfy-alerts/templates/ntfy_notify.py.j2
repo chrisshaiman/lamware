@@ -41,8 +41,11 @@ def send_alert(title: str, message: str, priority: str = "default",
     if not NTFY_ENABLED or not NTFY_TOPIC:
         return False
 
+    # Replace non-ASCII characters in headers (HTTP/1.1 requires latin-1 headers)
+    safe_title = title.encode("ascii", errors="replace").decode("ascii")
+
     headers = {
-        "Title": title,
+        "Title": safe_title,
         "Priority": priority,
     }
     if tags:
