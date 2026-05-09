@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+"""
+daily-digest.py — LLM-curated daily analysis summary with historical context.
+
+Queries PostgreSQL for the day's analyses, gathers historical context
+(family trending, first-seen, shared IOCs, top TTPs), sends to Haiku
+for highlights, and pushes a digest notification via ntfy.
+
+Designed to run as a daily cron job (default 8pm).
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import json
+import logging
+import os
+import shutil
+import sys
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
+import requests
+
+# Add ntfy module to path
+sys.path.insert(0, "{{ ntfy_install_dir }}")
+from ntfy_notify import send_alert
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+INSTALL_DIR = Path("{{ ntfy_install_dir }}")
+DIGEST_FILE = INSTALL_DIR / "latest-digest.json"
+
+DB_CONFIG = {
+    "host": "{{ postgres_listen_address | default('127.0.0.1') }}",
+    "port": {{ postgres_port | default(5432) }},
+    "dbname": "{{ postgres_db_name | default('malware_analysis') }}",
+    "user": "{{ postgres_db_user | default('pipeline') }}",
+    "password": "{{ pipeline_db_password | default('') }}",
+}
+
+ANTHROPIC_API_KEY = "{{ anthropic_api_key }}"
+HAIKU_MODEL = "{{ interpret_summary_model | default('claude-haiku-4-5-20251001') }}"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+log = logging.getLogger("daily-digest")
+log.setLevel(logging.INFO)
+handler = RotatingFileHandler(str(INSTALL_DIR / "digest.log"), maxBytes=2_000_000, backupCount=3)
+handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+log.addHandler(handler)
+log.addHandler(logging.StreamHandler(sys.stdout))
+
+# ---------------------------------------------------------------------------
+# Database queries
+# ---------------------------------------------------------------------------
+
+def gather_stats() -> dict:
+    """Query PostgreSQL for today's analysis stats and historical context."""
+    stats = {
+        "today_count": 0,
+        "families": {},
+        "severities": {},
+        "total_cost": 0.0,
+        "weekly_cost": 0.0,
+        "evasion_count": 0,
+        "errors": 0,
+        "first_seen_families": [],
+        "family_trending": {},
+        "shared_iocs": [],
+        "top_techniques": [],
+        "plain_english_summaries": [],
+    }
+
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.set_session(readonly=True)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+        # Today's analyses
+        cur.execute("""
+            SELECT a.id, a.malware_family_guess, a.severity, a.llm_cost_usd,
+                   a.plain_english_summary, a.pipeline_status, s.filename
+            FROM analyses a
+            JOIN samples s ON s.id = a.sample_id
+            WHERE a.started_at > NOW() - INTERVAL '1 day'
+            ORDER BY a.started_at DESC
+        """)
+        today = cur.fetchall()
+        stats["today_count"] = len(today)
+
+        for row in today:
+            family = row["malware_family_guess"] or "unknown"
+            stats["families"][family] = stats["families"].get(family, 0) + 1
+
+            severity = row["severity"] or "low"
+            stats["severities"][severity] = stats["severities"].get(severity, 0) + 1
+
+            stats["total_cost"] += float(row["llm_cost_usd"] or 0)
+
+            if row["pipeline_status"] == "failed":
+                stats["errors"] += 1
+
+            if row["plain_english_summary"]:
+                stats["plain_english_summaries"].append({
+                    "family": family,
+                    "severity": severity,
+                    "filename": row["filename"],
+                    "summary": row["plain_english_summary"],
+                })
+
+        # Weekly cost
+        cur.execute("""
+            SELECT COALESCE(SUM(llm_cost_usd), 0)
+            FROM analyses
+            WHERE started_at > NOW() - INTERVAL '7 days'
+        """)
+        stats["weekly_cost"] = float(cur.fetchone()[0])
+
+        # Evasion hunter triggers today
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM analyses
+            WHERE started_at > NOW() - INTERVAL '1 day'
+              AND report_json::text LIKE '%%evasion_analysis%%'
+              AND report_json->>'evasion_analysis' IS NOT NULL
+        """)
+        stats["evasion_count"] = cur.fetchone()[0]
+
+        # First-seen families (families appearing for the first time ever)
+        cur.execute("""
+            SELECT DISTINCT a.malware_family_guess
+            FROM analyses a
+            WHERE a.started_at > NOW() - INTERVAL '1 day'
+              AND a.malware_family_guess IS NOT NULL
+              AND a.malware_family_guess != 'unknown'
+              AND NOT EXISTS (
+                  SELECT 1 FROM analyses older
+                  WHERE older.malware_family_guess = a.malware_family_guess
+                    AND older.started_at < NOW() - INTERVAL '1 day'
+              )
+        """)
+        stats["first_seen_families"] = [row[0] for row in cur.fetchall()]
+
+        # Family trending (compare this week vs last week)
+        cur.execute("""
+            WITH this_week AS (
+                SELECT malware_family_guess, COUNT(*) as cnt
+                FROM analyses
+                WHERE started_at > NOW() - INTERVAL '7 days'
+                  AND malware_family_guess IS NOT NULL
+                  AND malware_family_guess != 'unknown'
+                GROUP BY malware_family_guess
+            ), last_week AS (
+                SELECT malware_family_guess, COUNT(*) as cnt
+                FROM analyses
+                WHERE started_at BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days'
+                  AND malware_family_guess IS NOT NULL
+                  AND malware_family_guess != 'unknown'
+                GROUP BY malware_family_guess
+            )
+            SELECT COALESCE(t.malware_family_guess, l.malware_family_guess) as family,
+                   COALESCE(t.cnt, 0) as this_week,
+                   COALESCE(l.cnt, 0) as last_week
+            FROM this_week t
+            FULL OUTER JOIN last_week l ON t.malware_family_guess = l.malware_family_guess
+            ORDER BY COALESCE(t.cnt, 0) DESC
+            LIMIT 10
+        """)
+        for row in cur.fetchall():
+            stats["family_trending"][row["family"]] = {
+                "this_week": row["this_week"],
+                "last_week": row["last_week"],
+            }
+
+        # Shared IOCs (IOCs from today that appear in previous samples)
+        cur.execute("""
+            SELECT iv.type, iv.value, COUNT(DISTINCT ai.analysis_id) as sample_count
+            FROM analysis_iocs ai
+            JOIN ioc_values iv ON iv.id = ai.ioc_id
+            WHERE ai.analysis_id IN (
+                SELECT id FROM analyses WHERE started_at > NOW() - INTERVAL '1 day'
+            )
+            AND iv.id IN (
+                SELECT ioc_id FROM analysis_iocs
+                WHERE analysis_id IN (
+                    SELECT id FROM analyses WHERE started_at < NOW() - INTERVAL '1 day'
+                )
+            )
+            GROUP BY iv.type, iv.value
+            ORDER BY sample_count DESC
+            LIMIT 10
+        """)
+        stats["shared_iocs"] = [
+            {"type": row["type"], "value": row["value"], "count": row["sample_count"]}
+            for row in cur.fetchall()
+        ]
+
+        # Top techniques today
+        cur.execute("""
+            SELECT tv.technique_id, tv.technique_name, COUNT(*) as cnt
+            FROM analysis_techniques at2
+            JOIN technique_values tv ON tv.id = at2.technique_id
+            WHERE at2.analysis_id IN (
+                SELECT id FROM analyses WHERE started_at > NOW() - INTERVAL '1 day'
+            )
+            GROUP BY tv.technique_id, tv.technique_name
+            ORDER BY cnt DESC
+            LIMIT 10
+        """)
+        stats["top_techniques"] = [
+            {"id": row["technique_id"], "name": row["technique_name"], "count": row["cnt"]}
+            for row in cur.fetchall()
+        ]
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        log.error(f"Database query failed: {e}")
+
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# LLM highlights
+# ---------------------------------------------------------------------------
+
+def generate_highlights(stats: dict) -> str:
+    """Send stats to Haiku for analyst-curated highlights."""
+    if not ANTHROPIC_API_KEY or stats["today_count"] == 0:
+        return ""
+
+    # Build context for Haiku
+    context_parts = [
+        f"Today: {stats['today_count']} samples analyzed",
+        f"Families: {json.dumps(stats['families'])}",
+        f"Severities: {json.dumps(stats['severities'])}",
+        f"Cost: ${stats['total_cost']:.2f} today, ${stats['weekly_cost']:.2f} this week",
+        f"Evasion hunter triggered: {stats['evasion_count']} samples",
+    ]
+
+    if stats["first_seen_families"]:
+        context_parts.append(f"NEW families (first time in corpus): {', '.join(stats['first_seen_families'])}")
+
+    if stats["family_trending"]:
+        trending = []
+        for fam, counts in stats["family_trending"].items():
+            if counts["this_week"] > counts["last_week"]:
+                trending.append(f"{fam}: {counts['last_week']}→{counts['this_week']} (up)")
+            elif counts["this_week"] < counts["last_week"]:
+                trending.append(f"{fam}: {counts['last_week']}→{counts['this_week']} (down)")
+        if trending:
+            context_parts.append(f"Family trending (week over week): {'; '.join(trending)}")
+
+    if stats["shared_iocs"]:
+        shared = [f"{ioc['type']}:{ioc['value']} (seen in {ioc['count']} samples)" for ioc in stats["shared_iocs"][:5]]
+        context_parts.append(f"Shared IOCs (today's samples matching previous): {'; '.join(shared)}")
+
+    if stats["top_techniques"]:
+        ttps = [f"{t['id']} {t['name']} ({t['count']}x)" for t in stats["top_techniques"][:5]]
+        context_parts.append(f"Top TTPs today: {'; '.join(ttps)}")
+
+    if stats["plain_english_summaries"]:
+        summaries = [f"[{s['severity']}] {s['family']}: {s['summary']}" for s in stats["plain_english_summaries"][:10]]
+        context_parts.append(f"Sample summaries:\n" + "\n".join(summaries))
+
+    context = "\n".join(context_parts)
+
+    prompt = """You are a security analyst reviewing the day's malware analysis results from an automated sandbox. Write 3-5 bullet points highlighting the most interesting or unusual findings. Call out:
+- New families not seen before in our corpus
+- Sophisticated evasion techniques
+- Unusual attack chains or novel techniques
+- High-severity samples that warrant attention
+- Shared infrastructure (IOCs appearing across multiple samples)
+- Changes in TTP frequency compared to the previous week
+
+Keep each bullet to 1-2 sentences. Be specific — name the families, techniques, and IOCs. If nothing unusual happened, say so briefly."""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": HAIKU_MODEL,
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": f"{context}\n\n{prompt}"}],
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            return result["content"][0]["text"]
+    except Exception as e:
+        log.error(f"LLM highlights failed: {e}")
+
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    log.info("Generating daily digest...")
+
+    stats = gather_stats()
+
+    if stats["today_count"] == 0:
+        log.info("No analyses today — skipping digest")
+        return
+
+    # Generate LLM highlights
+    highlights = generate_highlights(stats)
+
+    # Build digest text
+    lines = [f"lamware daily digest — {datetime.now().strftime('%B %d, %Y')}", ""]
+
+    if highlights:
+        lines.append("Highlights:")
+        for line in highlights.strip().splitlines():
+            lines.append(line)
+        lines.append("")
+
+    # Stats summary
+    families_str = ", ".join(f"{f} ({c})" for f, c in
+                             sorted(stats["families"].items(), key=lambda x: -x[1])[:5])
+    severity_str = " | ".join(f"{s}: {c}" for s, c in
+                               sorted(stats["severities"].items(),
+                                      key=lambda x: ["critical","high","medium","low"].index(x[0])
+                                      if x[0] in ["critical","high","medium","low"] else 99))
+
+    lines.append(f"Samples: {stats['today_count']} analyzed")
+    if families_str:
+        lines.append(f"Families: {families_str}")
+    lines.append(f"Severity: {severity_str}")
+    lines.append(f"Cost: ${stats['total_cost']:.2f} today (${stats['weekly_cost']:.2f} this week)")
+
+    if stats["evasion_count"]:
+        lines.append(f"Evasion: {stats['evasion_count']} sample(s) triggered evasion hunter")
+    if stats["first_seen_families"]:
+        lines.append(f"New families: {', '.join(stats['first_seen_families'])}")
+    if stats["errors"]:
+        lines.append(f"Errors: {stats['errors']} pipeline failure(s)")
+
+    # Disk + network
+    try:
+        usage = shutil.disk_usage("/opt/pipeline")
+        disk_pct = round((usage.used / usage.total) * 100, 1)
+        lines.append(f"Disk: {disk_pct}%")
+    except Exception:
+        pass
+
+    net_path = Path("/opt/network-monitor/status.json")
+    if net_path.exists():
+        try:
+            net = json.load(open(net_path))
+            lines.append(f"Network: {net.get('status', 'unknown')}")
+        except Exception:
+            pass
+
+    digest_text = "\n".join(lines)
+    log.info(f"Digest:\n{digest_text}")
+
+    # Send via ntfy
+    send_alert(
+        title=f"lamware digest — {datetime.now().strftime('%b %d')}",
+        message=digest_text,
+        priority="default",
+        tags="clipboard",
+    )
+
+    # Save latest digest for dashboard
+    digest_data = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "text": digest_text,
+        "highlights": highlights,
+        "stats": {
+            "count": stats["today_count"],
+            "families": stats["families"],
+            "severities": stats["severities"],
+            "cost_today": stats["total_cost"],
+            "cost_week": stats["weekly_cost"],
+            "evasion_count": stats["evasion_count"],
+            "first_seen": stats["first_seen_families"],
+            "errors": stats["errors"],
+        },
+    }
+    with open(DIGEST_FILE, "w") as f:
+        json.dump(digest_data, f, indent=2)
+
+    log.info("Digest sent and saved")
+
+
+if __name__ == "__main__":
+    main()

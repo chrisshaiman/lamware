@@ -44,6 +44,13 @@ except (ImportError, AttributeError):
 
 import requests
 
+# Optional ntfy push notifications
+sys.path.insert(0, "/opt/ntfy-alerts")
+try:
+    from ntfy_notify import send_alert as ntfy_alert
+except ImportError:
+    ntfy_alert = None
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -161,6 +168,9 @@ def check_guardrails(state: dict) -> str | None:
     percent = (usage.used / usage.total) * 100
     if percent >= DISK_THRESHOLD:
         PAUSE_FILE.touch()
+        if ntfy_alert:
+            ntfy_alert("Disk Full", f"Disk usage {percent:.1f}% — auto-feeder paused",
+                       priority="high", tags="warning")
         return f"Disk usage {percent:.1f}% exceeds {DISK_THRESHOLD}% — PAUSE file created"
 
     # 3. CAPE health
@@ -183,6 +193,10 @@ def check_guardrails(state: dict) -> str | None:
     # 4. Consecutive failures
     if state["consecutive_failures"] >= MAX_FAILURES:
         PAUSE_FILE.touch()
+        if ntfy_alert:
+            ntfy_alert("Pipeline Failures",
+                       f"{MAX_FAILURES} consecutive failures — auto-feeder paused\nLast error: {state.get('last_failure_reason', '?')}",
+                       priority="high", tags="warning")
         return f"{MAX_FAILURES} consecutive failures — PAUSE file created"
 
     # 5. Daily budget

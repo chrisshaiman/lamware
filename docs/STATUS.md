@@ -32,6 +32,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 5.5 Screenshot analysis | Perceptual dedup + QR detection | Podman (--network=none) | Complete |
 | 5.7 Visual analysis | Claude multimodal (screenshot interpretation) | Podman (--network=host) | Complete |
 | 5. Executive summary | Claude Haiku (single-shot) | Podman (--network=host) | Complete |
+| 5.1 Plain English | Claude Haiku (non-technical explanation) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Podman (--network=none) | Complete |
 
 ### Supporting Infrastructure — 20 Ansible roles
@@ -66,7 +67,8 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | dashboard | Flask web UI | Complete |
 | sample-feeder | MalwareBazaar CLI | Complete |
 | auto-feeder | Unattended MalwareBazaar ingestion with 6 guardrails | Complete |
-| network-monitor | Air-gap integrity checking (iptables counter monitor) | Complete |
+| network-monitor | Air-gap + QEMU breakout + process allowlist monitoring | Complete |
+| ntfy-alerts | Push notifications + daily digest with LLM highlights | Complete |
 
 ### Database Features
 
@@ -150,6 +152,9 @@ No items — all resolved.
 
 | Item | Effort | Notes |
 |------|--------|-------|
+| WireGuard phone peer | 30 min | Add phone as WireGuard peer with separate IP (10.200.0.3). QR code config for mobile app. |
+| WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
+| Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
 | Host file integrity monitoring | 1-2 hrs | SHA256 baseline of iptables rules + QEMU binary. Low value for single-operator setup — only 2 files worth watching, and an attacker with root could disable the checker. |
 | Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |

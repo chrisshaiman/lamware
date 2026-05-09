@@ -43,7 +43,7 @@ from stages.java import is_java_binary, run_java_analysis
 from stages.office import is_office_document, run_office_analysis
 from stages.powershell import is_powershell_script, extract_powershell_from_cape, run_powershell_analysis
 from stages.ghidra import should_run_ghidra, run_ghidra
-from stages.interpret import run_interpret, run_summarize
+from stages.interpret import run_interpret, run_summarize, run_plain_english
 from ioc_extract import extract_iocs, map_iocs_to_techniques
 from db_ingest import ingest_to_db, mark_pdf_generated
 from pipeline_status import create_analysis_row, update_stage, complete_pipeline
@@ -1637,6 +1637,23 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         report["executive_summary"] = {"enabled": False, "reason": "disabled_by_config"}
     stage_timings["summary"] = round(_time.time() - _summary_start, 1)
     update_stage(analysis_id_early, "summary", "completed", f"{stage_timings['summary']:.0f}s")
+
+    # Plain English summary for non-technical audiences
+    if INTERPRET_ENABLED and report.get("executive_summary", {}).get("executive_summary"):
+        log.info(f"\n[Stage 5.1] Plain English Summary: generating...")
+        plain_summary = run_plain_english(
+            report,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_config=INTERPRET_CONFIG,
+        )
+        if plain_summary:
+            report["plain_english_summary"] = plain_summary
+            log.info(f"  {plain_summary[:100]}...")
+        else:
+            report["plain_english_summary"] = ""
+    else:
+        report["plain_english_summary"] = ""
 
     # Merge LLM-generated IOC-technique links from executive summary
     llm_links = report.get("executive_summary", {}).get("ioc_technique_links", [])

@@ -1750,6 +1750,32 @@ def main() -> None:
         run_summarize(client, report, {**DEFAULT_CONFIG, **config})
         sys.exit(0)
 
+    # ---- Plain English summary — non-technical explanation ----
+    if init_msg.get("type") == "plain_english":
+        executive = init_msg.get("executive_summary", "")
+        family = init_msg.get("family", "unknown")
+        severity = init_msg.get("severity", "unknown")
+        filename = init_msg.get("filename", "unknown")
+
+        prompt = f"""You are explaining a malware analysis to someone who uses a computer for email and web browsing but has no technical background. Use everyday analogies. No jargon. No acronyms. Explain what the malware does, how it gets onto someone's computer, and what harm it could cause. Keep it to 2-3 sentences.
+
+Sample: {filename}
+Family: {family}
+Severity: {severity}
+Technical summary: {executive}"""
+
+        try:
+            response = client.messages.create(
+                model=init_msg.get("model", DEFAULT_CONFIG["model"]),
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(b.text for b in response.content if b.type == "text")
+            emit({"type": "plain_english", "summary": text.strip()})
+        except Exception as e:
+            emit({"type": "plain_english", "summary": "", "error": str(e)})
+        sys.exit(0)
+
     if init_msg.get("type") != "init":
         emit({"type": "final", "analysis": {"error": f"Expected init or summarize, got {init_msg.get('type')}"}, "model_used": "none", "tool_calls_used": 0})
         sys.exit(1)

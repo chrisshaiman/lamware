@@ -259,6 +259,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             "narrative": analysis.get("narrative", ""),
             "working_notes": analysis.get("working_notes", ""),
             "executive_summary": summary.get("executive_summary", ""),
+            "plain_english_summary": report.get("plain_english_summary", ""),
             "pipeline_status": "completed",
             "stage_timings": psycopg2.extras.Json(report.get("timing", {})),
             "report_json": psycopg2.extras.Json(report),
