@@ -172,6 +172,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     "duration_seconds": round(duration, 1),
                     "possible_prompt_influence": influenced,
                     "analysis": analysis,
+                    "usage": msg.get("usage", {}),
                     "audit": {"tool_call_log": str(audit_dir / "tool_calls.json")},
                 }
 
@@ -261,6 +262,11 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
         try:
             result = json.loads(line)
             summary = result.get("summary", {"error": "No summary in response"})
+            # Pass through token usage and model for cost tracking
+            if "usage" in result:
+                summary["usage"] = result["usage"]
+            if "model_used" in result:
+                summary["model"] = result["model_used"]
 
             # If parse_final_response hit the fallback, the summary fields
             # (executive_summary, key_findings, etc.) end up inside "narrative"

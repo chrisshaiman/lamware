@@ -760,6 +760,17 @@ def emit_status(message: str, tool_calls_used: int) -> None:
     emit({"type": "status", "message": message, "tool_calls_used": tool_calls_used})
 
 
+def usage_from_response(response) -> dict:
+    """Extract token usage from a Claude API response."""
+    usage = getattr(response, "usage", None)
+    if usage:
+        return {
+            "input_tokens": getattr(usage, "input_tokens", 0),
+            "output_tokens": getattr(usage, "output_tokens", 0),
+        }
+    return {"input_tokens": 0, "output_tokens": 0}
+
+
 # ---------------------------------------------------------------------------
 # Input sanitization
 # ---------------------------------------------------------------------------
@@ -1719,6 +1730,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
             "type": "summary",
             "summary": summary,
             "model_used": model,
+            "usage": usage_from_response(response),
         })
     except anthropic.APIError as e:
         emit({
@@ -1812,6 +1824,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -1842,6 +1855,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -1872,6 +1886,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -1902,6 +1917,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -1931,6 +1947,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -1960,6 +1977,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -2011,6 +2029,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -2040,6 +2059,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
+                "usage": usage_from_response(response),
             })
         except anthropic.APIError as e:
             emit({
@@ -2058,6 +2078,8 @@ Technical summary: {executive}"""
 
     tool_calls_used = 0
     current_model = model
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     emit_status(f"Starting analysis with {current_model}", tool_calls_used)
 
@@ -2083,8 +2105,14 @@ Technical summary: {executive}"""
                 "analysis": {"error": f"Claude API error: {e}"},
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
+                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
             })
             sys.exit(1)
+
+        # Accumulate token usage across all calls in the loop
+        resp_usage = usage_from_response(response)
+        total_input_tokens += resp_usage["input_tokens"]
+        total_output_tokens += resp_usage["output_tokens"]
 
         # ---- Process response ----
         if response.stop_reason == "tool_use":
@@ -2180,12 +2208,16 @@ Technical summary: {executive}"""
                         final_text = "".join(
                             b.text for b in final_response.content if b.type == "text"
                         )
+                        final_usage = usage_from_response(final_response)
+                        total_input_tokens += final_usage["input_tokens"]
+                        total_output_tokens += final_usage["output_tokens"]
                         analysis = parse_final_response(final_text)
                         emit({
                             "type": "final",
                             "analysis": analysis,
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
+                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
                         })
                     except anthropic.APIError as e:
                         emit({
@@ -2193,6 +2225,7 @@ Technical summary: {executive}"""
                             "analysis": {"error": f"Claude API error on forced final: {e}"},
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
+                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
                         })
                     sys.exit(0)
 
@@ -2243,12 +2276,16 @@ Technical summary: {executive}"""
                     final_text = "".join(
                         b.text for b in final_response.content if b.type == "text"
                     )
+                    final_usage = usage_from_response(final_response)
+                    total_input_tokens += final_usage["input_tokens"]
+                    total_output_tokens += final_usage["output_tokens"]
                     analysis = parse_final_response(final_text)
                     emit({
                         "type": "final",
                         "analysis": analysis,
                         "model_used": current_model,
                         "tool_calls_used": tool_calls_used,
+                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
                     })
                 except anthropic.APIError as e:
                     emit({
@@ -2256,6 +2293,7 @@ Technical summary: {executive}"""
                         "analysis": {"error": f"Claude API error on max-calls final: {e}"},
                         "model_used": current_model,
                         "tool_calls_used": tool_calls_used,
+                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
                     })
                 sys.exit(0)
 
@@ -2273,6 +2311,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
+                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
             })
             sys.exit(0)
 
