@@ -59,6 +59,21 @@ def file_entropy(path: Path) -> float:
     return round(entropy, 2)
 
 
+def pe_compile_timestamp(path: Path) -> str | None:
+    """Extract PE compile timestamp. Returns ISO format string or None."""
+    try:
+        pe = pefile.PE(str(path), fast_load=True)
+        ts = pe.FILE_HEADER.TimeDateStamp
+        if ts and ts > 946684800:  # after 2000-01-01 (filter bogus timestamps)
+            from datetime import datetime, timezone
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            if dt.year <= 2030:  # filter far-future timestamps
+                return dt.isoformat()
+    except (pefile.PEFormatError, Exception):
+        pass
+    return None
+
+
 def section_entropies(path: Path) -> list[dict]:
     """Calculate per-section entropy for PE files."""
     try:
@@ -209,6 +224,7 @@ def main():
     hashes = file_hashes(sample_path)
     entropy = file_entropy(sample_path)
     sections = section_entropies(sample_path)
+    compile_ts = pe_compile_timestamp(sample_path)
     fuzzy_hash = run_ssdeep(sample_path)
     yara_matches = run_yara(sample_path)
     floss_result = run_floss(sample_path)
@@ -222,6 +238,7 @@ def main():
             "hashes": hashes,
             "ssdeep": fuzzy_hash,
             "entropy": entropy,
+            "pe_compile_timestamp": compile_ts,
             "sections": sections,
             "yara_matches": yara_matches,
             "floss": floss_result,
