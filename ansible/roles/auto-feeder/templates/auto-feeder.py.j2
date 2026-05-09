@@ -453,12 +453,14 @@ def run_cycle() -> None:
 
     except subprocess.TimeoutExpired:
         log.error("Pipeline timed out (3600s)")
+        save_seen_hash(sample["sha256"])  # don't retry the same sample
         state["consecutive_failures"] += 1
         state["last_failure"] = datetime.now(timezone.utc).isoformat()
         state["last_failure_reason"] = "Pipeline timeout"
 
     except Exception as e:
         log.error(f"Pipeline failed: {e}")
+        save_seen_hash(sample["sha256"])  # don't retry the same sample
         state["consecutive_failures"] += 1
         state["last_failure"] = datetime.now(timezone.utc).isoformat()
         state["last_failure_reason"] = str(e)
