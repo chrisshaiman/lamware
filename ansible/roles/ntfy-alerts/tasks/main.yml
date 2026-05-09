@@ -1,0 +1,47 @@
+---
+# roles/ntfy-alerts/tasks/main.yml
+#
+# Deploys the ntfy notification module and daily digest.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+
+- name: Create ntfy-alerts directory
+  ansible.builtin.file:
+    path: "{{ ntfy_install_dir }}"
+    state: directory
+    owner: "{{ cape_user | default('cape') }}"
+    group: "{{ cape_user | default('cape') }}"
+    mode: "0750"
+
+- name: Deploy ntfy notification module
+  ansible.builtin.template:
+    src: ntfy_notify.py.j2
+    dest: "{{ ntfy_install_dir }}/ntfy_notify.py"
+    owner: "{{ cape_user | default('cape') }}"
+    group: "{{ cape_user | default('cape') }}"
+    mode: "0750"
+
+- name: Deploy daily digest script
+  ansible.builtin.template:
+    src: daily-digest.py.j2
+    dest: "{{ ntfy_install_dir }}/daily-digest.py"
+    owner: "{{ cape_user | default('cape') }}"
+    group: "{{ cape_user | default('cape') }}"
+    mode: "0750"
+
+- name: Install daily digest cron job
+  ansible.builtin.cron:
+    name: "lamware daily digest"
+    hour: "{{ ntfy_digest_hour }}"
+    minute: "0"
+    user: "{{ cape_user | default('cape') }}"
+    job: "cd /tmp && python3 {{ ntfy_install_dir }}/daily-digest.py >> {{ ntfy_install_dir }}/digest.log 2>&1"
+  when: ntfy_enabled and ntfy_digest_enabled
+
+- name: Remove daily digest cron if disabled
+  ansible.builtin.cron:
+    name: "lamware daily digest"
+    user: "{{ cape_user | default('cape') }}"
+    state: absent
+  when: not (ntfy_enabled and ntfy_digest_enabled)
