@@ -149,3 +149,7 @@
     # 20. Network monitor — air-gap integrity checking (cron, every 5 min)
     - role: network-monitor
       tags: [network-monitor]
+
+    # 21. ntfy alerts — push notifications and daily digest
+    - role: ntfy-alerts
+      tags: [ntfy-alerts]
