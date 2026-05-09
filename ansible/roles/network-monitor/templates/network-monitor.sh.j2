@@ -131,7 +131,7 @@ fi
 cape_process_status="ok"
 cape_unexpected=""
 # Exact process names expected for the cape user (system + CAPE + pipeline + containers)
-CAPE_ALLOWLIST="python3 python run-pipeline podman conmon catatonit sleep bash tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn dbus-daemon systemd (sd-pam) pause pipewire pipewire-pulse xdg-dbus-prox dconf-service gvfsd gvfsd-fuse tcpdump vol run-volatility run-triage run-ghidra run-interpret run-dotnet-anal run-go-analysis run-pyinstaller run-java-analys run-office-anal run-powershell- run-pcap-analys run-screenshot- run-pdf-generat"
+CAPE_ALLOWLIST="python3 python run-pipeline podman conmon catatonit sleep bash tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn dbus-daemon systemd (sd-pam) pause pipewire pipewire-pulse xdg-dbus-prox dconf-service gvfsd gvfsd-fuse tcpdump vol local run-volatility run-triage run-ghidra run-interpret run-dotnet-anal run-go-analysis run-pyinstaller run-java-analys run-office-anal run-powershell- run-pcap-analys run-screenshot- run-pdf-generat"
 # Patterns for processes with truncated or path-based names (ps comm= truncates to 15 chars)
 CAPE_ALLOWLIST_PATTERNS="/home/cape"
 
