@@ -711,6 +711,13 @@ def analysis_detail(analysis_id):
             </div>
             {% endif %}
 
+            {% if plain_english %}
+            <div class="card" style="border-left:3px solid #3fb950;">
+                <h3>What does this mean?</h3>
+                <p style="font-size:14px;line-height:1.6;">{{ plain_english }}</p>
+            </div>
+            {% endif %}
+
             {% if corr_rows %}
             <div class="card">
                 <h3>Cross-Tool Correlation Findings</h3>
@@ -782,6 +789,7 @@ def analysis_detail(analysis_id):
         pdf_link=pdf_link, logs_link=logs_link,
         evasion_html=Markup(evasion_html), screenshots_html=Markup(screenshots_html),
         executive_summary=Markup(render_markdown(a["executive_summary"] or "")),
+        plain_english=escape(a.get("plain_english_summary", "") or ""),
         narrative=Markup(render_markdown(a["narrative"] or "")),
         corr_rows=Markup(corr_rows),
         ioc_rows=Markup(ioc_rows), tech_rows=Markup(tech_rows), cap_rows=Markup(cap_rows),
@@ -1152,6 +1160,16 @@ def alerts_page():
         except Exception:
             pass
 
+    # Latest digest
+    digest = {}
+    digest_path = Path("/opt/ntfy-alerts/latest-digest.json")
+    try:
+        if digest_path.exists():
+            with open(digest_path) as f:
+                digest = json.load(f)
+    except Exception:
+        pass
+
     return render_template_string("""{% raw %}<!DOCTYPE html><html><head>
         <title>Operational Alerts — Dashboard</title>
         <style>{{ css }}</style>
@@ -1214,6 +1232,14 @@ def alerts_page():
                 <p>Today: ${{ '%.2f'|format(daily_cost) }} | This week: ${{ '%.2f'|format(weekly_cost) }}</p>
             </div>
 
+            {% if digest_text %}
+            <div class="card">
+                <h3>Latest Daily Digest</h3>
+                <pre style="white-space:pre-wrap;font-size:12px;">{{ digest_text }}</pre>
+                <p style="font-size:11px;color:#8b949e;">Generated: {{ digest_time }}</p>
+            </div>
+            {% endif %}
+
             {% if log_errors %}
             <div class="card">
                 <h3>Recent Errors (auto-feeder log)</h3>
@@ -1251,6 +1277,8 @@ def alerts_page():
         feeder_last_success=feeder.get("last_success", ""),
         log_errors=bool(log_errors),
         log_errors_text="\n".join(log_errors),
+        digest_text=digest.get("text", ""),
+        digest_time=digest.get("generated_at", ""),
     )
 
 

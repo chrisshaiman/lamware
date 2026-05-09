@@ -117,6 +117,7 @@ CREATE TABLE analyses (
 
     -- Cost tracking
     llm_cost_usd            NUMERIC(8,4),
+    plain_english_summary   TEXT,
 
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

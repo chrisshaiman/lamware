@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""
+ntfy_notify.py — push notification module for lamware alerts.
+
+Usable as:
+  - Python import: from ntfy_notify import send_alert
+  - CLI: python3 ntfy_notify.py "title" "message" --priority high --tags warning
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import argparse
+import logging
+import sys
+
+import requests
+
+NTFY_URL = "{{ ntfy_url }}"
+NTFY_TOPIC = "{{ ntfy_topic }}"
+NTFY_ENABLED = {% if ntfy_enabled %}True{% else %}False{% endif %}
+
+log = logging.getLogger("ntfy")
+
+
+def send_alert(title: str, message: str, priority: str = "default",
+               tags: str = "", click: str = "") -> bool:
+    """Send a push notification via ntfy.
+
+    Args:
+        title: Notification title
+        message: Notification body
+        priority: urgent, high, default, low, min
+        tags: Comma-separated emoji tags (e.g., "warning,skull")
+        click: URL to open when notification is tapped
+
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    if not NTFY_ENABLED or not NTFY_TOPIC:
+        return False
+
+    headers = {
+        "Title": title,
+        "Priority": priority,
+    }
+    if tags:
+        headers["Tags"] = tags
+    if click:
+        headers["Click"] = click
+
+    try:
+        resp = requests.post(
+            f"{NTFY_URL}/{NTFY_TOPIC}",
+            data=message.encode("utf-8"),
+            headers=headers,
+            timeout=10,
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        log.warning(f"ntfy send failed: {e}")
+        return False
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Send ntfy notification")
+    parser.add_argument("title", help="Notification title")
+    parser.add_argument("message", help="Notification body")
+    parser.add_argument("--priority", default="default",
+                        choices=["urgent", "high", "default", "low", "min"])
+    parser.add_argument("--tags", default="", help="Comma-separated tags")
+    parser.add_argument("--click", default="", help="Click URL")
+    args = parser.parse_args()
+
+    success = send_alert(args.title, args.message,
+                         priority=args.priority, tags=args.tags, click=args.click)
+    sys.exit(0 if success else 1)
