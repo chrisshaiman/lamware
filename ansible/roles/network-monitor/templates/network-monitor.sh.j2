@@ -75,6 +75,9 @@ if [ -f "$BASELINE_FILE" ]; then
         alert_message="AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to eth0 since baseline"
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
         touch "$PAUSE_FILE"
+        python3 "/opt/ntfy-alerts/ntfy_notify.py" \
+            "NETWORK BREACH" "$alert_message" \
+            --priority urgent --tags skull 2>/dev/null || true
     fi
 
     if [ "$det_wg0_accept" -gt "$baseline_wg0_accept" ]; then
@@ -83,9 +86,69 @@ if [ -f "$BASELINE_FILE" ]; then
         alert_message="${alert_message:+$alert_message; }AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to wg0 since baseline"
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
         touch "$PAUSE_FILE"
+        python3 "/opt/ntfy-alerts/ntfy_notify.py" \
+            "NETWORK BREACH" "$alert_message" \
+            --priority urgent --tags skull 2>/dev/null || true
     fi
 else
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) INFO: First run — saving baseline"
+fi
+
+# -------------------------------------------------------------------------
+# QEMU child process check — detect sandbox breakout
+# -------------------------------------------------------------------------
+
+QEMU_PIDS=$(pgrep qemu-system 2>/dev/null || true)
+qemu_status="ok"
+qemu_unexpected=""
+
+if [ -n "$QEMU_PIDS" ]; then
+    for qpid in $QEMU_PIDS; do
+        # Get child processes (exclude QEMU's own threads)
+        children=$(ps --ppid "$qpid" -o pid=,comm= 2>/dev/null | grep -v -E "qemu-system|CPU |worker" || true)
+        if [ -n "$children" ]; then
+            qemu_status="alert"
+            qemu_unexpected="$children"
+            status="alert"
+            alert_message="${alert_message:+$alert_message; }QEMU BREAKOUT: unexpected child processes of PID $qpid: $children"
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: QEMU unexpected children: $children"
+            touch "$PAUSE_FILE"
+            # Send ntfy notification
+            python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+                "QEMU BREAKOUT" "Unexpected child process of qemu-system (PID $qpid): $children" \
+                --priority urgent --tags skull 2>/dev/null || true
+        fi
+    done
+fi
+
+# -------------------------------------------------------------------------
+# Cape user process allowlist check
+# -------------------------------------------------------------------------
+
+cape_process_status="ok"
+cape_unexpected=""
+CAPE_ALLOWLIST="python3 python run-pipeline podman conmon catatonit sleep bash tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn"
+
+cape_procs=$(ps -u {{ cape_user | default('cape') }} -o comm= 2>/dev/null | sort -u || true)
+for proc in $cape_procs; do
+    allowed=false
+    for a in $CAPE_ALLOWLIST; do
+        if [ "$proc" = "$a" ]; then
+            allowed=true
+            break
+        fi
+    done
+    if [ "$allowed" = "false" ]; then
+        cape_process_status="warning"
+        cape_unexpected="${cape_unexpected:+$cape_unexpected, }$proc"
+    fi
+done
+
+if [ -n "$cape_unexpected" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected cape user processes: $cape_unexpected"
+    python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+        "Unexpected Processes" "Cape user running: $cape_unexpected" \
+        --priority high --tags warning 2>/dev/null || true
 fi
 
 # -------------------------------------------------------------------------
@@ -109,7 +172,6 @@ with open('$BASELINE_FILE', 'w') as f:
 # Write status file (read by dashboard)
 python3 -c "
 import json, os
-# Read previous check count
 checks = 0
 if os.path.exists('$STATUS_FILE'):
     try:
@@ -131,6 +193,10 @@ status = {
         'drop_packets': $det_wg0_drop,
         'status': 'alert' if $det_wg0_accept > 0 else 'ok',
     },
+    'qemu_status': '$qemu_status',
+    'qemu_unexpected_children': '$qemu_unexpected'.split(chr(10)) if '$qemu_unexpected' else [],
+    'cape_process_status': '$cape_process_status',
+    'cape_unexpected_processes': '$cape_unexpected'.split(', ') if '$cape_unexpected' else [],
     'alert_message': '$alert_message' if '$status' == 'alert' else None,
 }
 with open('$STATUS_FILE', 'w') as f:
