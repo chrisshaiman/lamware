@@ -127,7 +127,10 @@ fi
 
 cape_process_status="ok"
 cape_unexpected=""
-CAPE_ALLOWLIST="python3 python run-pipeline podman conmon catatonit sleep bash tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn"
+# Exact process names expected for the cape user (system + CAPE + pipeline + containers)
+CAPE_ALLOWLIST="python3 python run-pipeline podman conmon catatonit sleep bash tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn dbus-daemon systemd (sd-pam) pause pipewire pipewire-pulse xdg-dbus-prox dconf-service gvfsd gvfsd-fuse"
+# Patterns for processes with truncated or path-based names (ps comm= truncates to 15 chars)
+CAPE_ALLOWLIST_PATTERNS="/home/cape"
 
 cape_procs=$(ps -u {{ cape_user | default('cape') }} -o comm= 2>/dev/null | sort -u || true)
 for proc in $cape_procs; do
@@ -138,6 +141,12 @@ for proc in $cape_procs; do
             break
         fi
     done
+    # Check patterns for truncated/path-based names
+    if [ "$allowed" = "false" ]; then
+        for p in $CAPE_ALLOWLIST_PATTERNS; do
+            case "$proc" in *"$p"*|"$p"*) allowed=true; break ;; esac
+        done
+    fi
     if [ "$allowed" = "false" ]; then
         cape_process_status="warning"
         cape_unexpected="${cape_unexpected:+$cape_unexpected, }$proc"
