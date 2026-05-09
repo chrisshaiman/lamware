@@ -19,9 +19,8 @@ TimeoutStartSec=4200
 
 # Security hardening
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths={{ auto_feeder_install_dir }}
-ReadWritePaths=/opt/pipeline
-ReadWritePaths=/opt/sample-feeder
-ReadWritePaths=/tmp
-PrivateTmp=true
+# Note: PrivateTmp and ProtectSystem=strict are intentionally omitted.
+# The pipeline creates temp dirs in /tmp that Podman containers must access
+# from the host namespace. PrivateTmp isolates /tmp, breaking container mounts.
+# ProtectSystem=strict requires explicit ReadWritePaths for every path the
+# pipeline touches, which is fragile as new stages are added.
