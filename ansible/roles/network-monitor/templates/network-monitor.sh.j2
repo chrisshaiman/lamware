@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# Ensure output files are world-readable (dashboard runs as cape user)
+umask 022
+
 INSTALL_DIR="{{ network_monitor_install_dir }}"
 STATUS_FILE="$INSTALL_DIR/status.json"
 BASELINE_FILE="$INSTALL_DIR/baseline.json"
