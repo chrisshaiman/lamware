@@ -206,30 +206,30 @@ def get_alert_state() -> dict:
         alert["message"] = "Auto-feeder paused"
 
     # Check network monitor
-    net_status_path = Path("/opt/network-monitor/status.json")
-    if net_status_path.exists():
-        try:
+    try:
+        net_status_path = Path("/opt/network-monitor/status.json")
+        if net_status_path.exists():
             with open(net_status_path) as f:
                 net = json.load(f)
             alert["network_status"] = net.get("status", "unknown")
             if net.get("status") == "alert":
                 alert["level"] = "critical"
                 alert["message"] = net.get("alert_message", "Network alert")
-        except Exception:
-            alert["network_status"] = "error"
+    except Exception:
+        alert["network_status"] = "unknown"
 
     # Check auto-feeder state
-    feeder_path = Path("/opt/auto-feeder/state.json")
-    if feeder_path.exists():
-        try:
+    try:
+        feeder_path = Path("/opt/auto-feeder/state.json")
+        if feeder_path.exists():
             with open(feeder_path) as f:
                 alert["auto_feeder"] = json.load(f)
             failures = alert["auto_feeder"].get("consecutive_failures", 0)
             if failures > 0 and alert["level"] != "critical":
                 alert["level"] = "warning"
                 alert["message"] = f"{failures} consecutive failure(s)"
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     # Check disk usage
     try:
