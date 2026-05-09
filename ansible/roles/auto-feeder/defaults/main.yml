@@ -8,7 +8,8 @@ auto_feeder_enabled: false
 auto_feeder_install_dir: /opt/auto-feeder
 
 # Cooldown between ingestion cycles (minutes)
-auto_feeder_interval_minutes: 5
+# Must be longer than a typical pipeline run (CAPE ~3min + analysis ~5min)
+auto_feeder_interval_minutes: 15
 
 # Sample selection — empty lists = unfiltered (all recent samples)
 auto_feeder_family_allowlist: []
