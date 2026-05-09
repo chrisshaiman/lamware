@@ -1137,17 +1137,17 @@ def alerts_page():
     try:
         with db_connection() as cur:
             cur.execute("""
-                SELECT COALESCE(SUM(llm_cost_usd), 0)
+                SELECT COALESCE(SUM(llm_cost_usd), 0) AS total
                 FROM analyses
                 WHERE started_at > NOW() - INTERVAL '1 day'
             """)
-            daily_cost = float(cur.fetchone()[0])
+            daily_cost = float(cur.fetchone()["total"])
             cur.execute("""
-                SELECT COALESCE(SUM(llm_cost_usd), 0)
+                SELECT COALESCE(SUM(llm_cost_usd), 0) AS total
                 FROM analyses
                 WHERE started_at > NOW() - INTERVAL '7 days'
             """)
-            weekly_cost = float(cur.fetchone()[0])
+            weekly_cost = float(cur.fetchone()["total"])
     except Exception as e:
         import traceback
         app.logger.error(f"Cost query failed: {e}\n{traceback.format_exc()}")
