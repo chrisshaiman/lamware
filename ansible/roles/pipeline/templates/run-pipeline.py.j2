@@ -715,6 +715,26 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.info(f"  Filename: {cape_filename}")
 
     # Stage 2: Cape (always, with triage-informed tags, package, and filename)
+    # Calculate guest VM clock from PE compile timestamp to defeat date/time evasion
+    cape_clock = ""
+    pe_timestamp = report.get("triage", {}).get("pe_compile_timestamp")
+    if pe_timestamp:
+        try:
+            from datetime import datetime, timedelta, timezone
+            import random
+            compile_dt = datetime.fromisoformat(pe_timestamp)
+            # Set clock to compile time + 7-30 days (plausible execution window)
+            offset_days = random.randint(7, 30)
+            guest_dt = compile_dt + timedelta(days=offset_days)
+            # Don't set clock to the future
+            now = datetime.now(timezone.utc)
+            if guest_dt > now:
+                guest_dt = now - timedelta(days=random.randint(1, 7))
+            cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
+            log.info(f"  Guest clock: {cape_clock} (PE compiled {pe_timestamp[:10]}, +{offset_days}d)")
+        except Exception as e:
+            log.warning(f"  Could not calculate guest clock: {e}")
+
     log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
     _cape_start = _time.time()
     update_stage(analysis_id_early, "cape", "started")
@@ -725,6 +745,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             package=cape_package,
             filename=cape_filename,
             custom=f"pipeline_task_id={task_id}",
+            clock=cape_clock,
         )
         log.info(f"  Cape task ID: {cape_task_id}")
         cape_data = poll_cape_task(cape_task_id)

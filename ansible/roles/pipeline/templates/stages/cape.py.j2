@@ -55,8 +55,14 @@ def derive_filename(sample_path: Path, package: str, original_name: str = "") ->
 
 
 def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
-                   filename: str = "", custom: str = "") -> int:
-    """Submit sample to Cape API. Returns task ID."""
+                   filename: str = "", custom: str = "", clock: str = "") -> int:
+    """Submit sample to Cape API. Returns task ID.
+
+    Args:
+        clock: Guest VM clock setting in 'mm/dd/yyyy HH:MM:SS' format.
+               If set, CAPE sets the guest clock before sample execution.
+               Used to defeat date/time expiration checks.
+    """
     url = f"{CAPE_API_URL}/tasks/create/file/"
     submit_name = filename or sample_path.name
     data = {
@@ -67,6 +73,8 @@ def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
     }
     if package:
         data["package"] = package
+    if clock:
+        data["clock"] = clock
     with sample_path.open("rb") as fh:
         resp = requests.post(
             url,
