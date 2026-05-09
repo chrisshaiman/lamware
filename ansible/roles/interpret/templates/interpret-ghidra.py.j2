@@ -1757,7 +1757,7 @@ def main() -> None:
         severity = init_msg.get("severity", "unknown")
         filename = init_msg.get("filename", "unknown")
 
-        prompt = f"""You are explaining a malware analysis to someone who uses a computer for email and web browsing but has no technical background. Use everyday analogies. No jargon. No acronyms. Explain what the malware does, how it gets onto someone's computer, and what harm it could cause. Keep it to 2-3 sentences.
+        prompt = f"""You are explaining a malware analysis to someone who uses a computer for email and web browsing but has no technical background. Use everyday analogies. No jargon. No acronyms. Explain what the malware does, how it gets onto someone's computer, and what harm it could cause. Keep it to 2-3 sentences. Do not include a title, header, or markdown formatting — just plain text sentences.
 
 Sample: {filename}
 Family: {family}
