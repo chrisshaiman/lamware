@@ -1148,8 +1148,9 @@ def alerts_page():
                 WHERE started_at > NOW() - INTERVAL '7 days'
             """)
             weekly_cost = float(cur.fetchone()[0])
-    except Exception:
-        pass
+    except Exception as e:
+        import traceback
+        app.logger.error(f"Cost query failed: {e}\n{traceback.format_exc()}")
 
     # Network monitor details
     net = {}
