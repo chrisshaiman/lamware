@@ -7,6 +7,12 @@
 
 set -euo pipefail
 
+# Clean old pipeline reports
 find {{ pipeline_reports_dir }} -maxdepth 1 -mindepth 1 -type d \
   -mtime +{{ pipeline_report_retention_days }} \
   -exec rm -rf {} +
+
+# Clean CAPE memory dumps (8GB each, accumulate fast)
+# Keeps analysis data (reports, pcaps, screenshots) but removes full and per-process dumps
+find /opt/CAPEv2/storage/analyses/ -name "memory.dmp" -mtime +{{ pipeline_report_retention_days }} -delete 2>/dev/null || true
+find /opt/CAPEv2/storage/analyses/ -path "*/memory/*.dmp" -mtime +{{ pipeline_report_retention_days }} -delete 2>/dev/null || true
