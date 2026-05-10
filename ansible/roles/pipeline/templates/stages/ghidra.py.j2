@@ -91,6 +91,15 @@ def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
     has_dropped_pes = len(get_dropped_pe_files(cape_data)) > 0
     original_is_pe = get_original_sample_path(cape_data) is not None
 
+    # Also check the submitted sample directly (CAPE storage may have corrupt binary)
+    if not original_is_pe and sample_path and sample_path.exists():
+        try:
+            with sample_path.open("rb") as fh:
+                if fh.read(2) == b"MZ":
+                    original_is_pe = True
+        except (OSError, PermissionError):
+            pass
+
     # Dropped PEs with trigger signatures — highest value analysis
     if has_trigger and has_dropped_pes:
         return True
