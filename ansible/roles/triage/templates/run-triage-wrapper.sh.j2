@@ -31,7 +31,9 @@ mkdir -p "$OUTPUT_DIR"
 # into the container — prevents access to other files in the sample's directory.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
+chmod 755 "$WORK_DIR"
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
+chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
 exec podman run --rm \
     --network=none \
