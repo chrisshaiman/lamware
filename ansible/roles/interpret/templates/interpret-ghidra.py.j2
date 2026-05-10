@@ -1783,7 +1783,9 @@ Technical summary: {executive}"""
                 messages=[{"role": "user", "content": prompt}],
             )
             text = "".join(b.text for b in response.content if b.type == "text")
-            emit({"type": "plain_english", "summary": text.strip()})
+            emit({"type": "plain_english", "summary": text.strip(),
+                  "usage": usage_from_response(response),
+                  "model_used": init_msg.get("model", DEFAULT_CONFIG["model"])})
         except Exception as e:
             emit({"type": "plain_english", "summary": "", "error": str(e)})
         sys.exit(0)

@@ -1682,15 +1682,17 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     # Plain English summary for non-technical audiences
     if INTERPRET_ENABLED and report.get("executive_summary", {}).get("executive_summary"):
         log.info(f"\n[Stage 5.1] Plain English Summary: generating...")
-        plain_summary = run_plain_english(
+        plain_result = run_plain_english(
             report,
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_config=INTERPRET_CONFIG,
         )
-        if plain_summary:
-            report["plain_english_summary"] = plain_summary
-            log.info(f"  {plain_summary[:100]}...")
+        plain_text = plain_result.get("summary", "") if isinstance(plain_result, dict) else plain_result
+        if plain_text:
+            report["plain_english_summary"] = plain_text
+            report["plain_english_usage"] = plain_result.get("usage", {}) if isinstance(plain_result, dict) else {}
+            log.info(f"  {plain_text[:100]}...")
         else:
             report["plain_english_summary"] = ""
     else:
