@@ -24,7 +24,8 @@ import logging
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+import random
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from stages.triage import run_triage, derive_tags_from_triage, derive_package_from_triage
@@ -720,8 +721,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     pe_timestamp = report.get("triage", {}).get("pe_compile_timestamp")
     if pe_timestamp:
         try:
-            from datetime import datetime, timedelta, timezone
-            import random
             compile_dt = datetime.fromisoformat(pe_timestamp)
             # Set clock to compile time + 7-30 days (plausible execution window)
             offset_days = random.randint(7, 30)
