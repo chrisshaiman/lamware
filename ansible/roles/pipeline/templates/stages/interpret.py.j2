@@ -280,6 +280,11 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
                     try:
                         parsed = json.loads(cb_match.group(1))
                         if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            # Preserve usage/model from the outer result
+                            if "usage" in summary:
+                                parsed["usage"] = summary["usage"]
+                            if "model" in summary:
+                                parsed["model"] = summary["model"]
                             return parsed
                     except (json.JSONDecodeError, TypeError):
                         pass
@@ -289,6 +294,10 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
                     try:
                         parsed = json.loads(raw[first:last + 1])
                         if isinstance(parsed, dict) and "executive_summary" in parsed:
+                            if "usage" in summary:
+                                parsed["usage"] = summary["usage"]
+                            if "model" in summary:
+                                parsed["model"] = summary["model"]
                             return parsed
                     except (json.JSONDecodeError, TypeError):
                         pass
@@ -379,7 +388,11 @@ def run_plain_english(report: dict, interpret_cmd: str, interpret_enabled: bool,
             continue
         try:
             result = json.loads(line)
-            return result.get("summary", "")
+            return {
+                "summary": result.get("summary", ""),
+                "usage": result.get("usage", {}),
+                "model": result.get("model_used", ""),
+            }
         except json.JSONDecodeError:
             continue
-    return ""
+    return {"summary": "", "usage": {}, "model": ""}

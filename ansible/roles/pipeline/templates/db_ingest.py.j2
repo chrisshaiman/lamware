@@ -133,23 +133,23 @@ def _calculate_llm_cost(report: dict) -> float:
     total_cost = 0.0
     has_usage = False
 
+    # Each section stores usage at the top level of its result dict
     llm_sections = [
-        ("llm_interpretation", None),
-        ("executive_summary", None),
-        ("evasion_analysis", "analysis"),
-        ("visual_analysis", None),
+        "llm_interpretation",
+        "executive_summary",
+        "evasion_analysis",
+        "visual_analysis",
     ]
 
-    for section_key, nested_key in llm_sections:
+    for section_key in llm_sections:
         section = report.get(section_key, {})
-        if nested_key:
-            section = section.get(nested_key, {})
 
         usage = section.get("usage", {})
         if not usage:
             continue
 
-        model = section.get("model_used", section.get("model", "default"))
+        model = section.get("model_used", section.get("model_final",
+                section.get("model", "default")))
         pricing = _LLM_PRICING.get(model, _LLM_PRICING["default"])
 
         input_tokens = usage.get("input_tokens", 0)
@@ -157,6 +157,19 @@ def _calculate_llm_cost(report: dict) -> float:
 
         if input_tokens or output_tokens:
             has_usage = True
+            cost = (input_tokens * pricing["input"] / 1_000_000) + \
+                   (output_tokens * pricing["output"] / 1_000_000)
+            total_cost += cost
+
+    # Plain English summary usage (stored separately at report root)
+    pe_usage = report.get("plain_english_usage", {})
+    if pe_usage:
+        input_tokens = pe_usage.get("input_tokens", 0)
+        output_tokens = pe_usage.get("output_tokens", 0)
+        if input_tokens or output_tokens:
+            has_usage = True
+            # Plain English uses Haiku
+            pricing = _LLM_PRICING.get("claude-haiku-4-5", _LLM_PRICING["default"])
             cost = (input_tokens * pricing["input"] / 1_000_000) + \
                    (output_tokens * pricing["output"] / 1_000_000)
             total_cost += cost
