@@ -29,13 +29,18 @@ mkdir -p "$OUTPUT_DIR"
 
 # Copy sample to a temporary directory so only the single file is mounted
 # into the container — prevents access to other files in the sample's directory.
+# Output also goes to temp dir (nobody can't write to cape-owned dirs),
+# then we copy results back.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
-chmod 755 "$WORK_DIR"
+chmod 777 "$WORK_DIR"
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
 chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
-exec podman run --rm \
+OUTPUT_WORK="$(mktemp -d)"
+chmod 777 "$OUTPUT_WORK"
+
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \
@@ -47,6 +52,12 @@ exec podman run --rm \
     --user 65534:65534 \
     -v "$WORK_DIR:/sample:ro" \
     -v "{{ triage_rules_dir }}:/rules:ro" \
-    -v "$OUTPUT_DIR:/output:rw" \
+    -v "$OUTPUT_WORK:/output:rw" \
     localhost/triage:latest \
     "/sample/$SAMPLE_NAME"
+
+# Copy output files back to the real output directory
+if [ -d "$OUTPUT_WORK" ] && [ "$(ls -A "$OUTPUT_WORK" 2>/dev/null)" ]; then
+    cp -r "$OUTPUT_WORK"/* "$OUTPUT_DIR/" 2>/dev/null || true
+fi
+rm -rf "$OUTPUT_WORK"
