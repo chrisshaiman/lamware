@@ -912,7 +912,8 @@ def iocs_stix(analysis_id):
     for ioc in iocs:
         ioc_type = ioc["type"]
         stix_type = stix_type_map.get(ioc_type, "artifact")
-        indicator_id = f"indicator--{_uuid.uuid5(_uuid.NAMESPACE_URL, f'{ioc_type}:{ioc[\"value\"]}')}"
+        ioc_value = ioc["value"]
+        indicator_id = f"indicator--{_uuid.uuid5(_uuid.NAMESPACE_URL, f'{ioc_type}:{ioc_value}')}"
 
         # Build STIX pattern
         value = ioc["value"].replace("'", "\\'")
