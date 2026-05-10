@@ -744,7 +744,28 @@ def analysis_detail(analysis_id):
             {% if ioc_rows %}
             <div class="card">
                 <h3>Indicators of Compromise ({{ ioc_count }})</h3>
-                <table><tr><th>Source</th><th>Type</th><th>Value</th><th>Context</th></tr>{{ ioc_rows }}</table>
+                <div style="margin-bottom:8px;">
+                    <a href="/analysis/{{ analysis_id }}/iocs/csv" style="font-size:12px;margin-right:12px;">Download CSV</a>
+                    <a href="/analysis/{{ analysis_id }}/iocs/stix" style="font-size:12px;">Download STIX 2.1</a>
+                </div>
+                <table id="ioc-table"><tr><th>Source</th><th>Type</th><th>Value</th><th>Context</th></tr>{{ ioc_rows }}</table>
+                {% if ioc_count > 20 %}
+                <script>
+                (function() {
+                    var table = document.getElementById('ioc-table');
+                    var rows = table.querySelectorAll('tr');
+                    var btn = document.createElement('button');
+                    btn.textContent = 'Show all ' + (rows.length - 1) + ' IOCs';
+                    btn.style.cssText = 'margin-top:8px;padding:6px 16px;background:#30363d;color:#c9d1d9;border:1px solid #484f58;border-radius:4px;cursor:pointer;font-size:12px;';
+                    btn.onclick = function() {
+                        for (var i = 21; i < rows.length; i++) rows[i].style.display = '';
+                        btn.style.display = 'none';
+                    };
+                    for (var i = 21; i < rows.length; i++) rows[i].style.display = 'none';
+                    table.parentNode.insertBefore(btn, table.nextSibling);
+                })();
+                </script>
+                {% endif %}
             </div>
             {% endif %}
 
@@ -777,7 +798,7 @@ def analysis_detail(analysis_id):
             {% endif %}
         </div>
     </body></html>{% endraw %}""",
-        css=Markup(CSS), task_id=a["task_id"],
+        css=Markup(CSS), task_id=a["task_id"], analysis_id=analysis_id,
         alert_banner=Markup(render_alert_banner()),
         severity_badge=Markup(severity_badge(a["severity"])),
         malscore=a["malscore"] or "?",
@@ -795,6 +816,142 @@ def analysis_detail(analysis_id):
         corr_rows=Markup(corr_rows),
         ioc_rows=Markup(ioc_rows), tech_rows=Markup(tech_rows), cap_rows=Markup(cap_rows),
         sig_rows=Markup(sig_rows), net_rows=Markup(net_rows),
+    )
+
+
+@app.route("/analysis/<int:analysis_id>/iocs/csv")
+def iocs_csv(analysis_id):
+    """Download IOCs as CSV for SIEM/blocklist import."""
+    import csv
+    import io as _io
+    with db_connection() as cur:
+        cur.execute("""
+            SELECT iv.type, iv.value, ai.source_stage, ai.context
+            FROM analysis_iocs ai
+            JOIN ioc_values iv ON iv.id = ai.ioc_id
+            WHERE ai.analysis_id = %s
+            ORDER BY iv.type, iv.value
+        """, (analysis_id,))
+        iocs = cur.fetchall()
+        cur.execute("SELECT task_id FROM analyses WHERE id = %s", (analysis_id,))
+        row = cur.fetchone()
+        task_id = row["task_id"] if row else "unknown"
+
+    output = _io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["type", "value", "source", "context"])
+    for ioc in iocs:
+        writer.writerow([ioc["type"], ioc["value"], ioc["source_stage"], ioc["context"] or ""])
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={task_id}-iocs.csv"},
+    )
+
+
+@app.route("/analysis/<int:analysis_id>/iocs/stix")
+def iocs_stix(analysis_id):
+    """Download IOCs as STIX 2.1 bundle for threat intel platforms."""
+    import uuid as _uuid
+    with db_connection() as cur:
+        cur.execute("""
+            SELECT iv.type, iv.value, ai.source_stage, ai.context
+            FROM analysis_iocs ai
+            JOIN ioc_values iv ON iv.id = ai.ioc_id
+            WHERE ai.analysis_id = %s
+            ORDER BY iv.type, iv.value
+        """, (analysis_id,))
+        iocs = cur.fetchall()
+        cur.execute("""
+            SELECT a.task_id, a.malware_family_guess, a.severity, s.sha256
+            FROM analyses a JOIN samples s ON s.id = a.sample_id
+            WHERE a.id = %s
+        """, (analysis_id,))
+        row = cur.fetchone()
+        task_id = row["task_id"] if row else "unknown"
+        family = row["malware_family_guess"] if row else "unknown"
+        sha256 = row["sha256"] if row else ""
+
+    # STIX type mapping from our IOC types
+    stix_type_map = {
+        "ipv4-addr": "ipv4-addr",
+        "ipv6-addr": "ipv6-addr",
+        "domain-name": "domain-name",
+        "url": "url",
+        "file:hashes.SHA-256": "file",
+        "file:hashes.SHA-1": "file",
+        "file:hashes.MD5": "file",
+        "file:hashes.ssdeep": "file",
+        "email-addr": "email-addr",
+        "mutex": "mutex",
+        "windows-registry-key": "windows-registry-key",
+    }
+
+    objects = []
+
+    # Add malware object
+    malware_id = f"malware--{_uuid.uuid5(_uuid.NAMESPACE_URL, sha256)}"
+    now_str = datetime.now(timezone.utc).isoformat()
+    objects.append({
+        "type": "malware",
+        "spec_version": "2.1",
+        "id": malware_id,
+        "created": now_str,
+        "modified": now_str,
+        "name": family or "unknown",
+        "is_family": False,
+        "malware_types": ["trojan"],
+        "description": f"Analysis {task_id}",
+    })
+
+    # Add indicators
+    for ioc in iocs:
+        ioc_type = ioc["type"]
+        stix_type = stix_type_map.get(ioc_type, "artifact")
+        indicator_id = f"indicator--{_uuid.uuid5(_uuid.NAMESPACE_URL, f'{ioc_type}:{ioc[\"value\"]}')}"
+
+        # Build STIX pattern
+        value = ioc["value"].replace("'", "\\'")
+        if ioc_type in ("ipv4-addr", "ipv6-addr", "domain-name", "url", "email-addr"):
+            pattern = f"[{ioc_type}:value = '{value}']"
+        elif ioc_type.startswith("file:hashes."):
+            hash_type = ioc_type.split(".")[-1]
+            pattern = f"[file:hashes.'{hash_type}' = '{value}']"
+        elif ioc_type == "mutex":
+            pattern = f"[mutex:name = '{value}']"
+        elif ioc_type == "windows-registry-key":
+            pattern = f"[windows-registry-key:key = '{value}']"
+        elif ioc_type == "yara-rule":
+            continue  # YARA rules aren't STIX indicators
+        else:
+            pattern = f"[artifact:payload_bin = '{value}']"
+
+        objects.append({
+            "type": "indicator",
+            "spec_version": "2.1",
+            "id": indicator_id,
+            "created": datetime.now(timezone.utc).isoformat(),
+            "modified": datetime.now(timezone.utc).isoformat(),
+            "name": f"{ioc_type}: {ioc['value'][:80]}",
+            "pattern": pattern,
+            "pattern_type": "stix",
+            "valid_from": datetime.now(timezone.utc).isoformat(),
+            "indicator_types": ["malicious-activity"],
+            "labels": [ioc["source_stage"] or "unknown"],
+            "description": ioc["context"] or "",
+        })
+
+    bundle = {
+        "type": "bundle",
+        "id": f"bundle--{_uuid.uuid5(_uuid.NAMESPACE_URL, task_id)}",
+        "objects": objects,
+    }
+
+    return Response(
+        json.dumps(bundle, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={task_id}-iocs-stix.json"},
     )
 
 
