@@ -155,6 +155,7 @@ No items — all resolved.
 | Item | Effort | Notes |
 |------|--------|-------|
 | File permissions audit | 2-3 hrs | Audit all deployed files for over-permissioning (chmod 777 work dirs, 755 vs 750, world-readable status files). Establish consistent permission model: what runs as root vs cape, what needs cross-user read access, whether a shared group would be cleaner than world-readable files. |
+| Process allowlist to pattern-based | 1-2 hrs | Replace exact-match CAPE_ALLOWLIST with regex/pattern matching. Current approach requires a commit for every new process. Pattern-based (e.g., match /home/cape paths, known prefixes) would be maintenance-free. |
 | WireGuard phone peer | 30 min | Add phone as WireGuard peer with separate IP (10.200.0.3). QR code config for mobile app. |
 | WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
 | Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
