@@ -35,10 +35,16 @@
     group: "{{ api_user }}"
     recurse: true
 
+- name: Remove broken venv if pip is missing
+  ansible.builtin.file:
+    path: "{{ api_install_dir }}/venv"
+    state: absent
+  when: not (api_install_dir + '/venv/bin/pip') is file
+
 - name: Create Python venv for lamware-api
   ansible.builtin.command:
     cmd: python3 -m venv "{{ api_install_dir }}/venv"
-    creates: "{{ api_install_dir }}/venv/bin/python"
+    creates: "{{ api_install_dir }}/venv/bin/pip"
 
 - name: Install lamware-api dependencies into venv
   ansible.builtin.command:
