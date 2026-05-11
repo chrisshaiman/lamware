@@ -18,15 +18,13 @@
     group: "{{ api_user }}"
     mode: "0750"
 
-- name: Synchronize api/ source code to server
-  ansible.posix.synchronize:
+- name: Copy api/ source code to server
+  ansible.builtin.copy:
     src: "{{ playbook_dir }}/../api/"
     dest: "{{ api_install_dir }}/"
-    rsync_opts:
-      - "--exclude=__pycache__"
-      - "--exclude=*.pyc"
-      - "--exclude=.git"
-      - "--exclude=venv"
+    owner: "{{ api_user }}"
+    group: "{{ api_user }}"
+    mode: "preserve"
   notify: Restart lamware-api
 
 - name: Fix ownership of api source files
