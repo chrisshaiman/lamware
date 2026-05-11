@@ -45,6 +45,8 @@
   ansible.builtin.command:
     cmd: python3 -m venv "{{ api_install_dir }}/venv"
     creates: "{{ api_install_dir }}/venv/bin/pip"
+  become: true
+  become_user: "{{ api_user }}"
 
 - name: Install lamware-api dependencies into venv
   ansible.builtin.command:
