@@ -48,6 +48,13 @@
   become: true
   become_user: "{{ api_user }}"
 
+- name: Upgrade pip and setuptools in venv
+  ansible.builtin.command:
+    cmd: "{{ api_install_dir }}/venv/bin/pip install --upgrade pip setuptools"
+  become: true
+  become_user: "{{ api_user }}"
+  changed_when: true
+
 - name: Install lamware-api dependencies into venv
   ansible.builtin.command:
     cmd: "{{ api_install_dir }}/venv/bin/pip install -e ."
