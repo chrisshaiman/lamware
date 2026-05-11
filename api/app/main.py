@@ -52,9 +52,10 @@ async def health() -> dict:
 # ---------------------------------------------------------------------------
 # API routers — added here as each is implemented
 # ---------------------------------------------------------------------------
-# from app.routers import analyses, iocs, techniques, families
 # from app.routers import pipeline, alerts, stats, feeder, samples
-#
-# app.include_router(analyses.router, prefix="/api/analyses", tags=["analyses"])
-# app.include_router(iocs.router,     prefix="/api/iocs",     tags=["iocs"])
-# ... etc.
+
+from app.routers import families, iocs, techniques
+
+app.include_router(iocs.router)
+app.include_router(techniques.router)
+app.include_router(families.router)
