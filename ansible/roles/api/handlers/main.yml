@@ -1,0 +1,6 @@
+---
+- name: Restart lamware-api
+  ansible.builtin.systemd:
+    name: lamware-api
+    state: restarted
+    daemon_reload: true
