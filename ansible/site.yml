@@ -138,18 +138,22 @@
     - role: dashboard
       tags: [dashboard]
 
-    # 18. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
+    # 18. lamware API — FastAPI REST backend
+    - role: api
+      tags: [api]
+
+    # 19. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
 
-    # 19. Auto-feeder — unattended MalwareBazaar ingestion (disabled by default)
+    # 20. Auto-feeder — unattended MalwareBazaar ingestion (disabled by default)
     - role: auto-feeder
       tags: [auto-feeder]
 
-    # 20. Network monitor — air-gap integrity checking (cron, every 5 min)
+    # 21. Network monitor — air-gap integrity checking (cron, every 5 min)
     - role: network-monitor
       tags: [network-monitor]
 
-    # 21. ntfy alerts — push notifications and daily digest
+    # 22. ntfy alerts — push notifications and daily digest
     - role: ntfy-alerts
       tags: [ntfy-alerts]
