@@ -1,0 +1,23 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "lamware-api"
+version = "0.1.0"
+description = "FastAPI backend for the lamware malware analysis platform"
+authors = [{ name = "Christopher Shaiman" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlmodel>=0.0.22",
+    "psycopg2-binary>=2.9",
+    "pydantic-settings>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["httpx", "pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
