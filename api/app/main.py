@@ -53,19 +53,15 @@ async def health() -> dict:
 # API routers — added here as each task is completed
 # ---------------------------------------------------------------------------
 
-from app.routers import analyses  # noqa: E402
+from app.routers import analyses, iocs, techniques, families  # noqa: E402
+from app.routers import pipeline, alerts, stats, feeder, samples  # noqa: E402
 
-app.include_router(analyses.router, prefix="/api/analyses", tags=["analyses"])
-
-# Routers added in subsequent tasks:
-# from app.routers import iocs, techniques, families
-# from app.routers import pipeline, alerts, stats, feeder, samples
-#
-# app.include_router(iocs.router,        prefix="/api/iocs",             tags=["iocs"])
-# app.include_router(techniques.router,  prefix="/api/techniques",       tags=["techniques"])
-# app.include_router(families.router,    prefix="/api/families",         tags=["families"])
-# app.include_router(pipeline.router,    prefix="/api/pipeline",         tags=["pipeline"])
-# app.include_router(alerts.router,      prefix="/api/alerts",           tags=["alerts"])
-# app.include_router(stats.router,       prefix="/api/stats",            tags=["stats"])
-# app.include_router(feeder.router,      prefix="/api/feeder",           tags=["feeder"])
-# app.include_router(samples.router,     prefix="/api/samples",          tags=["samples"])
+app.include_router(analyses.router)
+app.include_router(iocs.router)
+app.include_router(techniques.router)
+app.include_router(families.router)
+app.include_router(pipeline.router)
+app.include_router(alerts.router)
+app.include_router(stats.router)
+app.include_router(feeder.router)
+app.include_router(samples.router)
