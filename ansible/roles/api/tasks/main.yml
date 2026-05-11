@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# roles/api/tasks/main.yml
+# Deploys the lamware FastAPI backend (port 8001).
+#
+# Runs as a systemd service behind WireGuard alongside the Flask dashboard.
+# Reads from the same PostgreSQL database as the dashboard.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create lamware-api install directory
+  ansible.builtin.file:
+    path: "{{ api_install_dir }}"
+    state: directory
+    owner: "{{ api_user }}"
+    group: "{{ api_user }}"
+    mode: "0750"
+
+- name: Synchronize api/ source code to server
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../api/"
+    dest: "{{ api_install_dir }}/"
+    rsync_opts:
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+      - "--exclude=.git"
+      - "--exclude=venv"
+  notify: Restart lamware-api
+
+- name: Fix ownership of api source files
+  ansible.builtin.file:
+    path: "{{ api_install_dir }}"
+    state: directory
+    owner: "{{ api_user }}"
+    group: "{{ api_user }}"
+    recurse: true
+
+- name: Create Python venv for lamware-api
+  ansible.builtin.command:
+    cmd: python3 -m venv "{{ api_install_dir }}/venv"
+    creates: "{{ api_install_dir }}/venv/bin/python"
+
+- name: Install lamware-api dependencies into venv
+  ansible.builtin.pip:
+    name: "."
+    chdir: "{{ api_install_dir }}"
+    virtualenv: "{{ api_install_dir }}/venv"
+    extra_args: "-e"
+  notify: Restart lamware-api
+
+- name: Deploy lamware-api environment file
+  ansible.builtin.template:
+    src: lamware-api.env.j2
+    dest: "{{ api_install_dir }}/lamware-api.env"
+    owner: "{{ api_user }}"
+    group: "{{ api_user }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart lamware-api
+
+- name: Deploy lamware-api systemd service
+  ansible.builtin.template:
+    src: lamware-api.service.j2
+    dest: /etc/systemd/system/lamware-api.service
+    mode: "0644"
+  notify: Restart lamware-api
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable and start lamware-api
+  ansible.builtin.systemd:
+    name: lamware-api
+    state: started
+    enabled: true
