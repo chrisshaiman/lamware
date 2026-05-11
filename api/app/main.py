@@ -50,12 +50,30 @@ async def health() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# API routers — added here as each is implemented
+# API routers
 # ---------------------------------------------------------------------------
-# from app.routers import pipeline, alerts, stats, feeder, samples
 
-from app.routers import families, iocs, techniques
+from app.routers import (  # noqa: E402
+    alerts,
+    analyses,
+    families,
+    feeder,
+    iocs,
+    pipeline,
+    samples,
+    stats,
+    techniques,
+)
 
+# Browse / data endpoints
+app.include_router(analyses.router)
 app.include_router(iocs.router)
 app.include_router(techniques.router)
 app.include_router(families.router)
+
+# Operational endpoints
+app.include_router(pipeline.router)
+app.include_router(alerts.router)
+app.include_router(stats.router)
+app.include_router(feeder.router)
+app.include_router(samples.router)
