@@ -29,7 +29,7 @@ from ..models import (
     TechniqueValue,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/api/analyses", tags=["analyses"])
 
 
 # ---------------------------------------------------------------------------
