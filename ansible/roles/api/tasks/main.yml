@@ -41,11 +41,12 @@
     creates: "{{ api_install_dir }}/venv/bin/python"
 
 - name: Install lamware-api dependencies into venv
-  ansible.builtin.pip:
-    name: "."
+  ansible.builtin.command:
+    cmd: "{{ api_install_dir }}/venv/bin/pip install -e ."
     chdir: "{{ api_install_dir }}"
-    virtualenv: "{{ api_install_dir }}/venv"
-    extra_args: "-e"
+  become: true
+  become_user: "{{ api_user }}"
+  changed_when: true
   notify: Restart lamware-api
 
 - name: Deploy lamware-api environment file
