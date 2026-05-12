@@ -158,6 +158,7 @@ export function SecurityCat() {
         <button
           onClick={() => setShowPopover(!showPopover)}
           className="focus:outline-none"
+          data-testid="security-cat"
           title="Security cat is watching your malware"
         >
           <pre
