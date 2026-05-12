@@ -9,6 +9,7 @@ import { SearchInput } from "#components/shared/search-input";
 import { MonoText } from "#components/shared/mono-text";
 import { formatRelativeTime } from "#lib/utils";
 import { MITRE_TACTICS, TACTIC_LABELS, type MitreTactic } from "#lib/constants";
+import { MitreHeatmap } from "./mitre-heatmap";
 
 const PAGE_SIZE = 50;
 
@@ -24,6 +25,9 @@ export function TechniquesPage() {
     limit: PAGE_SIZE,
     offset,
   });
+
+  // Fetch ALL techniques for the heatmap (unfiltered)
+  const { data: allTechniques } = useTechniquesList({ limit: 500 });
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -45,10 +49,14 @@ export function TechniquesPage() {
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">MITRE ATT&CK</h1>
       </div>
 
-      {/* MITRE Heatmap placeholder — will be built next */}
-      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-        MITRE ATT&CK Heatmap will be rendered here
-      </div>
+      {/* MITRE ATT&CK Heatmap */}
+      {allTechniques && allTechniques.length > 0 && (
+        <MitreHeatmap
+          techniques={allTechniques}
+          onTacticClick={(t) => setParam("tactic", t)}
+          onTechniqueClick={(id) => setParam("q", id)}
+        />
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
