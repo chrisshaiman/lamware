@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  /* Lamware dark theme — GitHub-style palette */
+  --color-background: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-hover: #1c2128;
+  --color-border: #30363d;
+  --color-border-light: #21262d;
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #484f58;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79c0ff;
+
+  /* Severity colors */
+  --color-severity-critical: #f85149;
+  --color-severity-high: #f0883e;
+  --color-severity-medium: #d29922;
+  --color-severity-low: #58a6ff;
+
+  /* Source stage badge colors */
+  --color-stage-triage: #8b949e;
+  --color-stage-cape: #f0883e;
+  --color-stage-volatility: #a371f7;
+  --color-stage-ghidra: #7ee787;
+  --color-stage-ai-re: #58a6ff;
+  --color-stage-summary: #d2a8ff;
+
+  /* Security cat */
+  --color-cat-default: #8b949e;
+  --color-cat-hover: #f0883e;
+  --color-cat-alert: #f85149;
+  --color-cat-dim: #484f58;
+
+  /* Fonts */
+  --font-sans: system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Consolas", "Monaco", "Cascadia Code", ui-monospace, monospace;
+}
+
+/* Dark-only theme — no light mode */
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
