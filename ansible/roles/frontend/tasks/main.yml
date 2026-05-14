@@ -32,7 +32,7 @@
         mode: "0755"
 
     - name: Run nodesource setup
-      ansible.builtin.command: /tmp/nodesource_setup.sh
+      ansible.builtin.command: bash /tmp/nodesource_setup.sh
       changed_when: true
 
     - name: Install nodejs package
@@ -53,14 +53,43 @@
     group: "{{ frontend_user }}"
     mode: "0750"
 
-- name: Copy frontend source to server
+- name: Create local frontend tarball (excludes node_modules/dist)
+  ansible.builtin.command:
+    cmd: >
+      tar czf /tmp/frontend-src.tar.gz
+      --exclude=node_modules --exclude=dist --exclude=.env
+      -C {{ playbook_dir }}/.. frontend
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: Upload frontend tarball
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../frontend/"
+    src: /tmp/frontend-src.tar.gz
+    dest: /tmp/frontend-src.tar.gz
+    mode: "0644"
+
+- name: Extract frontend source on server
+  ansible.builtin.unarchive:
+    src: /tmp/frontend-src.tar.gz
     dest: "{{ frontend_install_dir }}/src/"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
     owner: "{{ frontend_user }}"
     group: "{{ frontend_user }}"
-    mode: "preserve"
   register: frontend_source
+
+- name: Clean up local tarball
+  ansible.builtin.file:
+    path: /tmp/frontend-src.tar.gz
+    state: absent
+  delegate_to: localhost
+  become: false
+
+- name: Clean up remote tarball
+  ansible.builtin.file:
+    path: /tmp/frontend-src.tar.gz
+    state: absent
 
 - name: Deploy frontend .env for build
   ansible.builtin.template:
@@ -102,6 +131,14 @@
     directory_mode: "0755"
   when: frontend_build.changed | default(false)
   notify: Reload nginx
+
+- name: Fix dist permissions for nginx (www-data needs read + traverse)
+  ansible.builtin.command:
+    cmd: >
+      bash -c "chmod o+x {{ frontend_install_dir }} &&
+      find {{ frontend_dist_dir }} -type d -exec chmod 755 {} + &&
+      find {{ frontend_dist_dir }} -type f -exec chmod 644 {} +"
+  changed_when: true
 
 # -------------------------------------------------------------------------
 # nginx
