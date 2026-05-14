@@ -48,11 +48,13 @@ export function AlertsPage() {
           </h3>
           {alerts?.network_monitor ? (
             <div className="space-y-2 text-xs">
-              {Object.entries(alerts.network_monitor).map(([key, val]) => (
+              {Object.entries(alerts.network_monitor)
+                .filter(([, val]) => typeof val !== "object" || val === null)
+                .map(([key, val]) => (
                 <div key={key} className="flex justify-between">
                   <span className="text-[var(--color-text-muted)]">{key}</span>
                   <span className={`text-[var(--color-text-secondary)] ${val === "alert" ? "font-bold text-red-400" : ""}`}>
-                    {String(val)}
+                    {String(val ?? "\u2014")}
                   </span>
                 </div>
               ))}
