@@ -9,7 +9,7 @@ import { SearchInput } from "#components/shared/search-input";
 import { MonoText } from "#components/shared/mono-text";
 import { formatRelativeTime } from "#lib/utils";
 import { MITRE_TACTICS, TACTIC_LABELS, type MitreTactic } from "#lib/constants";
-import { MitreHeatmap } from "./mitre-heatmap";
+import { MitreMatrix } from "./mitre-matrix";
 
 const PAGE_SIZE = 50;
 
@@ -49,12 +49,12 @@ export function TechniquesPage() {
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">MITRE ATT&CK</h1>
       </div>
 
-      {/* MITRE ATT&CK Heatmap */}
+      {/* MITRE ATT&CK Matrix — Navigator-style grid */}
       {allTechniques && allTechniques.length > 0 && (
-        <MitreHeatmap
+        <MitreMatrix
           techniques={allTechniques}
-          onTacticClick={(t) => setParam("tactic", t)}
-          onTechniqueClick={(id) => setParam("q", id)}
+          onTacticClick={(t: string) => setParam("tactic", t)}
+          onTechniqueClick={(id: string) => setParam("q", id)}
         />
       )}
 

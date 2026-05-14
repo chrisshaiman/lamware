@@ -1,0 +1,199 @@
+---
+# =============================================================================
+# roles/frontend/tasks/main.yml
+# Deploys the lamware React frontend behind nginx.
+#
+# 1. Installs Node.js LTS (via nodesource)
+# 2. Copies frontend source, runs npm ci + npm run build
+# 3. Installs nginx, deploys config with SSL
+# 4. Generates self-signed cert if none exists
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Node.js LTS (for building the frontend)
+# -------------------------------------------------------------------------
+
+- name: Check if Node.js is installed
+  ansible.builtin.command: node --version
+  register: frontend_node_check
+  changed_when: false
+  failed_when: false
+
+- name: Install Node.js LTS via nodesource
+  when: frontend_node_check.rc != 0
+  block:
+    - name: Download nodesource setup script
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/setup_22.x
+        dest: /tmp/nodesource_setup.sh
+        mode: "0755"
+
+    - name: Run nodesource setup
+      ansible.builtin.command: bash /tmp/nodesource_setup.sh
+      changed_when: true
+
+    - name: Install nodejs package
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+# -------------------------------------------------------------------------
+# Build React frontend
+# -------------------------------------------------------------------------
+
+- name: Create frontend install directory
+  ansible.builtin.file:
+    path: "{{ frontend_install_dir }}"
+    state: directory
+    owner: "{{ frontend_user }}"
+    group: "{{ frontend_user }}"
+    mode: "0750"
+
+- name: Create local frontend tarball (excludes node_modules/dist)
+  ansible.builtin.command:
+    cmd: >
+      tar czf /tmp/frontend-src.tar.gz
+      --exclude=node_modules --exclude=dist --exclude=.env
+      -C {{ playbook_dir }}/.. frontend
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: Upload frontend tarball
+  ansible.builtin.copy:
+    src: /tmp/frontend-src.tar.gz
+    dest: /tmp/frontend-src.tar.gz
+    mode: "0644"
+
+- name: Extract frontend source on server
+  ansible.builtin.unarchive:
+    src: /tmp/frontend-src.tar.gz
+    dest: "{{ frontend_install_dir }}/src/"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+    owner: "{{ frontend_user }}"
+    group: "{{ frontend_user }}"
+  register: frontend_source
+
+- name: Clean up local tarball
+  ansible.builtin.file:
+    path: /tmp/frontend-src.tar.gz
+    state: absent
+  delegate_to: localhost
+  become: false
+
+- name: Clean up remote tarball
+  ansible.builtin.file:
+    path: /tmp/frontend-src.tar.gz
+    state: absent
+
+- name: Deploy frontend .env for build
+  ansible.builtin.template:
+    src: frontend.env.j2
+    dest: "{{ frontend_install_dir }}/src/.env"
+    owner: "{{ frontend_user }}"
+    group: "{{ frontend_user }}"
+    mode: "0600"
+  no_log: true
+  register: frontend_env
+
+- name: Install npm dependencies
+  ansible.builtin.command:
+    cmd: npm ci
+    chdir: "{{ frontend_install_dir }}/src"
+  become: true
+  become_user: "{{ frontend_user }}"
+  when: frontend_source.changed or frontend_env.changed
+  changed_when: true
+
+- name: Build frontend (npm run build)
+  ansible.builtin.command:
+    cmd: npm run build
+    chdir: "{{ frontend_install_dir }}/src"
+  become: true
+  become_user: "{{ frontend_user }}"
+  when: frontend_source.changed or frontend_env.changed
+  changed_when: true
+  register: frontend_build
+
+- name: Copy dist to serving directory  # noqa: no-handler
+  ansible.builtin.copy:
+    src: "{{ frontend_install_dir }}/src/dist/"
+    dest: "{{ frontend_dist_dir }}/"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  when: frontend_build.changed | default(false)
+  notify: Reload nginx
+
+- name: Fix dist permissions for nginx (www-data needs read + traverse)
+  ansible.builtin.file:
+    path: "{{ frontend_install_dir }}"
+    mode: "o+x"
+
+- name: Fix dist directory permissions
+  ansible.builtin.command:
+    cmd: find {{ frontend_dist_dir }} -type d -exec chmod 755 {} +
+  changed_when: false
+
+- name: Fix dist file permissions
+  ansible.builtin.command:
+    cmd: find {{ frontend_dist_dir }} -type f -exec chmod 644 {} +
+  changed_when: false
+
+# -------------------------------------------------------------------------
+# nginx
+# -------------------------------------------------------------------------
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Generate self-signed SSL certificate
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes -days 3650
+      -newkey rsa:2048
+      -keyout {{ frontend_ssl_key }}
+      -out {{ frontend_ssl_cert }}
+      -subj "/CN=lamware/O=lamware/C=US"
+    creates: "{{ frontend_ssl_cert }}"
+  notify: Reload nginx
+
+- name: Deploy nginx site config
+  ansible.builtin.template:
+    src: lamware-nginx.conf.j2
+    dest: /etc/nginx/sites-available/lamware.conf
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable lamware nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/lamware.conf
+    dest: /etc/nginx/sites-enabled/lamware.conf
+    state: link
+  notify: Reload nginx
+
+- name: Disable default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Test nginx config
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true

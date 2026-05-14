@@ -142,6 +142,10 @@
     - role: api
       tags: [api]
 
+    # 18b. React frontend — Vite SPA behind nginx reverse proxy
+    - role: frontend
+      tags: [frontend]
+
     # 19. Sample feeder — interactive CLI for MalwareBazaar sample ingestion (ADR-015)
     - role: sample-feeder
       tags: [sample-feeder]
