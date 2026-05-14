@@ -83,7 +83,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | Sample relationship lineage | Schema ready, not populated |
 | Per-analysis LLM cost tracking | Complete |
 
-### Dashboard Pages
+### Dashboard Pages (Flask — legacy, port 5000)
 
 | Page | Status |
 |------|--------|
@@ -95,6 +95,25 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | /pdf/<task_id> (PDF download) | Complete |
 | /logs/<task_id> (pipeline log viewer) | Complete |
 | /alerts (operational health) | Complete |
+
+### React Frontend (port 443 via nginx, PR #57 + #58)
+
+| Page | Status |
+|------|--------|
+| /analyses (analysis list) | Complete — paginated, search, severity/family filters |
+| /analyses/:id (detail view) | Complete — all sections, markdown narratives, downloads |
+| /iocs (IOC browser) | Complete — cross-sample frequency, type filter |
+| /techniques (ATT&CK matrix) | Complete — Navigator-style 14-column grid, click to filter |
+| /stats (statistics) | Complete — KPI cards, top families chart |
+| /pipeline (pipeline status) | Complete — running/completed cards, stage progress, 10s polling |
+| /alerts (operational health) | Complete — network monitor, disk, feeder controls |
+| /evasions (evasion dashboard) | Complete — technique frequency, recommendations |
+| /submit (sample upload) | Complete — drag-and-drop, progress, success/error states |
+
+Tech stack: Vite 8, React 19, TypeScript 6, Tailwind v4, Shadcn/ui, Nivo, TanStack Query/Table.
+Deployment: nginx reverse proxy on wg0 (10.200.0.1:443), self-signed SSL, proxies to FastAPI on 8001.
+Security cat mascot: 5 mood states, click for analysis facts, Konami code easter egg.
+34 Playwright smoke tests passing.
 
 ### Performance Optimizations
 
@@ -128,27 +147,29 @@ No items — all resolved.
 | OVH server migration | Research + deploy | Sys-1 Xeon E-2136 $44/mo vs current $92/mo |
 | VM user artifacts | 1-2 hrs (Packer) | Browser history, documents, installed software — defeats liveness heuristics. Requires Packer image rebuild. |
 | VM uptime spoofing | 30 min (Packer) | System uptime > 72 hours. Requires Packer image rebuild. |
-| Dynamic guest clock from PE timestamp | 1-2 hrs | Set guest VM clock to within 30 days of sample's PE compile timestamp before detonation. Defeats date/time expiration checks. Could be CAPE machinery option or pipeline pre-submission step. |
+| Dynamic guest clock from PE timestamp | DONE | Implemented — triage extracts PE timestamp, pipeline passes clock param to CAPE |
 | PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |
-| Actual LLM cost tracking | 1-2 hrs | Capture response.usage.input_tokens/output_tokens from Claude API in interpret container. Propagate through report JSON to db_ingest. Replace $0.50 default with real token-based cost calculation. |
+| Actual LLM cost tracking | DONE | Implemented — usage_from_response() captures tokens on all Claude calls |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 
-### Future — React/FastAPI Rebuild
+### Future — Platform Enhancements
 
 | Item | Effort | Notes |
 |------|--------|-------|
-| FastAPI backend | 1-2 sessions | Replace Flask, REST + WebSocket |
-| React frontend | 2-3 sessions | SPA, interactive MITRE map, real-time status |
+| FastAPI backend | DONE | PR #55 — 10 routers (incl. evasions), 28+ tests, port 8001 |
+| React frontend | DONE | PR #57, #58 — 10 pages, MITRE matrix, evasion dashboard, nginx deployment |
+| WebSocket real-time updates | 1 session | Replace pipeline polling with live push. FastAPI native WebSocket support |
+| Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
+| Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
 | Selective stage execution | Design + build | --skip, --only, --rerun flags with dependency tracking. Avoids re-running Cape/Volatility when only static analysis changed. |
-| WebSocket real-time updates | 1 session | Builds on pipeline_stage_events table |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
 | Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
 | HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
-| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Enterprise readiness. Depends on FastAPI + React rebuild. |
+| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Enterprise readiness. |
 
 ### Low Priority / Ideas
 
