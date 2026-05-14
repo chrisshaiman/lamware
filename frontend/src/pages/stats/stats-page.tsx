@@ -64,7 +64,10 @@ export function StatsPage() {
               const maxCount = families[0].count;
               return (
                 <div key={f.family} className="flex items-center gap-3">
-                  <span className="w-32 shrink-0 text-sm text-[var(--color-text-secondary)]">
+                  <span
+                    className="w-32 shrink-0 truncate text-sm text-[var(--color-text-secondary)]"
+                    title={f.family}
+                  >
                     {f.family}
                   </span>
                   <div className="flex-1">
