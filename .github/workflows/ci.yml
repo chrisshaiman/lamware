@@ -115,3 +115,9 @@ jobs:
         run: |
           pip install semgrep
           semgrep scan --config p/python src/ api/ --error
+
+      - name: Audit frontend dependencies (npm audit)
+        run: |
+          cd frontend
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
