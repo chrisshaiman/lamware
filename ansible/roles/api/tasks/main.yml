@@ -18,22 +18,32 @@
     group: "{{ api_user }}"
     mode: "0750"
 
-- name: Copy api/ source code to server
-  ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../api/"
-    dest: "{{ api_install_dir }}/"
-    owner: "{{ api_user }}"
-    group: "{{ api_user }}"
-    mode: "preserve"
-  notify: Restart lamware-api
+- name: Create local api tarball (excludes .venv, __pycache__, tests)
+  ansible.builtin.command:
+    cmd: >
+      tar czf /tmp/api-src.tar.gz
+      --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache
+      --exclude=tests --exclude=.env
+      -C {{ playbook_dir }}/.. api
+  delegate_to: localhost
+  become: false
+  changed_when: true
 
-- name: Fix ownership of api source files
-  ansible.builtin.file:
-    path: "{{ api_install_dir }}"
-    state: directory
+- name: Upload api tarball
+  ansible.builtin.copy:
+    src: /tmp/api-src.tar.gz
+    dest: /tmp/api-src.tar.gz
+    mode: "0644"
+
+- name: Extract api source on server
+  ansible.builtin.unarchive:
+    src: /tmp/api-src.tar.gz
+    dest: "{{ api_install_dir }}/"
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
     owner: "{{ api_user }}"
     group: "{{ api_user }}"
-    recurse: true
+  notify: Restart lamware-api
 
 - name: Remove broken venv if pip is missing
   ansible.builtin.file:
@@ -52,7 +62,7 @@
   ansible.builtin.command:
     cmd: >
       {{ api_install_dir }}/venv/bin/pip install
-      fastapi uvicorn[standard] sqlmodel psycopg2-binary pydantic-settings python-multipart
+      fastapi uvicorn[standard] sqlmodel psycopg2-binary pydantic-settings python-multipart asyncpg
   become: true
   become_user: "{{ api_user }}"
   changed_when: true
