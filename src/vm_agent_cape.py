@@ -193,10 +193,10 @@ def execute_action(
     elif action == "enter_credentials" and credential_type:
         cred_set = PROMPT_CREDENTIALS.get(credential_type)
         if not cred_set:
-            log.warning("  Unknown credential_type: %s — skipping", credential_type)
+            log.warning("  Unknown credential_type: %s — skipping", credential_type)  # nosemgrep: python-logger-credential-disclosure
             return result
 
-        log.info("  Entering fake credentials: %s", credential_type)
+        log.info("  Entering fake credentials: %s", credential_type)  # nosemgrep: python-logger-credential-disclosure
         entered: dict[str, str] = {}
         for field in cred_set["fields"]:
             log.info("    Field: %s = %s", field["label"], field["value"])
