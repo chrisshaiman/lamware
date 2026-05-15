@@ -154,6 +154,8 @@ No items — all resolved.
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 | Batch script (.bat/.cmd) analysis | 1-2 hrs | Add `is_batch_script()` detection, Stage 4 handler (raw source + basic deobfuscation), Stage 4.5 single-shot LLM route. Same pattern as PowerShell pipeline. Currently .bat falls through all Stage 4 checks → no AI analysis. |
+| JavaScript (.js/.jse/.wsf) analysis | 1-2 hrs | Same gap as batch — no Stage 4/4.5 handler. Common dropper format (WScript.Shell, XMLHTTP). Same pattern as PowerShell/batch. |
+| shellcheck + PSScriptAnalyzer | 1 hr | Shell (1 file) and PowerShell (9 files) linting. Low ROI — stable Packer provisioning scripts, rarely change. |
 
 ### Future — Platform Enhancements
 
