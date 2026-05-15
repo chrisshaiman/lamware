@@ -189,9 +189,9 @@ ansible-playbook -i inventory/hosts site.yml --ask-vault-pass
 ssh sandbox 'sudo -u cape sample-feeder --family AsyncRAT --limit 1 --yes'
 
 # 6. View results
-# Dashboard: http://10.200.0.1:5000  (via WireGuard)
+# Dashboard: https://10.200.0.1  (via WireGuard)
 # Cape UI:   http://10.200.0.1:8000  (via WireGuard)
-# Logs:      http://10.200.0.1:5000/logs/<task_id>
+# API docs:  https://10.200.0.1/docs  (Swagger UI)
 # Reports:   /opt/pipeline/reports/<task_id>/report.pdf
 ```
 
@@ -232,9 +232,9 @@ OVH Bare Metal
 +-- WireGuard VPN for admin access
 +-- Podman (rootless containers for all tool stages)
 +-- PostgreSQL (analysis database)
-+-- Flask dashboard (behind WireGuard)
++-- React frontend + FastAPI backend (behind WireGuard)
 +-- Unified logging with per-task log files
-+-- 20 Ansible roles for fully automated deployment
++-- 19 Ansible roles for fully automated deployment
 ```
 
 <details>

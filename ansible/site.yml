@@ -134,11 +134,7 @@
     - role: pipeline
       tags: [pipeline]
 
-    # 17. Dashboard — Flask web UI for browsing analysis results
-    - role: dashboard
-      tags: [dashboard]
-
-    # 18. lamware API — FastAPI REST backend
+    # 17. lamware API — FastAPI REST backend
     - role: api
       tags: [api]
 

@@ -3,9 +3,7 @@
 #
 # FastAPI application entrypoint.
 #
-# Port 8001, runs alongside the Flask dashboard (port 5000).
-# Routers for analyses, iocs, techniques, etc. will be added here as they
-# are implemented in subsequent tasks.
+# Port 8001, serves the React frontend via nginx reverse proxy.
 #
 # Run locally:
 #   cd api

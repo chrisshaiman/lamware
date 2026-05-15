@@ -3,12 +3,24 @@
 # roles/api/tasks/main.yml
 # Deploys the lamware FastAPI backend (port 8001).
 #
-# Runs as a systemd service behind WireGuard alongside the Flask dashboard.
-# Reads from the same PostgreSQL database as the dashboard.
+# Runs as a systemd service behind WireGuard.
+# Serves the React frontend via nginx reverse proxy.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
+
+- name: Stop and disable legacy Flask dashboard (if present)
+  ansible.builtin.systemd:
+    name: dashboard
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove legacy Flask dashboard service file
+  ansible.builtin.file:
+    path: /etc/systemd/system/dashboard.service
+    state: absent
 
 - name: Create lamware-api install directory
   ansible.builtin.file:
