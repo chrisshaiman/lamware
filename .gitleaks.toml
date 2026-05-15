@@ -1,0 +1,21 @@
+# .gitleaks.toml — gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "lamware gitleaks config"
+
+[allowlist]
+
+  # Vault-encrypted file — content is ciphertext, not plaintext secrets
+  paths = [
+    '''ansible/vars/secrets\.yml$''',
+    '''packer/ansible/roles/konstruktoid\.hardening/''',
+  ]
+
+  # Example/placeholder values that are not real secrets
+  [[allowlist.rules]]
+    description = "Example secrets file with placeholder values"
+    paths = ['''\.yml\.example$''']
+
+  [[allowlist.rules]]
+    description = "Package lockfiles with registry URLs"
+    paths = ['''package-lock\.json$''']
