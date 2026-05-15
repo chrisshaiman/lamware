@@ -35,7 +35,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 5.1 Plain English | Claude Haiku (non-technical explanation) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Podman (--network=none) | Complete |
 
-### Supporting Infrastructure — 20 Ansible roles
+### Supporting Infrastructure — 19 Ansible roles
 
 | Role | Purpose | Status |
 |------|---------|--------|
@@ -64,7 +64,6 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | interpret | Claude LLM container (agentic + summary) | Complete |
 | postgres | Analysis database | Complete |
 | pipeline | Orchestrator + modules | Complete |
-| dashboard | Flask web UI | Complete |
 | sample-feeder | MalwareBazaar CLI | Complete |
 | auto-feeder | Unattended MalwareBazaar ingestion with 6 guardrails | Complete |
 | network-monitor | Air-gap + QEMU breakout + process allowlist monitoring | Complete |
@@ -82,19 +81,6 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | MITRE tactics populated | Complete |
 | Sample relationship lineage | Schema ready, not populated |
 | Per-analysis LLM cost tracking | Complete |
-
-### Dashboard Pages (Flask — legacy, port 5000)
-
-| Page | Status |
-|------|--------|
-| / (analysis list) | Complete |
-| /analysis/<id> (detail view) | Complete |
-| /status (pipeline progress) | Complete |
-| /iocs (IOC browser) | Complete |
-| /techniques (ATT&CK browser) | Complete |
-| /pdf/<task_id> (PDF download) | Complete |
-| /logs/<task_id> (pipeline log viewer) | Complete |
-| /alerts (operational health) | Complete |
 
 ### React Frontend (port 443 via nginx, PR #57 + #58)
 
