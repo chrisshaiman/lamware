@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { cn } from "#lib/utils";
 
@@ -28,7 +29,7 @@ export function MarkdownProse({ children, className }: MarkdownProseProps) {
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{children}</ReactMarkdown>
     </div>
   );
 }
