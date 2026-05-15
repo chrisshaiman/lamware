@@ -218,6 +218,28 @@ Every analysis tool runs in a Podman container with:
 - Full audit logging of prompts and responses
 - Triage/Cape/Volatility determine maliciousness — AI explains *how*, not *whether*
 
+**Frontend security:**
+
+- `rehype-sanitize` on all markdown rendering (LLM narratives contain malware-derived content)
+- CORS restricted to explicit methods and headers (no wildcards)
+- API key authentication on all REST and WebSocket endpoints
+- `npm audit` in CI for frontend dependency vulnerabilities
+
+**Development security (CI gates on every PR):**
+
+| Tool | What it checks |
+|------|---------------|
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Secret scanning — pre-commit hook + CI gate, full history audited |
+| [bandit](https://github.com/PyCQA/bandit) | Python SAST — security anti-patterns in src/ and api/ |
+| [semgrep](https://github.com/semgrep/semgrep) | Python pattern-based SAST — 151 rules (injection, SSRF, deserialization) |
+| [pip-audit](https://github.com/pypa/pip-audit) | Python SCA — dependency vulnerabilities against OSV/PyPI advisory DB |
+| [npm audit](https://docs.npmjs.com/cli/commands/npm-audit) | JavaScript SCA — frontend dependency vulnerabilities |
+| [ruff](https://github.com/astral-sh/ruff) | Python linting — pre-commit hook + CI |
+| [ansible-lint](https://github.com/ansible/ansible-lint) | Ansible quality and security rules |
+| `terraform validate` | IaC syntax and schema validation |
+
+All Python dependencies pinned to exact versions (`==`) for deterministic SCA scanning.
+
 ---
 
 ## Infrastructure
