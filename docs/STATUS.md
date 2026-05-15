@@ -177,7 +177,8 @@ No items — all resolved.
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
 | Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
 | HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
-| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Enterprise readiness. |
+| Frontend auth (OIDC/JWT) | 1-2 sessions | Replace static API key with proper auth flow. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes. **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. Prerequisite for multi-user and DAST items. |
+| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Depends on frontend auth. Enterprise readiness. |
 
 ### Low Priority / Ideas
 
