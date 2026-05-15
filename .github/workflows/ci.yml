@@ -87,7 +87,7 @@ jobs:
         run: terraform validate
 
   # ---------------------------------------------------------------------------
-  # Security: gitleaks, bandit, ruff via pre-commit + pip-audit
+  # Security: gitleaks, bandit, ruff via pre-commit + pip-audit + semgrep
   # ---------------------------------------------------------------------------
   security:
     name: Security scanning
@@ -110,3 +110,8 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r requirements.txt -r requirements-dev.txt
+
+      - name: Semgrep SAST (Python patterns)
+        run: |
+          pip install semgrep
+          semgrep scan --config p/python src/ api/ --error
