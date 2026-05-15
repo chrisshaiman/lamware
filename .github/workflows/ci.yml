@@ -87,7 +87,7 @@ jobs:
         run: terraform validate
 
   # ---------------------------------------------------------------------------
-  # Security: gitleaks + ruff via pre-commit
+  # Security: gitleaks, bandit, ruff via pre-commit + pip-audit
   # ---------------------------------------------------------------------------
   security:
     name: Security scanning
@@ -105,3 +105,8 @@ jobs:
 
       - name: Run pre-commit (all files)
         run: pre-commit run --all-files
+
+      - name: Audit dependencies (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt -r requirements-dev.txt
