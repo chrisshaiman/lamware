@@ -23,5 +23,21 @@ ignore = [
     "E501",  # line too long — ruff format handles wrapping
 ]
 
+[tool.bandit]
+exclude_dirs = [
+    "tests",
+    "packer/ansible/roles/konstruktoid.hardening",
+    "frontend",
+]
+skips = [
+    "B104",  # hardcoded_bind_all_interfaces — API binds 0.0.0.0 intentionally (behind WireGuard)
+    "B108",  # hardcoded_tmp_directory — CLI tools use /tmp by design on Linux
+    "B110",  # try_except_pass — intentional in non-fatal paths (commented)
+    "B404",  # import subprocess — security tooling legitimately shells out
+    "B603",  # subprocess_without_shell — all commands are hardcoded, no user input
+    "B105",  # hardcoded_password_string — fake_credentials.py is intentional test data
+    "B607",  # start_process_with_partial_path — known executables (wslpath, explorer.exe)
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
