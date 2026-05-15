@@ -156,6 +156,11 @@ No items — all resolved.
 | Batch script (.bat/.cmd) analysis | 1-2 hrs | Add `is_batch_script()` detection, Stage 4 handler (raw source + basic deobfuscation), Stage 4.5 single-shot LLM route. Same pattern as PowerShell pipeline. Currently .bat falls through all Stage 4 checks → no AI analysis. |
 | JavaScript (.js/.jse/.wsf) analysis | 1-2 hrs | Same gap as batch — no Stage 4/4.5 handler. Common dropper format (WScript.Shell, XMLHTTP). Same pattern as PowerShell/batch. |
 | shellcheck + PSScriptAnalyzer | 1 hr | Shell (1 file) and PowerShell (9 files) linting. Low ROI — stable Packer provisioning scripts, rarely change. |
+| DAST: Schemathesis API fuzzing | 1 session | Fuzz all 10 FastAPI routers via /openapi.json. Priority targets: samples + feeder intake routers. Ansible post-deploy role + `make dast`. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
+| DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
+| DAST: Nuclei misconfig sweep | 1-2 hrs | FastAPI/Flask misconfig templates (exposed /docs, CORS, debug mode, missing security headers). **Trigger: when adding multi-user access or removing WireGuard requirement.** |
+| /docs /redoc env-gating | 30 min | Disable Swagger/ReDoc in prod, enable only in dev via settings.env flag. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
+| eslint-plugin-security | 30 min | Frontend JS security patterns (unsafe innerHTML, regex DoS). Low priority — rehype-sanitize covers primary risk. |
 
 ### Future — Platform Enhancements
 
