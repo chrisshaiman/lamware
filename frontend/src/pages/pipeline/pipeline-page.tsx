@@ -4,6 +4,7 @@
 import { Link } from "react-router-dom";
 import { Activity } from "lucide-react";
 import { usePipelineStatus } from "#hooks/use-pipeline";
+import { useWsStatus } from "#hooks/use-ws-context";
 import { SeverityBadge } from "#components/shared/severity-badge";
 import { MonoText } from "#components/shared/mono-text";
 import { formatDuration, formatRelativeTime } from "#lib/utils";
@@ -80,6 +81,7 @@ function PipelineCard({ item }: { item: PipelineItem }) {
 
 export function PipelinePage() {
   const { data, isLoading, isError } = usePipelineStatus();
+  const { isConnected, isReconnecting } = useWsStatus();
 
   return (
     <div className="space-y-6">
@@ -93,6 +95,20 @@ export function PipelinePage() {
               : "idle"}
           </span>
         )}
+        <span className="ml-auto flex items-center gap-1.5 text-xs">
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${
+              isConnected
+                ? "bg-green-500"
+                : isReconnecting
+                  ? "bg-yellow-500 animate-pulse"
+                  : "bg-gray-500"
+            }`}
+          />
+          <span className="text-[var(--color-text-muted)]">
+            {isConnected ? "Live" : isReconnecting ? "Reconnecting" : "Polling"}
+          </span>
+        </span>
       </div>
 
       {isLoading ? (

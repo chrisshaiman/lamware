@@ -13,10 +13,11 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "psycopg2-binary>=2.9",
     "pydantic-settings>=2.0",
+    "asyncpg>=0.30",
 ]
 
 [project.optional-dependencies]
-dev = ["httpx", "pytest"]
+dev = ["httpx", "pytest", "pytest-asyncio"]
 
 [build-system]
 requires = ["setuptools>=68"]
