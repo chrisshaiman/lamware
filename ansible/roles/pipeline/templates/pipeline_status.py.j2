@@ -10,6 +10,8 @@ License: Apache 2.0
 """
 
 import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -127,6 +129,18 @@ def update_stage(analysis_id: int | None, stage: str, status: str,
                 UPDATE analyses SET current_stage = %s WHERE id = %s
             """, (stage, analysis_id))
 
+        # Notify WebSocket listeners
+        cur.execute(
+            "NOTIFY pipeline_events, %s",
+            [json.dumps({
+                "event": "stage_update",
+                "analysis_id": analysis_id,
+                "stage": stage,
+                "status": status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })]
+        )
+
         cur.close()
         conn.close()
 
@@ -161,6 +175,18 @@ def complete_pipeline(analysis_id: int | None, status: str = "completed",
                 stage_timings = %s
             WHERE id = %s
         """, (status, psycopg2.extras.Json(stage_timings or {}), analysis_id))
+
+        # Notify WebSocket listeners
+        event = "analysis_complete" if status == "completed" else "analysis_failed"
+        cur.execute(
+            "NOTIFY pipeline_events, %s",
+            [json.dumps({
+                "event": event,
+                "analysis_id": analysis_id,
+                "stage_timings": stage_timings or {},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })]
+        )
 
         cur.close()
         conn.close()
