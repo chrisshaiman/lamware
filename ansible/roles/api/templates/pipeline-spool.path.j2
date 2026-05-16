@@ -1,0 +1,14 @@
+# pipeline-spool.path — watches for new sample uploads in the spool directory.
+# When a file appears, triggers pipeline-spool.service to process it.
+#
+# Managed by Ansible (api role). Do not edit manually.
+
+[Unit]
+Description=Watch for new sample uploads in pipeline spool
+
+[Path]
+DirectoryNotEmpty=/opt/pipeline/spool
+MakeDirectory=true
+
+[Install]
+WantedBy=multi-user.target
