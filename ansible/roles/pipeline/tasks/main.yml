@@ -84,6 +84,17 @@
       cgroup_manager = "cgroupfs"
       events_logger = "file"
 
+- name: Deploy Podman storage.conf for pipeline user
+  ansible.builtin.copy:
+    dest: /home/pipeline/.config/containers/storage.conf
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+    content: |
+      [storage]
+      driver = "overlay"
+      graphroot = "/home/pipeline/.local/share/containers/storage"
+
 - name: Enable lingering for pipeline user (rootless Podman cgroups)
   ansible.builtin.command:
     cmd: loginctl enable-linger pipeline
