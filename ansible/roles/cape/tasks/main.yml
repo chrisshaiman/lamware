@@ -410,12 +410,11 @@
     create: true
     mode: "0600"
 
-- name: Schedule memory dump cleanup (daily at 4am)
+- name: Schedule memory dump cleanup (hourly, dumps older than 1h)
   ansible.builtin.cron:
     name: "cape-memory-dump-cleanup"
     user: "{{ cape_user }}"
-    hour: "4"
-    minute: "0"
+    minute: "15"
     job: >-
-      find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mtime +1 -delete;
-      find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mtime +1 -exec rm -rf {} +
+      find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mmin +60 -delete;
+      find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mmin +60 -exec rm -rf {} +
