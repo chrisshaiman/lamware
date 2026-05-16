@@ -11,8 +11,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ dotnet_analysis_install_dir }}"
@@ -23,16 +23,16 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ dotnet_analysis_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy analyze-dotnet.py
   ansible.builtin.template:
     src: analyze-dotnet.py.j2
     dest: "{{ dotnet_analysis_install_dir }}/build/analyze-dotnet.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Build dotnet-analysis container image
@@ -44,15 +44,15 @@
       -f {{ dotnet_analysis_install_dir }}/build/Containerfile
       {{ dotnet_analysis_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 - name: Deploy dotnet-analysis wrapper script
   ansible.builtin.template:
     src: run-dotnet-analysis-wrapper.sh.j2
     dest: "{{ dotnet_analysis_install_dir }}/run-dotnet-analysis"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink
