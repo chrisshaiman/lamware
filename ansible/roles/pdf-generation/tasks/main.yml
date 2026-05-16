@@ -15,8 +15,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ pdf_generation_install_dir }}"
@@ -27,16 +27,16 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ pdf_generation_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy generate-report.py
   ansible.builtin.template:
     src: "../../pipeline/templates/generate-report.py.j2"
     dest: "{{ pdf_generation_install_dir }}/build/generate-report.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
   no_log: true
 
@@ -50,15 +50,15 @@
       -f {{ pdf_generation_install_dir }}/build/Containerfile
       {{ pdf_generation_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 - name: Deploy pdf-generation wrapper script
   ansible.builtin.template:
     src: run-pdf-generation-wrapper.sh.j2
     dest: "{{ pdf_generation_install_dir }}/run-pdf-generation"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink

@@ -20,8 +20,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ volatility_install_dir }}"
@@ -41,8 +41,8 @@
   ansible.builtin.get_url:
     url: "{{ volatility_isf_url }}"
     dest: "{{ volatility_install_dir }}/windows-symbols.zip"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
   when: not volatility_symbols_check.stat.exists
 
@@ -51,8 +51,8 @@
     src: "{{ volatility_install_dir }}/windows-symbols.zip"
     dest: "{{ volatility_symbols_dir }}/"
     remote_src: true
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
   when: not volatility_symbols_check.stat.exists
 
 - name: Remove symbol zip after extraction
@@ -68,16 +68,16 @@
   ansible.builtin.file:
     path: "{{ volatility_install_dir }}/build"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
 
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ volatility_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Build volatility3 container image
@@ -89,7 +89,7 @@
       -f {{ volatility_install_dir }}/build/Containerfile
       {{ volatility_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 # -------------------------------------------------------------------------
@@ -100,8 +100,8 @@
   ansible.builtin.template:
     src: run-volatility-wrapper.sh.j2
     dest: "{{ volatility_install_dir }}/run-volatility"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink
@@ -119,8 +119,8 @@
   ansible.builtin.file:
     path: "{{ volatility_install_dir }}/cache"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0755"
 
 - name: Check if Volatility ISF cache is already built
@@ -152,6 +152,6 @@
       --cache-path /vol-cache
       frameworkinfo
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   when: volatility_cache_check.matched == 0
   changed_when: true

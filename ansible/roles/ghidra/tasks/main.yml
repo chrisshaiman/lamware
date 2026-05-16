@@ -23,8 +23,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ ghidra_install_dir }}"
@@ -39,40 +39,40 @@
   ansible.builtin.file:
     path: "{{ ghidra_install_dir }}/build"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
 
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ ghidra_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy run-ghidra.py into build context
   ansible.builtin.template:
     src: run-ghidra.py.j2
     dest: "{{ ghidra_install_dir }}/build/run-ghidra.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Deploy ExportAnalysis.java into build context
   ansible.builtin.template:
     src: ExportAnalysis.java.j2
     dest: "{{ ghidra_install_dir }}/build/ExportAnalysis.java"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy GhidraTool.java into build context
   ansible.builtin.template:
     src: GhidraTool.java.j2
     dest: "{{ ghidra_install_dir }}/build/GhidraTool.java"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Build ghidra container image
@@ -84,7 +84,7 @@
       -f {{ ghidra_install_dir }}/build/Containerfile
       {{ ghidra_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 # -------------------------------------------------------------------------
@@ -95,8 +95,8 @@
   ansible.builtin.template:
     src: run-ghidra-wrapper.sh.j2
     dest: "{{ ghidra_install_dir }}/run-ghidra"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink
