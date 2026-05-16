@@ -18,7 +18,6 @@ fi
 
 PCAP_PATH="$(realpath "$1")"
 PCAP_NAME="$(basename "$PCAP_PATH")"
-PCAP_DIR="$(dirname "$PCAP_PATH")"
 OUTPUT_DIR="${2:-{{ pcap_analysis_install_dir }}/output}"
 
 if [ ! -f "$PCAP_PATH" ]; then
@@ -27,6 +26,13 @@ if [ ! -f "$PCAP_PATH" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+
+# Copy PCAP to a temp dir so the container can run as nobody
+# without needing access to CAPE-owned files.
+TEMP_PCAP="$(mktemp -d)"
+cp "$PCAP_PATH" "$TEMP_PCAP/" 2>/dev/null || true
+chmod -R a+rX "$TEMP_PCAP"
+trap 'rm -rf "$TEMP_PCAP"' EXIT
 
 exec podman run --rm \
     --network=none \
@@ -41,7 +47,7 @@ exec podman run --rm \
     --tmpfs /var/log/suricata:size=50m \
     --tmpfs /var/run/suricata:size=10m \
     --user 65534:65534 \
-    -v "$PCAP_DIR:/pcap:ro" \
+    -v "$TEMP_PCAP:/pcap:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/pcap-analysis:latest \
     "/pcap/$PCAP_NAME"

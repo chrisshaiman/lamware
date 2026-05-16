@@ -26,6 +26,13 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# Copy screenshots to a temp dir so the container can run as nobody
+# without needing access to CAPE-owned files.
+TEMP_SHOTS="$(mktemp -d)"
+cp "$SHOTS_DIR"/*.png "$TEMP_SHOTS/" 2>/dev/null || true
+chmod -R a+rX "$TEMP_SHOTS"
+trap 'rm -rf "$TEMP_SHOTS"' EXIT
+
 exec podman run --rm \
     --network=none \
     --read-only \
@@ -37,7 +44,7 @@ exec podman run --rm \
     --tmpfs /tmp:size=100m \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
-    -v "$SHOTS_DIR:/shots:ro" \
+    -v "$TEMP_SHOTS:/shots:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     localhost/screenshot-analysis:latest \
     "/shots"

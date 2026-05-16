@@ -435,6 +435,21 @@
       UMask=0027
   notify: Restart Cape services
 
+- name: Create CAPE rooter drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/cape-rooter.service.d
+    state: directory
+    mode: "0755"
+
+- name: Deploy CAPE rooter drop-in (UMask for group-readable pcap)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cape-rooter.service.d/lamware-umask.conf
+    mode: "0644"
+    content: |
+      [Service]
+      UMask=0027
+  notify: Restart Cape services
+
 # -------------------------------------------------------------------------
 # Memory dump cleanup — delete full + per-process memory dumps older than
 # 1h. These are 2-4GB each and CAPE never auto-deletes them. The pipeline
