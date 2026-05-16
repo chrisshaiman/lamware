@@ -396,3 +396,26 @@
   loop_control:
     label: "[{{ item.0.name }}] {{ item.1.key }}"
   notify: Restart Cape services
+
+# -------------------------------------------------------------------------
+# Memory dump cleanup — delete full + per-process memory dumps older than
+# 24h. These are 2-4GB each and CAPE never auto-deletes them. The pipeline
+# user cannot delete these (security boundary) so cape owns this cleanup.
+# -------------------------------------------------------------------------
+
+- name: Allow cape user to use crontab
+  ansible.builtin.lineinfile:
+    path: /etc/cron.allow
+    line: "{{ cape_user }}"
+    create: true
+    mode: "0600"
+
+- name: Schedule memory dump cleanup (daily at 4am)
+  ansible.builtin.cron:
+    name: "cape-memory-dump-cleanup"
+    user: "{{ cape_user }}"
+    hour: "4"
+    minute: "0"
+    job: >-
+      find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mtime +1 -delete;
+      find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mtime +1 -exec rm -rf {} +
