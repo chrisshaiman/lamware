@@ -9,6 +9,79 @@
 # License: Apache 2.0
 # =============================================================================
 
+# -------------------------------------------------------------------------
+# System users and shared group — created here because pipeline runs
+# before api in site.yml. Both pipeline and lamware-api need the lamware
+# group to exist before directory ownership is set.
+# -------------------------------------------------------------------------
+
+- name: Create lamware shared group
+  ansible.builtin.group:
+    name: lamware
+    system: true
+
+- name: Create pipeline primary group
+  ansible.builtin.group:
+    name: pipeline
+    system: true
+
+- name: Create lamware-api primary group
+  ansible.builtin.group:
+    name: lamware-api
+    system: true
+
+- name: Create pipeline system user
+  ansible.builtin.user:
+    name: pipeline
+    system: true
+    group: pipeline
+    groups: lamware
+    append: true
+    shell: /bin/bash
+    home: /home/pipeline
+    create_home: true
+
+- name: Configure subuid for pipeline (rootless Podman)
+  ansible.builtin.lineinfile:
+    path: /etc/subuid
+    regexp: "^pipeline:"
+    line: "pipeline:200000:65536"
+    create: true
+    mode: "0644"
+
+- name: Configure subgid for pipeline (rootless Podman)
+  ansible.builtin.lineinfile:
+    path: /etc/subgid
+    regexp: "^pipeline:"
+    line: "pipeline:200000:65536"
+    create: true
+    mode: "0644"
+
+- name: Create lamware-api system user
+  ansible.builtin.user:
+    name: lamware-api
+    system: true
+    group: lamware-api
+    groups: lamware
+    append: true
+    shell: /usr/sbin/nologin
+    home: /opt/lamware-api
+    create_home: false
+
+- name: Add cape user to lamware group
+  ansible.builtin.user:
+    name: "{{ cape_user }}"
+    groups: lamware
+    append: true
+
+- name: Set CAPE storage directory to lamware group
+  ansible.builtin.file:
+    path: /opt/CAPEv2/storage
+    state: directory
+    owner: "{{ cape_user }}"
+    group: lamware
+    mode: "2750"
+
 - name: Install pipeline Python dependencies
   ansible.builtin.pip:
     name:
@@ -18,7 +91,7 @@
     state: present
     break_system_packages: true
 
-- name: Fix pip package permissions for cape user
+- name: Fix pip package permissions for pipeline user
   ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
   args:
     executable: /bin/bash
@@ -28,9 +101,9 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
-    mode: "0750"
+    owner: pipeline
+    group: lamware
+    mode: "2750"
   loop:
     - "{{ pipeline_install_dir }}"
     - "{{ pipeline_install_dir }}/stages"
@@ -40,9 +113,9 @@
   ansible.builtin.file:
     path: "{{ pipeline_volatility_ramdisk }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
-    mode: "0750"
+    owner: pipeline
+    group: lamware
+    mode: "2750"
   when: pipeline_volatility_ramdisk | default('') | length > 0
 
 - name: Mount ramdisk (tmpfs) for Volatility memory dumps
@@ -50,7 +123,7 @@
     path: "{{ pipeline_volatility_ramdisk }}"
     src: tmpfs
     fstype: tmpfs
-    opts: "size=8g,uid={{ cape_user }},gid={{ cape_user }},mode=0750"
+    opts: "size=8g,uid=pipeline,gid=lamware,mode=2750"
     state: mounted
   when: pipeline_volatility_ramdisk | default('') | length > 0
 
@@ -58,8 +131,8 @@
   ansible.builtin.template:
     src: run-pipeline.py.j2
     dest: "{{ pipeline_install_dir }}/run-pipeline.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
   no_log: true  # contains cape_api_key
 
@@ -67,8 +140,8 @@
   ansible.builtin.template:
     src: "stages/{{ item }}"
     dest: "{{ pipeline_install_dir }}/stages/{{ item | replace('.j2', '') }}"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0640"
   loop:
     - __init__.py.j2
@@ -89,8 +162,8 @@
   ansible.builtin.template:
     src: "stages/cape.py.j2"
     dest: "{{ pipeline_install_dir }}/stages/cape.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0640"
   no_log: true
 
@@ -98,8 +171,8 @@
   ansible.builtin.template:
     src: "{{ item }}"
     dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0640"
   loop:
     - ioc_extract.py.j2
@@ -108,8 +181,8 @@
   ansible.builtin.template:
     src: "{{ item }}"
     dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0640"
   no_log: true
   loop:
@@ -120,8 +193,8 @@
   ansible.builtin.template:
     src: run-pipeline-wrapper.sh.j2
     dest: "{{ pipeline_install_dir }}/run-pipeline"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
   no_log: true  # contains DB password
 
@@ -129,8 +202,8 @@
   ansible.builtin.template:
     src: generate-report.py.j2
     dest: "{{ pipeline_install_dir }}/generate-report.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink for pipeline
@@ -149,21 +222,21 @@
   ansible.builtin.template:
     src: pipeline-cleanup.sh.j2
     dest: "{{ pipeline_install_dir }}/cleanup.sh"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
-- name: Allow cape user to use crontab (hardening restricts via cron.allow)
+- name: Allow pipeline user to use crontab (hardening restricts via cron.allow)
   ansible.builtin.lineinfile:
     path: /etc/cron.allow
-    line: "{{ cape_user }}"
+    line: pipeline
     create: true
     mode: "0600"
 
 - name: Schedule daily report cleanup
   ansible.builtin.cron:
     name: "pipeline-report-cleanup"
-    user: "{{ cape_user }}"
+    user: pipeline
     hour: "3"
     minute: "0"
     job: "{{ pipeline_install_dir }}/cleanup.sh"
