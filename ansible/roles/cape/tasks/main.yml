@@ -465,6 +465,18 @@
     create: true
     mode: "0600"
 
+- name: Set CAPE storage directories to lamware group
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: lamware
+    mode: "2750"
+  loop:
+    - "{{ cape_install_dir }}/storage"
+    - "{{ cape_install_dir }}/storage/analyses"
+    - "{{ cape_install_dir }}/storage/binaries"
+
 - name: Schedule CAPE storage maintenance (hourly)
   ansible.builtin.cron:
     name: "cape-storage-maintenance"
