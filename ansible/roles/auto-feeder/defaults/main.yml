@@ -27,4 +27,4 @@ auto_feeder_pause_file: /opt/pipeline/PAUSE
 auto_feeder_max_sample_size_bytes: 268435456  # 256 MB
 
 # Run as same user as pipeline
-auto_feeder_user: "{{ cape_user | default('cape') }}"
+auto_feeder_user: pipeline
