@@ -3,34 +3,29 @@
 #
 # Sample submission endpoint.
 #
-# Accepts a multipart file upload, saves it to a temp directory, then
-# launches the pipeline command in a background subprocess. Returns
-# immediately with a submitted status — clients poll /api/pipeline/status
-# for progress.
+# Accepts a multipart file upload, saves it to a spool directory. A systemd
+# path unit watches the spool and triggers the pipeline as the `pipeline` user.
+# Returns immediately — clients poll /api/pipeline/status for progress.
 #
-# The pipeline command (settings.pipeline_cmd) is expected to accept a file
-# path as its first positional argument:
-#
-#   /usr/local/bin/run-pipeline /tmp/uploads/<filename>
-#
-# subprocess.Popen is used (not subprocess.run) so the call is non-blocking.
-# The child process is detached from this process's stdin/stdout.
+# This design maintains the security boundary: the API (lamware-api) writes
+# files, the pipeline (pipeline user) processes them. No sudo, no privilege
+# escalation.
 
-import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from ..auth import require_api_key
-from ..config import settings
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
 
-# Max upload size: 100 MB. FastAPI doesn't enforce this at the middleware
-# level by default, so we check after reading into the temp file.
+# Max upload size: 100 MB.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+# Spool directory for uploaded samples. Owned by lamware-api:lamware.
+# Pipeline user reads via lamware group membership.
+SPOOL_DIR = Path("/opt/pipeline/spool")
 
 
 @router.post("/submit")
@@ -41,27 +36,19 @@ async def submit_sample(
     """
     Submit a sample file for analysis.
 
-    Saves the upload to a temp file and launches the pipeline in a background
-    subprocess. Returns immediately — poll /api/pipeline/status for progress.
-
-    The response includes a submission_id (random UUID) for tracking this
-    specific API call. It is NOT the pipeline task_id — that is assigned by
-    the pipeline and visible in /api/pipeline/status once the run starts.
+    Saves the upload to a spool directory. A systemd path unit detects the
+    new file and launches the pipeline as the pipeline user. Returns
+    immediately — poll /api/pipeline/status for progress.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="filename is required")
 
-    # Sanitise the original filename — strip directory components and limit
-    # length so we can safely use it as part of a filesystem path.
     safe_name = Path(file.filename).name[:200]
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    # Write upload to a unique temp file. Using NamedTemporaryFile with
-    # delete=False so the pipeline process can open it after we close it.
     submission_id = str(uuid.uuid4())
-    tmp_dir = tempfile.gettempdir()
-    tmp_path = Path(tmp_dir) / f"{submission_id}_{safe_name}"
+    tmp_path = SPOOL_DIR / f"{submission_id}_{safe_name}"
 
     try:
         content = await file.read()
@@ -75,30 +62,12 @@ async def submit_sample(
         )
 
     try:
+        SPOOL_DIR.mkdir(parents=True, exist_ok=True)
         tmp_path.write_bytes(content)
+        tmp_path.chmod(0o640)
     except OSError as exc:
         raise HTTPException(
             status_code=500, detail=f"Failed to save upload: {exc}"
-        ) from exc
-
-    # Launch the pipeline in the background. Popen returns immediately;
-    # the child runs independently. We capture no output — the pipeline
-    # writes its own logs.
-    try:
-        proc = subprocess.Popen(  # noqa: S603 — cmd and path are not user-controlled
-            [settings.pipeline_cmd, str(tmp_path)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Pipeline command not found: {settings.pipeline_cmd}",
-        ) from exc
-    except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to launch pipeline: {exc}"
         ) from exc
 
     return {
@@ -106,6 +75,5 @@ async def submit_sample(
         "submission_id": submission_id,
         "filename": safe_name,
         "size_bytes": len(content),
-        "pipeline_pid": proc.pid,
         "message": "Sample queued. Poll /api/pipeline/status for progress.",
     }

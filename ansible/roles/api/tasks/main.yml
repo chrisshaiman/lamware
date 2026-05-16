@@ -22,6 +22,14 @@
     path: /etc/systemd/system/dashboard.service
     state: absent
 
+- name: Create sample upload spool directory
+  ansible.builtin.file:
+    path: /opt/pipeline/spool
+    state: directory
+    owner: "{{ api_user }}"
+    group: lamware
+    mode: "2770"
+
 - name: Create lamware-api install directory
   ansible.builtin.file:
     path: "{{ api_install_dir }}"
@@ -97,6 +105,18 @@
     mode: "0644"
   notify: Restart lamware-api
 
+- name: Deploy pipeline-spool.path unit (watches for uploaded samples)
+  ansible.builtin.template:
+    src: pipeline-spool.path.j2
+    dest: /etc/systemd/system/pipeline-spool.path
+    mode: "0644"
+
+- name: Deploy pipeline-spool.service unit (processes uploaded samples)
+  ansible.builtin.template:
+    src: pipeline-spool.service.j2
+    dest: /etc/systemd/system/pipeline-spool.service
+    mode: "0644"
+
 - name: Reload systemd daemon
   ansible.builtin.systemd:
     daemon_reload: true
@@ -104,5 +124,11 @@
 - name: Enable and start lamware-api
   ansible.builtin.systemd:
     name: lamware-api
+    state: started
+    enabled: true
+
+- name: Enable and start pipeline-spool.path watcher
+  ansible.builtin.systemd:
+    name: pipeline-spool.path
     state: started
     enabled: true

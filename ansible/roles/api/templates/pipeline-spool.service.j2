@@ -1,0 +1,26 @@
+# pipeline-spool.service — processes uploaded samples from the spool directory.
+# Triggered by pipeline-spool.path when files appear in /opt/pipeline/spool.
+# Runs as the pipeline user — proper security boundary from the API.
+#
+# Managed by Ansible (api role). Do not edit manually.
+
+[Unit]
+Description=Process uploaded samples from spool directory
+
+[Service]
+Type=oneshot
+User=pipeline
+Group=pipeline
+SupplementaryGroups=lamware
+WorkingDirectory=/tmp
+
+# Process each file in the spool directory
+ExecStart=/bin/bash -c 'for f in /opt/pipeline/spool/*; do [ -f "$f" ] && {{ pipeline_cmd | default("/usr/local/bin/run-pipeline") }} "$f" && rm -f "$f"; done'
+
+# Security hardening
+NoNewPrivileges=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
