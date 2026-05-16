@@ -14,8 +14,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ java_analysis_install_dir }}"
@@ -26,24 +26,24 @@
   ansible.builtin.get_url:
     url: "{{ cfr_url }}"
     dest: "{{ java_analysis_install_dir }}/build/cfr.jar"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ java_analysis_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy analyze-java.py
   ansible.builtin.template:
     src: analyze-java.py.j2
     dest: "{{ java_analysis_install_dir }}/build/analyze-java.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Build java-analysis container image
@@ -56,15 +56,15 @@
       -f {{ java_analysis_install_dir }}/build/Containerfile
       {{ java_analysis_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 - name: Deploy java-analysis wrapper script
   ansible.builtin.template:
     src: run-java-analysis-wrapper.sh.j2
     dest: "{{ java_analysis_install_dir }}/run-java-analysis"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink

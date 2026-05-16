@@ -11,8 +11,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ pcap_analysis_install_dir }}"
@@ -24,32 +24,32 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ pcap_analysis_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy analyze-pcap.py
   ansible.builtin.template:
     src: analyze-pcap.py.j2
     dest: "{{ pcap_analysis_install_dir }}/build/analyze-pcap.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Deploy suricata.yaml
   ansible.builtin.template:
     src: suricata.yaml.j2
     dest: "{{ pcap_analysis_install_dir }}/build/suricata.yaml"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Download Suricata rules (ET Open)
   ansible.builtin.get_url:
     url: "{{ suricata_rules_url }}"
     dest: "{{ pcap_analysis_install_dir }}/rules/emerging-all.rules"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Build pcap-analysis container image
@@ -61,15 +61,15 @@
       -f {{ pcap_analysis_install_dir }}/build/Containerfile
       {{ pcap_analysis_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 - name: Deploy pcap-analysis wrapper script
   ansible.builtin.template:
     src: run-pcap-analysis-wrapper.sh.j2
     dest: "{{ pcap_analysis_install_dir }}/run-pcap-analysis"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink
