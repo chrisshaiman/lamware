@@ -11,8 +11,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ screenshot_analysis_install_dir }}"
@@ -23,16 +23,16 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ screenshot_analysis_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy analyze-screenshots.py
   ansible.builtin.template:
     src: analyze-screenshots.py.j2
     dest: "{{ screenshot_analysis_install_dir }}/build/analyze-screenshots.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Build screenshot-analysis container image
@@ -45,15 +45,15 @@
       -f {{ screenshot_analysis_install_dir }}/build/Containerfile
       {{ screenshot_analysis_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 - name: Deploy screenshot-analysis wrapper script
   ansible.builtin.template:
     src: run-screenshot-analysis-wrapper.sh.j2
     dest: "{{ screenshot_analysis_install_dir }}/run-screenshot-analysis"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink

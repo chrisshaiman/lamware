@@ -21,8 +21,8 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
   loop:
     - "{{ triage_install_dir }}"
@@ -42,7 +42,7 @@
     depth: 1
     force: true
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
@@ -55,32 +55,32 @@
   ansible.builtin.file:
     path: "{{ triage_install_dir }}/build"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: lamware
     mode: "0750"
 
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ triage_install_dir }}/build/Containerfile"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy pip requirements
   ansible.builtin.copy:
     src: requirements.txt
     dest: "{{ triage_install_dir }}/build/requirements.txt"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0644"
 
 - name: Deploy run-triage.py into build context
   ansible.builtin.template:
     src: run-triage.py.j2
     dest: "{{ triage_install_dir }}/build/run-triage.py"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0755"
 
 - name: Build triage container image
@@ -92,7 +92,7 @@
       -f {{ triage_install_dir }}/build/Containerfile
       {{ triage_install_dir }}/build
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: true
 
 # -------------------------------------------------------------------------
@@ -103,8 +103,8 @@
   ansible.builtin.template:
     src: run-triage-wrapper.sh.j2
     dest: "{{ triage_install_dir }}/run-triage"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
+    owner: pipeline
+    group: pipeline
     mode: "0750"
 
 - name: Create convenience symlink
@@ -126,7 +126,7 @@
   args:
     executable: /bin/bash
   become: true
-  become_user: "{{ cape_user }}"
+  become_user: pipeline
   changed_when: false
   register: triage_smoke_test
   failed_when: "'triage' not in triage_smoke_test.stdout"

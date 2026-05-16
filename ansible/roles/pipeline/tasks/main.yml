@@ -57,6 +57,38 @@
     create: true
     mode: "0644"
 
+- name: Create Podman config directory for pipeline user
+  ansible.builtin.file:
+    path: /home/pipeline/.config/containers
+    state: directory
+    owner: pipeline
+    group: pipeline
+    mode: "0700"
+
+- name: Create Podman local storage directory for pipeline user
+  ansible.builtin.file:
+    path: /home/pipeline/.local/share/containers
+    state: directory
+    owner: pipeline
+    group: pipeline
+    mode: "0700"
+
+- name: Deploy Podman containers.conf for pipeline user (cgroupfs, no systemd)
+  ansible.builtin.copy:
+    dest: /home/pipeline/.config/containers/containers.conf
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+    content: |
+      [engine]
+      cgroup_manager = "cgroupfs"
+      events_logger = "file"
+
+- name: Enable lingering for pipeline user (rootless Podman cgroups)
+  ansible.builtin.command:
+    cmd: loginctl enable-linger pipeline
+  changed_when: false
+
 - name: Create lamware-api system user
   ansible.builtin.user:
     name: lamware-api
