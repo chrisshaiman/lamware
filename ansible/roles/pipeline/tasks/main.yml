@@ -117,13 +117,17 @@
     groups: lamware
     append: true
 
-- name: Set CAPE storage directory to lamware group
+- name: Set CAPE storage directories to lamware group
   ansible.builtin.file:
-    path: /opt/CAPEv2/storage
+    path: "{{ item }}"
     state: directory
     owner: "{{ cape_user }}"
     group: lamware
     mode: "2750"
+  loop:
+    - /opt/CAPEv2/storage
+    - /opt/CAPEv2/storage/analyses
+    - /opt/CAPEv2/storage/binaries
 
 - name: Install pipeline Python dependencies
   ansible.builtin.pip:
