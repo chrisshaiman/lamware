@@ -20,6 +20,16 @@
     name: lamware
     system: true
 
+- name: Create pipeline primary group
+  ansible.builtin.group:
+    name: pipeline
+    system: true
+
+- name: Create lamware-api primary group
+  ansible.builtin.group:
+    name: lamware-api
+    system: true
+
 - name: Create pipeline system user
   ansible.builtin.user:
     name: pipeline
