@@ -969,26 +969,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         all_candidates = shellcode_candidates
     shellcode_candidates = all_candidates
 
-    # Clean up CAPE memory dump (8GB each, fills disk fast)
-    # Safe to delete after Volatility + shellcode extraction are done
-    cape_task_id_cleanup = report.get("cape", {}).get("task_id")
-    if cape_task_id_cleanup:
-        mem_dump = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id_cleanup}/memory.dmp")
-        if mem_dump.exists():
-            try:
-                mem_dump.unlink()
-                log.info(f"  Cleaned up memory dump ({mem_dump})")
-            except OSError as e:
-                log.warning(f"  Could not delete memory dump: {e}")
-        # Also clean per-process dumps
-        proc_dump_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id_cleanup}/memory")
-        if proc_dump_dir.is_dir():
-            import shutil as _shutil
-            try:
-                _shutil.rmtree(proc_dump_dir)
-                log.info(f"  Cleaned up per-process dumps ({proc_dump_dir})")
-            except OSError as e:
-                log.warning(f"  Could not delete process dumps: {e}")
+    # Memory dump cleanup is handled by a cape-owned cron job.
+    # The pipeline user intentionally does not have write access to
+    # CAPE storage — that's a security boundary we want to preserve.
 
     # Stage 4: Static analysis (Ghidra for native PE, ILSpy for .NET)
     _ghidra_start = _time.time()
