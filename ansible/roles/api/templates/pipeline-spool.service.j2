@@ -19,8 +19,8 @@ ExecStart=/bin/bash -c 'for f in /opt/pipeline/spool/*; do [ -f "$f" ] && {{ pip
 
 # Security hardening
 NoNewPrivileges=true
-ProtectHome=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
+# ProtectHome omitted — pipeline user's Podman config lives in /home/pipeline
