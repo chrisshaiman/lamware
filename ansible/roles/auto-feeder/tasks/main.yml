@@ -12,7 +12,7 @@
     path: "{{ auto_feeder_install_dir }}"
     state: directory
     owner: "{{ auto_feeder_user }}"
-    group: "{{ auto_feeder_user }}"
+    group: lamware
     mode: "0750"
 
 - name: Deploy auto-feeder script

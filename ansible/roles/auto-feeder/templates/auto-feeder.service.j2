@@ -13,14 +13,17 @@ Wants=network-online.target
 Type=oneshot
 User={{ auto_feeder_user }}
 Group={{ auto_feeder_user }}
+SupplementaryGroups=lamware
 WorkingDirectory=/tmp
 ExecStart=/usr/bin/python3 {{ auto_feeder_install_dir }}/auto-feeder.py
 TimeoutStartSec=4200
 
 # Security hardening
 NoNewPrivileges=true
-# Note: PrivateTmp and ProtectSystem=strict are intentionally omitted.
-# The pipeline creates temp dirs in /tmp that Podman containers must access
-# from the host namespace. PrivateTmp isolates /tmp, breaking container mounts.
-# ProtectSystem=strict requires explicit ReadWritePaths for every path the
-# pipeline touches, which is fragile as new stages are added.
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# PrivateTmp and ProtectSystem=strict intentionally omitted —
+# Podman containers need host /tmp and /proc/sys access.

@@ -7,11 +7,23 @@ Wants=network-online.target postgresql.service
 Type=exec
 User={{ api_user }}
 Group={{ api_user }}
+SupplementaryGroups=lamware
 WorkingDirectory={{ api_install_dir }}
 EnvironmentFile={{ api_install_dir }}/lamware-api.env
 ExecStart={{ api_install_dir }}/venv/bin/uvicorn app.main:app --host {{ api_host }} --port {{ api_port }}
 Restart=always
 RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{ api_install_dir }}
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
