@@ -13,9 +13,10 @@ User=pipeline
 Group=pipeline
 SupplementaryGroups=lamware
 WorkingDirectory=/tmp
+Environment=HOME=/home/pipeline
 
 # Process each file in the spool directory
-ExecStart=/bin/bash -c 'for f in /opt/pipeline/spool/*; do [ -f "$f" ] && {{ pipeline_cmd | default("/usr/local/bin/run-pipeline") }} "$f" && rm -f "$f"; done'
+ExecStart=/bin/bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); for f in /opt/pipeline/spool/*; do [ -f "$f" ] && {{ pipeline_cmd | default("/usr/local/bin/run-pipeline") }} "$f" && rm -f "$f"; done'
 
 # Security hardening
 NoNewPrivileges=true

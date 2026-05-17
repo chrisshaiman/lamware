@@ -15,12 +15,13 @@ User={{ auto_feeder_user }}
 Group={{ auto_feeder_user }}
 SupplementaryGroups=lamware
 WorkingDirectory=/tmp
-ExecStart=/usr/bin/python3 {{ auto_feeder_install_dir }}/auto-feeder.py
+Environment=HOME=/home/pipeline
+ExecStart=/bin/bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); exec /usr/bin/python3 {{ auto_feeder_install_dir }}/auto-feeder.py'
 TimeoutStartSec=4200
 
 # Security hardening
 NoNewPrivileges=true
-ProtectHome=true
+# ProtectHome omitted — pipeline user's Podman config lives in /home/pipeline
 ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
