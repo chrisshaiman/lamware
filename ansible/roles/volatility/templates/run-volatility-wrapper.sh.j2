@@ -41,6 +41,8 @@ mkdir -p "$OUTPUT_DIR"
 # Container is read-only with targeted writable tmpfs mounts for
 # Volatility's cache and temp files. Memory dump directory mounted
 # directly (read-only) — no copy, since dumps are multi-GB.
+# Use timeout(1) instead of --timeout — Podman 4.x rootless timeout is unreliable
+timeout --kill-after=60 {{ volatility_container_timeout }} \
 podman run --rm \
     --network=none \
     --read-only \
@@ -48,7 +50,6 @@ podman run --rm \
     --security-opt=no-new-privileges \
     --memory={{ volatility_container_memory }} \
     --cpus={{ volatility_container_cpus }} \
-    --timeout={{ volatility_container_timeout }} \
     --tmpfs /tmp:size=2g \
     --tmpfs /root:size=100m \
     --tmpfs /home:size=100m \

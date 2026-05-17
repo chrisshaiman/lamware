@@ -893,24 +893,38 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         if cape_injection_pids:
             log.info(f"  Cape identified injection PIDs: {cape_injection_pids}")
 
-        report["volatility"] = run_volatility(
-            cape_data, output_dir,
-            volatility_cmd=VOLATILITY_CMD,
-            volatility_triggers=VOLATILITY_TRIGGERS,
-            volatility_standard_plugins=VOLATILITY_STANDARD_PLUGINS,
-            volatility_extra_plugins=VOLATILITY_EXTRA_PLUGINS,
-            malfind_enabled=MALFIND_ENABLED,
-            malfind_min_size=MALFIND_MIN_SIZE,
-            malfind_max_size=MALFIND_MAX_SIZE,
-            malfind_min_score=MALFIND_MIN_SCORE,
-            malfind_max_candidates=MALFIND_MAX_CANDIDATES,
-            malfind_benign_processes=MALFIND_BENIGN_PROCESSES,
-            get_cape_signatures_fn=get_cape_signatures,
-            cape_injection_pids=cape_injection_pids,
-            cape_has_injection_buffers=len(cape_injection_candidates) > 0,
-            ramdisk_path=VOLATILITY_RAMDISK,
-            parallel_workers=VOLATILITY_PARALLEL_WORKERS,
-        )
+        import signal
+
+        def _vol_timeout_handler(signum, frame):
+            raise TimeoutError("Volatility stage timed out (45 min)")
+
+        old_handler = signal.signal(signal.SIGALRM, _vol_timeout_handler)
+        signal.alarm(2700)  # 45 minutes — covers copy + 7 plugins + malfind
+        try:
+            report["volatility"] = run_volatility(
+                cape_data, output_dir,
+                volatility_cmd=VOLATILITY_CMD,
+                volatility_triggers=VOLATILITY_TRIGGERS,
+                volatility_standard_plugins=VOLATILITY_STANDARD_PLUGINS,
+                volatility_extra_plugins=VOLATILITY_EXTRA_PLUGINS,
+                malfind_enabled=MALFIND_ENABLED,
+                malfind_min_size=MALFIND_MIN_SIZE,
+                malfind_max_size=MALFIND_MAX_SIZE,
+                malfind_min_score=MALFIND_MIN_SCORE,
+                malfind_max_candidates=MALFIND_MAX_CANDIDATES,
+                malfind_benign_processes=MALFIND_BENIGN_PROCESSES,
+                get_cape_signatures_fn=get_cape_signatures,
+                cape_injection_pids=cape_injection_pids,
+                cape_has_injection_buffers=len(cape_injection_candidates) > 0,
+                ramdisk_path=VOLATILITY_RAMDISK,
+                parallel_workers=VOLATILITY_PARALLEL_WORKERS,
+            )
+        except TimeoutError:
+            log.error("  [!] Volatility stage timed out after 45 minutes")
+            report["volatility"] = {"triggered": True, "error": "timeout (45 min)"}
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
     else:
         # Explain why Volatility was skipped
         cape_sigs = get_cape_signatures(cape_data) if cape_data else []
