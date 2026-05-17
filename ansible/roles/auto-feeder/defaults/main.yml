@@ -23,7 +23,7 @@ auto_feeder_recent_count: 100
 auto_feeder_max_failures: 3
 auto_feeder_disk_threshold: 80
 auto_feeder_daily_budget_usd: 10.0
-auto_feeder_pause_file: /opt/pipeline/spool/PAUSE
+auto_feeder_pause_file: /opt/pipeline/control/PAUSE
 auto_feeder_max_sample_size_bytes: 268435456  # 256 MB
 
 # Run as same user as pipeline
