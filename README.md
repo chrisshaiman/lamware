@@ -249,25 +249,26 @@ graph TB
     subgraph "cape user"
         CAPE_CORE["CAPE core<br/>cape, cape-web, cape-processor"]
         CAPE_ROOTER["CAPE rooter (root)<br/>tcpdump, iptables"]
-        CAPE_STORAGE["/opt/CAPEv2/storage/<br/>cape:lamware 2750"]
+        CAPE_STORAGE["/opt/CAPEv2/storage/<br/>Owner: cape (read + write)<br/>Group: lamware (read only)"]
     end
 
     subgraph "pipeline user"
         PIPELINE["Pipeline orchestrator<br/>run-pipeline.py"]
         AUTOFEEDER["Auto-feeder<br/>auto-feeder.py"]
         CONTAINERS["13 Podman containers<br/>triage, ghidra, volatility, etc."]
-        REPORTS["/opt/pipeline/reports/<br/>pipeline:lamware 2750"]
-        TOOLS["/opt/triage/, /opt/ghidra/, etc.<br/>pipeline:lamware 2750"]
+        REPORTS["/opt/pipeline/reports/<br/>Owner: pipeline (read + write)<br/>Group: lamware (read only)"]
+        TOOLS["/opt/triage/, /opt/ghidra/, etc.<br/>Owner: pipeline (read + write)<br/>Group: lamware (read only)"]
     end
 
     subgraph "lamware-api user"
         API["FastAPI backend<br/>uvicorn (systemd hardened)"]
-        SPOOL["/opt/pipeline/spool/<br/>lamware-api:lamware 2770"]
+        SPOOL["/opt/pipeline/spool/<br/>Owner: lamware-api (read + write)<br/>Group: lamware (read + write)"]
+        CONTROL["/opt/pipeline/control/<br/>Owner: lamware-api (read + write)<br/>Group: lamware (read + write)"]
     end
 
     subgraph "Shared access (lamware group)"
         direction LR
-        LAMWARE_GROUP["lamware group<br/>members: cape, pipeline, lamware-api"]
+        LAMWARE_GROUP["lamware group<br/>members: cape, pipeline, lamware-api<br/>Grants read-only access to other users' directories"]
     end
 
     CAPE_CORE -->|writes| CAPE_STORAGE
@@ -276,7 +277,7 @@ graph TB
     PIPELINE -->|writes| REPORTS
     API -->|reads via group| REPORTS
     API -->|writes uploads| SPOOL
-    SPOOL -->|systemd path unit| PIPELINE
+    SPOOL -->|systemd path unit<br/>triggers pipeline| PIPELINE
     AUTOFEEDER -->|invokes| PIPELINE
 
     style CAPE_CORE fill:#4a1a1a,stroke:#ff6b6b
@@ -284,6 +285,33 @@ graph TB
     style API fill:#1a4a2a,stroke:#6bff8b
     style LAMWARE_GROUP fill:#3a3a1a,stroke:#ffdb6b
 ```
+
+**How the access model works:**
+
+Each directory has an **owner** (full control) and a **group** (limited access). All three users are members of the `lamware` group, which provides the cross-service read access needed for the pipeline to flow.
+
+| Directory | Owner (full control) | Group access (lamware) | Others |
+|-----------|---------------------|----------------------|--------|
+| `/opt/CAPEv2/storage/` | `cape` — read, write, create analysis results | `pipeline` — read analysis output for processing | No access |
+| `/opt/pipeline/reports/` | `pipeline` — read, write, create reports | `lamware-api` — read to serve PDFs and logs | No access |
+| `/opt/triage/`, `/opt/ghidra/`, etc. | `pipeline` — read, write, run containers | Other lamware members — read only | No access |
+| `/opt/pipeline/spool/` | `lamware-api` — write uploaded samples | `pipeline` — read samples for processing | No access |
+| `/opt/pipeline/control/` | `lamware-api` — write PAUSE file | `pipeline` — read PAUSE file | No access |
+| `/opt/lamware-api/` | `lamware-api` — API code and venv | No group access needed | No access |
+
+**What each user can and cannot do:**
+
+| | cape | pipeline | lamware-api |
+|---|---|---|---|
+| Read CAPE analysis results | Yes (owner) | Yes (group) | No |
+| Write CAPE analysis results | Yes (owner) | No | No |
+| Read pipeline reports | No | Yes (owner) | Yes (group) |
+| Write pipeline reports | No | Yes (owner) | No |
+| Run Podman containers | Yes | Yes | No |
+| Manage VMs (libvirt/KVM) | Yes | No | No |
+| Access database | Yes | Yes | Yes (read-focused) |
+| Submit samples to CAPE API | No | Yes | No |
+| Serve web traffic | No | No | Yes |
 
 | User | Runs as | Systemd hardening | Process monitoring |
 |------|---------|-------------------|--------------------|
