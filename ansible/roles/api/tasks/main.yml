@@ -30,13 +30,13 @@
     group: lamware
     mode: "2770"
 
-- name: Create pipeline control directory (PAUSE file, shared API/pipeline access)
+- name: Create pipeline control directory (PAUSE file, API writes, pipeline reads)
   ansible.builtin.file:
     path: /opt/pipeline/control
     state: directory
     owner: "{{ api_user }}"
     group: lamware
-    mode: "2770"
+    mode: "2750"
 
 - name: Create lamware-api install directory
   ansible.builtin.file:
