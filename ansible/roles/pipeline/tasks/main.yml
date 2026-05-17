@@ -158,7 +158,7 @@
     path: "{{ pipeline_volatility_ramdisk }}"
     src: tmpfs
     fstype: tmpfs
-    opts: "size=8g,uid=pipeline,gid=lamware,mode=2750"
+    opts: "size=12g,uid=pipeline,gid=lamware,mode=2750"
     state: mounted
   when: pipeline_volatility_ramdisk | default('') | length > 0
 
