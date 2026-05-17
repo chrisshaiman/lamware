@@ -156,6 +156,7 @@ No items — all resolved.
 | React frontend | DONE | PR #57, #58 — 10 pages, MITRE matrix, evasion dashboard, nginx deployment |
 | WebSocket real-time updates | DONE | PR #64 — PG LISTEN/NOTIFY → FastAPI → browser, TanStack cache invalidation |
 | LLM container network lockdown | 2-3 hrs | Replace `--network=host` with isolated Podman network + Squid forward proxy container. Squid allowlists `api.anthropic.com` only, handles DNS natively, logs all connections. LLM containers get `HTTP_PROXY` env var. Currently LLM containers have full host network access. |
+| Dynamic trace + LLM devirtualization | Design + build | Feed CAPE's runtime API trace alongside Ghidra's static decompilation to the LLM. For VM-protected binaries (VMProtect, Themida), Ghidra only sees the VM dispatcher loop — but CAPE captured what the code *actually did*. The LLM correlates "this VM bytecode sequence resulted in these API calls" to reconstruct behavior that no single tool can reverse. Novel cross-tool correlation — core to lamware's thesis. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
