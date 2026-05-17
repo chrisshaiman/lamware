@@ -33,7 +33,7 @@ cp "$SHOTS_DIR"/*.png "$TEMP_SHOTS/" 2>/dev/null || true
 chmod -R a+rX "$TEMP_SHOTS"
 trap 'rm -rf "$TEMP_SHOTS"' EXIT
 
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \

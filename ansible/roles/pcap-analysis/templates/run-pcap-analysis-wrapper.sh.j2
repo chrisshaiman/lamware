@@ -34,7 +34,7 @@ cp "$PCAP_PATH" "$TEMP_PCAP/" 2>/dev/null || true
 chmod -R a+rX "$TEMP_PCAP"
 trap 'rm -rf "$TEMP_PCAP"' EXIT
 
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \
