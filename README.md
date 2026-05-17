@@ -248,7 +248,6 @@ Three dedicated system users with least-privilege access. A compromise of any on
 graph TB
     subgraph "cape user"
         CAPE_CORE["CAPE core<br/>cape, cape-web, cape-processor"]
-        CAPE_ROOTER["CAPE rooter (root)<br/>tcpdump, iptables"]
         CAPE_STORAGE["/opt/CAPEv2/storage/<br/>Owner: cape (read + write)<br/>Group: lamware (read only)"]
     end
 
