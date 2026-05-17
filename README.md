@@ -17,64 +17,95 @@ Most setups run Cape, Volatility, and Ghidra and leave an analyst to correlate t
 
 ## Pipeline
 
-```
-Sample
-  |
-  +- Stage 1: Triage -------------- YARA, ssdeep, FLOSS, entropy, PE analysis
-  |  (containerized, --network=none)
-  |
-  +- Stage 2: Dynamic Analysis ---- CAPEv2 sandbox, Windows 11 guest VMs
-  |  (KVM/QEMU + anti-evasion)      Behavioral signatures, memory dumps, network capture
-  |     |
-  |     +- Stage 2.5a: Injection    Extract shellcode bytes directly from WriteProcessMemory
-  |     |   Buffer Extraction       API traces -- ground truth, no scanning heuristics
-  |     |
-  |     +- Stage 2.5b: Payload      Scan unpacked payloads for decrypted APIs,
-  |         Analysis                 file paths, URLs, IPs
-  |
-  +- Stage 2.7: PCAP Analysis ----- Zeek (protocol) + Suricata (IDS)
-  |  (containerized, --network=none) JA3 fingerprints, HTTP details, IDS alerts
-  |
-  +- Stage 3: Memory Forensics ---- Volatility 3 (7 plugins, all parallel)
-  |  (containerized, --network=none) Injection detection, connection state, mutex IOCs
-  |  Pre-built ISF cache, ramdisk    Process image dumps for .NET payload recovery
-  |
-  +- Cross-Correlation ------------ Cape + Volatility compared:
-  |                                  dropped file loaded? shellcode self-modified?
-  |                                  command line spoofed?
-  |
-  +- Stage 4: Static Analysis ----- Routing by binary type:
-  |  (containerized, --network=none)   Native PE: Ghidra headless (functions, pseudocode, xrefs)
-  |                                    .NET: de4dotEx deobfuscation + ILSpy (C# source)
-  |                                    Go: GoReSym (functions, types, build metadata)
-  |                                    PyInstaller: pyinstxtractor + pycdc (Python 3.11/3.12)
-  |                                    Java JAR: java-deobfuscator + CFR (Java source)
-  |
-  +- Stage 4.5: AI Investigation -- Language-aware LLM analysis:
-  |  (containerized, --network=host)   Native PE: agentic with 6 Ghidra query tools
-  |  Orchestrator validates args       .NET/Go/Python/Java: single-shot source analysis
-  |  Model escalation: Sonnet->Opus    Garble-obfuscated Go: Ghidra fallback
-  |
-  +- Stage 4.7: Evasion Hunter ---- Triggers when CAPE produces < 10 signatures:
-  |  (containerized, --network=host)   Identifies sandbox detection techniques
-  |                                    Recommends sandbox hardening measures
-  |
-  +- Stage 5.5: Screenshots ------- QEMU VNC capture (host-side, invisible):
-  |  (containerized, --network=none)   Perceptual hash dedup, QR code detection
-  |
-  +- Stage 5.7: Visual Analysis --- Multimodal LLM screenshot interpretation:
-  |  (containerized, --network=host)   Ransom notes, dialogs, evasion signals
-  |
-  +- IOC Extraction ---------------- Structured indicators from all stages
-  |                                    STIX 2.1 types, mutex IOCs from Cape API traces
-  |
-  +- Kill Chain Summary ------------ LLM narrative organized by attack phase
-  |  (Haiku for cost efficiency)       Each claim cites corroborating tool sources
-  |
-  +- Database Ingestion ------------ PostgreSQL with normalized IOCs, techniques,
-  |                                    capabilities, network events, MISP-style tags
-  |
-  +- PDF Report -------------------- Containerized WeasyPrint (isolated from untrusted data)
+```mermaid
+flowchart TB
+    SAMPLE([Sample submitted])
+
+    subgraph "Stage 1 — Triage"
+        TRIAGE["YARA, ssdeep, FLOSS, entropy, PE analysis<br/>🔒 containerized, --network=none"]
+    end
+
+    subgraph "Stage 2 — Dynamic Analysis"
+        CAPE["CAPEv2 sandbox — Windows 11 guest VMs<br/>KVM/QEMU + anti-evasion hardening<br/>Behavioral signatures, memory dumps, network capture"]
+        INJECT["2.5a: Injection Buffer Extraction<br/>WriteProcessMemory API traces — ground truth"]
+        PAYLOAD["2.5b: Payload Analysis<br/>Decrypted APIs, file paths, URLs, IPs"]
+    end
+
+    subgraph "Stage 2.7 — PCAP"
+        PCAP["Zeek (protocol) + Suricata (IDS)<br/>JA3 fingerprints, HTTP details, IDS alerts<br/>🔒 containerized, --network=none"]
+    end
+
+    subgraph "Stage 3 — Memory Forensics"
+        VOL["Volatility 3 — 7 plugins, all parallel<br/>Injection detection, connections, mutex IOCs<br/>🔒 containerized, --network=none, ramdisk"]
+    end
+
+    XCORR["Cross-Correlation<br/>Dropped file loaded? Shellcode self-modified?<br/>Command line spoofed?"]
+
+    subgraph "Stage 4 — Static Analysis"
+        direction LR
+        GHIDRA["Native PE<br/>Ghidra headless"]
+        DOTNET[".NET<br/>de4dotEx + ILSpy"]
+        GOBIN["Go<br/>GoReSym"]
+        PYINST["PyInstaller<br/>pyinstxtractor + pycdc"]
+        JAVA["Java JAR<br/>java-deobfuscator + CFR"]
+        OFFICE["Office macros<br/>olevba + mraptor"]
+        PWSH["PowerShell<br/>PSDecode"]
+    end
+
+    subgraph "Stage 4.5 — AI Investigation"
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🌐 containerized, --network=host"]
+    end
+
+    subgraph "Stage 4.7 — Evasion Hunter"
+        EVASION["Triggers on low-signature samples<br/>Identifies sandbox detection techniques<br/>Recommends hardening measures<br/>🌐 containerized, --network=host"]
+    end
+
+    subgraph "Stage 5 — Screenshots + Visual"
+        SCREENSHOTS["QEMU VNC capture + perceptual dedup<br/>🔒 containerized, --network=none"]
+        VISUAL["Multimodal LLM interpretation<br/>Ransom notes, dialogs, evasion signals<br/>🌐 containerized, --network=host"]
+    end
+
+    IOC["IOC Extraction<br/>STIX 2.1 types, mutex IOCs from Cape API traces"]
+
+    subgraph "Stage 5 — Summaries"
+        SUMMARY["Kill Chain Summary — Haiku<br/>Each claim cites corroborating tool sources"]
+        PLAIN["Plain English Summary — Haiku<br/>Non-technical explanation"]
+    end
+
+    DB[("Database Ingestion<br/>PostgreSQL — IOCs, techniques,<br/>capabilities, network events")]
+
+    PDF["PDF Report<br/>🔒 containerized WeasyPrint"]
+
+    SAMPLE --> TRIAGE
+    TRIAGE --> CAPE
+    CAPE --> INJECT
+    CAPE --> PAYLOAD
+    CAPE --> PCAP
+    CAPE --> VOL
+    VOL --> XCORR
+    CAPE --> XCORR
+    XCORR --> GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH
+    GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH --> LLM
+    LLM --> EVASION
+    CAPE --> SCREENSHOTS
+    SCREENSHOTS --> VISUAL
+    EVASION --> IOC
+    VISUAL --> IOC
+    IOC --> SUMMARY
+    SUMMARY --> PLAIN
+    PLAIN --> DB
+    DB --> PDF
+
+    style TRIAGE fill:#1a3a4a,stroke:#6bb5ff
+    style CAPE fill:#4a1a1a,stroke:#ff6b6b
+    style PCAP fill:#1a3a4a,stroke:#6bb5ff
+    style VOL fill:#1a3a4a,stroke:#6bb5ff
+    style GHIDRA fill:#1a3a4a,stroke:#6bb5ff
+    style LLM fill:#3a2a4a,stroke:#b56bff
+    style EVASION fill:#3a2a4a,stroke:#b56bff
+    style VISUAL fill:#3a2a4a,stroke:#b56bff
+    style PDF fill:#1a3a4a,stroke:#6bb5ff
+    style DB fill:#1a4a2a,stroke:#6bff8b
 ```
 
 ---
