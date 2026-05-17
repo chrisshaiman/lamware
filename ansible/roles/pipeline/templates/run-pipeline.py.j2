@@ -1717,10 +1717,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     log.info(f"\n[DB Ingestion] Writing to database...")
     analysis_id = ingest_to_db(report, existing_analysis_id=analysis_id_early)
 
-    # Mark pipeline complete
-    complete_pipeline(analysis_id or analysis_id_early, "completed",
-                      stage_timings=stage_timings)
-
     # Stage 6: PDF report generation (containerized)
     log.info(f"\n[Stage 6] PDF Report: generating...")
     _pdf_start = _time.time()
@@ -1746,6 +1742,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.error(f"  [!] PDF generation error: {e}")
     stage_timings["pdf"] = round(_time.time() - _pdf_start, 1)
     update_stage(analysis_id_early, "pdf", "completed", f"{stage_timings['pdf']:.0f}s")
+
+    # Mark pipeline complete — must be AFTER all stages including PDF
+    complete_pipeline(analysis_id or analysis_id_early, "completed",
+                      stage_timings=stage_timings)
 
     return report
 
