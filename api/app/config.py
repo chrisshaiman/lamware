@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     network_monitor_status: str = "/opt/network-monitor/status.json"
     auto_feeder_state: str = "/opt/auto-feeder/state.json"
     auto_feeder_log: str = "/opt/auto-feeder/auto-feeder.log"
-    pause_file: str = "/opt/pipeline/PAUSE"
+    pause_file: str = "/opt/pipeline/spool/PAUSE"
     digest_file: str = "/opt/ntfy-alerts/latest-digest.json"
     pipeline_cmd: str = "/usr/local/bin/run-pipeline"
 
