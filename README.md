@@ -240,6 +240,61 @@ Every analysis tool runs in a Podman container with:
 
 All Python dependencies pinned to exact versions (`==`) for deterministic SCA scanning.
 
+**Service user separation:**
+
+Three dedicated system users with least-privilege access. A compromise of any one service limits blast radius to that user's permissions.
+
+```mermaid
+graph TB
+    subgraph "cape user"
+        CAPE_CORE["CAPE core<br/>cape, cape-web, cape-processor"]
+        CAPE_ROOTER["CAPE rooter (root)<br/>tcpdump, iptables"]
+        CAPE_STORAGE["/opt/CAPEv2/storage/<br/>cape:lamware 2750"]
+    end
+
+    subgraph "pipeline user"
+        PIPELINE["Pipeline orchestrator<br/>run-pipeline.py"]
+        AUTOFEEDER["Auto-feeder<br/>auto-feeder.py"]
+        CONTAINERS["13 Podman containers<br/>triage, ghidra, volatility, etc."]
+        REPORTS["/opt/pipeline/reports/<br/>pipeline:lamware 2750"]
+        TOOLS["/opt/triage/, /opt/ghidra/, etc.<br/>pipeline:lamware 2750"]
+    end
+
+    subgraph "lamware-api user"
+        API["FastAPI backend<br/>uvicorn (systemd hardened)"]
+        SPOOL["/opt/pipeline/spool/<br/>lamware-api:lamware 2770"]
+    end
+
+    subgraph "Shared access (lamware group)"
+        direction LR
+        LAMWARE_GROUP["lamware group<br/>members: cape, pipeline, lamware-api"]
+    end
+
+    CAPE_CORE -->|writes| CAPE_STORAGE
+    PIPELINE -->|reads via group| CAPE_STORAGE
+    PIPELINE -->|runs| CONTAINERS
+    PIPELINE -->|writes| REPORTS
+    API -->|reads via group| REPORTS
+    API -->|writes uploads| SPOOL
+    SPOOL -->|systemd path unit| PIPELINE
+    AUTOFEEDER -->|invokes| PIPELINE
+
+    style CAPE_CORE fill:#4a1a1a,stroke:#ff6b6b
+    style PIPELINE fill:#1a3a4a,stroke:#6bb5ff
+    style API fill:#1a4a2a,stroke:#6bff8b
+    style LAMWARE_GROUP fill:#3a3a1a,stroke:#ffdb6b
+```
+
+| User | Runs as | Systemd hardening | Process monitoring |
+|------|---------|-------------------|--------------------|
+| `cape` | CAPE core services | Drop-in: `Group=lamware`, `UMask=0027` | Full command allowlist, high priority alerts |
+| `pipeline` | Pipeline, auto-feeder, containers | `NoNewPrivileges`, `ProtectKernelModules` | Full command allowlist, high priority alerts |
+| `lamware-api` | FastAPI only | `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges` | Only `uvicorn` allowed, **critical** priority alerts |
+
+**Runtime process monitoring:**
+
+The network monitor runs every 5 minutes and checks each user's running processes against a full command-line allowlist. Unexpected processes trigger ntfy push notifications — critical priority for `lamware-api` (should only ever run uvicorn), high priority for `cape` and `pipeline`.
+
 ---
 
 ## Infrastructure
