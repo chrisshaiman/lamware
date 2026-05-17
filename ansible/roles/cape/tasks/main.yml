@@ -451,6 +451,21 @@
   notify: Restart Cape services
 
 # -------------------------------------------------------------------------
+# tcpdump wrapper — tcpdump ignores parent umask and creates dump.pcap
+# as 0600. This wrapper sets umask 0027 before calling the real tcpdump
+# so files are created group-readable for the pipeline user.
+# -------------------------------------------------------------------------
+
+- name: Create tcpdump wrapper (umask fix for group-readable pcaps)
+  ansible.builtin.copy:
+    dest: /usr/local/bin/tcpdump
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      umask 0027
+      exec /usr/bin/tcpdump "$@"
+
+# -------------------------------------------------------------------------
 # Memory dump cleanup — delete full + per-process memory dumps older than
 # 1h. These are 2-4GB each and CAPE never auto-deletes them. The pipeline
 # user cannot delete these (security boundary) so cape owns this cleanup.
