@@ -11,9 +11,9 @@ import { useQueryClient } from "@tanstack/react-query";
 
 /** Event type to query keys to invalidate */
 const INVALIDATION_MAP: Record<string, string[]> = {
-  stage_update: ["pipeline", "analyses"],
-  analysis_complete: ["pipeline", "analyses", "stats", "techniques", "iocs", "evasions"],
-  analysis_failed: ["pipeline", "analyses"],
+  stage_update: ["pipeline", "analyses", "analysis"],
+  analysis_complete: ["pipeline", "analyses", "analysis", "stats", "techniques", "iocs", "evasions"],
+  analysis_failed: ["pipeline", "analyses", "analysis"],
 };
 
 const MAX_BACKOFF_MS = 30_000;
