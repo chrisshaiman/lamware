@@ -125,42 +125,115 @@ if [ -n "$QEMU_PIDS" ]; then
 fi
 
 # -------------------------------------------------------------------------
-# Cape user process allowlist check
+# Per-user process allowlist checks (full command-line pattern matching)
+#
+# Uses ps args= for full command lines. Each user has a set of glob
+# patterns — if a process doesn't match any pattern, it's flagged.
 # -------------------------------------------------------------------------
 
-cape_process_status="ok"
-cape_unexpected=""
-# Exact process names expected for the cape user (system + CAPE + pipeline + containers)
-CAPE_ALLOWLIST="python3 python podman conmon catatonit sleep bash sh find tee qemu-system cuckoo.py process.py rooter.py cape-web gunicorn uvicorn dbus-daemon systemd (sd-pam) pause pipewire pipewire-pulse xdg-dbus-prox dconf-service gvfsd gvfsd-fuse tcpdump vol local poetry"
-# Patterns for processes with truncated or path-based names (ps comm= truncates to 15 chars)
-CAPE_ALLOWLIST_PATTERNS="/home/cape"
+check_user_processes() {
+    local user="$1"
+    shift
+    local patterns=("$@")
+    local unexpected=""
 
-cape_procs=$(ps -u {{ cape_user | default('cape') }} -o comm= 2>/dev/null | sort -u || true)
-for proc in $cape_procs; do
-    allowed=false
-    for a in $CAPE_ALLOWLIST; do
-        if [ "$proc" = "$a" ]; then
-            allowed=true
-            break
-        fi
-    done
-    # Check patterns for truncated/path-based names
-    if [ "$allowed" = "false" ]; then
-        for p in $CAPE_ALLOWLIST_PATTERNS; do
-            case "$proc" in *"$p"*|"$p"*) allowed=true; break ;; esac
+    while IFS= read -r cmdline; do
+        [ -z "$cmdline" ] && continue
+        local allowed=false
+        for pattern in "${patterns[@]}"; do
+            case "$cmdline" in $pattern) allowed=true; break ;; esac
         done
-    fi
-    if [ "$allowed" = "false" ]; then
-        cape_process_status="warning"
-        cape_unexpected="${cape_unexpected:+$cape_unexpected, }$proc"
-    fi
-done
+        if [ "$allowed" = "false" ]; then
+            unexpected="${unexpected:+$unexpected | }$cmdline"
+        fi
+    done < <(ps -u "$user" -o args= 2>/dev/null | sort -u)
 
+    echo "$unexpected"
+}
+
+# --- cape user: CAPE core services + system daemons + cron cleanup ---
+cape_patterns=(
+    '*/capev2-*/bin/python cuckoo.py*'
+    '*/capev2-*/bin/python process.py*'
+    '*/capev2-*/bin/python manage.py runserver*'
+    '*/capev2-*/bin/python rooter.py*'
+    '*/poetry*'
+    'podman'
+    'tcpdump*'
+    'qemu-system*'
+    '/usr/lib/systemd/systemd --user'
+    '(sd-pam)'
+    '/usr/bin/dbus-daemon --session*'
+    '/usr/bin/pipewire*'
+    '/usr/bin/xdg-dbus-prox*'
+    '/usr/lib/dconf/dconf-service'
+    '/usr/libexec/gvfsd*'
+    'bash -c find /opt/CAPEv2/storage*'
+    'find /opt/CAPEv2/storage*'
+    'bash*'
+    'sh -c *'
+    'sleep*'
+    'conmon*'
+    'catatonit*'
+    'pause'
+)
+cape_unexpected=$(check_user_processes "{{ cape_user | default('cape') }}" "${cape_patterns[@]}")
+cape_process_status="ok"
 if [ -n "$cape_unexpected" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected cape user processes: $cape_unexpected"
+    cape_process_status="warning"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected cape processes: $cape_unexpected"
     python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
-        "Unexpected Processes" "Cape user running: $cape_unexpected" \
+        "Unexpected Processes" "cape user: $cape_unexpected" \
         --priority high --tags warning 2>/dev/null || true
+fi
+
+# --- pipeline user: pipeline + containers + feeders ---
+pipeline_patterns=(
+    'python3 /opt/pipeline/run-pipeline.py*'
+    'python3 /opt/auto-feeder/auto-feeder.py*'
+    'python3 /opt/sample-feeder/sample_feeder.py*'
+    'python3 /opt/ntfy-alerts/daily-digest.py*'
+    'python3 /opt/pipeline/generate-report.py*'
+    '/opt/pipeline/cleanup.sh*'
+    'podman'
+    'podman run --rm*'
+    'podman build*'
+    'conmon*'
+    'catatonit*'
+    '/usr/lib/systemd/systemd --user'
+    '(sd-pam)'
+    '/usr/bin/dbus-daemon --session*'
+    'bash -c for f in /opt/pipeline/spool*'
+    'bash*'
+    'sh -c *'
+    'sleep*'
+    'pause'
+    'cp *'
+    'find *'
+)
+pipeline_unexpected=$(check_user_processes "pipeline" "${pipeline_patterns[@]}")
+pipeline_process_status="ok"
+if [ -n "$pipeline_unexpected" ]; then
+    pipeline_process_status="warning"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected pipeline processes: $pipeline_unexpected"
+    python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+        "Unexpected Processes" "pipeline user: $pipeline_unexpected" \
+        --priority high --tags warning 2>/dev/null || true
+fi
+
+# --- lamware-api user: only uvicorn ---
+api_patterns=(
+    '*/uvicorn app.main:app*'
+    '*/python3 */uvicorn*'
+)
+api_unexpected=$(check_user_processes "lamware-api" "${api_patterns[@]}")
+api_process_status="ok"
+if [ -n "$api_unexpected" ]; then
+    api_process_status="warning"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected lamware-api processes: $api_unexpected"
+    python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+        "Unexpected API Process" "lamware-api user: $api_unexpected" \
+        --priority critical --tags rotating_light 2>/dev/null || true
 fi
 
 # -------------------------------------------------------------------------
@@ -208,7 +281,11 @@ status = {
     'qemu_status': '$qemu_status',
     'qemu_unexpected_children': '$qemu_unexpected'.split(chr(10)) if '$qemu_unexpected' else [],
     'cape_process_status': '$cape_process_status',
-    'cape_unexpected_processes': '$cape_unexpected'.split(', ') if '$cape_unexpected' else [],
+    'cape_unexpected_processes': '$cape_unexpected'.split(' | ') if '$cape_unexpected' else [],
+    'pipeline_process_status': '$pipeline_process_status',
+    'pipeline_unexpected_processes': '$pipeline_unexpected'.split(' | ') if '$pipeline_unexpected' else [],
+    'api_process_status': '$api_process_status',
+    'api_unexpected_processes': '$api_unexpected'.split(' | ') if '$api_unexpected' else [],
     'alert_message': '$alert_message' if '$status' == 'alert' else None,
 }
 with open('$STATUS_FILE', 'w') as f:
