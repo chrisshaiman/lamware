@@ -295,7 +295,7 @@ Each directory has an **owner** (full control) and a **group** (limited access).
 | `/opt/pipeline/reports/` | `pipeline` — read, write, create reports | `lamware-api` — read to serve PDFs and logs | No access |
 | `/opt/triage/`, `/opt/ghidra/`, etc. | `pipeline` — read, write, run containers | Other lamware members — read only | No access |
 | `/opt/pipeline/spool/` | `lamware-api` — write uploaded samples | `pipeline` — read + delete after processing (delete requires directory write) | No access |
-| `/opt/pipeline/control/` | `lamware-api` — create + delete PAUSE file | `pipeline` — read only (checks if PAUSE exists) | No access |
+| `/opt/pipeline/control/` | `lamware-api` — create + delete PAUSE file | `pipeline` — read + write (auto-feeder creates PAUSE on guardrail limits) | No access |
 | `/opt/lamware-api/` | `lamware-api` — API code and venv | No group access needed | No access |
 
 **What each user can and cannot do:**
