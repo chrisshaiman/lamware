@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-exec podman run --rm -i \
+podman run --rm -i \
     --network=host \
     --read-only \
     --cap-drop=ALL \

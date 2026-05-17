@@ -35,7 +35,7 @@ mkdir -p "$OUTPUT_DIR"
 # then we copy the PDF back to the real output dir after the container exits.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
-chmod 777 "$WORK_DIR"
+chmod a+rwx "$WORK_DIR" 2>/dev/null || true
 cp "$REPORT_PATH" "$WORK_DIR/$REPORT_NAME"
 chmod 644 "$WORK_DIR/$REPORT_NAME"
 
