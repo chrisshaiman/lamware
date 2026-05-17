@@ -108,6 +108,8 @@ flowchart TB
     style DB fill:#1a4a2a,stroke:#6bff8b
 ```
 
+> **Legend:** 🔵 Blue — air-gapped containers (`--network=none`, no internet access) · 🔴 Red — CAPE detonation sandbox (KVM/QEMU, air-gapped guest VMs) · 🟣 Purple — LLM-powered stages (`--network=host`, needs Claude API) · 🟢 Green — database
+
 ---
 
 ## Output
