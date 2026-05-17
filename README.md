@@ -53,7 +53,7 @@ flowchart TB
     end
 
     subgraph "Stage 4.5 — AI Investigation"
-        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🌐 containerized, --network=host"]
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 --network=host (full host network)"]
     end
 
     subgraph "Stage 4.7 — Evasion Hunter"
@@ -106,9 +106,21 @@ flowchart TB
     style VISUAL fill:#3a2a4a,stroke:#b56bff
     style PDF fill:#1a3a4a,stroke:#6bb5ff
     style DB fill:#1a4a2a,stroke:#6bff8b
+
+    subgraph Legend
+        direction LR
+        L1["🔵 Air-gapped container\n--network=none"]
+        L2["🔴 Detonation sandbox\nKVM/QEMU, air-gapped VMs"]
+        L3["🟣 LLM stage\n--network=host (full host network)"]
+        L4["🟢 Database"]
+        style L1 fill:#1a3a4a,stroke:#6bb5ff
+        style L2 fill:#4a1a1a,stroke:#ff6b6b
+        style L3 fill:#3a2a4a,stroke:#b56bff
+        style L4 fill:#1a4a2a,stroke:#6bff8b
+    end
 ```
 
-> **Legend:** 🔵 Blue — air-gapped containers (`--network=none`, no internet access) · 🔴 Red — CAPE detonation sandbox (KVM/QEMU, air-gapped guest VMs) · 🟣 Purple — LLM-powered stages (`--network=host`, needs Claude API) · 🟢 Green — database
+> **Note:** LLM stages use `--network=host` which grants full host network access, not just the Claude API. This is required for outbound HTTPS to Anthropic's API. All other analysis containers are fully air-gapped with `--network=none`.
 
 ---
 
