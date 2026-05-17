@@ -40,7 +40,7 @@ esac
 cp "$BINARY_PATH" "$WORK_DIR/$JAR_NAME"
 chmod 644 "$WORK_DIR/$JAR_NAME"
 
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \

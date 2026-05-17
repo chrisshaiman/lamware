@@ -35,7 +35,7 @@ chmod 755 "$WORK_DIR"
 cp "$BINARY_PATH" "$WORK_DIR/$BINARY_NAME"
 chmod 644 "$WORK_DIR/$BINARY_NAME"
 
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \

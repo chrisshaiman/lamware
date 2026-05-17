@@ -33,12 +33,12 @@ mkdir -p "$OUTPUT_DIR"
 # then we copy results back.
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
-chmod 777 "$WORK_DIR"
+chmod a+rwx "$WORK_DIR" 2>/dev/null || true
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
 chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
 OUTPUT_WORK="$(mktemp -d)"
-chmod 777 "$OUTPUT_WORK"
+chmod a+rwx "$OUTPUT_WORK" 2>/dev/null || true
 
 podman run --rm \
     --network=none \

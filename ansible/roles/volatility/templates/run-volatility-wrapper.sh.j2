@@ -41,7 +41,7 @@ mkdir -p "$OUTPUT_DIR"
 # Container is read-only with targeted writable tmpfs mounts for
 # Volatility's cache and temp files. Memory dump directory mounted
 # directly (read-only) — no copy, since dumps are multi-GB.
-exec podman run --rm \
+podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \
