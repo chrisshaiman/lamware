@@ -154,7 +154,8 @@ No items — all resolved.
 |------|--------|-------|
 | FastAPI backend | DONE | PR #55 — 10 routers (incl. evasions), 28+ tests, port 8001 |
 | React frontend | DONE | PR #57, #58 — 10 pages, MITRE matrix, evasion dashboard, nginx deployment |
-| WebSocket real-time updates | 1 session | Replace pipeline polling with live push. FastAPI native WebSocket support |
+| WebSocket real-time updates | DONE | PR #64 — PG LISTEN/NOTIFY → FastAPI → browser, TanStack cache invalidation |
+| LLM container network lockdown | 1-2 hrs | Restrict `--network=host` to `api.anthropic.com` only via dedicated Podman network + nftables rules. DNS refresh cron every 5 min updates IP set. Currently LLM containers have full host network access. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
