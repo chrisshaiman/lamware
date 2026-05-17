@@ -1723,6 +1723,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
     # Stage 6: PDF report generation (containerized)
     log.info(f"\n[Stage 6] PDF Report: generating...")
+    _pdf_start = _time.time()
+    update_stage(analysis_id_early, "pdf", "started")
     pdf_path = report_path.parent / "report.pdf"
     try:
         result = subprocess.run(
@@ -1742,6 +1744,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.error("  [!] PDF generation timed out (120s)")
     except Exception as e:
         log.error(f"  [!] PDF generation error: {e}")
+    stage_timings["pdf"] = round(_time.time() - _pdf_start, 1)
+    update_stage(analysis_id_early, "pdf", "completed", f"{stage_timings['pdf']:.0f}s")
 
     return report
 
