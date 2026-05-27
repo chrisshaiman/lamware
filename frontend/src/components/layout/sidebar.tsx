@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ShieldAlert,
   Upload,
+  X,
 } from "lucide-react";
 import { cn } from "#lib/utils";
 import { SecurityCat } from "./security-cat";
@@ -26,17 +27,35 @@ const NAV_ITEMS = [
   { to: "/submit", label: "Submit", icon: Upload },
 ] as const;
 
-export function Sidebar() {
+interface SidebarProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function Sidebar({ open, onClose }: SidebarProps) {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
+    <aside
+      className={cn(
+        "fixed inset-y-0 left-0 z-30 flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] transition-transform duration-200 md:static md:translate-x-0",
+        open ? "translate-x-0" : "-translate-x-full",
+      )}
+    >
       {/* Logo */}
-      <div className="border-b border-[var(--color-border)] px-4 py-4">
-        <div className="text-lg font-bold tracking-tight text-[var(--color-text-primary)]">
-          lamware
+      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-4">
+        <div>
+          <div className="text-lg font-bold tracking-tight text-[var(--color-text-primary)]">
+            lamware
+          </div>
+          <div className="text-xs text-[var(--color-text-muted)]">
+            Malware Analysis Platform
+          </div>
         </div>
-        <div className="text-xs text-[var(--color-text-muted)]">
-          Malware Analysis Platform
-        </div>
+        <button
+          onClick={onClose}
+          className="rounded-md p-1 text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] md:hidden"
+        >
+          <X className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Navigation */}
