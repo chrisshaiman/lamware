@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useLocation } from "react-router-dom";
+import { Menu } from "lucide-react";
 import { useAlerts } from "#hooks/use-alerts";
 
 const PAGE_TITLES: Record<string, string> = {
@@ -15,7 +16,11 @@ const PAGE_TITLES: Record<string, string> = {
   "/submit": "Submit Sample",
 };
 
-export function TopBar() {
+interface TopBarProps {
+  onToggleSidebar: () => void;
+}
+
+export function TopBar({ onToggleSidebar }: TopBarProps) {
   const location = useLocation();
   const { data: alerts } = useAlerts();
 
@@ -43,8 +48,14 @@ export function TopBar() {
   }
 
   return (
-    <header className="flex h-12 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6">
-      <div className="flex items-center gap-2">
+    <header className="flex h-12 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 md:px-6">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onToggleSidebar}
+          className="rounded-md p-1 text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <h1 className="text-sm font-semibold text-[var(--color-text-primary)]">
           {isDetailView ? "Analysis Detail" : title}
         </h1>
@@ -55,7 +66,7 @@ export function TopBar() {
             className={`h-2 w-2 rounded-full ${healthColor}`}
             title={healthTitle}
           />
-          {healthTitle}
+          <span className="hidden sm:inline">{healthTitle}</span>
         </div>
       </div>
     </header>
