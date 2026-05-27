@@ -77,12 +77,12 @@ if [ "$1" = "--shellcode" ]; then
     fi
 
     mkdir -p "$OUTPUT_DIR"
-    chmod a+rwx "$OUTPUT_DIR" 2>/dev/null || true
 
     # Copy dump to temp dir for isolation
     WORK_DIR="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR"' EXIT
-    chmod 755 "$WORK_DIR"
+    CONTAINER_OUTPUT="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT"' EXIT
+    chmod 755 "$WORK_DIR" "$CONTAINER_OUTPUT"
     cp "$DUMP_FILE" "$WORK_DIR/$DUMP_NAME"
     chmod 644 "$WORK_DIR/$DUMP_NAME"
 
@@ -99,9 +99,11 @@ if [ "$1" = "--shellcode" ]; then
         --tmpfs /var/cache:size=100m \
         --user 65534:65534 \
         -v "$WORK_DIR:/sample:ro" \
-        -v "$OUTPUT_DIR:/output:rw" \
+        -v "$CONTAINER_OUTPUT:/output:rw" \
         localhost/ghidra:latest \
         --shellcode "/sample/$DUMP_NAME" "$BASE_ADDR"
+
+    cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------
@@ -122,12 +124,14 @@ if [ ! -f "$SAMPLE_PATH" ]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-chmod a+rwx "$OUTPUT_DIR" 2>/dev/null || true
 
 # Copy sample to temp dir — only the single file is mounted
 WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
-chmod 755 "$WORK_DIR"
+# Container output goes to a separate temp dir (rootless Podman UID mapping
+# prevents the container's nobody user from writing to pipeline-owned dirs)
+CONTAINER_OUTPUT="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT"' EXIT
+chmod 755 "$WORK_DIR" "$CONTAINER_OUTPUT"
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
 chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
@@ -144,6 +148,9 @@ podman run --rm \
     --tmpfs /var/cache:size=100m \
     --user 65534:65534 \
     -v "$WORK_DIR:/sample:ro" \
-    -v "$OUTPUT_DIR:/output:rw" \
+    -v "$CONTAINER_OUTPUT:/output:rw" \
     localhost/ghidra:latest \
     "/sample/$SAMPLE_NAME"
+
+# Copy results back to the real output directory
+cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
