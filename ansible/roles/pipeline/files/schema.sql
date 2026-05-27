@@ -42,7 +42,7 @@ CREATE TABLE samples (
     md5             VARCHAR(32),
     ssdeep          VARCHAR(200),
     filename        VARCHAR(500),
-    file_type       VARCHAR(300),
+    file_type       TEXT,
     file_mime       VARCHAR(100),
     file_size       BIGINT,
     entropy         REAL,
