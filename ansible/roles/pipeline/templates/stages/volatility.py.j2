@@ -637,10 +637,8 @@ def run_volatility(cape_data: dict, output_dir: Path,
         ramdisk_dump.unlink(missing_ok=True)
         print(f"    Cleaned ramdisk copy")
 
-    # Clean up original memory dump
-    if dump_path.exists():
-        print(f"    Cleaning up memory dump ({dump_path.stat().st_size // (1024*1024)} MB)...")
-        dump_path.unlink(missing_ok=True)
+    # Memory dump cleanup is handled by CAPE's hourly cron (cape user owns the file).
+    # Pipeline user intentionally does NOT have delete permission on CAPE storage.
 
     # Extract insights from all plugin outputs
     result["insights"] = extract_volatility_insights(result.get("plugins", {}))
