@@ -53,16 +53,16 @@ flowchart TB
     end
 
     subgraph "Stage 4.5 — AI Investigation"
-        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 --network=host (full host network)"]
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
     end
 
     subgraph "Stage 4.7 — Evasion Hunter"
-        EVASION["Triggers on low-signature samples<br/>Identifies sandbox detection techniques<br/>Recommends hardening measures<br/>🌐 containerized, --network=host"]
+        EVASION["Triggers on low-signature samples<br/>Identifies sandbox detection techniques<br/>Recommends hardening measures<br/>🟣 via LiteLLM proxy"]
     end
 
     subgraph "Stage 5 — Screenshots + Visual"
         SCREENSHOTS["QEMU VNC capture + perceptual dedup<br/>🔒 containerized, --network=none"]
-        VISUAL["Multimodal LLM interpretation<br/>Ransom notes, dialogs, evasion signals<br/>🌐 containerized, --network=host"]
+        VISUAL["Multimodal LLM interpretation<br/>Ransom notes, dialogs, evasion signals<br/>🟣 via LiteLLM proxy"]
     end
 
     IOC["IOC Extraction<br/>STIX 2.1 types, mutex IOCs from Cape API traces"]
@@ -111,7 +111,7 @@ flowchart TB
         direction LR
         L1["🔵 Air-gapped container\n--network=none"]
         L2["🔴 Detonation sandbox\nKVM/QEMU, air-gapped VMs"]
-        L3["🟣 LLM stage\n--network=host (full host network)"]
+        L3["🟣 LLM stage\nvia LiteLLM proxy → Anthropic API"]
         L4["🟢 Database"]
         style L1 fill:#1a3a4a,stroke:#6bb5ff
         style L2 fill:#4a1a1a,stroke:#ff6b6b
@@ -120,7 +120,7 @@ flowchart TB
     end
 ```
 
-> **Note:** LLM stages use `--network=host` which grants full host network access, not just the Claude API. This is required for outbound HTTPS to Anthropic's API. All other analysis containers are fully air-gapped with `--network=none`.
+> **LLM network path:** LLM containers use `--network=host` to reach the self-hosted LiteLLM proxy on `localhost:4000`. LiteLLM is the only process with outbound HTTPS to Anthropic's API. The Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. All other analysis containers are fully air-gapped with `--network=none`.
 
 ---
 
@@ -138,8 +138,9 @@ Submit a sample and get back:
 | **Memory forensics** | Suspicious cmdlines, mutex IOCs, DLLs from unusual paths, process anomalies |
 | **PDF report** | Source attribution badges showing which stage surfaced each finding |
 | **PostgreSQL DB** | Normalized schema for cross-sample correlation and family tracking |
-| **Web dashboard** | Browse analyses, IOCs, MITRE techniques, and pipeline logs |
-| **Pipeline status** | Real-time per-stage progress tracking with log viewer |
+| **Web dashboard** | Browse analyses, IOCs, MITRE techniques, evasion dashboard, real-time pipeline status |
+| **Real-time updates** | WebSocket pipeline progress via PG LISTEN/NOTIFY — no polling |
+| **Mobile access** | Responsive UI with collapsible sidebar, WireGuard phone peer |
 
 ---
 
@@ -191,7 +192,7 @@ The interpret stage uses an LLM's tool-use API with 6 Ghidra query tools. The ag
 | `list_functions` | List/search functions with xref counts |
 | `get_data_at` | Read raw bytes at an address |
 
-Model escalation: starts with Sonnet, escalates to Opus after 5 tool calls for complex samples. Executive summaries use Haiku for cost efficiency.
+Model escalation: starts with Sonnet, escalates to Opus after 5 tool calls for complex samples. Executive summaries use Haiku for cost efficiency. All API calls route through a self-hosted LiteLLM proxy for key isolation and centralized cost tracking.
 
 ### Kill chain narrative
 
@@ -231,7 +232,7 @@ ansible-vault create vars/secrets.yml   # cape_api_key, anthropic_api_key, etc.
 ansible-playbook -i inventory/hosts site.yml --ask-vault-pass
 
 # 5. Submit a sample
-ssh sandbox 'sudo -u cape sample-feeder --family AsyncRAT --limit 1 --yes'
+ssh sandbox 'sudo machinectl shell pipeline@ /bin/bash -c "sample-feeder --family AsyncRAT --limit 1 --yes"'
 
 # 6. View results
 # Dashboard: https://10.200.0.1  (via WireGuard)
@@ -246,13 +247,20 @@ ssh sandbox 'sudo -u cape sample-feeder --family AsyncRAT --limit 1 --yes'
 
 Every analysis tool runs in a Podman container with:
 
-- `--network=none` — no network access (AI container excluded; needs LLM API)
+- `--network=none` — no network access (LLM containers use `--network=host` to reach local LiteLLM proxy only)
 - `--read-only` — immutable filesystem
 - `--cap-drop=ALL` — no Linux capabilities
 - `--user 65534:65534` — unprivileged nobody user
 
 > [!WARNING]
 > **The detonation network is fully air-gapped.** `virbr-det` has no route to `eth0` or `wg0`. iptables DROP rules are enforced before any ACCEPT. INetSim simulates internet services for guest VMs. All admin access is through WireGuard VPN.
+
+**LLM API isolation:**
+
+- All Claude API calls route through a self-hosted **LiteLLM proxy** (root Podman container, systemd-managed)
+- The Anthropic API key exists only in LiteLLM's environment file (`0600`, root-owned) — never in pipeline templates or container env vars
+- Analysis containers authenticate to LiteLLM with an internal master key (`sk-lamware`)
+- LiteLLM's Anthropic passthrough endpoint preserves the native SDK protocol — no code rewrite needed
 
 **LLM prompt injection mitigations:**
 
@@ -310,6 +318,10 @@ graph TB
         CONTROL["/opt/pipeline/control/<br/>Owner: lamware-api (read + write)<br/>Group: lamware (read + write)"]
     end
 
+    subgraph "root (system services)"
+        LITELLM["LiteLLM proxy<br/>Root Podman container (systemd)<br/>API key isolated here"]
+    end
+
     subgraph "Shared access (lamware group)"
         direction LR
         LAMWARE_GROUP["lamware group<br/>members: cape, pipeline, lamware-api<br/>Grants read-only access to other users' directories"]
@@ -323,11 +335,13 @@ graph TB
     API -->|writes uploads| SPOOL
     SPOOL -->|systemd path unit<br/>triggers pipeline| PIPELINE
     AUTOFEEDER -->|invokes| PIPELINE
+    CONTAINERS -->|LLM calls via localhost:4000| LITELLM
 
     style CAPE_CORE fill:#4a1a1a,stroke:#ff6b6b
     style PIPELINE fill:#1a3a4a,stroke:#6bb5ff
     style API fill:#1a4a2a,stroke:#6bff8b
     style LAMWARE_GROUP fill:#3a3a1a,stroke:#ffdb6b
+    style LITELLM fill:#3a2a4a,stroke:#b56bff
 ```
 
 **How the access model works:**
@@ -339,23 +353,26 @@ Each directory has an **owner** (full control) and a **group** (limited access).
 | `/opt/CAPEv2/storage/` | `cape` — read, write, create analysis results | `pipeline` — read analysis output for processing | No access |
 | `/opt/pipeline/reports/` | `pipeline` — read, write, create reports | `lamware-api` — read to serve PDFs and logs | No access |
 | `/opt/triage/`, `/opt/ghidra/`, etc. | `pipeline` — read, write, run containers | Other lamware members — read only | No access |
-| `/opt/pipeline/spool/` | `lamware-api` — write uploaded samples | `pipeline` — read + delete after processing (delete requires directory write) | No access |
-| `/opt/pipeline/control/` | `lamware-api` — create + delete PAUSE file | `pipeline` — read + write (auto-feeder creates PAUSE on guardrail limits) | No access |
+| `/opt/pipeline/spool/` | `lamware-api` — write uploaded samples | `pipeline` — read + delete after processing (setgid 2770) | No access |
+| `/opt/pipeline/control/` | `lamware-api` — create + delete PAUSE file | `pipeline` — read + write (auto-feeder creates PAUSE on guardrail limits, setgid 2770) | No access |
+| `/opt/auto-feeder/` | `pipeline` — auto-feeder state and scripts | `lamware-api` — read + write state.json for reset/resume (setgid 2770) | No access |
 | `/opt/lamware-api/` | `lamware-api` — API code and venv | No group access needed | No access |
+| `/opt/litellm/` | `root` — LiteLLM config and API key env file (mode 0700) | No access | No access |
 
 **What each user can and cannot do:**
 
-| | cape | pipeline | lamware-api |
-|---|---|---|---|
-| Read CAPE analysis results | Yes (owner) | Yes (group) | No |
-| Write CAPE analysis results | Yes (owner) | No | No |
-| Read pipeline reports | No | Yes (owner) | Yes (group) |
-| Write pipeline reports | No | Yes (owner) | No |
-| Run Podman containers | Yes | Yes | No |
-| Manage VMs (libvirt/KVM) | Yes | No | No |
-| Access database | Yes | Yes | Yes (read-focused) |
-| Submit samples to CAPE API | No | Yes | No |
-| Serve web traffic | No | No | Yes |
+| | cape | pipeline | lamware-api | root (LiteLLM) |
+|---|---|---|---|---|
+| Read CAPE analysis results | Yes (owner) | Yes (group) | No | No |
+| Write CAPE analysis results | Yes (owner) | No | No | No |
+| Read pipeline reports | No | Yes (owner) | Yes (group) | No |
+| Write pipeline reports | No | Yes (owner) | No | No |
+| Run Podman containers | Yes | Yes (rootless) | No | Yes (root) |
+| Manage VMs (libvirt/KVM) | Yes | No | No | No |
+| Access database | Yes | Yes | Yes (read-focused) | No |
+| Submit samples to CAPE API | No | Yes | No | No |
+| Serve web traffic | No | No | Yes | No |
+| Hold Anthropic API key | No | No | No | Yes (LiteLLM only) |
 
 | User | Runs as | Systemd hardening | Process monitoring |
 |------|---------|-------------------|--------------------|
@@ -378,12 +395,15 @@ OVH Bare Metal
 +-- CAPEv2 dynamic analysis sandbox
 +-- Windows 11 guest VMs with anti-evasion measures
 +-- INetSim network simulation
-+-- WireGuard VPN for admin access
-+-- Podman (rootless containers for all tool stages)
++-- WireGuard VPN for admin access (laptop + phone peers)
++-- Podman (rootless containers for pipeline, root container for LiteLLM)
++-- LiteLLM proxy (centralized LLM API routing, key isolation, cost tracking)
 +-- PostgreSQL (analysis database)
-+-- React frontend + FastAPI backend (behind WireGuard)
++-- React frontend + FastAPI backend (behind WireGuard, nginx reverse proxy)
++-- WebSocket real-time pipeline updates (PG LISTEN/NOTIFY)
++-- Mobile-responsive UI with collapsible sidebar
 +-- Unified logging with per-task log files
-+-- 19 Ansible roles for fully automated deployment
++-- 20 Ansible roles for fully automated deployment
 ```
 
 <details>
