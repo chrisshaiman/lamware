@@ -18,10 +18,10 @@ function CopyableHash({ label, value }: { label: string; value: string | null })
   };
 
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-xs text-[var(--color-text-muted)]">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <MonoText>{value}</MonoText>
+    <div className="flex items-start justify-between gap-2">
+      <span className="shrink-0 text-xs text-[var(--color-text-muted)]">{label}</span>
+      <div className="flex items-start gap-1.5 min-w-0">
+        <MonoText className="break-all">{value}</MonoText>
         <button
           onClick={handleCopy}
           className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
@@ -49,15 +49,15 @@ export function SampleInfoCard({ analysis }: { analysis: AnalysisDetail }) {
         <CopyableHash label="SHA-1" value={s.sha1} />
         <CopyableHash label="ssdeep" value={s.ssdeep} />
         {s.filename && (
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-[var(--color-text-muted)]">Filename</span>
-            <span className="text-xs text-[var(--color-text-secondary)]">{s.filename}</span>
+          <div className="flex items-start justify-between gap-2">
+            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">Filename</span>
+            <span className="break-all text-right text-xs text-[var(--color-text-secondary)]">{s.filename}</span>
           </div>
         )}
         {s.file_type && (
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-[var(--color-text-muted)]">Type</span>
-            <span className="text-xs text-[var(--color-text-secondary)]">{s.file_type}</span>
+          <div className="flex items-start justify-between gap-2">
+            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">Type</span>
+            <span className="break-all text-right text-xs text-[var(--color-text-secondary)]">{s.file_type}</span>
           </div>
         )}
         {s.file_size != null && (
