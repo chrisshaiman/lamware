@@ -211,8 +211,14 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     try:
         # --- Upsert sample ---
         triage = report.get("triage", {})
-        ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
-        sha256 = ghidra_files[0].get("sha256", "") if ghidra_files else ""
+        # SHA-256: prefer triage hashes, then extract from sample filename, then task_id
+        sha256 = triage.get("hashes", {}).get("sha256", "")
+        if not sha256:
+            name = report.get("sample_name", "")
+            # Sample filenames are often <sha256>.exe — extract if 64+ hex chars
+            stem = name.rsplit(".", 1)[0] if "." in name else name
+            if len(stem) == 64 and all(c in "0123456789abcdef" for c in stem.lower()):
+                sha256 = stem.lower()
         if not sha256:
             sha256 = report.get("task_id", "unknown")
 
