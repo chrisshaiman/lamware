@@ -82,7 +82,8 @@ if [ "$1" = "--shellcode" ]; then
     WORK_DIR="$(mktemp -d)"
     CONTAINER_OUTPUT="$(mktemp -d)"
     trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT"' EXIT
-    chmod 755 "$WORK_DIR" "$CONTAINER_OUTPUT"
+    chmod 755 "$WORK_DIR"
+    chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
     cp "$DUMP_FILE" "$WORK_DIR/$DUMP_NAME"
     chmod 644 "$WORK_DIR/$DUMP_NAME"
 
@@ -131,7 +132,8 @@ WORK_DIR="$(mktemp -d)"
 # prevents the container's nobody user from writing to pipeline-owned dirs)
 CONTAINER_OUTPUT="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT"' EXIT
-chmod 755 "$WORK_DIR" "$CONTAINER_OUTPUT"
+chmod 755 "$WORK_DIR"
+chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
 cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
 chmod 644 "$WORK_DIR/$SAMPLE_NAME"
 
