@@ -17,10 +17,13 @@
 # "feeder_not_running" status rather than a 500.
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+
+log = logging.getLogger(__name__)
 
 from ..auth import require_api_key
 from ..config import settings
@@ -103,7 +106,8 @@ async def feeder_resume(
 
     # Reset consecutive_failures in state.json so the feeder doesn't stay in
     # backoff mode after resuming from a deliberate pause.
-    _update_state({"consecutive_failures": 0})
+    if not _update_state({"consecutive_failures": 0}):
+        log.warning("Resume succeeded (PAUSE removed) but failed to reset failure counter")
 
     return {"status": "running"}
 
@@ -119,7 +123,11 @@ async def feeder_reset(
     without the operator wanting to fully pause/resume. Does not touch the
     PAUSE file.
     """
-    _update_state({"consecutive_failures": 0})
+    if not _update_state({"consecutive_failures": 0}):
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update state.json — check file permissions",
+        )
     return {"status": "ok", "consecutive_failures": 0}
 
 
@@ -137,13 +145,12 @@ def _read_state() -> dict | None:
         return None
 
 
-def _update_state(updates: dict) -> None:
+def _update_state(updates: dict) -> bool:
     """
     Merge updates into state.json.
 
     Reads the existing state, applies updates, writes back atomically via a
-    temp file rename. Silently no-ops if state.json cannot be read/written —
-    callers don't depend on this succeeding for correctness.
+    temp file rename. Returns True on success, False on failure.
     """
     state_path = settings.auto_feeder_state
     tmp_path = state_path + ".tmp"
@@ -161,6 +168,7 @@ def _update_state(updates: dict) -> None:
             json.dump(state, f, indent=2, default=str)
 
         os.replace(tmp_path, state_path)
-    except Exception:
-        # Non-fatal: feeder will overwrite state on next iteration anyway.
-        pass
+        return True
+    except Exception as exc:
+        log.error("Failed to update state.json: %s", exc)
+        return False
