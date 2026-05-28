@@ -13,7 +13,7 @@
     state: directory
     owner: "{{ auto_feeder_user }}"
     group: lamware
-    mode: "0750"
+    mode: "2770"
 
 - name: Deploy auto-feeder script
   ansible.builtin.template:
