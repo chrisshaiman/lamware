@@ -1,0 +1,6 @@
+---
+- name: Restart LiteLLM
+  ansible.builtin.systemd:
+    name: litellm
+    state: restarted
+    daemon_reload: true
