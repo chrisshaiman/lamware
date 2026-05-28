@@ -140,6 +140,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Dynamic guest clock from PE timestamp | DONE | Implemented — triage extracts PE timestamp, pipeline passes clock param to CAPE |
 | PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |
 | Actual LLM cost tracking | DONE | Implemented — usage_from_response() captures tokens on all Claude calls |
+| Network baseline diffing | 1 session | Capture clean guest VM network traffic baseline (DNS, HTTP, telemetry). Subtract from analysis PCAP results before passing to LLM and IOC extraction. Eliminates false positives from Win11 noise (BitLocker attestation, Defender, Office telemetry, NCSI). Only filter exact matches to avoid masking malware that mimics Microsoft domains. |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
