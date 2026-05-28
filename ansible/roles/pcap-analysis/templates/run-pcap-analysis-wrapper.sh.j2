@@ -30,9 +30,11 @@ mkdir -p "$OUTPUT_DIR"
 # Copy PCAP to a temp dir so the container can run as nobody
 # without needing access to CAPE-owned files.
 TEMP_PCAP="$(mktemp -d)"
+CONTAINER_OUTPUT="$(mktemp -d)"
 cp "$PCAP_PATH" "$TEMP_PCAP/" 2>/dev/null || true
 chmod -R a+rX "$TEMP_PCAP"
-trap 'rm -rf "$TEMP_PCAP"' EXIT
+chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
+trap 'rm -rf "$TEMP_PCAP" "$CONTAINER_OUTPUT" 2>/dev/null || true' EXIT
 
 podman run --rm \
     --network=none \
@@ -48,6 +50,9 @@ podman run --rm \
     --tmpfs /var/run/suricata:size=10m \
     --user 65534:65534 \
     -v "$TEMP_PCAP:/pcap:ro" \
-    -v "$OUTPUT_DIR:/output:rw" \
+    -v "$CONTAINER_OUTPUT:/output:rw" \
     localhost/pcap-analysis:latest \
     "/pcap/$PCAP_NAME"
+
+# Copy results back to the real output directory
+cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
