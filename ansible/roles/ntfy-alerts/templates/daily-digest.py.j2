@@ -45,7 +45,8 @@ DB_CONFIG = {
     "password": "{{ pipeline_db_password | default('') }}",
 }
 
-ANTHROPIC_API_KEY = "{{ anthropic_api_key }}"
+LITELLM_API_KEY = "{{ litellm_master_key | default('sk-lamware') }}"
+LITELLM_BASE_URL = "http://127.0.0.1:{{ litellm_port | default(4000) }}"
 HAIKU_MODEL = "{{ interpret_summary_model | default('claude-haiku-4-5-20251001') }}"
 
 # ---------------------------------------------------------------------------
@@ -236,7 +237,7 @@ def gather_stats() -> dict:
 
 def generate_highlights(stats: dict) -> str:
     """Send stats to Haiku for analyst-curated highlights."""
-    if not ANTHROPIC_API_KEY or stats["today_count"] == 0:
+    if not LITELLM_API_KEY or stats["today_count"] == 0:
         return ""
 
     # Build context for Haiku
@@ -287,9 +288,9 @@ Keep each bullet to 1-2 sentences. Be specific — name the families, techniques
 
     try:
         resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
+            f"{LITELLM_BASE_URL}/anthropic/v1/messages",
             headers={
-                "x-api-key": ANTHROPIC_API_KEY,
+                "x-api-key": LITELLM_API_KEY,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             },

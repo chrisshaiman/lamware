@@ -74,6 +74,10 @@
     - role: podman
       tags: [podman]
 
+    # 10b. LiteLLM proxy — routes all Claude API calls through local proxy
+    - role: litellm
+      tags: [litellm]
+
     # 11. PCAP analysis — containerized Zeek + Suricata for network traffic
     - role: pcap-analysis
       tags: [pcap-analysis]
