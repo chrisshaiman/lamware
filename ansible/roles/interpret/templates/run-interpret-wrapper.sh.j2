@@ -23,5 +23,6 @@ podman run --rm -i \
     --tmpfs /tmp:size=100m \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
-    -e ANTHROPIC_API_KEY="{{ anthropic_api_key }}" \
+    -e LITELLM_API_KEY="{{ litellm_master_key | default('sk-lamware') }}" \
+    -e LITELLM_BASE_URL="http://127.0.0.1:{{ litellm_port | default(4000) }}/anthropic" \
     localhost/interpret:latest

@@ -124,7 +124,11 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 
 ### High Priority
 
-No items — all resolved.
+| Item | Effort | Notes |
+|------|--------|-------|
+| LiteLLM proxy | 1 session | Replace direct Anthropic API calls with self-hosted LiteLLM proxy. Solves network lockdown (containers reach LiteLLM on local network, only LiteLLM has outbound internet), API key isolation (key only in proxy, not pipeline templates), native cost tracking dashboard (replaces custom usage_from_response), and model routing (Sonnet→Opus escalation as config, not code). Replaces Squid approach — one dependency instead of two. |
+| Enterprise authentication (OAuth/SAML) | 1-2 sessions | Replace static API key with OIDC/SAML SSO. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes, RBAC (analyst/admin/viewer roles). **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. |
+| Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
 
 ### Medium Priority
 
@@ -155,7 +159,6 @@ No items — all resolved.
 | FastAPI backend | DONE | PR #55 — 10 routers (incl. evasions), 28+ tests, port 8001 |
 | React frontend | DONE | PR #57, #58 — 10 pages, MITRE matrix, evasion dashboard, nginx deployment |
 | WebSocket real-time updates | DONE | PR #64 — PG LISTEN/NOTIFY → FastAPI → browser, TanStack cache invalidation |
-| LiteLLM proxy | 1 session | Replace direct Anthropic API calls with self-hosted LiteLLM proxy. Solves network lockdown (containers reach LiteLLM on local network, only LiteLLM has outbound internet), API key isolation (key only in proxy, not pipeline templates), native cost tracking dashboard (replaces custom usage_from_response), and model routing (Sonnet→Opus escalation as config, not code). Replaces Squid approach — one dependency instead of two. |
 | Dynamic trace + LLM devirtualization | Design + build | Feed CAPE's runtime API trace alongside Ghidra's static decompilation to the LLM. For VM-protected binaries (VMProtect, Themida), Ghidra only sees the VM dispatcher loop — but CAPE captured what the code *actually did*. The LLM correlates "this VM bytecode sequence resulted in these API calls" to reconstruct behavior that no single tool can reverse. Novel cross-tool correlation — core to lamware's thesis. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
@@ -165,8 +168,7 @@ No items — all resolved.
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
 | Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
 | HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
-| Frontend auth (OIDC/JWT) | 1-2 sessions | Replace static API key with proper auth flow. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes. **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. Prerequisite for multi-user and DAST items. |
-| Multi-user platform | Design + build | SSO integration (SAML/OIDC), RBAC (analyst/admin/viewer roles), per-user audit trail. Depends on frontend auth. Enterprise readiness. |
+| Multi-user platform | Design + build | Per-user audit trail, team workspaces. Depends on enterprise auth (high priority). Enterprise readiness. |
 
 ### Low Priority / Ideas
 
@@ -174,7 +176,7 @@ No items — all resolved.
 |------|--------|-------|
 | File permissions audit | 2-3 hrs | Audit all deployed files for over-permissioning (chmod 777 work dirs, 755 vs 750, world-readable status files). Establish consistent permission model: what runs as root vs cape, what needs cross-user read access, whether a shared group would be cleaner than world-readable files. |
 | Process allowlist to pattern-based | 1-2 hrs | Replace exact-match CAPE_ALLOWLIST with regex/pattern matching. Current approach requires a commit for every new process. Pattern-based (e.g., match /home/cape paths, known prefixes) would be maintenance-free. |
-| WireGuard phone peer | 30 min | Add phone as WireGuard peer with separate IP (10.200.0.3). QR code config for mobile app. |
+| WireGuard phone peer | DONE | Phone peer at 10.200.0.3, QR code config via qrencode. |
 | WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
 | Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
 | Host file integrity monitoring | 1-2 hrs | SHA256 baseline of iptables rules + QEMU binary. Low value for single-operator setup — only 2 files worth watching, and an attacker with root could disable the checker. |
@@ -183,7 +185,6 @@ No items — all resolved.
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
 | Randomize UNTRUSTED_CODE delimiters | 15 min | Per-request random suffix on UNTRUSTED_CODE tags to prevent delimiter escape from malicious content. Low risk but easy hardening. |
 | Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
-| Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP. Full design needed. |
 | Rust binary analysis | 2-3 weeks | Demangle names, identify stdlib functions, reconstruct common types. Research project. |
 | Linux guest VMs | 1-2 sessions | ELF binary analysis, different Volatility symbols. New Packer build + CAPE guest config. |
 | Threat intel enrichment | 2-3 hrs | VirusTotal, AbuseIPDB, Shodan lookups. API integrations per provider. |
@@ -192,6 +193,7 @@ No items — all resolved.
 | YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
+| Container temp dir cleanup errors | 30 min | Podman rootless UID mapping creates files the pipeline user can't delete in trap cleanup. Wrapper scripts log `rm: cannot remove` on exit. Fix with `podman unshare rm -rf` or `chmod -R` before cleanup. |
 | RTF exploit extraction | 2-3 hrs | rtfobj for CVE-2017-11882/CVE-2018-0802 shellcode extraction. Different from macro analysis — parser exploits, not code. |
 | DDE injection detection | 1-2 hrs | Pattern matching for DDE/DDEAUTO fields in OOXML/OLE. Not macros — formula abuse. |
 | Embedded OLE object extraction | 1-2 hrs | Packager object extraction from Office docs. File dropping, not code execution. |

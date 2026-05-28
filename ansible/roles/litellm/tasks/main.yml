@@ -1,0 +1,69 @@
+---
+# =============================================================================
+# roles/litellm/tasks/main.yml
+# Deploys LiteLLM proxy as a root Podman container managed by systemd.
+# Routes all Claude API calls through a local proxy for key isolation,
+# cost tracking, and future network lockdown.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create LiteLLM config directory
+  ansible.builtin.file:
+    path: "{{ litellm_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy LiteLLM config
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ litellm_install_dir }}/config.yaml"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart LiteLLM
+
+- name: Deploy LiteLLM environment file (contains API key)
+  ansible.builtin.template:
+    src: litellm.env.j2
+    dest: "{{ litellm_install_dir }}/litellm.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart LiteLLM
+
+- name: Pull LiteLLM container image
+  ansible.builtin.command:
+    cmd: "podman pull {{ litellm_image }}"
+  register: litellm_pull
+  changed_when: "'Pulling' in litellm_pull.stdout or 'Writing' in litellm_pull.stderr"
+
+- name: Deploy LiteLLM systemd service
+  ansible.builtin.template:
+    src: litellm.service.j2
+    dest: /etc/systemd/system/litellm.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart LiteLLM
+
+- name: Enable and start LiteLLM
+  ansible.builtin.systemd:
+    name: litellm
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for LiteLLM to be ready
+  ansible.builtin.uri:
+    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health"
+    method: GET
+    status_code: 200
+  register: litellm_health
+  retries: 10
+  delay: 5
+  until: litellm_health.status == 200
