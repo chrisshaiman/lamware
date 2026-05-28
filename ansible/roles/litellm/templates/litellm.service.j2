@@ -1,0 +1,30 @@
+# /etc/systemd/system/litellm.service — managed by Ansible
+# LiteLLM proxy — routes all Claude API calls through a local proxy.
+# Runs as a root Podman container with full lockdown.
+
+[Unit]
+Description=LiteLLM API proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/podman rm -f litellm
+ExecStart=/usr/bin/podman run --rm --name litellm \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --network=host \
+    --env-file {{ litellm_install_dir }}/litellm.env \
+    -v {{ litellm_install_dir }}/config.yaml:/app/config.yaml:ro \
+    {{ litellm_image }} \
+    --config /app/config.yaml \
+    --host {{ litellm_listen_address }} \
+    --port {{ litellm_port }}
+ExecStop=/usr/bin/podman stop litellm
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
