@@ -164,6 +164,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Dynamic trace + LLM devirtualization | Design + build | Feed CAPE's runtime API trace alongside Ghidra's static decompilation to the LLM. For VM-protected binaries (VMProtect, Themida), Ghidra only sees the VM dispatcher loop — but CAPE captured what the code *actually did*. The LLM correlates "this VM bytecode sequence resulted in these API calls" to reconstruct behavior that no single tool can reverse. Novel cross-tool correlation — core to lamware's thesis. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
+| Containerize FastAPI + React/nginx | 1 session | Root Podman + systemd pattern (same as LiteLLM). Improves portability for host migration. FastAPI: Python slim + uvicorn. React: nginx + Vite build output. Touches API and frontend Ansible roles, SSL cert mounts, volume config. |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
 | Selective stage execution | Design + build | --skip, --only, --rerun flags with dependency tracking. Avoids re-running Cape/Volatility when only static analysis changed. |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
