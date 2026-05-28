@@ -408,12 +408,11 @@ def run_cycle() -> None:
         log.info(f"Downloaded and extracted: {extracted_name} ({len(content)} bytes)")
 
     except Exception as e:
-        log.error(f"Download failed: {e}")
+        log.warning(f"Download failed (not counted as pipeline failure): {e}")
         # Mark as seen so we don't retry the same broken sample
         save_seen_hash(sample["sha256"])
-        state["consecutive_failures"] += 1
         state["last_failure"] = datetime.now(timezone.utc).isoformat()
-        state["last_failure_reason"] = str(e)
+        state["last_failure_reason"] = f"download: {e}"
         save_state(state)
         return
 
