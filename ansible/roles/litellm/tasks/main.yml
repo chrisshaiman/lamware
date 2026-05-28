@@ -62,6 +62,8 @@
   ansible.builtin.uri:
     url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health"
     method: GET
+    headers:
+      Authorization: "Bearer {{ litellm_master_key }}"
     status_code: 200
   register: litellm_health
   retries: 10
