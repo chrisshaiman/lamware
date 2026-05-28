@@ -195,6 +195,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
 | Container temp dir cleanup errors | 30 min | Podman rootless UID mapping creates files the pipeline user can't delete in trap cleanup. Wrapper scripts log `rm: cannot remove` on exit. Fix with `podman unshare rm -rf` or `chmod -R` before cleanup. |
+| Container output dir temp pattern for remaining wrappers | 1-2 hrs | 7 wrappers still mount $OUTPUT_DIR directly (screenshot, volatility, dotnet, go, pyinstaller, java, office, powershell). Apply same temp dir + copy-back pattern used in Ghidra and PCAP wrappers. May not surface as errors if containers write to stdout, but preemptive fix. |
 | Auto-feeder retry on download failure | 1 hr | When a sample download fails (e.g., delisted, non-zip response), try a different sample within the same cycle instead of waiting 15 minutes. Currently only attempts one sample per cycle. |
 | RTF exploit extraction | 2-3 hrs | rtfobj for CVE-2017-11882/CVE-2018-0802 shellcode extraction. Different from macro analysis — parser exploits, not code. |
 | DDE injection detection | 1-2 hrs | Pattern matching for DDE/DDEAUTO fields in OOXML/OLE. Not macros — formula abuse. |
