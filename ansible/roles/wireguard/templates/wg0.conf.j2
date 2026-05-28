@@ -13,5 +13,9 @@ PrivateKey = {{ wireguard_private_key }}
 [Peer]
 # Operator laptop
 PublicKey  = {{ wireguard_peer_pubkey }}
-# Only traffic sourced from the peer's tunnel IP is accepted
 AllowedIPs = {{ wireguard_peer_address }}
+
+[Peer]
+# Operator phone
+PublicKey  = {{ wireguard_phone_pubkey }}
+AllowedIPs = {{ wireguard_phone_address }}

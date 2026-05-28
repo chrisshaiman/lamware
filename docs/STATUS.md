@@ -145,6 +145,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 | Batch script (.bat/.cmd) analysis | 1-2 hrs | Add `is_batch_script()` detection, Stage 4 handler (raw source + basic deobfuscation), Stage 4.5 single-shot LLM route. Same pattern as PowerShell pipeline. Currently .bat falls through all Stage 4 checks → no AI analysis. |
 | JavaScript (.js/.jse/.wsf) analysis | 1-2 hrs | Same gap as batch — no Stage 4/4.5 handler. Common dropper format (WScript.Shell, XMLHTTP). Same pattern as PowerShell/batch. |
+| VBScript (.vbs/.vbe) analysis | 1-2 hrs | Standalone VBScript files fall through all Stage 4 checks. Different from olevba (which handles VBA macros inside Office docs). Raw source + single-shot LLM, same pattern as PowerShell/batch. |
 | shellcheck + PSScriptAnalyzer | 1 hr | Shell (1 file) and PowerShell (9 files) linting. Low ROI — stable Packer provisioning scripts, rarely change. |
 | DAST: Schemathesis API fuzzing | 1 session | Fuzz all 10 FastAPI routers via /openapi.json. Priority targets: samples + feeder intake routers. Ansible post-deploy role + `make dast`. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
@@ -194,6 +195,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
 | Container temp dir cleanup errors | 30 min | Podman rootless UID mapping creates files the pipeline user can't delete in trap cleanup. Wrapper scripts log `rm: cannot remove` on exit. Fix with `podman unshare rm -rf` or `chmod -R` before cleanup. |
+| Auto-feeder retry on download failure | 1 hr | When a sample download fails (e.g., delisted, non-zip response), try a different sample within the same cycle instead of waiting 15 minutes. Currently only attempts one sample per cycle. |
 | RTF exploit extraction | 2-3 hrs | rtfobj for CVE-2017-11882/CVE-2018-0802 shellcode extraction. Different from macro analysis — parser exploits, not code. |
 | DDE injection detection | 1-2 hrs | Pattern matching for DDE/DDEAUTO fields in OOXML/OLE. Not macros — formula abuse. |
 | Embedded OLE object extraction | 1-2 hrs | Packager object extraction from Office docs. File dropping, not code execution. |
