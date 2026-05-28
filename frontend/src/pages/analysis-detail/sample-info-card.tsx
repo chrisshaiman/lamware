@@ -39,7 +39,7 @@ export function SampleInfoCard({ analysis }: { analysis: AnalysisDetail }) {
   if (!s) return null;
 
   return (
-    <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+    <div className="min-w-0 space-y-2 overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
         Sample Info
       </h3>
