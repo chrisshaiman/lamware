@@ -266,7 +266,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             "cape_task_id": report.get("cape", {}).get("task_id"),
             "volatility_completed": bool(report.get("volatility", {}).get("plugins")),
             "volatility_triggered": report.get("volatility", {}).get("triggered", False),
-            "ghidra_completed": bool(ghidra_files),
+            "ghidra_completed": bool(report.get("ghidra", {}).get("analyzed_files")),
             "ghidra_triggered": report.get("ghidra", {}).get("triggered", False),
             "interpret_completed": interp.get("enabled", False) and "error" not in interp,
             "summary_completed": bool(summary.get("executive_summary")),
