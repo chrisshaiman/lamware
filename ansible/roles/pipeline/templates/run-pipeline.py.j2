@@ -715,68 +715,83 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             log.info(f"  Package: {cape_package}")
         log.info(f"  Filename: {cape_filename}")
 
-    # Stage 2: Cape (always, with triage-informed tags, package, and filename)
-    # Calculate guest VM clock from PE compile timestamp to defeat date/time evasion
-    cape_clock = ""
-    pe_timestamp = report.get("triage", {}).get("pe_compile_timestamp")
-    if pe_timestamp:
-        try:
-            compile_dt = datetime.fromisoformat(pe_timestamp)
-            # Set clock to compile time + 7-30 days (plausible execution window)
-            offset_days = random.randint(7, 30)
-            guest_dt = compile_dt + timedelta(days=offset_days)
-            # Don't set clock to the future
-            now = datetime.now(timezone.utc)
-            if guest_dt > now:
-                guest_dt = now - timedelta(days=random.randint(1, 7))
-            cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
-            log.info(f"  Guest clock: {cape_clock} (PE compiled {pe_timestamp[:10]}, +{offset_days}d)")
-        except Exception as e:
-            log.warning(f"  Could not calculate guest clock: {e}")
+    # Stage 2: Cape — skip for non-Windows binaries (ELF, Mach-O)
+    _triage_mime = report.get("triage", {}).get("file_mime", "")
+    _triage_ftype = report.get("triage", {}).get("file_type", "").lower()
+    _skip_cape = (
+        _triage_mime in ("application/x-mach-binary", "application/x-elf",
+                         "application/x-sharedlib", "application/x-executable",
+                         "application/x-pie-executable")
+        or "elf " in _triage_ftype
+        or "mach-o" in _triage_ftype
+    )
 
-    log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
     _cape_start = _time.time()
-    update_stage(analysis_id_early, "cape", "started")
-    try:
-        cape_task_id = submit_to_cape(
-            sample_path,
-            tags=cape_tags,
-            package=cape_package,
-            filename=cape_filename,
-            custom=f"pipeline_task_id={task_id}",
-            clock=cape_clock,
-        )
-        log.info(f"  Cape task ID: {cape_task_id}")
-        cape_data = poll_cape_task(cape_task_id)
-        report["cape"] = {
-            "task_id": cape_task_id,
-            "status": cape_data.get("status", "unknown"),
-        }
-
-        # Extract rich intelligence from Cape's full report
-        if cape_data.get("status") == "reported":
-            log.info("  Extracting Cape intelligence (signatures, network, configs)...")
-            cape_intel = extract_cape_intel(cape_data, output_dir=output_dir)
-            report["cape"].update(cape_intel)
-            sig_count = len(cape_intel.get("signatures", []))
-            ttp_count = len(cape_intel.get("mitre_ttps", []))
-            net_keys = list(cape_intel.get("network", {}).keys())
-            payloads = cape_intel.get("payloads_extracted", 0)
-            injection_bufs = cape_intel.get("injection_buffers", [])
-            mutex_count = len(cape_intel.get("mutex_iocs", []))
-            log.info(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}, Mutexes: {mutex_count}")
-            if mutex_count:
-                for m in cape_intel["mutex_iocs"][:5]:
-                    log.info(f"    Mutex: {m['name'][:60]} ({m['action']} by {m['process']})")
-            if injection_bufs:
-                log.info(f"  Injection buffers captured: {len(injection_bufs)}")
-                for inj in injection_bufs:
-                    log.info(f"    {inj['source_process']} (pid {inj['source_pid']}) → pid {inj['target_pid']} at {inj['injection_address']} ({inj['size']} bytes)")
-
-    except Exception as e:
-        log.error(f"  [!] Cape submission failed: {e}")
-        report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
+    if _skip_cape:
+        log.info(f"\n[Stage 2] Cape: skipped — non-Windows binary ({_triage_mime or _triage_ftype})")
+        report["cape"] = {"status": "skipped", "reason": f"non-Windows binary: {_triage_mime or _triage_ftype}"}
         cape_data = {}
+    else:
+        # Calculate guest VM clock from PE compile timestamp to defeat date/time evasion
+        cape_clock = ""
+        pe_timestamp = report.get("triage", {}).get("pe_compile_timestamp")
+        if pe_timestamp:
+            try:
+                compile_dt = datetime.fromisoformat(pe_timestamp)
+                # Set clock to compile time + 7-30 days (plausible execution window)
+                offset_days = random.randint(7, 30)
+                guest_dt = compile_dt + timedelta(days=offset_days)
+                # Don't set clock to the future
+                now = datetime.now(timezone.utc)
+                if guest_dt > now:
+                    guest_dt = now - timedelta(days=random.randint(1, 7))
+                cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
+                log.info(f"  Guest clock: {cape_clock} (PE compiled {pe_timestamp[:10]}, +{offset_days}d)")
+            except Exception as e:
+                log.warning(f"  Could not calculate guest clock: {e}")
+
+        log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
+        update_stage(analysis_id_early, "cape", "started")
+        try:
+            cape_task_id = submit_to_cape(
+                sample_path,
+                tags=cape_tags,
+                package=cape_package,
+                filename=cape_filename,
+                custom=f"pipeline_task_id={task_id}",
+                clock=cape_clock,
+            )
+            log.info(f"  Cape task ID: {cape_task_id}")
+            cape_data = poll_cape_task(cape_task_id)
+            report["cape"] = {
+                "task_id": cape_task_id,
+                "status": cape_data.get("status", "unknown"),
+            }
+
+            # Extract rich intelligence from Cape's full report
+            if cape_data.get("status") == "reported":
+                log.info("  Extracting Cape intelligence (signatures, network, configs)...")
+                cape_intel = extract_cape_intel(cape_data, output_dir=output_dir)
+                report["cape"].update(cape_intel)
+                sig_count = len(cape_intel.get("signatures", []))
+                ttp_count = len(cape_intel.get("mitre_ttps", []))
+                net_keys = list(cape_intel.get("network", {}).keys())
+                payloads = cape_intel.get("payloads_extracted", 0)
+                injection_bufs = cape_intel.get("injection_buffers", [])
+                mutex_count = len(cape_intel.get("mutex_iocs", []))
+                log.info(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}, Mutexes: {mutex_count}")
+                if mutex_count:
+                    for m in cape_intel["mutex_iocs"][:5]:
+                        log.info(f"    Mutex: {m['name'][:60]} ({m['action']} by {m['process']})")
+                if injection_bufs:
+                    log.info(f"  Injection buffers captured: {len(injection_bufs)}")
+                    for inj in injection_bufs:
+                        log.info(f"    {inj['source_process']} (pid {inj['source_pid']}) → pid {inj['target_pid']} at {inj['injection_address']} ({inj['size']} bytes)")
+
+        except Exception as e:
+            log.error(f"  [!] Cape submission failed: {e}")
+            report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
+            cape_data = {}
     stage_timings["cape"] = round(_time.time() - _cape_start, 1)
     update_stage(analysis_id_early, "cape", "completed", f"{stage_timings['cape']:.0f}s")
     log.info(f"  [cape completed in {stage_timings['cape']:.0f}s]")
