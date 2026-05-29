@@ -73,17 +73,44 @@ def get_original_sample_path(cape_data: dict) -> Path | None:
     return None
 
 
+def _is_ghidra_compatible_binary(sample_path: Path) -> bool:
+    """Check if the sample is a binary format Ghidra can analyze (PE, ELF, Mach-O)."""
+    if not sample_path or not sample_path.exists():
+        return False
+    try:
+        with sample_path.open("rb") as fh:
+            magic_bytes = fh.read(4)
+            # PE (MZ header)
+            if magic_bytes[:2] == b"MZ":
+                return True
+            # ELF
+            if magic_bytes == b"\x7fELF":
+                return True
+            # Mach-O (32/64-bit, big/little-endian)
+            if magic_bytes in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                               b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe"):
+                return True
+    except (OSError, PermissionError):
+        pass
+    return False
+
+
 def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
                       get_cape_signatures_fn) -> bool:
     """Check if Ghidra analysis should run.
 
     Triggers when:
     1. Cape found dropped PEs + injection/packing signatures, OR
-    2. No dropped PEs but the original sample is a PE (analyze the packed binary)
+    2. The original sample is a Ghidra-compatible binary (PE, ELF, Mach-O)
     """
-    if cape_data.get("status") != "reported":
-        return False
     if not Path(ghidra_cmd).exists():
+        return False
+
+    # Non-Windows binary with no CAPE data — still analyze with Ghidra
+    if cape_data.get("status") in ("skipped", None, ""):
+        return _is_ghidra_compatible_binary(sample_path)
+
+    if cape_data.get("status") != "reported":
         return False
 
     sigs = get_cape_signatures_fn(cape_data)
@@ -92,18 +119,13 @@ def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
     original_is_pe = get_original_sample_path(cape_data) is not None
 
     # Also check the submitted sample directly (CAPE storage may have corrupt binary)
-    if not original_is_pe and sample_path and sample_path.exists():
-        try:
-            with sample_path.open("rb") as fh:
-                if fh.read(2) == b"MZ":
-                    original_is_pe = True
-        except (OSError, PermissionError):
-            pass
+    if not original_is_pe:
+        original_is_pe = _is_ghidra_compatible_binary(sample_path)
 
     # Dropped PEs with trigger signatures — highest value analysis
     if has_trigger and has_dropped_pes:
         return True
-    # Original sample is a PE — analyze even without dropped files
+    # Original sample is a compatible binary — analyze even without dropped files
     if original_is_pe:
         return True
 
