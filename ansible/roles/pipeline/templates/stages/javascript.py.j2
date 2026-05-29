@@ -1,0 +1,111 @@
+"""
+Stage 4: JavaScript analysis — raw source extraction for LLM interpretation.
+
+Detects standalone JavaScript files (.js, .jse, .wsf) and reads the
+source for single-shot LLM analysis. Common dropper format using
+WScript.Shell, XMLHTTP, and ADODB.Stream patterns.
+
+No containerized deobfuscation tool — the LLM handles JS deobfuscation
+directly (eval chains, String.fromCharCode, variable substitution).
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+
+import re
+from pathlib import Path
+
+# Max source size to send to LLM (chars)
+MAX_SOURCE_SIZE = 50000
+
+
+def is_javascript_file(report: dict, sample_path: Path = None) -> bool:
+    """Detect standalone JavaScript files from triage data.
+
+    Checks extension, MIME type, file_type string, and content patterns.
+    Does NOT match JavaScript embedded in HTML — only standalone scripts.
+    """
+    triage = report.get("triage", {})
+    file_type = triage.get("file_type", "").lower()
+    file_mime = triage.get("file_mime", "")
+
+    # Extension check
+    name = report.get("sample_name", "").lower()
+    js_extensions = (".js", ".jse", ".wsf", ".wsh")
+    if any(name.endswith(ext) for ext in js_extensions):
+        return True
+
+    # MIME type
+    js_mimes = ("application/javascript", "text/javascript",
+                "application/x-javascript", "text/jscript")
+    if file_mime in js_mimes:
+        return True
+
+    # file_type string patterns
+    if "javascript" in file_type or "jscript" in file_type:
+        return True
+
+    # Content sniff for text files that might be JS
+    if sample_path and sample_path.exists() and file_mime.startswith("text/"):
+        try:
+            head = sample_path.read_text(encoding="utf-8", errors="ignore")[:2000]
+            # Common JS dropper patterns (detection signatures, not execution)
+            js_indicators = [
+                "WScript.Shell", "WScript.CreateObject", "ActiveXObject",
+                "XMLHTTP", "ADODB.Stream", "Scripting.FileSystemObject",
+                "String.fromCharCode",
+            ]
+            if sum(1 for ind in js_indicators if ind in head) >= 2:
+                return True
+        except (OSError, PermissionError):
+            pass
+
+    return False
+
+
+def read_javascript_source(sample_path: Path) -> dict:
+    """Read JavaScript source file and extract basic metadata.
+
+    Returns a dict with source, size, and detected patterns for LLM context.
+    """
+    result = {
+        "analysis_success": False,
+        "source": "",
+        "file_size": 0,
+        "detected_patterns": [],
+    }
+
+    if not sample_path or not sample_path.exists():
+        result["error"] = f"File not found: {sample_path}"
+        return result
+
+    try:
+        raw = sample_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        result["error"] = f"Failed to read file: {e}"
+        return result
+
+    result["file_size"] = len(raw)
+    result["source"] = raw[:MAX_SOURCE_SIZE]
+    if len(raw) > MAX_SOURCE_SIZE:
+        result["truncated"] = True
+        result["truncated_at"] = MAX_SOURCE_SIZE
+
+    # Detect common dropper/obfuscation patterns (signature matching only)
+    pattern_checks = {
+        "wscript_shell": r"WScript\.Shell|WScript\.CreateObject",
+        "activex": r"ActiveXObject",
+        "xmlhttp": r"XMLHTTP|WinHttp|ServerXMLHTTP",
+        "adodb_stream": r"ADODB\.Stream",
+        "filesystem": r"Scripting\.FileSystemObject|\.SaveToFile",
+        "char_encoding": r"String\.fromCharCode|charCodeAt|unescape\(",
+        "powershell_exec": r"powershell|cmd\.exe|cmd\s+/c",
+        "registry": r"RegWrite|RegRead|HKCU|HKLM",
+        "scheduled_task": r"schtasks|Schedule\.Service",
+    }
+    result["detected_patterns"] = [
+        name for name, pattern in pattern_checks.items()
+        if re.search(pattern, raw, re.I)
+    ]
+    result["analysis_success"] = True
+    return result
