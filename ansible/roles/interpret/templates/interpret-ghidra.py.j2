@@ -49,6 +49,46 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 # ---------------------------------------------------------------------------
+# Known-good network indicators — Windows guest VM telemetry, not IOCs
+# ---------------------------------------------------------------------------
+
+KNOWN_GOOD_DOMAINS = [
+    "microsoftaik.azure.net",       # BitLocker TPM attestation
+    "settings-win.data.microsoft.com",  # Windows telemetry
+    "self.events.data.microsoft.com",   # Windows telemetry
+    "ecs.office.com",               # Office telemetry
+    "g.live.com",                   # Windows Update
+    "wdcp.microsoft.com",           # Windows Defender
+    "ctldl.windowsupdate.com",      # Certificate trust list
+    "ocsp.digicert.com",            # Certificate validation
+    "crl.microsoft.com",            # Certificate revocation
+]
+
+KNOWN_GOOD_CONTEXT = (
+    "ANALYSIS CONTEXT: This sample was detonated in a Windows 11 sandbox VM. "
+    "The following domains are EXPECTED guest VM telemetry and should NOT be "
+    "flagged as IOCs or C2 infrastructure: " + ", ".join(KNOWN_GOOD_DOMAINS) + ". "
+    "Only flag network activity to these domains if the malware is specifically "
+    "targeting or abusing these services (e.g., DGA subdomain of microsoft.com)."
+)
+
+
+def _bazaar_context(init_msg: dict) -> str:
+    """Build context prefix from MalwareBazaar metadata if available."""
+    parts = []
+    bazaar_family = init_msg.get("bazaar_family", "")
+    if bazaar_family:
+        parts.append(
+            f"THREAT INTEL CONTEXT: MalwareBazaar identifies this sample as "
+            f"'{bazaar_family}'. Use this as your starting hypothesis for family "
+            f"identification. If your code analysis disagrees, explain the "
+            f"discrepancy — do not silently override the community classification."
+        )
+    parts.append(KNOWN_GOOD_CONTEXT)
+    return "\n\n".join(parts) + "\n\n" if parts else ""
+
+
+# ---------------------------------------------------------------------------
 # System prompt — safety-first framing for malware analysis
 # ---------------------------------------------------------------------------
 
@@ -1800,6 +1840,7 @@ Technical summary: {executive}"""
 
     ghidra_data = init_msg.get("ghidra_data", {})
     runtime_config = init_msg.get("config", {})
+    _ctx = _bazaar_context(init_msg)
 
     # Merge runtime config over defaults
     config = {**DEFAULT_CONFIG, **runtime_config}
@@ -1813,7 +1854,7 @@ Technical summary: {executive}"""
     # ---- .NET path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "dotnet":
         emit_status(f"Starting .NET analysis with {model}", 0)
-        dotnet_text = build_dotnet_message(ghidra_data, config)
+        dotnet_text = _ctx + build_dotnet_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -1844,7 +1885,7 @@ Technical summary: {executive}"""
     # ---- Java path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "java_cfr":
         emit_status(f"Starting Java analysis with {model}", 0)
-        java_text = build_java_message(ghidra_data, config)
+        java_text = _ctx + build_java_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -1875,7 +1916,7 @@ Technical summary: {executive}"""
     # ---- Office macro path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "office_macro":
         emit_status(f"Starting Office macro analysis with {model}", 0)
-        office_text = build_office_message(ghidra_data, config)
+        office_text = _ctx + build_office_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -1906,7 +1947,7 @@ Technical summary: {executive}"""
     # ---- PowerShell path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "powershell":
         emit_status(f"Starting PowerShell analysis with {model}", 0)
-        ps_text = build_powershell_message(ghidra_data, config)
+        ps_text = _ctx + build_powershell_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -1936,7 +1977,7 @@ Technical summary: {executive}"""
 
     if ghidra_data.get("analysis_type") == "pyinstaller":
         emit_status(f"Starting PyInstaller analysis with {model}", 0)
-        py_text = build_pyinstaller_message(ghidra_data, config)
+        py_text = _ctx + build_pyinstaller_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -1966,7 +2007,7 @@ Technical summary: {executive}"""
 
     if ghidra_data.get("analysis_type") == "go_goresym":
         emit_status(f"Starting Go analysis with {model}", 0)
-        go_text = build_go_message(ghidra_data, config)
+        go_text = _ctx + build_go_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -2048,7 +2089,7 @@ Technical summary: {executive}"""
 
     if ghidra_data.get("analysis_type") == "evasion_hunter":
         emit_status(f"Starting evasion analysis with {model}", 0)
-        evasion_text = build_evasion_message(ghidra_data, config)
+        evasion_text = _ctx + build_evasion_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
@@ -2077,7 +2118,7 @@ Technical summary: {executive}"""
         sys.exit(0)
 
     # Build initial conversation
-    initial_text = build_initial_message(ghidra_data, config)
+    initial_text = _bazaar_context(init_msg) + build_initial_message(ghidra_data, config)
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": initial_text},
     ]
