@@ -11,5 +11,7 @@ keycloak_listen_address: "127.0.0.1"
 keycloak_db_user: "keycloak"
 keycloak_db_name: "keycloak"
 keycloak_admin_user: "admin"
+keycloak_hostname: "localhost"
+keycloak_hostname_port: 8443
 keycloak_realm: "lamware"
 keycloak_client_id: "lamware-web"

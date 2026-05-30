@@ -71,7 +71,7 @@
 
 - name: Wait for Keycloak to be ready
   ansible.builtin.uri:
-    url: "http://{{ keycloak_listen_address }}:9000/health/ready"
+    url: "http://{{ keycloak_listen_address }}:9000/auth/health/ready"
     method: GET
     status_code: 200
   register: keycloak_health
