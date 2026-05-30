@@ -1,0 +1,27 @@
+# /etc/systemd/system/keycloak.service — managed by Ansible
+# Keycloak identity broker — enterprise SSO for lamware.
+# Runs as a root Podman container.
+
+[Unit]
+Description=Keycloak identity broker
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/podman rm -f keycloak
+ExecStart=/usr/bin/podman run --rm --name keycloak \
+    --network=host \
+    --env-file {{ keycloak_install_dir }}/keycloak.env \
+    -v {{ keycloak_install_dir }}/themes/lamware:/opt/keycloak/themes/lamware:ro \
+    -v {{ keycloak_install_dir }}/import:/opt/keycloak/data/import:ro \
+    {{ keycloak_image }} \
+    start --import-realm
+ExecStop=/usr/bin/podman stop keycloak
+Restart=always
+RestartSec=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target
