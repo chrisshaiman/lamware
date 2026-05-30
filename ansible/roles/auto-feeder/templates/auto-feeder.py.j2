@@ -419,8 +419,12 @@ def run_cycle() -> None:
     # Run pipeline
     try:
         log.info(f"Starting pipeline for {extracted_name}...")
+        pipeline_args = [PIPELINE_CMD, str(tmp_path), "--filename", extracted_name]
+        bazaar_sig = sample.get("signature", "")
+        if bazaar_sig and bazaar_sig.lower() not in ("", "unknown", "n/a", "none"):
+            pipeline_args.extend(["--bazaar-family", bazaar_sig])
         pipe_result = subprocess.run(
-            [PIPELINE_CMD, str(tmp_path), "--filename", extracted_name],
+            pipeline_args,
             capture_output=False,
             timeout=3600,
             cwd="/tmp",
