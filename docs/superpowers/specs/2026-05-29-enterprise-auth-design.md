@@ -132,10 +132,11 @@ All routes wrapped in auth guard:
 
 ### Role-Aware UI
 
-Components check user roles:
-- `/submit` page: hidden for viewers
-- Auto-feeder controls (pause/resume/reset): hidden for viewers
-- Delete buttons: hidden for non-admins
+Frontend hides elements for UX clarity. **This is NOT the security boundary** — the API enforces roles via `Depends(require_role(...))` and returns 403 regardless of how the request arrives. Frontend hiding just keeps the UI clean.
+
+- `/submit` page: hidden for viewers (API enforces `analyst` role)
+- Auto-feeder controls (pause/resume/reset): hidden for viewers (API enforces `analyst` role)
+- Delete buttons: hidden for non-admins (API enforces `admin` role)
 - All read-only pages: visible to everyone
 
 ### User Indicator
@@ -179,6 +180,36 @@ ALTER TABLE analyses ADD COLUMN submitted_by TEXT;
 ```
 
 Populated from `AuthContext.email` when a sample is submitted. NULL for auto-feeder submissions. Enables "who submitted what" queries.
+
+### Audit Log Table
+
+Track all state-changing operations with user identity:
+
+```sql
+CREATE TABLE audit_log (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id TEXT NOT NULL,          -- Keycloak subject
+    user_email TEXT NOT NULL,
+    action TEXT NOT NULL,           -- e.g., "sample_submit", "feeder_pause", "analysis_delete"
+    resource_type TEXT,             -- e.g., "analysis", "feeder", "sample"
+    resource_id TEXT,               -- e.g., analysis ID, sample SHA256
+    detail JSONB,                   -- action-specific metadata
+    ip_address TEXT
+);
+CREATE INDEX idx_audit_log_timestamp ON audit_log (timestamp DESC);
+CREATE INDEX idx_audit_log_user ON audit_log (user_email);
+```
+
+**Logged actions:**
+- Sample submission (who, filename, SHA256)
+- Auto-feeder pause/resume/reset (who)
+- Analysis deletion (who, analysis ID)
+- Login/logout events (forwarded from Keycloak event listener)
+
+**Implementation:** FastAPI middleware or per-endpoint logging that writes to audit_log after successful state-changing operations. Read-only operations (GET) are not logged to avoid noise.
+
+**API endpoint:** `GET /api/audit` (admin only) — paginated audit log viewer. Filterable by user, action, date range.
 
 ## Ansible Implementation
 
@@ -232,10 +263,18 @@ Keycloak after PostgreSQL, before API:
 8. Test SSO with Entra ID
 9. Deprecation: static API key demoted to viewer-only
 
+## Keycloak Theme (Security Cat Branding)
+
+Custom login theme replacing Keycloak's default look with lamware branding:
+- Security cat SVG on login page
+- Dark theme matching the dashboard (GitHub-style palette: `#0d1117` background, `#58a6ff` accent)
+- "lamware" wordmark and "Malware Analysis Platform" subtitle
+- Deployed as a theme directory mounted into the Keycloak container: `-v /opt/keycloak/themes/lamware:/opt/keycloak/themes/lamware:ro`
+- Keycloak FTL templates (login.ftl) with custom CSS — no JavaScript changes needed
+- Set as default theme in realm configuration
+
 ## Backlog (Phase 2)
 
 - Remove static API key fallback entirely
 - Keycloak service accounts for programmatic API access (client credentials grant)
-- Audit log table for all state-changing operations
 - Per-user API rate limiting
-- Keycloak theme customization (lamware branding on login page)
