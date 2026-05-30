@@ -91,7 +91,7 @@ server {
         proxy_set_header Host $host;
     }
 
-    # Keycloak identity broker proxy
+    # Keycloak identity broker proxy — all Keycloak paths
     location /auth/ {
         proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }}/;
         proxy_set_header Host $host;
@@ -101,6 +101,34 @@ server {
         proxy_buffer_size 128k;
         proxy_buffers 4 256k;
         proxy_busy_buffers_size 256k;
+    }
+    location /admin/ {
+        proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }}/admin/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+    }
+    location /resources/ {
+        proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }}/resources/;
+        proxy_set_header Host $host;
+    }
+    location /realms/ {
+        proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }}/realms/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+    }
+    location /js/ {
+        proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }}/js/;
+        proxy_set_header Host $host;
     }
 
     # Gzip compression
