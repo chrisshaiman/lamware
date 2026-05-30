@@ -189,7 +189,7 @@
     - java.py.j2
     - office.py.j2
     - powershell.py.j2
-    - javascript.py.j2
+    - script_analysis.py.j2
     - ghidra.py.j2
     - interpret.py.j2
 
