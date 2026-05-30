@@ -111,7 +111,6 @@
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
-    match: owner
     uid_owner: pipeline
     out_interface: lo
     destination_port: "4000"
@@ -122,7 +121,6 @@
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
-    match: owner
     uid_owner: pipeline
     out_interface: lo
     destination_port: "5432"
@@ -133,7 +131,6 @@
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
-    match: owner
     uid_owner: pipeline
     out_interface: lo
     destination_port: "8000"
@@ -144,7 +141,6 @@
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
-    match: owner
     uid_owner: pipeline
     out_interface: lo
     destination_port: "27017"
@@ -154,7 +150,6 @@
 - name: Block all other outbound traffic from pipeline user
   ansible.builtin.iptables:
     chain: OUTPUT
-    match: owner
     uid_owner: pipeline
     jump: DROP
     comment: "pipeline: block all other outbound"
