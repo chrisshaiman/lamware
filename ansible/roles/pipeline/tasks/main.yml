@@ -100,6 +100,65 @@
     cmd: loginctl enable-linger pipeline
   changed_when: false
 
+# -------------------------------------------------------------------------
+# Network lockdown — restrict pipeline user to localhost services only.
+# The interpret container uses --network=host, so these rules apply to
+# LLM API calls. Direct internet access is blocked; all Claude traffic
+# goes through the LiteLLM proxy on localhost:4000.
+# -------------------------------------------------------------------------
+
+- name: Allow pipeline user to reach LiteLLM proxy (localhost:4000)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    match: owner
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "4000"
+    jump: ACCEPT
+    comment: "pipeline: LiteLLM proxy"
+
+- name: Allow pipeline user to reach PostgreSQL (localhost:5432)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    match: owner
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "5432"
+    jump: ACCEPT
+    comment: "pipeline: PostgreSQL"
+
+- name: Allow pipeline user to reach CAPE API (localhost:8000)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    match: owner
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "8000"
+    jump: ACCEPT
+    comment: "pipeline: CAPE API"
+
+- name: Allow pipeline user to reach MongoDB (localhost:27017)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    match: owner
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "27017"
+    jump: ACCEPT
+    comment: "pipeline: MongoDB"
+
+- name: Block all other outbound traffic from pipeline user
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    match: owner
+    uid_owner: pipeline
+    jump: DROP
+    comment: "pipeline: block all other outbound"
+
 - name: Create lamware-api system user
   ansible.builtin.user:
     name: lamware-api
