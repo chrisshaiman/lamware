@@ -17,6 +17,8 @@ ExecStart=/usr/bin/podman run --rm --name litellm \
     --network=host \
     --env-file {{ litellm_install_dir }}/litellm.env \
     -v {{ litellm_install_dir }}/config.yaml:/app/config.yaml:ro \
+    --tmpfs /tmp:size=100m \
+    --tmpfs /usr/lib/python3.13/site-packages/litellm_proxy_extras/migrations:size=50m \
     {{ litellm_image }} \
     --config /app/config.yaml \
     --host {{ litellm_listen_address }} \
