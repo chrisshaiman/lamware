@@ -127,8 +127,8 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Item | Effort | Notes |
 |------|--------|-------|
 | LiteLLM proxy | DONE | Root Podman container on localhost:4000. Anthropic passthrough endpoint. API key isolated to LiteLLM env file. All Claude calls routed through proxy (PR #74). |
-| LiteLLM network lockdown | 1-2 hrs | Move interpret container from --network=host to restricted Podman network where only LiteLLM port is reachable. Requires podman network create + iptables rules. |
-| LiteLLM PostgreSQL spend tracking | 1-2 hrs | Enable LiteLLM's built-in spend tracking with PostgreSQL backend. Could replace custom _calculate_llm_cost() in db_ingest.py. Query /spend/logs API for cost data. |
+| LiteLLM network lockdown | DONE | iptables OUTPUT rules restrict pipeline user to localhost only (LiteLLM:4000, PostgreSQL:5432, CAPE:8000, MongoDB:27017). All other outbound blocked. PR #79. |
+| LiteLLM PostgreSQL spend tracking | DONE | LiteLLM connected to dedicated PostgreSQL database for native per-request spend tracking. PR #79. |
 | Enterprise authentication (OAuth/SAML) | 1-2 sessions | Replace static API key with OIDC/SAML SSO. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes, RBAC (analyst/admin/viewer roles). **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
 
@@ -142,14 +142,12 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Dynamic guest clock from PE timestamp | DONE | Implemented — triage extracts PE timestamp, pipeline passes clock param to CAPE |
 | PowerShell ScriptBlock logging | 15 min (Packer) | Enable `EnableScriptBlockLogging` registry key in guest. Captures decoded PS blocks in CAPE logs. Requires Packer image rebuild. |
 | Actual LLM cost tracking | DONE | Implemented — usage_from_response() captures tokens on all Claude calls |
-| Skip CAPE for non-Windows binaries | 1 hr | Triage should detect Mach-O (macOS) and ELF (Linux) formats and skip CAPE submission — no Windows guest can run them. Currently wastes 20 min on CAPE timeout. Still run triage + static analysis where applicable. |
+| Skip CAPE for non-Windows binaries | DONE | Detects ELF/Mach-O via file_mime and magic bytes, skips CAPE. Ghidra handles all three natively (PR #75). |
 | Network baseline diffing | 1 session | Capture clean guest VM network traffic baseline (DNS, HTTP, telemetry). Subtract from analysis PCAP results before passing to LLM and IOC extraction. Eliminates false positives from Win11 noise (BitLocker attestation, Defender, Office telemetry, NCSI). Only filter exact matches to avoid masking malware that mimics Microsoft domains. |
 | AutoIt support (Exe2Aut) | 1-2 hrs | Same container pattern. Common in commodity malware. ~2-3% of samples. |
 | NSIS installer extraction | 1-2 hrs | 7zip extraction + script analysis. Common dropper packaging. ~2% of samples. |
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
-| Batch script (.bat/.cmd) analysis | 1-2 hrs | Add `is_batch_script()` detection, Stage 4 handler (raw source + basic deobfuscation), Stage 4.5 single-shot LLM route. Same pattern as PowerShell pipeline. Currently .bat falls through all Stage 4 checks → no AI analysis. |
-| JavaScript (.js/.jse/.wsf) analysis | 1-2 hrs | Same gap as batch — no Stage 4/4.5 handler. Common dropper format (WScript.Shell, XMLHTTP). Same pattern as PowerShell/batch. |
-| VBScript (.vbs/.vbe) analysis | 1-2 hrs | Standalone VBScript files fall through all Stage 4 checks. Different from olevba (which handles VBA macros inside Office docs). Raw source + single-shot LLM, same pattern as PowerShell/batch. |
+| Batch/JS/VBS/HTA script analysis | DONE | Generic text/script catch-all handler (PR #77). Detects language, reads source, sends to LLM. Covers .bat, .cmd, .js, .jse, .wsf, .vbs, .vbe, .hta, .py, and any readable text. |
 | shellcheck + PSScriptAnalyzer | 1 hr | Shell (1 file) and PowerShell (9 files) linting. Low ROI — stable Packer provisioning scripts, rarely change. |
 | DAST: Schemathesis API fuzzing | 1 session | Fuzz all 10 FastAPI routers via /openapi.json. Priority targets: samples + feeder intake routers. Ansible post-deploy role + `make dast`. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
