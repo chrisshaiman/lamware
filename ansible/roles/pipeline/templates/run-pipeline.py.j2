@@ -43,7 +43,7 @@ from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
 from stages.java import is_java_binary, run_java_analysis
 from stages.office import is_office_document, run_office_analysis
 from stages.powershell import is_powershell_script, extract_powershell_from_cape, run_powershell_analysis
-from stages.javascript import is_javascript_file, read_javascript_source
+from stages.script_analysis import is_text_script, read_script_source
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize, run_plain_english
 from ioc_extract import extract_iocs, map_iocs_to_techniques
@@ -1055,21 +1055,22 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
 
         report["ghidra"] = {"triggered": True, "powershell_routed": True,
                             "analyzed_files": []}
-    elif is_javascript_file(report, sample_path):
-        log.info(f"\n[Stage 4] JavaScript file detected — extracting source...")
-        js_result = read_javascript_source(sample_path)
-        report["javascript_analysis"] = js_result
-        if js_result.get("analysis_success"):
-            patterns = js_result.get("detected_patterns", [])
-            log.info(f"  Source: {js_result['file_size']} chars")
+    elif is_text_script(report, sample_path):
+        script_result = read_script_source(sample_path, report)
+        lang = script_result.get("source_language", "unknown")
+        log.info(f"\n[Stage 4] Script file detected ({lang}) — extracting source...")
+        report["script_analysis"] = script_result
+        if script_result.get("analysis_success"):
+            patterns = script_result.get("detected_patterns", [])
+            log.info(f"  Source: {script_result['file_size']} chars, language: {lang}")
             if patterns:
                 log.info(f"  Detected patterns: {', '.join(patterns)}")
-            if js_result.get("truncated"):
-                log.info(f"  Truncated at {js_result['truncated_at']} chars")
+            if script_result.get("truncated"):
+                log.info(f"  Truncated at {script_result['truncated_at']} chars")
         else:
-            log.warning(f"JavaScript source read failed: {js_result.get('error', 'unknown')}")
+            log.warning(f"Script source read failed: {script_result.get('error', 'unknown')}")
 
-        report["ghidra"] = {"triggered": True, "javascript_routed": True,
+        report["ghidra"] = {"triggered": True, "script_routed": True,
                             "analyzed_files": []}
     # Check if this is a .NET binary — route to ILSpy instead
     elif is_dotnet_binary(report):
@@ -1249,7 +1250,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     java_data = report.get("java_analysis", {})
     office_data = report.get("office_analysis", {})
     ps_data = report.get("powershell_analysis", {})
-    js_data = report.get("javascript_analysis", {})
+    script_data = report.get("script_analysis", {})
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
@@ -1397,22 +1398,23 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         elif interp.get("error"):
             log.warning(f"Error: {interp['error']}")
 
-    elif js_data.get("analysis_success") and INTERPRET_ENABLED:
-        # JavaScript path — send source directly to LLM for deobfuscation + analysis
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing JavaScript source...")
+    elif script_data.get("analysis_success") and INTERPRET_ENABLED:
+        # Generic script path — send source directly to LLM for analysis + deobfuscation
+        script_lang = script_data.get("source_language", "unknown")
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing {script_lang} source...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
-        js_init = {
-            "analysis_type": "javascript",
-            "source_language": "javascript",
-            "source": js_data.get("source", "")[:50000],
-            "file_size": js_data.get("file_size", 0),
-            "detected_patterns": js_data.get("detected_patterns", []),
-            "truncated": js_data.get("truncated", False),
+        script_init = {
+            "analysis_type": "script_analysis",
+            "source_language": script_lang,
+            "source": script_data.get("source", "")[:50000],
+            "file_size": script_data.get("file_size", 0),
+            "detected_patterns": script_data.get("detected_patterns", []),
+            "truncated": script_data.get("truncated", False),
             "cape_signatures": cape_sigs[:20],
             "analysis_success": True,
         }
         report["llm_interpretation"] = run_interpret(
-            js_init, output_dir,
+            script_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
