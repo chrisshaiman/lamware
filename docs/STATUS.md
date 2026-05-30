@@ -129,7 +129,6 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | LiteLLM proxy | DONE | Root Podman container on localhost:4000. Anthropic passthrough endpoint. API key isolated to LiteLLM env file. All Claude calls routed through proxy (PR #74). |
 | LiteLLM network lockdown | 1-2 hrs | Move interpret container from --network=host to restricted Podman network where only LiteLLM port is reachable. Requires podman network create + iptables rules. |
 | LiteLLM PostgreSQL spend tracking | 1-2 hrs | Enable LiteLLM's built-in spend tracking with PostgreSQL backend. Could replace custom _calculate_llm_cost() in db_ingest.py. Query /spend/logs API for cost data. |
-| LiteLLM multi-provider fallback | 1 hr | Add fallback models (e.g., OpenAI GPT-4o) via LiteLLM model_list with fallback groups. Resilience if Anthropic API is down. |
 | Enterprise authentication (OAuth/SAML) | 1-2 sessions | Replace static API key with OIDC/SAML SSO. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes, RBAC (analyst/admin/viewer roles). **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
 
@@ -166,6 +165,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | React frontend | DONE | PR #57, #58 — 10 pages, MITRE matrix, evasion dashboard, nginx deployment |
 | WebSocket real-time updates | DONE | PR #64 — PG LISTEN/NOTIFY → FastAPI → browser, TanStack cache invalidation |
 | Dynamic trace + LLM devirtualization | Design + build | Feed CAPE's runtime API trace alongside Ghidra's static decompilation to the LLM. For VM-protected binaries (VMProtect, Themida), Ghidra only sees the VM dispatcher loop — but CAPE captured what the code *actually did*. The LLM correlates "this VM bytecode sequence resulted in these API calls" to reconstruct behavior that no single tool can reverse. Novel cross-tool correlation — core to lamware's thesis. |
+| LiteLLM multi-provider fallback | 1 hr | Add fallback models (e.g., OpenAI GPT-4o) via LiteLLM model_list with fallback groups. Resilience if Anthropic API is down. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
 | Containerize FastAPI + React/nginx | 1 session | Root Podman + systemd pattern (same as LiteLLM). Improves portability for host migration. FastAPI: Python slim + uvicorn. React: nginx + Vite build output. Touches API and frontend Ansible roles, SSL cert mounts, volume config. |
