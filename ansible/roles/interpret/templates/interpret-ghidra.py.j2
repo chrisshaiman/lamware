@@ -1755,7 +1755,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
             parts.append(f"- [{ioc.get('source', '?')}] {ioc.get('type', '?')}: {ioc.get('value', '?')[:80]} — {ioc.get('context', '')[:60]}")
         parts.append("")
 
-    prompt_text = "\n".join(parts)
+    prompt_text = KNOWN_GOOD_CONTEXT + "\n\n" + "\n".join(parts)
 
     try:
         response = client.messages.create(
