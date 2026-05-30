@@ -176,6 +176,7 @@ def determine_family(report: dict) -> str:
     """Determine malware family using a priority chain of signals.
 
     Priority order (highest confidence first):
+    0. MalwareBazaar signature — threat intel community consensus
     1. Cape extracted configs — curated family tag from config extraction
     2. Cape malfamily — CAPE's own signature-based family detection
     3. Go offensive module match — definitive build provenance
@@ -194,6 +195,11 @@ def determine_family(report: dict) -> str:
         """Tag the report with the detection source for logging."""
         report["_family_source"] = source
         return family
+
+    # --- Priority 0: MalwareBazaar signature (community consensus) ---
+    bazaar_family = report.get("bazaar_family", "")
+    if bazaar_family and bazaar_family.lower() not in ("", "unknown", "n/a", "none"):
+        return _result(bazaar_family.lower(), "bazaar")
 
     # --- Priority 1: Cape extracted configs (highest confidence) ---
     for cfg in cape.get("extracted_configs", []):
@@ -662,11 +668,14 @@ def cross_correlate(report: dict) -> list[dict]:
 # Main pipeline
 # -------------------------------------------------------------------------
 
-def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> dict:
+def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
+                  bazaar_family: str = "") -> dict:
     """Execute the multi-stage malware analysis pipeline."""
     import time as _time
     pipeline_start = _time.time()
     stage_timings = {}
+    if bazaar_family:
+        log.info(f"  MalwareBazaar family: {bazaar_family}")
 
     # Create DB row at pipeline start for real-time status tracking
     analysis_id_early = create_analysis_row(task_id, str(sample_path),
@@ -697,6 +706,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         "sample": str(sample_path),
         "sample_name": original_name or sample_path.name,
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "bazaar_family": bazaar_family,
     }
 
     output_dir = REPORTS_DIR / task_id
@@ -1241,6 +1251,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
     update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
     # Stage 4.5: LLM Interpretation (agentic for Ghidra, single-shot for .NET/Go)
+    # Common context passed to all LLM init messages for consistency
+    _llm_context = {}
+    if report.get("bazaar_family"):
+        _llm_context["bazaar_family"] = report["bazaar_family"]
     _interp_start = _time.time()
     update_stage(analysis_id_early, "interpret", "started")
     ghidra_data = report.get("ghidra", {})
@@ -1265,6 +1279,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         extraction_source = dotnet_data.get("extraction_source")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         dotnet_init = {
+            **_llm_context,
             "analysis_type": "dotnet",
             "source_language": "csharp",
             "decompiled_source": dotnet_source[:50000],  # cap for LLM context
@@ -1299,6 +1314,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         # Java path — send decompiled Java source directly to LLM
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Java decompilation...")
         java_init = {
+            **_llm_context,
             "analysis_type": "java_cfr",
             "source_language": "java",
             "decompiled_source": java_data.get("decompilation", {}).get("source", "")[:50000],
@@ -1331,6 +1347,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Office macros...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         office_init = {
+            **_llm_context,
             "analysis_type": "office_macro",
             "source_language": "vba",
             "vba_source": office_data.get("vba_source", "")[:50000],
@@ -1367,6 +1384,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing PowerShell script...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         ps_init = {
+            **_llm_context,
             "analysis_type": "powershell",
             "source_language": "powershell",
             "original_script": ps_data.get("original_script", "")[:30000],
@@ -1404,6 +1422,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing {script_lang} source...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         script_init = {
+            **_llm_context,
             "analysis_type": "script_analysis",
             "source_language": script_lang,
             "source": script_data.get("source", "")[:50000],
@@ -1436,6 +1455,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         py_imports = pyinstaller_data.get("imports", [])
         py_strings = pyinstaller_data.get("strings_of_interest", [])
         py_init = {
+            **_llm_context,
             "analysis_type": "pyinstaller",
             "source_language": "python",
             "decompiled_source": py_source[:50000],
@@ -1466,6 +1486,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
         # Go path — send GoReSym metadata directly to LLM (no tools needed)
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Go binary metadata...")
         go_init = {
+            **_llm_context,
             "analysis_type": "go_goresym",
             "build_info": go_data.get("build_info", {}),
             "packages": go_data.get("packages", []),
@@ -1563,6 +1584,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
                         api_summary.add(api)
 
         evasion_init = {
+            **_llm_context,
             "analysis_type": "evasion_hunter",
             "binary_size": sample_size,
             "file_type": triage.get("file_type", "unknown"),
@@ -1691,6 +1713,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "") -> di
             and screenshot_data.get("frames_base64")):
         log.info(f"\n[Stage 5.7] Visual Analysis: analyzing {screenshot_data['unique_count']} unique screenshots...")
         visual_init = {
+            **_llm_context,
             "analysis_type": "visual_analysis",
             "total_screenshots": screenshot_data.get("total_screenshots", 0),
             "unique_count": screenshot_data.get("unique_count", 0),
@@ -1958,6 +1981,8 @@ def main():
     parser.add_argument("--stages", default=None,
                         help="Comma-separated stages to replay (default: all). "
                              "Options: correlate,analysis,iocs,summary,db,pdf")
+    parser.add_argument("--bazaar-family", default="",
+                        help="MalwareBazaar signature/family name (passed from auto-feeder)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging")
     args = parser.parse_args()
@@ -1973,7 +1998,8 @@ def main():
         run_replay(args.sample, stages=stages)
     else:
         task_id = args.task_id or uuid.uuid4().hex[:12]
-        report = run_pipeline(args.sample, task_id, original_name=args.filename)
+        report = run_pipeline(args.sample, task_id, original_name=args.filename,
+                              bazaar_family=args.bazaar_family)
 
         # Print summary
         triage = report.get("triage", {})
