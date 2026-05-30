@@ -117,12 +117,15 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     except OSError as e:
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
 
-    # Send init message
-    init_msg = json.dumps({
+    # Send init message (bazaar_family passed through for LLM context)
+    init_payload = {
         "type": "init",
         "ghidra_data": ghidra_result,
         "config": interpret_config,
-    })
+    }
+    if ghidra_result.get("bazaar_family"):
+        init_payload["bazaar_family"] = ghidra_result["bazaar_family"]
+    init_msg = json.dumps(init_payload)
     proc.stdin.write(init_msg + "\n")
     proc.stdin.flush()
 
