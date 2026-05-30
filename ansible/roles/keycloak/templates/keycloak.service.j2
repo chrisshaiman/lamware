@@ -15,9 +15,8 @@ ExecStart=/usr/bin/podman run --rm --name keycloak \
     --network=host \
     --env-file {{ keycloak_install_dir }}/keycloak.env \
     -v {{ keycloak_install_dir }}/themes/lamware:/opt/keycloak/themes/lamware:ro \
-    -v {{ keycloak_install_dir }}/import:/opt/keycloak/data/import:ro \
     {{ keycloak_image }} \
-    start-dev --import-realm
+    start-dev
 ExecStop=/usr/bin/podman stop keycloak
 Restart=always
 RestartSec=5
