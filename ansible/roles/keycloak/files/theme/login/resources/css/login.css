@@ -1,0 +1,105 @@
+/* lamware dark theme — matches dashboard palette */
+body {
+    background-color: #0d1117 !important;
+}
+
+#kc-header-wrapper,
+#kc-locale {
+    display: none;
+}
+
+.login-pf body,
+#kc-login {
+    background-color: #0d1117;
+}
+
+#kc-form-login {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 24px;
+}
+
+.form-control {
+    background-color: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    color: #e6edf3 !important;
+    border-radius: 6px !important;
+    padding: 10px 12px !important;
+}
+
+.form-control:focus {
+    border-color: #58a6ff !important;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15) !important;
+}
+
+.control-label {
+    color: #8b949e !important;
+    font-size: 12px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-primary {
+    background-color: #58a6ff !important;
+    border-color: #58a6ff !important;
+    color: #0d1117 !important;
+    font-weight: 600 !important;
+    border-radius: 6px !important;
+    padding: 10px !important;
+    margin-top: 8px;
+}
+
+.btn-primary:hover {
+    background-color: #79c0ff !important;
+    border-color: #79c0ff !important;
+}
+
+.lamware-header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.lamware-logo {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 12px;
+}
+
+.lamware-title {
+    color: #e6edf3;
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.5px;
+}
+
+.lamware-subtitle {
+    color: #8b949e;
+    font-size: 12px;
+    margin: 4px 0 0 0;
+}
+
+#kc-content-wrapper {
+    max-width: 400px;
+    margin: 0 auto;
+    padding-top: 10vh;
+}
+
+.alert-error {
+    background-color: #3d1a1a !important;
+    border-color: #ff6b6b !important;
+    color: #ff6b6b !important;
+    border-radius: 6px !important;
+}
+
+#kc-social-providers .zocial {
+    background-color: #161b22 !important;
+    border: 1px solid #30363d !important;
+    color: #e6edf3 !important;
+    border-radius: 6px !important;
+}
+
+#kc-social-providers .zocial:hover {
+    background-color: #1c2128 !important;
+}
