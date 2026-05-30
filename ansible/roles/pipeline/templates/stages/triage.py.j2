@@ -81,7 +81,15 @@ def derive_package_from_triage(triage_result: dict, filename: str = "") -> str:
             return "dll"
         return "exe"
 
-    # Scripts
+    # Scripts — extension-based (reliable) then content-based
+    if ext in ("js", "jse", "wsf", "wsh"):
+        return "js"
+    if ext in ("vbs", "vbe"):
+        return "vbs"
+    if ext in ("bat", "cmd"):
+        return "bat"
+    if ext == "hta":
+        return "hta"
     if any(kw in file_type for kw in ["powershell", "ps1"]):
         return "ps1"
     if "python" in file_type:
