@@ -55,6 +55,22 @@
     owner: "{{ litellm_db_user | default('litellm') }}"
     encoding: UTF-8
 
+- name: Create Keycloak database user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    name: "{{ keycloak_db_user | default('keycloak') }}"
+    password: "{{ keycloak_db_password }}"
+    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+
+- name: Create Keycloak database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: "{{ keycloak_db_name | default('keycloak') }}"
+    owner: "{{ keycloak_db_user | default('keycloak') }}"
+    encoding: UTF-8
+
 - name: Deploy schema SQL
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/roles/pipeline/files/schema.sql"
