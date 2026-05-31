@@ -78,6 +78,10 @@
     - role: litellm
       tags: [litellm]
 
+    # 10c. Keycloak — identity broker for enterprise SSO
+    - role: keycloak
+      tags: [keycloak]
+
     # 11. PCAP analysis — containerized Zeek + Suricata for network traffic
     - role: pcap-analysis
       tags: [pcap-analysis]
