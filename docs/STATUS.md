@@ -166,6 +166,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | LiteLLM multi-provider fallback | 1 hr | Add fallback models (e.g., OpenAI GPT-4o) via LiteLLM model_list with fallback groups. Resilience if Anthropic API is down. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
+| Alembic database migrations | 1-2 hrs | Replace raw SQL schema changes with versioned Alembic migrations. Scaffold `alembic init`, configure for SQLModel, convert existing schema to initial migration. Enables rollback, drift detection, and cleaner schema evolution. Do before the next batch of schema changes. |
 | Containerize FastAPI + React/nginx | 1 session | Root Podman + systemd pattern (same as LiteLLM). Improves portability for host migration. FastAPI: Python slim + uvicorn. React: nginx + Vite build output. Touches API and frontend Ansible roles, SSL cert mounts, volume config. |
 | Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
 | Selective stage execution | Design + build | --skip, --only, --rerun flags with dependency tracking. Avoids re-running Cape/Volatility when only static analysis changed. |

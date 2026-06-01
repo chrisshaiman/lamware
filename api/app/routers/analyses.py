@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, col, func, select
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_auth, require_role
+from ..audit import log_audit
 from ..config import settings
 from ..database import get_session
 from ..models import (
@@ -56,7 +57,7 @@ def list_analyses(
     family: str | None = Query(default=None, description="Filter by malware family"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> dict:
     """
@@ -159,7 +160,7 @@ def list_analyses(
 @router.get("/{analysis_id}")
 def get_analysis(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> dict:
     """
@@ -333,7 +334,7 @@ def get_analysis(
 @router.delete("/{analysis_id}", status_code=200)
 def delete_analysis(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_role("admin")),
     session: Session = Depends(get_session),
 ) -> dict:
     """
@@ -356,6 +357,14 @@ def delete_analysis(
 
     session.delete(analysis)
     session.commit()
+
+    log_audit(
+        session, auth,
+        action="analysis_delete",
+        resource_type="analysis",
+        resource_id=str(analysis_id),
+        details={"task_id": task_id},
+    )
 
     # Remove report files from disk -- best-effort, no exception on failure
     report_dir = Path(settings.reports_dir) / task_id
@@ -388,7 +397,7 @@ def delete_analysis(
 @router.get("/{analysis_id}/pdf")
 def get_pdf(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> FileResponse:
     """Download the PDF report for this analysis."""
@@ -416,7 +425,7 @@ def get_pdf(
 @router.get("/{analysis_id}/logs")
 def get_logs(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> FileResponse:
     """Download the pipeline log for this analysis."""
@@ -457,7 +466,7 @@ def get_logs(
 @router.get("/{analysis_id}/iocs/csv")
 def export_iocs_csv(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """Export all IOCs for this analysis as CSV."""
@@ -569,7 +578,7 @@ def _ioc_to_stix_object(ioc: IocValue, ai: AnalysisIoc) -> dict:
 @router.get("/{analysis_id}/iocs/stix")
 def export_iocs_stix(
     analysis_id: int,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """

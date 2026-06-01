@@ -111,6 +111,24 @@
     path: /tmp/pipeline-migration-001.sql
     state: absent
 
+- name: Deploy auth migration SQL
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/roles/pipeline/files/migration_002_auth.sql"
+    dest: /tmp/pipeline-migration-002.sql
+    mode: "0644"
+
+- name: Apply auth migration (idempotent — uses IF NOT EXISTS)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: psql -d {{ postgres_db_name }} -f /tmp/pipeline-migration-002.sql
+  changed_when: true
+
+- name: Clean up auth migration file
+  ansible.builtin.file:
+    path: /tmp/pipeline-migration-002.sql
+    state: absent
+
 - name: Grant table privileges to pipeline user
   become: true
   become_user: postgres

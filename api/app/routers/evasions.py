@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlmodel import Session
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_auth
 from ..database import get_session
 
 router = APIRouter(prefix="/api/evasions", tags=["evasions"])
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/evasions", tags=["evasions"])
 
 @router.get("")
 async def list_evasions(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> dict:
     """
