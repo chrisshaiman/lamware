@@ -6,6 +6,7 @@
   "imports": {
     "#*": "./src/*.ts",
     "#components/*": "./src/components/*.tsx",
+    "#contexts/*": "./src/contexts/*.tsx",
     "#pages/*": "./src/pages/*.tsx",
     "#hooks/*": "./src/hooks/*.ts",
     "#lib/*": "./src/lib/*.ts"
@@ -34,6 +35,7 @@
     "@tanstack/react-query": "^5.100.10",
     "@tanstack/react-table": "^8.21.3",
     "axios": "^1.16.0",
+    "keycloak-js": "^26.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",
