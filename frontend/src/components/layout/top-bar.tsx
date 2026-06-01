@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useLocation } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { useAlerts } from "#hooks/use-alerts";
+import { useAuth } from "#contexts/auth-context";
 
 const PAGE_TITLES: Record<string, string> = {
   "/analyses": "Analyses",
@@ -23,6 +24,7 @@ interface TopBarProps {
 export function TopBar({ onToggleSidebar }: TopBarProps) {
   const location = useLocation();
   const { data: alerts } = useAlerts();
+  const { user, roles, logout } = useAuth();
 
   // Match the longest prefix for nested routes like /analyses/123
   const matchedPath = Object.keys(PAGE_TITLES)
@@ -68,6 +70,23 @@ export function TopBar({ onToggleSidebar }: TopBarProps) {
           />
           <span className="hidden sm:inline">{healthTitle}</span>
         </div>
+        {user && (
+          <div className="flex items-center gap-2 border-l border-[var(--color-border)] pl-3">
+            <div className="hidden text-right text-xs sm:block">
+              <div className="text-[var(--color-text-primary)]">{user.name}</div>
+              <div className="text-[var(--color-text-muted)]">
+                {roles.includes("admin") ? "admin" : roles.includes("analyst") ? "analyst" : "viewer"}
+              </div>
+            </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              className="rounded-md p-1 text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

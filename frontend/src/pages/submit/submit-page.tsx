@@ -5,6 +5,7 @@ import { useState, useCallback } from "react";
 import { Upload, FileUp, CheckCircle, AlertCircle } from "lucide-react";
 import { useSubmitSample } from "#hooks/use-submit";
 import { formatBytes } from "#lib/utils";
+import { RequireRole } from "#components/require-role";
 
 export function SubmitPage() {
   const [dragOver, setDragOver] = useState(false);
@@ -69,13 +70,22 @@ export function SubmitPage() {
               {formatBytes(selectedFile.size)}
             </div>
           </div>
-          <button
-            onClick={handleSubmit}
-            disabled={submitMutation.isPending}
-            className="rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+          <RequireRole
+            role="analyst"
+            fallback={
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Analyst role required to submit samples.
+              </p>
+            }
           >
-            {submitMutation.isPending ? "Submitting..." : "Submit for Analysis"}
-          </button>
+            <button
+              onClick={handleSubmit}
+              disabled={submitMutation.isPending}
+              className="rounded-md bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+            >
+              {submitMutation.isPending ? "Submitting..." : "Submit for Analysis"}
+            </button>
+          </RequireRole>
         </div>
       )}
 
