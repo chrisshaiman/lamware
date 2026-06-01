@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     api_port: int = 8001
     api_host: str = "0.0.0.0"
 
+    # Keycloak OIDC
+    keycloak_url: str = "http://127.0.0.1:8080/auth"
+    keycloak_realm: str = "lamware"
+    api_key_role: str = "viewer"  # role granted to API key auth during transition
+
     # Filesystem paths used by routers
     reports_dir: str = "/opt/pipeline/reports"
     network_monitor_status: str = "/opt/network-monitor/status.json"

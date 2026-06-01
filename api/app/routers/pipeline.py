@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_auth
 from ..database import get_session
 from ..models.analysis import Analysis
 from ..models.sample import Sample
@@ -28,7 +28,7 @@ RECENT_WINDOW_HOURS = 24
 
 @router.get("/status")
 async def pipeline_status(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> dict:
     """
