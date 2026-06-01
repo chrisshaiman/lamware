@@ -23,6 +23,11 @@ class ConnectionManager:
         self.active_connections.add(websocket)
         log.info("WebSocket client connected (%d total)", len(self.active_connections))
 
+    def track(self, websocket: WebSocket) -> None:
+        """Add an already-accepted WebSocket to the broadcast pool."""
+        self.active_connections.add(websocket)
+        log.info("WebSocket client tracked (%d total)", len(self.active_connections))
+
     def disconnect(self, websocket: WebSocket) -> None:
         self.active_connections.discard(websocket)
         log.info("WebSocket client disconnected (%d total)", len(self.active_connections))

@@ -3,7 +3,7 @@
 #
 # WebSocket endpoint for real-time pipeline updates.
 #
-# Clients connect to /ws/pipeline?api_key=<key> and receive:
+# Clients connect to /ws/pipeline and authenticate via first message:
 # 1. Current pipeline state on connect (same as GET /api/pipeline/status)
 # 2. Typed events as stages transition (stage_update, analysis_complete, etc.)
 #
@@ -15,7 +15,7 @@ import json
 import logging
 
 import asyncpg
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 
 from ..config import settings
@@ -84,20 +84,51 @@ def _get_current_state(session: Session) -> dict:
 
 
 @router.websocket("/ws/pipeline")
-async def websocket_pipeline(
-    websocket: WebSocket,
-    api_key: str = Query(default=""),
-):
-    """WebSocket endpoint for real-time pipeline status updates."""
-    # Auth — same logic as REST: empty settings.api_key = dev mode (allow all)
-    if settings.api_key and api_key != settings.api_key:
-        await websocket.close(code=1008, reason="Invalid API key")
+async def websocket_pipeline(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time pipeline status updates.
+
+    Auth: client sends {"type": "auth", "token": "<jwt>"} or
+    {"type": "auth", "api_key": "<key>"} as first message within 5 seconds.
+    """
+    await websocket.accept()
+
+    # --- Auth via first message (5s timeout) ---
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+        msg = json.loads(raw)
+    except (asyncio.TimeoutError, json.JSONDecodeError):
+        await websocket.close(code=4001, reason="Auth timeout or invalid message")
         return
 
-    await manager.connect(websocket)
+    if msg.get("type") != "auth":
+        await websocket.close(code=4001, reason="First message must be auth")
+        return
+
+    # Try JWT
+    token = msg.get("token")
+    api_key = msg.get("api_key")
+
+    if token:
+        from ..auth import _validate_jwt
+        try:
+            await _validate_jwt(token)
+        except Exception:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+    elif api_key and settings.api_key and api_key == settings.api_key:
+        pass  # API key accepted
+    elif not settings.api_key:
+        pass  # Dev mode — allow all
+    else:
+        await websocket.close(code=4001, reason="Invalid credentials")
+        return
+
+    # --- Authenticated — join broadcast pool ---
+    manager.track(websocket)
 
     try:
-        # Send current state on connect
+        # Send current state
         try:
             with Session(engine) as session:
                 state = _get_current_state(session)
@@ -105,7 +136,7 @@ async def websocket_pipeline(
             state = {"running": [], "recent_completed": [], "as_of": ""}
         await websocket.send_json(state)
 
-        # Keep connection alive — wait for client disconnect
+        # Keep alive — wait for client disconnect
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
