@@ -9,7 +9,7 @@
 #   cd api
 #   LAMWARE_DB_PASSWORD=... uvicorn app.main:app --reload --port 8001
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -35,6 +35,20 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
+
+# ---------------------------------------------------------------------------
+# Deprecation header middleware — signals API key auth is legacy
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def add_deprecation_header(request: Request, call_next):
+    """Add Deprecation header when API key auth is used."""
+    response = await call_next(request)
+    if getattr(request.state, "auth_deprecated", False):
+        response.headers["Deprecation"] = "true"
+    return response
+
 
 # ---------------------------------------------------------------------------
 # Health endpoint — no auth, used by systemd / load balancer checks
@@ -76,7 +90,15 @@ app.include_router(ws.router)
 
 @app.on_event("startup")
 async def _startup():
+    import logging
+    from app.auth import fetch_jwks
     from app.routers.ws import start_pg_listener
+    try:
+        await fetch_jwks()
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "JWKS fetch failed on startup: %s (JWT auth unavailable until Keycloak is reachable)", e
+        )
     await start_pg_listener()
 
 
