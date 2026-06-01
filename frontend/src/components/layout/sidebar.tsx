@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "#lib/utils";
+import { useAuth } from "#contexts/auth-context";
 import { SecurityCat } from "./security-cat";
 
 const NAV_ITEMS = [
@@ -24,8 +25,8 @@ const NAV_ITEMS = [
   { to: "/pipeline", label: "Pipeline", icon: Activity },
   { to: "/alerts", label: "Alerts", icon: AlertTriangle },
   { to: "/evasions", label: "Evasions", icon: ShieldAlert },
-  { to: "/submit", label: "Submit", icon: Upload },
-] as const;
+  { to: "/submit", label: "Submit", icon: Upload, requiredRole: "analyst" },
+];
 
 interface SidebarProps {
   open: boolean;
@@ -33,6 +34,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const { hasRole } = useAuth();
+
   return (
     <aside
       className={cn(
@@ -60,7 +63,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-0.5 px-2 py-3">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+        {NAV_ITEMS.filter((item) => !item.requiredRole || hasRole(item.requiredRole)).map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

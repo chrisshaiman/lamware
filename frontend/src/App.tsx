@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Routes, Route, Navigate } from "react-router-dom";
+import { useAuth } from "#contexts/auth-context";
 import { AppShell } from "#components/layout/app-shell";
+import { LoginPage } from "#pages/login";
 import { AnalysesPage } from "#pages/analyses/analyses-page";
 import { AnalysisDetailPage } from "#pages/analysis-detail/analysis-detail-page";
 import { IocsPage } from "#pages/iocs/iocs-page";
@@ -14,6 +16,20 @@ import { EvasionsPage } from "#pages/evasions/evasions-page";
 import { SubmitPage } from "#pages/submit/submit-page";
 
 export default function App() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg)]">
+        <div className="text-sm text-[var(--color-text-secondary)]">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
   return (
     <Routes>
       <Route element={<AppShell />}>
