@@ -141,6 +141,8 @@ async def _validate_jwt(token: str) -> AuthContext:
             token,
             public_key,
             algorithms=["RS256"],
+            # verify_aud disabled — single-app realm. Enable if adding more
+            # Keycloak clients to prevent cross-client token reuse.
             options={"verify_aud": False},
         )
     except jwt.ExpiredSignatureError:
