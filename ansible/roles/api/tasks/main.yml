@@ -90,7 +90,7 @@
   ansible.builtin.command:
     cmd: >
       {{ api_install_dir }}/venv/bin/pip install
-      fastapi uvicorn[standard] sqlmodel psycopg2-binary pydantic-settings python-multipart asyncpg
+      fastapi uvicorn[standard] sqlmodel psycopg2-binary pydantic-settings python-multipart asyncpg PyJWT[crypto] httpx
   become: true
   become_user: "{{ api_user }}"
   changed_when: true
