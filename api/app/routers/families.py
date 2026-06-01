@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_auth
 from ..database import get_session
 from ..models.analysis import Analysis
 
@@ -27,7 +27,7 @@ async def list_families(
     ),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """
