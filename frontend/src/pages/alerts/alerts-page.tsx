@@ -5,6 +5,7 @@ import { AlertTriangle, Pause, Play, RotateCcw } from "lucide-react";
 import { useAlerts } from "#hooks/use-alerts";
 import { useFeederStatus, useFeederPause, useFeederResume, useFeederReset } from "#hooks/use-feeder";
 import { formatCost } from "#lib/utils";
+import { RequireRole } from "#components/require-role";
 
 export function AlertsPage() {
   const { data: alerts, isLoading: alertsLoading } = useAlerts();
@@ -114,32 +115,34 @@ export function AlertsPage() {
                 ))}
               </div>
             )}
-            <div className="flex gap-2">
-              {feeder?.paused ? (
+            <RequireRole role="analyst">
+              <div className="flex gap-2">
+                {feeder?.paused ? (
+                  <button
+                    onClick={handleResume}
+                    disabled={resumeMutation.isPending}
+                    className="flex items-center gap-1 rounded border border-green-800 bg-green-900/20 px-3 py-1.5 text-xs text-green-400 hover:bg-green-900/40 disabled:opacity-50"
+                  >
+                    <Play className="h-3 w-3" /> Resume
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePause}
+                    disabled={pauseMutation.isPending}
+                    className="flex items-center gap-1 rounded border border-yellow-800 bg-yellow-900/20 px-3 py-1.5 text-xs text-yellow-400 hover:bg-yellow-900/40 disabled:opacity-50"
+                  >
+                    <Pause className="h-3 w-3" /> Pause
+                  </button>
+                )}
                 <button
-                  onClick={handleResume}
-                  disabled={resumeMutation.isPending}
-                  className="flex items-center gap-1 rounded border border-green-800 bg-green-900/20 px-3 py-1.5 text-xs text-green-400 hover:bg-green-900/40 disabled:opacity-50"
+                  onClick={handleReset}
+                  disabled={resetMutation.isPending}
+                  className="flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
                 >
-                  <Play className="h-3 w-3" /> Resume
+                  <RotateCcw className="h-3 w-3" /> Reset Failures
                 </button>
-              ) : (
-                <button
-                  onClick={handlePause}
-                  disabled={pauseMutation.isPending}
-                  className="flex items-center gap-1 rounded border border-yellow-800 bg-yellow-900/20 px-3 py-1.5 text-xs text-yellow-400 hover:bg-yellow-900/40 disabled:opacity-50"
-                >
-                  <Pause className="h-3 w-3" /> Pause
-                </button>
-              )}
-              <button
-                onClick={handleReset}
-                disabled={resetMutation.isPending}
-                className="flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
-              >
-                <RotateCcw className="h-3 w-3" /> Reset Failures
-              </button>
-            </div>
+              </div>
+            </RequireRole>
           </div>
         </div>
 

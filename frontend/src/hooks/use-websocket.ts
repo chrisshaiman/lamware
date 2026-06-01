@@ -1,13 +1,13 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 //
-// WebSocket hook — connects to /ws/pipeline, receives pipeline events,
-// and invalidates TanStack Query caches to trigger auto-refetch.
-// Auto-reconnects with exponential backoff. Falls back to polling when
-// disconnected.
+// WebSocket hook — connects to /ws/pipeline, authenticates via first message,
+// receives pipeline events, and invalidates TanStack Query caches.
+// Auto-reconnects with exponential backoff.
 
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import keycloak from "#lib/keycloak";
 
 /** Event type to query keys to invalidate */
 const INVALIDATION_MAP: Record<string, string[]> = {
@@ -39,21 +39,32 @@ export function useWebSocket(): WebSocketStatus {
     mountedRef.current = true;
 
     function connect() {
-      // Build WebSocket URL from the same base as the API client
+      // Build WebSocket URL — no auth in URL, auth via first message
       const baseUrl = import.meta.env.VITE_API_BASE_URL || window.location.origin;
       const wsProtocol = baseUrl.startsWith("https") ? "wss" : "ws";
       const host = baseUrl.replace(/^https?:\/\//, "");
-      const apiKey = import.meta.env.VITE_API_KEY || "";
-      const url = `${wsProtocol}://${host}/ws/pipeline${apiKey ? `?api_key=${apiKey}` : ""}`;
+      const url = `${wsProtocol}://${host}/ws/pipeline`;
 
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (!mountedRef.current) return;
+
+        // Send auth as first message
+        if (keycloak.authenticated && keycloak.token) {
+          ws.send(JSON.stringify({ type: "auth", token: keycloak.token }));
+        } else {
+          // Fallback: API key for dev/testing
+          const apiKey = import.meta.env.VITE_API_KEY;
+          if (apiKey) {
+            ws.send(JSON.stringify({ type: "auth", api_key: apiKey }));
+          }
+        }
+
         setIsConnected(true);
         setIsReconnecting(false);
-        backoffRef.current = 1000; // reset backoff on success
+        backoffRef.current = 1000;
       };
 
       ws.onmessage = (event) => {
@@ -87,7 +98,6 @@ export function useWebSocket(): WebSocketStatus {
       };
 
       ws.onerror = () => {
-        // onclose will fire after onerror — reconnect handled there
         ws.close();
       };
     }

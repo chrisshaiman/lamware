@@ -8,6 +8,7 @@ import { SeverityBadge } from "#components/shared/severity-badge";
 import { formatTimestamp, formatCost, formatDuration } from "#lib/utils";
 import { PIPELINE_STAGES, STAGE_LABELS } from "#lib/constants";
 import { SampleInfoCard } from "./sample-info-card";
+import { RequireRole } from "#components/require-role";
 import { NarrativeSection } from "./narrative-section";
 import { IocsSection } from "./iocs-section";
 import { TechniquesSection } from "./techniques-section";
@@ -97,14 +98,16 @@ export function AnalysisDetailPage() {
             {analysis.llm_cost_usd != null && <span>{formatCost(analysis.llm_cost_usd)}</span>}
           </div>
         </div>
-        <button
-          onClick={handleDelete}
-          disabled={deleteMutation.isPending}
-          className="flex items-center gap-1.5 rounded-md border border-red-800 bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-900/40 disabled:opacity-50"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-          Delete
-        </button>
+        <RequireRole role="admin">
+          <button
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending}
+            className="flex items-center gap-1.5 rounded-md border border-red-800 bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-900/40 disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
+          </button>
+        </RequireRole>
       </div>
 
       {/* Stage progress bar */}
