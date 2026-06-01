@@ -5,3 +5,4 @@ api_install_dir: /opt/lamware-api
 api_port: 8001
 api_host: "0.0.0.0"
 api_user: lamware-api
+lamware_api_key_role: "viewer"
