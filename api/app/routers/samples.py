@@ -15,8 +15,11 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlmodel import Session
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_role
+from ..audit import log_audit
+from ..database import get_session
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
 
@@ -31,7 +34,8 @@ SPOOL_DIR = Path("/opt/pipeline/spool")
 @router.post("/submit")
 async def submit_sample(
     file: UploadFile,
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_role("analyst")),
+    session: Session = Depends(get_session),
 ) -> dict:
     """
     Submit a sample file for analysis.
@@ -70,10 +74,19 @@ async def submit_sample(
             status_code=500, detail=f"Failed to save upload: {exc}"
         ) from exc
 
+    log_audit(
+        session, auth,
+        action="sample_submit",
+        resource_type="sample",
+        resource_id=submission_id,
+        details={"filename": safe_name, "size_bytes": len(content)},
+    )
+
     return {
         "status": "submitted",
         "submission_id": submission_id,
         "filename": safe_name,
         "size_bytes": len(content),
+        "submitted_by": auth.email,
         "message": "Sample queued. Poll /api/pipeline/status for progress.",
     }

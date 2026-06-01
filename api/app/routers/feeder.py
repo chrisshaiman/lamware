@@ -22,18 +22,21 @@ import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session
 
 log = logging.getLogger(__name__)
 
-from ..auth import require_api_key
+from ..auth import AuthContext, require_auth, require_role
+from ..audit import log_audit
 from ..config import settings
+from ..database import get_session
 
 router = APIRouter(prefix="/api/feeder", tags=["feeder"])
 
 
 @router.get("/status")
 async def feeder_status(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_auth),
 ) -> dict:
     """
     Return the auto-feeder's current state.
@@ -61,7 +64,8 @@ async def feeder_status(
 
 @router.post("/pause")
 async def feeder_pause(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_role("analyst")),
+    session: Session = Depends(get_session),
 ) -> dict:
     """
     Pause the auto-feeder by creating the PAUSE file.
@@ -79,12 +83,15 @@ async def feeder_pause(
             detail=f"Could not create PAUSE file: {exc}",
         ) from exc
 
+    log_audit(session, auth, action="feeder_pause", resource_type="feeder")
+
     return {"status": "paused", "pause_file": settings.pause_file}
 
 
 @router.post("/resume")
 async def feeder_resume(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_role("analyst")),
+    session: Session = Depends(get_session),
 ) -> dict:
     """
     Resume the auto-feeder: remove the PAUSE file and reset consecutive
@@ -109,12 +116,15 @@ async def feeder_resume(
     if not _update_state({"consecutive_failures": 0}):
         log.warning("Resume succeeded (PAUSE removed) but failed to reset failure counter")
 
+    log_audit(session, auth, action="feeder_resume", resource_type="feeder")
+
     return {"status": "running"}
 
 
 @router.post("/reset")
 async def feeder_reset(
-    _auth: dict = Depends(require_api_key),
+    auth: AuthContext = Depends(require_role("analyst")),
+    session: Session = Depends(get_session),
 ) -> dict:
     """
     Reset the consecutive failure counter in state.json.
@@ -128,6 +138,9 @@ async def feeder_reset(
             status_code=500,
             detail="Failed to update state.json — check file permissions",
         )
+
+    log_audit(session, auth, action="feeder_reset", resource_type="feeder")
+
     return {"status": "ok", "consecutive_failures": 0}
 
 
