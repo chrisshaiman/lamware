@@ -15,7 +15,7 @@ User={{ auto_feeder_user }}
 Group={{ auto_feeder_user }}
 SupplementaryGroups=lamware
 WorkingDirectory=/tmp
-Environment=HOME=/home/pipeline
+Environment=HOME=/home/{{ auto_feeder_user }}
 ExecStart=/bin/bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); exec /usr/bin/python3 {{ auto_feeder_install_dir }}/auto-feeder.py'
 TimeoutStartSec=4200
 
