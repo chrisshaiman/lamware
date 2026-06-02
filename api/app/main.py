@@ -21,9 +21,8 @@ app = FastAPI(
         "Serves analysis data, IOCs, MITRE techniques, and pipeline controls."
     ),
     version="0.1.0",
-    # /docs (Swagger UI) and /redoc are public — no auth required for discovery
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.enable_docs else None,
+    redoc_url="/redoc" if settings.enable_docs else None,
 )
 
 # CORS — allows the React dev server (localhost:3000) and any additional origins
