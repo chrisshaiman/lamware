@@ -16,7 +16,7 @@
     path: "{{ sample_feeder_dir }}"
     state: directory
     owner: "{{ sample_feeder_user }}"
-    group: "{{ sample_feeder_user }}"
+    group: lamware
     mode: "0750"
 
 - name: Install pyzipper for AES-encrypted MalwareBazaar zips
@@ -48,8 +48,8 @@
     src: sample-feeder.conf.j2
     dest: "{{ sample_feeder_dir }}/config.json"
     owner: "{{ sample_feeder_user }}"
-    group: "{{ sample_feeder_user }}"
-    mode: "0600"
+    group: lamware
+    mode: "0640"
   no_log: true
 
 - name: Create convenience symlink

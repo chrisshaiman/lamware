@@ -26,5 +26,7 @@ auto_feeder_daily_budget_usd: 10.0
 auto_feeder_pause_file: /opt/pipeline/control/PAUSE
 auto_feeder_max_sample_size_bytes: 268435456  # 256 MB
 
-# Run as same user as pipeline
-auto_feeder_user: pipeline
+# Separate user — not subject to pipeline iptables lockdown.
+# Downloads from MalwareBazaar need outbound HTTPS.
+# Pipeline execution delegated via sudo -u pipeline.
+auto_feeder_user: auto-feeder

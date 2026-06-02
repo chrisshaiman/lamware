@@ -153,7 +153,8 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | DAST: Nuclei misconfig sweep | 1-2 hrs | FastAPI/Flask misconfig templates (exposed /docs, CORS, debug mode, missing security headers). **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | /docs /redoc env-gating | 30 min | Disable Swagger/ReDoc in prod, enable only in dev via settings.env flag. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
-| Remove VITE_API_KEY from prod build | 30 min | Static API key baked into JS bundle via frontend.env.j2. Now a fallback — Keycloak JWT is primary. Remove from prod builds, keep for local dev only. |
+| Remove static API key auth | DONE | Removed VITE_API_KEY from frontend build, X-API-Key fallback from FastAPI, API key from WebSocket auth. JWT-only auth path. |
+| Refactor auto-feeder to spool-based | 1 session | Replace direct `sudo -u pipeline run-pipeline` with spool drop pattern (same as UI submit). Eliminates sudo/NoNewPrivileges tradeoff. Requires reworking cost tracking, failure counting, and sequential processing — currently coupled to subprocess.run(). |
 | eslint-plugin-security | 30 min | Frontend JS security patterns (unsafe innerHTML, regex DoS). Low priority — rehype-sanitize covers primary risk. |
 
 ### Future — Platform Enhancements
@@ -175,7 +176,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
 | Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
 | HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
-| Multi-user platform | Design + build | Per-user audit trail, team workspaces. Depends on enterprise auth (high priority). Enterprise readiness. |
+| Multi-user platform | Design + build | Per-user audit trail, team workspaces. Depends on enterprise auth (high priority). Enterprise readiness. WebSocket events currently broadcast to all authenticated users — add per-user/tenant filtering before exposing beyond trusted team. |
 
 ### Low Priority / Ideas
 

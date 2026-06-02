@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Single axios instance for all API calls. Interceptor injects Bearer JWT
-// from Keycloak on every request, with API key fallback for dev/testing.
+// from Keycloak on every request.
 
 import axios from "axios";
 import keycloak from "./keycloak";
@@ -12,7 +12,7 @@ const apiClient = axios.create({
   timeout: 30_000,
 });
 
-// Request interceptor: inject JWT or fall back to static API key
+// Request interceptor: inject JWT token
 apiClient.interceptors.request.use(async (config) => {
   if (keycloak.authenticated) {
     // Ensure token has at least 5 seconds of validity
@@ -22,12 +22,6 @@ apiClient.interceptors.request.use(async (config) => {
       // Token refresh failed — request will likely get 401
     }
     config.headers["Authorization"] = `Bearer ${keycloak.token}`;
-  } else {
-    // Fallback: static API key for dev/testing without Keycloak
-    const apiKey = import.meta.env.VITE_API_KEY;
-    if (apiKey) {
-      config.headers["X-API-Key"] = apiKey;
-    }
   }
   return config;
 });
