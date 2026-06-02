@@ -19,22 +19,11 @@ apiClient.interceptors.request.use(async (config) => {
     try {
       await keycloak.updateToken(5);
     } catch {
-      // Token refresh failed — request will likely get 401
+      // Token refresh failed — request will go without valid token
     }
     config.headers["Authorization"] = `Bearer ${keycloak.token}`;
   }
   return config;
 });
-
-// Response interceptor: redirect to login on 401
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401 && keycloak.authenticated) {
-      keycloak.login();
-    }
-    return Promise.reject(error);
-  },
-);
 
 export default apiClient;
