@@ -79,7 +79,7 @@ export function KeycloakProvider({ children }: { children: ReactNode }) {
     initRef.current = true;
 
     keycloak
-      .init({})
+      .init({ onLoad: "check-sso" })
       .then((authenticated) => {
         if (authenticated) {
           setIsAuthenticated(true);
