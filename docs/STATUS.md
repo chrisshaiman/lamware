@@ -154,6 +154,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | DAST: Nuclei misconfig sweep | 1-2 hrs | FastAPI/Flask misconfig templates (exposed /docs, CORS, debug mode, missing security headers). **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | /docs /redoc env-gating | 30 min | Disable Swagger/ReDoc in prod, enable only in dev via settings.env flag. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | Remove static API key auth | DONE | Removed VITE_API_KEY from frontend build, X-API-Key fallback from FastAPI, API key from WebSocket auth. JWT-only auth path. |
+| Refactor auto-feeder to spool-based | 1 session | Replace direct `sudo -u pipeline run-pipeline` with spool drop pattern (same as UI submit). Eliminates sudo/NoNewPrivileges tradeoff. Requires reworking cost tracking, failure counting, and sequential processing — currently coupled to subprocess.run(). |
 | eslint-plugin-security | 30 min | Frontend JS security patterns (unsafe innerHTML, regex DoS). Low priority — rehype-sanitize covers primary risk. |
 
 ### Future — Platform Enhancements
