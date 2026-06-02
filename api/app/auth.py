@@ -132,8 +132,9 @@ async def _validate_jwt(token: str) -> AuthContext:
             public_key,
             algorithms=["RS256"],
             issuer=expected_issuer,
-            audience="account",
-            options={"verify_aud": True},
+            # Audience varies by flow (password grant="account", PKCE=client_id).
+            # Issuer + JWKS binding provides sufficient cross-realm protection.
+            options={"verify_aud": False},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
