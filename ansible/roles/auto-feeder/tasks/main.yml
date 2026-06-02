@@ -7,6 +7,28 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 
+- name: Create auto-feeder system user
+  ansible.builtin.user:
+    name: "{{ auto_feeder_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "/home/{{ auto_feeder_user }}"
+    create_home: true
+    groups: lamware
+    append: true
+
+- name: Allow auto-feeder to run pipeline as pipeline user
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/auto-feeder
+    content: |
+      # Allow auto-feeder to invoke the pipeline as the pipeline user.
+      # No password, restricted to the run-pipeline command only.
+      {{ auto_feeder_user }} ALL=(pipeline) NOPASSWD: /usr/local/bin/run-pipeline *
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
 - name: Create auto-feeder directory
   ansible.builtin.file:
     path: "{{ auto_feeder_install_dir }}"
