@@ -176,7 +176,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
 | Systemd credentials | 2-3 hrs | Move secrets from config files to /etc/credstore/, injected via LoadCredential=. No new dependencies. Single-server upgrade. |
 | HashiCorp Vault | 1-2 sessions | Central secrets management with rotation, audit, policies. Needed for multi-operator deployment. |
-| Multi-user platform | Design + build | Per-user audit trail, team workspaces. Depends on enterprise auth (high priority). Enterprise readiness. |
+| Multi-user platform | Design + build | Per-user audit trail, team workspaces. Depends on enterprise auth (high priority). Enterprise readiness. WebSocket events currently broadcast to all authenticated users — add per-user/tenant filtering before exposing beyond trusted team. |
 
 ### Low Priority / Ideas
 
