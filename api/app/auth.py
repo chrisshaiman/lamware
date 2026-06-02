@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 
 import jwt
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
@@ -76,18 +76,34 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def require_auth(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AuthContext:
     """
     FastAPI dependency: authenticate via JWT Bearer token.
 
     Validates signature against Keycloak JWKS, extracts user info + roles.
-    Returns 401 if no token or invalid token.
+    Returns 401 if no token or invalid token. Logs failed attempts.
     """
     if credentials and credentials.credentials:
-        return await _validate_jwt(credentials.credentials)
+        try:
+            return await _validate_jwt(credentials.credentials)
+        except HTTPException as e:
+            _log_failed_auth(request, e.detail)
+            raise
 
+    _log_failed_auth(request, "No credentials provided")
     raise HTTPException(status_code=401, detail="Authentication required")
+
+
+def _log_failed_auth(request: Request, reason: str) -> None:
+    """Log failed authentication attempts for security monitoring."""
+    client_ip = request.headers.get("x-real-ip", request.client.host if request.client else "unknown")
+    user_agent = request.headers.get("user-agent", "unknown")
+    log.warning(
+        "Auth failed: %s | IP: %s | UA: %s | Path: %s",
+        reason, client_ip, user_agent, request.url.path,
+    )
 
 
 async def _validate_jwt(token: str) -> AuthContext:
@@ -108,17 +124,23 @@ async def _validate_jwt(token: str) -> AuthContext:
             raise HTTPException(status_code=401, detail="Unknown signing key")
         public_key = _jwks_cache[kid]
 
+    expected_issuer = f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
+
     try:
         payload = jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],
-            # verify_aud disabled — single-app realm. Enable if adding more
-            # Keycloak clients to prevent cross-client token reuse.
-            options={"verify_aud": False},
+            issuer=expected_issuer,
+            audience="account",
+            options={"verify_aud": True},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidIssuerError:
+        raise HTTPException(status_code=401, detail="Invalid token issuer")
+    except jwt.InvalidAudienceError:
+        raise HTTPException(status_code=401, detail="Invalid token audience")
     except jwt.InvalidTokenError as e:
         raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 

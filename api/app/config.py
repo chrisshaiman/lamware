@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Keycloak OIDC
     keycloak_url: str = "http://127.0.0.1:8080/auth"
     keycloak_realm: str = "lamware"
+    keycloak_client_id: str = "lamware-web"  # audience check for JWT validation
+
+    # API docs — disable in production
+    enable_docs: bool = False
 
     # Filesystem paths used by routers
     reports_dir: str = "/opt/pipeline/reports"
