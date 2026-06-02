@@ -153,7 +153,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | DAST: Nuclei misconfig sweep | 1-2 hrs | FastAPI/Flask misconfig templates (exposed /docs, CORS, debug mode, missing security headers). **Trigger: when adding multi-user access or removing WireGuard requirement.** |
 | /docs /redoc env-gating | 30 min | Disable Swagger/ReDoc in prod, enable only in dev via settings.env flag. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
-| Remove VITE_API_KEY from prod build | 30 min | Static API key baked into JS bundle via frontend.env.j2. Now a fallback — Keycloak JWT is primary. Remove from prod builds, keep for local dev only. |
+| Remove static API key auth | DONE | Removed VITE_API_KEY from frontend build, X-API-Key fallback from FastAPI, API key from WebSocket auth. JWT-only auth path. |
 | eslint-plugin-security | 30 min | Frontend JS security patterns (unsafe innerHTML, regex DoS). Low priority — rehype-sanitize covers primary risk. |
 
 ### Future — Platform Enhancements

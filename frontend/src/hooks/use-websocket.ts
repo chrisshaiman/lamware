@@ -54,12 +54,6 @@ export function useWebSocket(): WebSocketStatus {
         // Send auth as first message
         if (keycloak.authenticated && keycloak.token) {
           ws.send(JSON.stringify({ type: "auth", token: keycloak.token }));
-        } else {
-          // Fallback: API key for dev/testing
-          const apiKey = import.meta.env.VITE_API_KEY;
-          if (apiKey) {
-            ws.send(JSON.stringify({ type: "auth", api_key: apiKey }));
-          }
         }
 
         setIsConnected(true);

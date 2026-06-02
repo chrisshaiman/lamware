@@ -9,7 +9,7 @@
 #   cd api
 #   LAMWARE_DB_PASSWORD=... uvicorn app.main:app --reload --port 8001
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -33,22 +33,8 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+    allow_headers=["Content-Type", "Authorization"],
 )
-
-# ---------------------------------------------------------------------------
-# Deprecation header middleware — signals API key auth is legacy
-# ---------------------------------------------------------------------------
-
-
-@app.middleware("http")
-async def add_deprecation_header(request: Request, call_next):
-    """Add Deprecation header when API key auth is used."""
-    response = await call_next(request)
-    if getattr(request.state, "auth_deprecated", False):
-        response.headers["Deprecation"] = "true"
-    return response
-
 
 # ---------------------------------------------------------------------------
 # Health endpoint — no auth, used by systemd / load balancer checks

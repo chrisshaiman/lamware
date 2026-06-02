@@ -88,8 +88,8 @@ async def websocket_pipeline(websocket: WebSocket):
     """
     WebSocket endpoint for real-time pipeline status updates.
 
-    Auth: client sends {"type": "auth", "token": "<jwt>"} or
-    {"type": "auth", "api_key": "<key>"} as first message within 5 seconds.
+    Auth: client sends {"type": "auth", "token": "<jwt>"} as first message
+    within 5 seconds.
     """
     await websocket.accept()
 
@@ -101,27 +101,15 @@ async def websocket_pipeline(websocket: WebSocket):
         await websocket.close(code=4001, reason="Auth timeout or invalid message")
         return
 
-    if msg.get("type") != "auth":
-        await websocket.close(code=4001, reason="First message must be auth")
+    if msg.get("type") != "auth" or not msg.get("token"):
+        await websocket.close(code=4001, reason="First message must be auth with JWT token")
         return
 
-    # Try JWT
-    token = msg.get("token")
-    api_key = msg.get("api_key")
-
-    if token:
-        from ..auth import _validate_jwt
-        try:
-            await _validate_jwt(token)
-        except Exception:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-    elif api_key and settings.api_key and api_key == settings.api_key:
-        pass  # API key accepted
-    elif not settings.api_key:
-        pass  # Dev mode — allow all
-    else:
-        await websocket.close(code=4001, reason="Invalid credentials")
+    from ..auth import _validate_jwt
+    try:
+        await _validate_jwt(msg["token"])
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
         return
 
     # --- Authenticated — join broadcast pool ---
