@@ -1,44 +1,47 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
+#
+# WebSocket auth tests — JWT via first message.
+
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.config import settings
 
 
-@pytest.fixture(autouse=True)
-def _set_api_key(monkeypatch):
-    monkeypatch.setattr(settings, "api_key", "test-key-123")
-
-
-def test_ws_rejects_missing_api_key():
-    client = TestClient(app)
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws/pipeline"):
-            pass
-
-
-def test_ws_rejects_wrong_api_key():
-    client = TestClient(app)
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws/pipeline?api_key=wrong"):
-            pass
-
-
-def test_ws_accepts_valid_api_key():
-    client = TestClient(app)
-    with client.websocket_connect("/ws/pipeline?api_key=test-key-123") as ws:
-        # Should receive initial state on connect
-        data = ws.receive_json()
-        assert "running" in data
-        assert "recent_completed" in data
-
-
-def test_ws_allows_any_key_in_dev_mode(monkeypatch):
-    monkeypatch.setattr(settings, "api_key", "")
+def test_ws_closes_without_auth_message():
+    """WebSocket should close if no auth message sent within timeout."""
     client = TestClient(app)
     with client.websocket_connect("/ws/pipeline") as ws:
-        data = ws.receive_json()
-        assert "running" in data
+        # Don't send auth — server should close with 4001
+        with pytest.raises(Exception):
+            ws.receive_json()
+
+
+def test_ws_rejects_invalid_message_type():
+    """WebSocket should close if first message type is not 'auth'."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws/pipeline") as ws:
+        ws.send_text(json.dumps({"type": "subscribe"}))
+        with pytest.raises(Exception):
+            ws.receive_json()
+
+
+def test_ws_rejects_auth_without_token():
+    """WebSocket should close if auth message has no token."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws/pipeline") as ws:
+        ws.send_text(json.dumps({"type": "auth"}))
+        with pytest.raises(Exception):
+            ws.receive_json()
+
+
+def test_ws_rejects_invalid_jwt():
+    """WebSocket should close if JWT is invalid."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws/pipeline") as ws:
+        ws.send_text(json.dumps({"type": "auth", "token": "invalid.jwt.token"}))
+        with pytest.raises(Exception):
+            ws.receive_json()

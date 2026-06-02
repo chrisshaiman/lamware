@@ -1,19 +1,17 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 #
-# Authentication — JWT validation against Keycloak + API key fallback.
+# Authentication — JWT validation against Keycloak JWKS.
 #
-# require_auth: FastAPI dependency returning AuthContext. Checks Bearer JWT
-# first, then X-API-Key header as a fallback (with deprecation warning).
-#
+# require_auth: FastAPI dependency returning AuthContext.
 # require_role: Factory returning a dependency that enforces a realm role.
 
 import logging
 from dataclasses import dataclass, field
 
 import jwt
-from fastapi import Depends, HTTPException, Request, Security
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import settings
 
@@ -69,53 +67,27 @@ class AuthContext:
     auth_method: str = "jwt"
 
 
-# --- Security schemes (auto_error=False for manual handling) ---------------
+# --- Security scheme -------------------------------------------------------
 
 bearer_scheme = HTTPBearer(auto_error=False)
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 # --- require_auth ----------------------------------------------------------
 
 
 async def require_auth(
-    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
-    api_key: str | None = Security(api_key_header),
 ) -> AuthContext:
     """
-    FastAPI dependency: authenticate via JWT (preferred) or API key (fallback).
+    FastAPI dependency: authenticate via JWT Bearer token.
 
-    JWT: Validates signature against Keycloak JWKS, extracts user info + roles.
-    API key: Returns AuthContext with configurable role + deprecation header.
+    Validates signature against Keycloak JWKS, extracts user info + roles.
+    Returns 401 if no token or invalid token.
     """
-    # --- Try JWT first ---
     if credentials and credentials.credentials:
         return await _validate_jwt(credentials.credentials)
 
-    # --- Fall back to API key ---
-    if api_key and settings.api_key:
-        if api_key == settings.api_key:
-            request.state.auth_deprecated = True
-            return AuthContext(
-                user_id="api-key",
-                email="api-key@legacy",
-                name="API Key User",
-                roles=[settings.api_key_role],
-                auth_method="api_key",
-            )
-
-    # --- Dev mode: no key configured, allow all ---
-    if not settings.api_key:
-        return AuthContext(
-            user_id="dev",
-            email="dev@localhost",
-            name="Dev Mode",
-            roles=["admin", "analyst", "viewer"],
-            auth_method="dev",
-        )
-
-    raise HTTPException(status_code=401, detail="Invalid or missing authentication")
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 
 async def _validate_jwt(token: str) -> AuthContext:
