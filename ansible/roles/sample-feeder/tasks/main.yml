@@ -16,7 +16,7 @@
     path: "{{ sample_feeder_dir }}"
     state: directory
     owner: "{{ sample_feeder_user }}"
-    group: "{{ sample_feeder_user }}"
+    group: lamware
     mode: "0750"
 
 - name: Install pyzipper for AES-encrypted MalwareBazaar zips
