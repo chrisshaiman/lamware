@@ -21,9 +21,10 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
 
     # Keycloak OIDC
-    keycloak_url: str = "http://127.0.0.1:8080/auth"
+    keycloak_url: str = "http://127.0.0.1:8080/auth"  # internal URL for JWKS fetch
+    keycloak_issuer_url: str = "https://localhost/auth"  # external URL matching token issuer
     keycloak_realm: str = "lamware"
-    keycloak_client_id: str = "lamware-web"  # audience check for JWT validation
+    keycloak_client_id: str = "lamware-web"
 
     # API docs — disable in production
     enable_docs: bool = False

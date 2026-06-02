@@ -124,7 +124,7 @@ async def _validate_jwt(token: str) -> AuthContext:
             raise HTTPException(status_code=401, detail="Unknown signing key")
         public_key = _jwks_cache[kid]
 
-    expected_issuer = f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
+    expected_issuer = f"{settings.keycloak_issuer_url}/realms/{settings.keycloak_realm}"
 
     try:
         payload = jwt.decode(
