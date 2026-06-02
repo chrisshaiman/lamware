@@ -405,6 +405,8 @@ def run_cycle() -> None:
             tmp.write(content)
             tmp_path = Path(tmp.name)
 
+        # Make readable by pipeline user (runs via sudo -u pipeline)
+        tmp_path.chmod(0o644)
         log.info(f"Downloaded and extracted: {extracted_name} ({len(content)} bytes)")
 
     except Exception as e:
