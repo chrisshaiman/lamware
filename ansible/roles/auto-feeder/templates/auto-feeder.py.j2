@@ -405,6 +405,8 @@ def run_cycle() -> None:
             tmp.write(content)
             tmp_path = Path(tmp.name)
 
+        # Make readable by pipeline user (runs via sudo -u pipeline)
+        tmp_path.chmod(0o644)
         log.info(f"Downloaded and extracted: {extracted_name} ({len(content)} bytes)")
 
     except Exception as e:
@@ -419,7 +421,7 @@ def run_cycle() -> None:
     # Run pipeline
     try:
         log.info(f"Starting pipeline for {extracted_name}...")
-        pipeline_args = [PIPELINE_CMD, str(tmp_path), "--filename", extracted_name]
+        pipeline_args = ["sudo", "-u", "pipeline", PIPELINE_CMD, str(tmp_path), "--filename", extracted_name]
         bazaar_sig = sample.get("signature", "")
         if bazaar_sig and bazaar_sig.lower() not in ("", "unknown", "n/a", "none"):
             pipeline_args.extend(["--bazaar-family", bazaar_sig])
