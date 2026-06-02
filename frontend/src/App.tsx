@@ -4,6 +4,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "#contexts/auth-context";
 import { AppShell } from "#components/layout/app-shell";
+import { WebSocketProvider } from "./providers/ws-provider";
 import { LoginPage } from "#pages/login";
 import { AnalysesPage } from "#pages/analyses/analyses-page";
 import { AnalysisDetailPage } from "#pages/analysis-detail/analysis-detail-page";
@@ -31,19 +32,21 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route element={<AppShell />}>
-        <Route index element={<Navigate to="/analyses" replace />} />
-        <Route path="/analyses" element={<AnalysesPage />} />
-        <Route path="/analyses/:id" element={<AnalysisDetailPage />} />
-        <Route path="/iocs" element={<IocsPage />} />
-        <Route path="/techniques" element={<TechniquesPage />} />
-        <Route path="/stats" element={<StatsPage />} />
-        <Route path="/pipeline" element={<PipelinePage />} />
-        <Route path="/alerts" element={<AlertsPage />} />
-        <Route path="/evasions" element={<EvasionsPage />} />
-        <Route path="/submit" element={<SubmitPage />} />
-      </Route>
-    </Routes>
+    <WebSocketProvider>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route index element={<Navigate to="/analyses" replace />} />
+          <Route path="/analyses" element={<AnalysesPage />} />
+          <Route path="/analyses/:id" element={<AnalysisDetailPage />} />
+          <Route path="/iocs" element={<IocsPage />} />
+          <Route path="/techniques" element={<TechniquesPage />} />
+          <Route path="/stats" element={<StatsPage />} />
+          <Route path="/pipeline" element={<PipelinePage />} />
+          <Route path="/alerts" element={<AlertsPage />} />
+          <Route path="/evasions" element={<EvasionsPage />} />
+          <Route path="/submit" element={<SubmitPage />} />
+        </Route>
+      </Routes>
+    </WebSocketProvider>
   );
 }

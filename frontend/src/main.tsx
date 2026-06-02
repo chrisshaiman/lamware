@@ -7,7 +7,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import { KeycloakProvider } from "./contexts/auth-context";
 import App from "./App";
-import { WebSocketProvider } from "./providers/ws-provider";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -24,9 +23,7 @@ createRoot(document.getElementById("root")!).render(
     <KeycloakProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
-          <WebSocketProvider>
-            <App />
-          </WebSocketProvider>
+          <App />
         </BrowserRouter>
       </QueryClientProvider>
     </KeycloakProvider>
