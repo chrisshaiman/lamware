@@ -20,7 +20,8 @@ ExecStart=/bin/bash -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); exec /usr/bin
 TimeoutStartSec=4200
 
 # Security hardening
-NoNewPrivileges=true
+# NoNewPrivileges intentionally omitted — auto-feeder uses sudo -u pipeline
+# to delegate pipeline execution while keeping download privileges separate.
 # ProtectHome omitted — pipeline user's Podman config lives in /home/pipeline
 ProtectKernelModules=true
 ProtectKernelTunables=true
