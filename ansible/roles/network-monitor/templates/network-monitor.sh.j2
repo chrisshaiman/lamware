@@ -153,14 +153,20 @@ check_user_processes() {
 
 # --- cape user: CAPE core services + system daemons + cron cleanup ---
 cape_patterns=(
+    # CAPE core services
     '*/capev2-*/bin/python cuckoo.py*'
     '*/capev2-*/bin/python process.py*'
     '*/capev2-*/bin/python manage.py runserver*'
     '*/capev2-*/bin/python rooter.py*'
     '*/poetry*'
+    # Podman containers + QEMU VMs
     'podman'
+    'conmon*'
+    'catatonit*'
+    'pause'
     '*/tcpdump*'
     '*/qemu-system*'
+    # Systemd user session
     '/usr/lib/systemd/systemd --user'
     '(sd-pam)'
     '/usr/bin/dbus-daemon --session*'
@@ -168,21 +174,15 @@ cape_patterns=(
     '/usr/bin/xdg-dbus-prox*'
     '/usr/lib/dconf/dconf-service'
     '/usr/libexec/gvfsd*'
-    'bash -c find /opt/CAPEv2/storage*'
+    # Cron: cape-memory-dump-cleanup + cape-storage-maintenance
     'find /opt/CAPEv2/storage*'
     'chgrp *lamware /opt/CAPEv2/storage*'
     'chmod *g+rX /opt/CAPEv2/storage*'
-    'chmod *g+r *'
     'rm -rf /opt/CAPEv2/storage*'
     '/bin/sh -c find /opt/CAPEv2/storage*'
     '/bin/sh -c *CAPEv2/storage*'
-    'bash*'
-    'sh -c *'
-    '/bin/sh *'
-    'sleep*'
-    'conmon*'
-    'catatonit*'
-    'pause'
+    'bash -c find /opt/CAPEv2/storage*'
+    'sleep [0-9]*'
 )
 cape_unexpected=$(check_user_processes "{{ cape_user | default('cape') }}" "${cape_patterns[@]}")
 cape_process_status="ok"
@@ -196,36 +196,38 @@ fi
 
 # --- pipeline user: pipeline + containers + feeders ---
 pipeline_patterns=(
+    # Pipeline execution
     'python3 /opt/pipeline/run-pipeline.py*'
     '*/python3 /opt/pipeline/run-pipeline.py*'
-    'python3 /opt/auto-feeder/auto-feeder.py*'
-    '*/python3 /opt/auto-feeder/auto-feeder.py*'
-    'python3 /opt/sample-feeder/sample_feeder.py*'
-    'python3 /opt/ntfy-alerts/daily-digest.py*'
-    'python3 /opt/pipeline/generate-report.py*'
-    '/opt/pipeline/cleanup.sh*'
     '/bin/bash /usr/local/bin/run-pipeline*'
     '/bin/bash */run-pipeline*'
     '*/run-pipeline /tmp/*'
+    # Feeders (auto-feeder delegates via sudo)
+    'python3 /opt/sample-feeder/sample_feeder.py*'
+    # Cron jobs
+    'python3 /opt/ntfy-alerts/daily-digest.py*'
+    '/bin/sh -c *ntfy-alerts*'
+    '/opt/pipeline/cleanup.sh*'
+    '/bin/sh -c *pipeline*'
+    'python3 /opt/pipeline/generate-report.py*'
+    # Podman containers
     'podman'
     'podman run --rm*'
     'podman build*'
     'conmon*'
     'catatonit*'
+    'pause'
+    # Systemd user session
     '/usr/lib/systemd/systemd --user'
     '(sd-pam)'
     '/usr/bin/dbus-daemon --session*'
+    # Pipeline spool processing
     'bash -c for f in /opt/pipeline/spool*'
-    'bash*'
-    'sh -c *'
-    '/bin/sh -c *CAPEv2*'
-    '/bin/sh -c *ntfy-alerts*'
-    '/bin/sh -c *pipeline*'
-    'sudo -u pipeline /usr/local/bin/run-pipeline*'
-    'sleep*'
-    'pause'
-    'cp *'
-    'find *'
+    # Container file operations (scoped to pipeline paths)
+    'cp /tmp/*'
+    'find /opt/*'
+    'find /tmp/*'
+    'sleep [0-9]*'
 )
 pipeline_unexpected=$(check_user_processes "pipeline" "${pipeline_patterns[@]}")
 pipeline_process_status="ok"
@@ -239,14 +241,14 @@ fi
 
 # --- auto-feeder user: MalwareBazaar downloads + sudo pipeline delegation ---
 autofeeder_patterns=(
+    # Auto-feeder script + pipeline delegation
     'python3 /opt/auto-feeder/auto-feeder.py*'
     '*/python3 /opt/auto-feeder/auto-feeder.py*'
     'sudo -u pipeline /usr/local/bin/run-pipeline*'
+    # Systemd user session
     '/usr/lib/systemd/systemd --user'
     '(sd-pam)'
-    'bash*'
-    'sh -c *'
-    'sleep*'
+    'sleep [0-9]*'
 )
 autofeeder_unexpected=$(check_user_processes "auto-feeder" "${autofeeder_patterns[@]}")
 autofeeder_process_status="ok"
