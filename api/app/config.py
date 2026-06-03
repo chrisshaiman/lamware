@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # API server
     api_port: int = 8001
-    api_host: str = "0.0.0.0"
+    api_host: str = "127.0.0.1"
 
     # Keycloak OIDC
     keycloak_url: str = "http://127.0.0.1:8080/auth"  # internal URL for JWKS fetch
