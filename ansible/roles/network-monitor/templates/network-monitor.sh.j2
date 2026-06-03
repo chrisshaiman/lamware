@@ -218,6 +218,10 @@ pipeline_patterns=(
     'bash -c for f in /opt/pipeline/spool*'
     'bash*'
     'sh -c *'
+    '/bin/sh -c *CAPEv2*'
+    '/bin/sh -c *ntfy-alerts*'
+    '/bin/sh -c *pipeline*'
+    'sudo -u pipeline /usr/local/bin/run-pipeline*'
     'sleep*'
     'pause'
     'cp *'
@@ -230,6 +234,27 @@ if [ -n "$pipeline_unexpected" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected pipeline processes: $pipeline_unexpected"
     python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
         "Unexpected Processes" "pipeline user: $pipeline_unexpected" \
+        --priority high --tags warning 2>/dev/null || true
+fi
+
+# --- auto-feeder user: MalwareBazaar downloads + sudo pipeline delegation ---
+autofeeder_patterns=(
+    'python3 /opt/auto-feeder/auto-feeder.py*'
+    '*/python3 /opt/auto-feeder/auto-feeder.py*'
+    'sudo -u pipeline /usr/local/bin/run-pipeline*'
+    '/usr/lib/systemd/systemd --user'
+    '(sd-pam)'
+    'bash*'
+    'sh -c *'
+    'sleep*'
+)
+autofeeder_unexpected=$(check_user_processes "auto-feeder" "${autofeeder_patterns[@]}")
+autofeeder_process_status="ok"
+if [ -n "$autofeeder_unexpected" ]; then
+    autofeeder_process_status="warning"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected auto-feeder processes: $autofeeder_unexpected"
+    python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+        "Unexpected Processes" "auto-feeder user: $autofeeder_unexpected" \
         --priority high --tags warning 2>/dev/null || true
 fi
 
