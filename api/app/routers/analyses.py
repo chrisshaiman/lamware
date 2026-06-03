@@ -30,7 +30,9 @@ from ..models import (
     TechniqueValue,
 )
 
-router = APIRouter(prefix="/api/analyses", tags=["analyses"])
+AUTH_RESPONSES = {401: {"description": "Authentication required"}, 403: {"description": "Insufficient role"}}
+
+router = APIRouter(prefix="/api/analyses", tags=["analyses"], responses=AUTH_RESPONSES)
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +465,7 @@ def get_logs(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{analysis_id}/iocs/csv")
+@router.get("/{analysis_id}/iocs/csv", responses={200: {"content": {"text/csv": {}}}, 404: {"description": "Analysis not found"}})
 def export_iocs_csv(
     analysis_id: int,
     auth: AuthContext = Depends(require_auth),
@@ -575,7 +577,7 @@ def _ioc_to_stix_object(ioc: IocValue, ai: AnalysisIoc) -> dict:
     return obj
 
 
-@router.get("/{analysis_id}/iocs/stix")
+@router.get("/{analysis_id}/iocs/stix", responses={200: {"content": {"application/stix+json": {}}}, 404: {"description": "Analysis not found"}})
 def export_iocs_stix(
     analysis_id: int,
     auth: AuthContext = Depends(require_auth),
