@@ -30,7 +30,9 @@ from ..models import (
     TechniqueValue,
 )
 
-router = APIRouter(prefix="/api/analyses", tags=["analyses"])
+AUTH_RESPONSES = {401: {"description": "Authentication required"}, 403: {"description": "Insufficient role"}}
+
+router = APIRouter(prefix="/api/analyses", tags=["analyses"], responses=AUTH_RESPONSES)
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,7 @@ def list_analyses(
     severity: str | None = Query(default=None, description="Filter by severity"),
     family: str | None = Query(default=None, description="Filter by malware family"),
     limit: int = Query(default=50, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
     auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> dict:
@@ -463,7 +465,7 @@ def get_logs(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{analysis_id}/iocs/csv")
+@router.get("/{analysis_id}/iocs/csv", responses={200: {"content": {"text/csv": {}}}, 404: {"description": "Analysis not found"}})
 def export_iocs_csv(
     analysis_id: int,
     auth: AuthContext = Depends(require_auth),
@@ -575,7 +577,7 @@ def _ioc_to_stix_object(ioc: IocValue, ai: AnalysisIoc) -> dict:
     return obj
 
 
-@router.get("/{analysis_id}/iocs/stix")
+@router.get("/{analysis_id}/iocs/stix", responses={200: {"content": {"application/stix+json": {}}}, 404: {"description": "Analysis not found"}})
 def export_iocs_stix(
     analysis_id: int,
     auth: AuthContext = Depends(require_auth),
