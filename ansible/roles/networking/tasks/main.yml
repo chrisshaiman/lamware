@@ -15,6 +15,17 @@
 # License: Apache 2.0
 # =============================================================================
 
+- name: Disable rpcbind (unnecessary RPC service, actively probed by scanners)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop:
+    - rpcbind
+    - rpcbind.socket
+  failed_when: false
+
 - name: Install iptables-persistent (saves rules across reboots)
   ansible.builtin.apt:
     name:
