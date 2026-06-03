@@ -129,7 +129,13 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | LiteLLM proxy | DONE | Root Podman container on localhost:4000. Anthropic passthrough endpoint. API key isolated to LiteLLM env file. All Claude calls routed through proxy (PR #74). |
 | LiteLLM network lockdown | DONE | iptables OUTPUT rules restrict pipeline user to localhost only (LiteLLM:4000, PostgreSQL:5432, CAPE:8000, MongoDB:27017). All other outbound blocked. PR #79. |
 | LiteLLM PostgreSQL spend tracking | DONE | LiteLLM connected to dedicated PostgreSQL database for native per-request spend tracking. PR #79. |
-| Enterprise authentication (OAuth/SAML) | 1-2 sessions | Replace static API key with OIDC/SAML SSO. FastAPI OIDC provider integration, JWT tokens, React auth context + protected routes, RBAC (analyst/admin/viewer roles). **Implement before removing WireGuard** — sequence: auth → test with second user behind WG → then expose publicly. |
+| Enterprise authentication (OAuth/SAML) | DONE | Keycloak SSO with PKCE, FastAPI JWT + RBAC + audit log, React keycloak-js. PRs #80-85. Pentested: 24 tests, 12 findings, 9 fixed. |
+| Security testing — pentest complete | DONE | Phase 1 manual (24 tests), Phase 2 Schemathesis (2007 cases), port audit, alert tuning. PRs #84-89. Formal report pending. |
+| Domain + TLS setup (lamware.shaiman.net) | 1 session | DNS A record → 10.200.0.1, Let's Encrypt via DNS-01, KC_HOSTNAME=lamware.shaiman.net, KC_HOSTNAME_STRICT=true. Fixes mobile access, variable issuer, and self-signed cert warnings. |
+| PKCE server-side enforcement | 30 min | Keycloak client setting: Proof Key for Code Exchange → S256 required. Currently optional — client-side only. Pentest finding. |
+| API rate limiting | 1 session | No rate limiting on any endpoint. Add nginx rate_limit or FastAPI middleware. Pentest finding. |
+| Pentest report PDF | 1-2 hrs | Formal report: 12 findings, methodology, evidence, remediation status. WeasyPrint. Portfolio deliverable. |
+| CI/CD security-test Ansible role | 1 session | Automate RBAC tests, Schemathesis, Nuclei into post-deploy verification. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
 
 ### Medium Priority
