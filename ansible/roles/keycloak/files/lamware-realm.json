@@ -34,11 +34,11 @@
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
-      "redirectUris": ["https://10.200.0.1/*", "https://localhost:8443/*"],
-      "webOrigins": ["https://10.200.0.1", "https://localhost:8443"],
+      "redirectUris": ["https://lamware.shaiman.net/*"],
+      "webOrigins": ["https://lamware.shaiman.net"],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://10.200.0.1/*##https://localhost:8443/*"
+        "post.logout.redirect.uris": "https://lamware.shaiman.net/*"
       },
       "defaultClientScopes": ["openid", "profile", "email", "roles"],
       "protocolMappers": [
