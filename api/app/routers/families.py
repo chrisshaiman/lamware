@@ -26,7 +26,7 @@ async def list_families(
         default=None, description="Search family name (substring match)"
     ),
     limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
     auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> list[dict]:
