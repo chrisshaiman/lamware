@@ -123,11 +123,29 @@ server {
         proxy_set_header Host $host;
     }
 
+    # Keycloak admin console — no rate limit (makes many rapid API calls)
+    # Must appear before /auth/ so nginx matches the more specific prefix.
+    location /auth/admin/ {
+        proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+    }
+
     # Keycloak identity broker proxy
     # Override X-Frame-Options to SAMEORIGIN — Keycloak admin console uses
     # iframes for its auth flow (step1.html). DENY blocks this.
     location /auth/ {
-        limit_req zone=auth burst=10 nodelay;
+        limit_req zone=auth burst=50 nodelay;
         proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
