@@ -49,10 +49,14 @@ data "ovh_dedicated_server" "sandbox" {
 # =============================================================================
 # Robot firewall — network-edge allowlist, active before the OS boots
 #
-# OVH's hardware firewall drops all traffic not matching a permit rule.
-# Rules are evaluated in sequence order (0 = highest priority).
-# Sequences 0–9 reserved for SSH, 10–19 for WireGuard.
-# Max 10 admin CIDRs supported per service type.
+# OVH's hardware firewall evaluates rules in sequence order (0 = highest priority).
+# Layout:
+#   0–4:  SSH (22/tcp) from admin CIDRs
+#   5:    WireGuard (UDP) from anywhere (protocol auth handles access)
+#   10:   HTTPS (443/tcp) from anywhere
+#   11:   HTTP (80/tcp) from anywhere
+#   19:   Deny all (default drop)
+# Max 5 admin CIDRs for SSH.
 #
 # IMPORTANT: firewall must be enabled and rules applied before OS installation.
 # The depends_on chain enforces this ordering.
@@ -61,9 +65,10 @@ data "ovh_dedicated_server" "sandbox" {
 resource "ovh_ip_firewall" "sandbox" {
   ip             = "${data.ovh_dedicated_server.sandbox.ip}/32"
   ip_on_firewall = data.ovh_dedicated_server.sandbox.ip
+  enabled        = true
 }
 
-# Allow SSH from each admin CIDR (sequences 0–9)
+# Allow SSH from each admin CIDR (sequences 0–4)
 # SSH is required for Ansible runs and emergency manual access.
 resource "ovh_ip_firewall_rule" "allow_ssh" {
   for_each = { for idx, cidr in var.admin_cidrs : tostring(idx) => cidr }
@@ -79,18 +84,58 @@ resource "ovh_ip_firewall_rule" "allow_ssh" {
   depends_on = [ovh_ip_firewall.sandbox]
 }
 
-# Allow WireGuard UDP from each admin CIDR (sequences 10–19)
-# WireGuard is admin-only management VPN — see ADR-004.
+# Allow WireGuard UDP from anywhere (sequence 5)
+# WireGuard is cryptographically authenticated — unauthenticated packets are
+# silently dropped by the protocol itself. Safe to expose publicly, and
+# required for mobile access where source IPs are unpredictable (carrier NAT).
 resource "ovh_ip_firewall_rule" "allow_wireguard" {
-  for_each = { for idx, cidr in var.admin_cidrs : tostring(idx) => cidr }
-
   ip               = "${data.ovh_dedicated_server.sandbox.ip}/32"
   ip_on_firewall   = data.ovh_dedicated_server.sandbox.ip
-  sequence         = 10 + tonumber(each.key)
+  sequence         = 5
   action           = "permit"
   protocol         = "udp"
   destination_port = tostring(var.wireguard_port)
-  source           = each.value
+  source           = "0.0.0.0/0"
+
+  depends_on = [ovh_ip_firewall.sandbox]
+}
+
+# Allow HTTPS from anywhere (sequence 10)
+# Public web access to lamware dashboard and Keycloak.
+resource "ovh_ip_firewall_rule" "allow_https" {
+  ip               = "${data.ovh_dedicated_server.sandbox.ip}/32"
+  ip_on_firewall   = data.ovh_dedicated_server.sandbox.ip
+  sequence         = 10
+  action           = "permit"
+  protocol         = "tcp"
+  destination_port = "443"
+  source           = "0.0.0.0/0"
+
+  depends_on = [ovh_ip_firewall.sandbox]
+}
+
+# Allow HTTP from anywhere (sequence 11)
+# Required for Let's Encrypt ACME HTTP-01 challenges and HTTPS redirect.
+resource "ovh_ip_firewall_rule" "allow_http" {
+  ip               = "${data.ovh_dedicated_server.sandbox.ip}/32"
+  ip_on_firewall   = data.ovh_dedicated_server.sandbox.ip
+  sequence         = 11
+  action           = "permit"
+  protocol         = "tcp"
+  destination_port = "80"
+  source           = "0.0.0.0/0"
+
+  depends_on = [ovh_ip_firewall.sandbox]
+}
+
+# Deny all — default drop for anything not matched above (sequence 19)
+# Must be highest sequence number (lowest priority) so permit rules match first.
+resource "ovh_ip_firewall_rule" "deny_all" {
+  ip               = "${data.ovh_dedicated_server.sandbox.ip}/32"
+  ip_on_firewall   = data.ovh_dedicated_server.sandbox.ip
+  sequence         = 19
+  action           = "deny"
+  protocol         = "ipv4"
 
   depends_on = [ovh_ip_firewall.sandbox]
 }
