@@ -55,6 +55,7 @@ data "ovh_dedicated_server" "sandbox" {
 #   5:    WireGuard (UDP) from anywhere (protocol auth handles access)
 #   10:   HTTPS (443/tcp) from anywhere
 #   11:   HTTP (80/tcp) from anywhere
+#   18:   TCP established (return traffic for outbound connections)
 #   19:   Deny all (default drop)
 # Max 5 admin CIDRs for SSH.
 #
@@ -124,6 +125,23 @@ resource "ovh_ip_firewall_rule" "allow_http" {
   protocol         = "tcp"
   destination_port = "80"
   source           = "0.0.0.0/0"
+
+  depends_on = [ovh_ip_firewall.sandbox]
+}
+
+# Allow established TCP connections (sequence 18)
+# OVH robot firewall is stateless — it does not track TCP sessions.
+# Without this rule, return packets from outbound connections (apt, DNS,
+# curl, etc.) are dropped by the deny-all. The "established" TCP option
+# permits packets with ACK flag set (i.e., part of an existing connection).
+resource "ovh_ip_firewall_rule" "allow_established" {
+  ip               = "${data.ovh_dedicated_server.sandbox.ip}/32"
+  ip_on_firewall   = data.ovh_dedicated_server.sandbox.ip
+  sequence         = 18
+  action           = "permit"
+  protocol         = "tcp"
+  source           = "0.0.0.0/0"
+  tcp_option        = "established"
 
   depends_on = [ovh_ip_firewall.sandbox]
 }
