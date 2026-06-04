@@ -10,6 +10,15 @@
 # License: Apache 2.0
 # =============================================================================
 
+# Rate limiting zones
+# API: 30 requests/sec per IP (burst 50) — normal browsing
+# Auth: 5 requests/sec per IP (burst 10) — login/token endpoints
+# Upload: 2 requests/sec per IP (burst 5) — sample submission
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=upload:10m rate=2r/s;
+limit_req_status 429;
+
 # HTTP → HTTPS redirect
 server {
     listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_http_port }};
@@ -52,6 +61,7 @@ server {
 
     # FastAPI API proxy
     location /api/ {
+        limit_req zone=api burst=50 nodelay;
         proxy_pass http://{{ frontend_api_upstream }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -59,6 +69,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # File upload support (100MB max matches FastAPI limit)
+        client_max_body_size 100m;
+    }
+
+    # Sample submission — stricter rate limit
+    location /api/samples/ {
+        limit_req zone=upload burst=5 nodelay;
+        proxy_pass http://{{ frontend_api_upstream }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         client_max_body_size 100m;
     }
 
@@ -97,6 +118,7 @@ server {
     # Override X-Frame-Options to SAMEORIGIN — Keycloak admin console uses
     # iframes for its auth flow (step1.html). DENY blocks this.
     location /auth/ {
+        limit_req zone=auth burst=10 nodelay;
         proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
