@@ -1,0 +1,47 @@
+# /etc/fail2ban/jail.local — managed by Ansible
+# Lamware-specific jails for SSH, nginx rate limiting, and Keycloak auth.
+
+[DEFAULT]
+# Ban action: iptables multiport (works with existing iptables rules)
+banaction = iptables-multiport
+# Send no notification emails
+action = %(action_)s
+
+# -------------------------------------------------------------------------
+# SSH brute force
+# -------------------------------------------------------------------------
+[sshd]
+enabled  = true
+port     = ssh
+filter   = sshd
+logpath  = /var/log/auth.log
+maxretry = {{ fail2ban_ssh_maxretry }}
+findtime = {{ fail2ban_ssh_findtime }}
+bantime  = {{ fail2ban_ssh_bantime }}
+
+# -------------------------------------------------------------------------
+# nginx rate-limit recidivist — ban IPs that keep hitting 429
+# An IP that gets rate-limited 10 times in 5 minutes is scanning, not browsing.
+# -------------------------------------------------------------------------
+[nginx-rate-limit]
+enabled  = true
+port     = http,https
+filter   = nginx-rate-limit
+logpath  = /var/log/nginx/error.log
+maxretry = {{ fail2ban_nginx_maxretry }}
+findtime = {{ fail2ban_nginx_findtime }}
+bantime  = {{ fail2ban_nginx_bantime }}
+
+# -------------------------------------------------------------------------
+# Keycloak authentication failures
+# Keycloak logs failed logins to its stdout, captured by Podman/journald.
+# -------------------------------------------------------------------------
+[keycloak-auth]
+enabled  = true
+port     = http,https
+filter   = keycloak-auth
+backend  = systemd
+journalmatch = _SYSTEMD_UNIT=keycloak.service
+maxretry = {{ fail2ban_keycloak_maxretry }}
+findtime = {{ fail2ban_keycloak_findtime }}
+bantime  = {{ fail2ban_keycloak_bantime }}

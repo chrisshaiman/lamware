@@ -1,0 +1,10 @@
+---
+# roles/certbot/defaults/main.yml
+
+certbot_enabled: true
+certbot_webroot: /var/lib/letsencrypt
+certbot_email: ""  # set in vars/main.yml — required for Let's Encrypt account
+certbot_domain: "{{ lamware_domain | default('lamware.example.com') }}"
+
+# Cert expiry monitoring — alert via ntfy if cert expires within this many days
+certbot_expiry_warn_days: 14

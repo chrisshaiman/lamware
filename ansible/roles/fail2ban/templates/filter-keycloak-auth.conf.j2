@@ -1,0 +1,7 @@
+# /etc/fail2ban/filter.d/keycloak-auth.conf — managed by Ansible
+# Matches Keycloak login failure events from journald.
+# Keycloak 26.x logs: "LOGIN_ERROR ... ipAddress=1.2.3.4"
+
+[Definition]
+failregex = LOGIN_ERROR.*ipAddress=<HOST>
+ignoreregex =

@@ -1,0 +1,44 @@
+#!/bin/bash
+# =============================================================================
+# check-cert-expiry.sh — alert if TLS cert expires within {{ certbot_expiry_warn_days }} days
+# Run daily by cron. Sends ntfy alert on expiry warning or renewal failure.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+DOMAIN="{{ certbot_domain }}"
+CERT_PATH="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+WARN_DAYS="{{ certbot_expiry_warn_days }}"
+NTFY_URL="{{ ntfy_url }}/{{ ntfy_topic }}"
+
+if [[ ! -f "$CERT_PATH" ]]; then
+    curl -s -H "Title: lamware TLS cert missing" \
+         -H "Priority: urgent" \
+         -H "Tags: rotating_light" \
+         -d "Certificate file not found: ${CERT_PATH}" \
+         "$NTFY_URL"
+    exit 1
+fi
+
+# Get cert expiry date and calculate days remaining
+EXPIRY_DATE=$(openssl x509 -enddate -noout -in "$CERT_PATH" | cut -d= -f2)
+EXPIRY_EPOCH=$(date -d "$EXPIRY_DATE" +%s)
+NOW_EPOCH=$(date +%s)
+DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+
+if [[ "$DAYS_LEFT" -le 0 ]]; then
+    curl -s -H "Title: lamware TLS cert EXPIRED" \
+         -H "Priority: urgent" \
+         -H "Tags: rotating_light" \
+         -d "Certificate for ${DOMAIN} expired ${DAYS_LEFT#-} days ago. Run: certbot renew" \
+         "$NTFY_URL"
+elif [[ "$DAYS_LEFT" -le "$WARN_DAYS" ]]; then
+    curl -s -H "Title: lamware TLS cert expiring soon" \
+         -H "Priority: high" \
+         -H "Tags: warning" \
+         -d "Certificate for ${DOMAIN} expires in ${DAYS_LEFT} days (${EXPIRY_DATE}). Renewal should happen automatically — check certbot.timer." \
+         "$NTFY_URL"
+fi

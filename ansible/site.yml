@@ -165,3 +165,11 @@
     # 22. ntfy alerts — push notifications and daily digest
     - role: ntfy-alerts
       tags: [ntfy-alerts]
+
+    # 23. fail2ban — SSH, nginx rate-limit, and Keycloak auth jails
+    - role: fail2ban
+      tags: [fail2ban]
+
+    # 24. Certbot — Let's Encrypt auto-renewal and cert expiry monitoring
+    - role: certbot
+      tags: [certbot]
