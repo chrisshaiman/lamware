@@ -40,8 +40,8 @@
     directory_mode: "0755"
 
 - name: Deploy realm import file
-  ansible.builtin.copy:
-    src: lamware-realm.json
+  ansible.builtin.template:
+    src: lamware-realm.json.j2
     dest: "{{ keycloak_install_dir }}/import/lamware-realm.json"
     owner: root
     group: root

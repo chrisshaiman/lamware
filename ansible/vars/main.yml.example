@@ -10,6 +10,10 @@
 # -----------------------------------------------------------------------------
 sandbox_hostname: malware-sandbox-01
 
+# Public-facing domain name for the lamware dashboard and Keycloak.
+# Used by nginx (server_name), Keycloak (KC_HOSTNAME), CORS, and TLS certs.
+lamware_domain: lamware.example.com
+
 # -----------------------------------------------------------------------------
 # Networking — detonation bridge
 # This network is air-gapped. Guests detonate here, INetSim listens here.
