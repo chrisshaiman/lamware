@@ -69,8 +69,8 @@ variable "admin_cidrs" {
   description = "CIDRs allowed to reach SSH (22/tcp) and WireGuard (UDP) on the robot firewall. Must be set explicitly — no default. Use your static IP(s) in CIDR notation (e.g. ['203.0.113.10/32']). Max 10 entries."
 
   validation {
-    condition     = length(var.admin_cidrs) > 0 && length(var.admin_cidrs) <= 10
-    error_message = "admin_cidrs must contain between 1 and 10 entries (robot firewall sequences 0–9 for SSH, 10–19 for WireGuard)."
+    condition     = length(var.admin_cidrs) > 0 && length(var.admin_cidrs) <= 5
+    error_message = "admin_cidrs must contain between 1 and 5 entries (sequences 0–4 SSH, 5–9 WireGuard, 18–19 public web)."
   }
 }
 
