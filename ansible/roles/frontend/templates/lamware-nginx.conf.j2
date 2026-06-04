@@ -19,11 +19,20 @@ limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
 limit_req_zone $binary_remote_addr zone=upload:10m rate=2r/s;
 limit_req_status 429;
 
-# HTTP → HTTPS redirect
+# HTTP — ACME challenges + HTTPS redirect
 server {
     listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_http_port }};
     server_name {{ frontend_server_name }};
-    return 301 https://$host$request_uri;
+
+    # Let's Encrypt HTTP-01 challenge (certbot webroot)
+    location /.well-known/acme-challenge/ {
+        root /var/lib/letsencrypt;
+    }
+
+    # Everything else → HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
 }
 
 server {

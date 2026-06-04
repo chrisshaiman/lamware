@@ -1,0 +1,51 @@
+---
+# =============================================================================
+# roles/fail2ban/tasks/main.yml
+#
+# Installs fail2ban with jails for SSH brute force, nginx rate-limit
+# recidivists, and Keycloak authentication failures.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install fail2ban
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Deploy jail configuration
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Deploy nginx rate-limit filter
+  ansible.builtin.template:
+    src: filter-nginx-rate-limit.conf.j2
+    dest: /etc/fail2ban/filter.d/nginx-rate-limit.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Deploy Keycloak auth filter
+  ansible.builtin.template:
+    src: filter-keycloak-auth.conf.j2
+    dest: /etc/fail2ban/filter.d/keycloak-auth.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Enable and start fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+    daemon_reload: true

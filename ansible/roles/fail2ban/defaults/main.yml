@@ -1,0 +1,19 @@
+---
+# roles/fail2ban/defaults/main.yml
+
+fail2ban_enabled: true
+
+# SSH jail
+fail2ban_ssh_maxretry: 5
+fail2ban_ssh_findtime: 600
+fail2ban_ssh_bantime: 3600
+
+# nginx rate-limit recidivist jail (repeat 429 offenders)
+fail2ban_nginx_maxretry: 10
+fail2ban_nginx_findtime: 300
+fail2ban_nginx_bantime: 3600
+
+# Keycloak auth failure jail
+fail2ban_keycloak_maxretry: 10
+fail2ban_keycloak_findtime: 600
+fail2ban_keycloak_bantime: 3600

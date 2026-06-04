@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# roles/certbot/tasks/main.yml
+#
+# Sets up certbot for HTTP-01 auto-renewal of Let's Encrypt certificates.
+# Does NOT request a new certificate — assumes one was already issued.
+# Configures:
+#   1. certbot package install
+#   2. Webroot directory for ACME challenges
+#   3. Renewal deploy hook (nginx reload)
+#   4. Systemd timer for twice-daily renewal checks (certbot default)
+#   5. Certificate expiry monitoring via cron + ntfy
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install certbot
+  ansible.builtin.apt:
+    name: certbot
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create ACME webroot directory
+  ansible.builtin.file:
+    path: "{{ certbot_webroot }}"
+    state: directory
+    owner: root
+    group: www-data
+    mode: "0755"
+
+# Configure certbot to use webroot and reload nginx after renewal.
+# This sets up /etc/letsencrypt/renewal/<domain>.conf so that
+# certbot renew uses HTTP-01 automatically.
+- name: Configure renewal to use webroot authenticator
+  ansible.builtin.blockinfile:
+    path: "/etc/letsencrypt/renewal/{{ certbot_domain }}.conf"
+    marker: "# {mark} MANAGED BY ANSIBLE — webroot config"
+    block: |
+      authenticator = webroot
+      webroot_path = {{ certbot_webroot }},
+    create: false  # fail if cert doesn't exist yet
+  when: certbot_enabled
+
+- name: Deploy post-renewal hook for nginx reload
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Reload nginx to pick up renewed certificate
+      systemctl reload nginx
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Enable certbot systemd timer
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: true
+    state: started
+
+# -------------------------------------------------------------------------
+# Certificate expiry monitoring
+# -------------------------------------------------------------------------
+
+- name: Create certbot script directory
+  ansible.builtin.file:
+    path: /opt/certbot
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy cert expiry check script
+  ansible.builtin.template:
+    src: check-cert-expiry.sh.j2
+    dest: /opt/certbot/check-cert-expiry.sh
+    owner: root
+    group: root
+    mode: "0750"
+  when: ntfy_enabled | default(false)
+
+- name: Install cert expiry monitoring cron
+  ansible.builtin.cron:
+    name: "lamware cert expiry check"
+    hour: "8"
+    minute: "0"
+    user: root
+    job: "/opt/certbot/check-cert-expiry.sh"
+  when: certbot_enabled and (ntfy_enabled | default(false))
+
+- name: Remove cert expiry cron if disabled
+  ansible.builtin.cron:
+    name: "lamware cert expiry check"
+    user: root
+    state: absent
+  when: not (certbot_enabled and (ntfy_enabled | default(false)))

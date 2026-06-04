@@ -1,0 +1,7 @@
+# /etc/fail2ban/filter.d/nginx-rate-limit.conf — managed by Ansible
+# Matches nginx limit_req rate-limiting log entries in error.log.
+# Format: "limiting requests, excess: 50.123 by zone "api", client: 1.2.3.4, ..."
+
+[Definition]
+failregex = ^\s*\S+ \S+ \[error\] \d+#\d+: \*\d+ limiting requests, excess: [\d.]+ by zone "[^"]+", client: <HOST>,
+ignoreregex =
