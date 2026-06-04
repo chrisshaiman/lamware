@@ -8,5 +8,5 @@ frontend_nginx_port: 443
 frontend_nginx_http_port: 80
 frontend_api_upstream: "127.0.0.1:{{ api_port | default(8001) }}"
 frontend_server_name: "lamware.shaiman.net"
-frontend_ssl_cert: /etc/ssl/certs/lamware-selfsigned.crt
-frontend_ssl_key: /etc/ssl/private/lamware-selfsigned.key
+frontend_ssl_cert: /etc/letsencrypt/live/lamware.shaiman.net/fullchain.pem
+frontend_ssl_key: /etc/letsencrypt/live/lamware.shaiman.net/privkey.pem
