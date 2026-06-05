@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import text
 from sqlmodel import Session, col, func, select
 
 from ..auth import AuthContext, require_auth, require_role
@@ -269,6 +270,46 @@ def get_analysis(
         ).all()
     ]
 
+    # Overlapping IOCs: IOCs from this analysis that also appear in other analyses
+    overlap_iocs_result = session.exec(
+        text("""
+            SELECT iv.id AS ioc_id, iv.type, iv.value,
+                   json_agg(json_build_object(
+                       'analysis_id', a.id,
+                       'sha256', s.sha256,
+                       'family', a.malware_family_guess
+                   )) AS other_analyses
+            FROM analysis_iocs ai1
+            JOIN ioc_values iv ON iv.id = ai1.ioc_id
+            JOIN analysis_iocs ai2 ON ai2.ioc_id = ai1.ioc_id AND ai2.analysis_id != ai1.analysis_id
+            JOIN analyses a ON a.id = ai2.analysis_id
+            JOIN samples s ON s.id = a.sample_id
+            WHERE ai1.analysis_id = :aid
+            GROUP BY iv.id, iv.type, iv.value
+        """),
+        params={"aid": analysis_id},
+    ).all()
+
+    # Overlapping techniques: techniques from this analysis that also appear in other analyses
+    overlap_techniques_result = session.exec(
+        text("""
+            SELECT tv.id AS technique_pk, tv.technique_id AS tid, tv.technique_name,
+                   json_agg(json_build_object(
+                       'analysis_id', a.id,
+                       'sha256', s.sha256,
+                       'family', a.malware_family_guess
+                   )) AS other_analyses
+            FROM analysis_techniques at1
+            JOIN technique_values tv ON tv.id = at1.technique_id
+            JOIN analysis_techniques at2 ON at2.technique_id = at1.technique_id AND at2.analysis_id != at1.analysis_id
+            JOIN analyses a ON a.id = at2.analysis_id
+            JOIN samples s ON s.id = a.sample_id
+            WHERE at1.analysis_id = :aid
+            GROUP BY tv.id, tv.technique_id, tv.technique_name
+        """),
+        params={"aid": analysis_id},
+    ).all()
+
     return {
         "id": analysis.id,
         "task_id": analysis.task_id,
@@ -325,6 +366,24 @@ def get_analysis(
         "capabilities": capabilities,
         "signatures": signatures,
         "network_events": network_events,
+        # Cross-analysis overlap data for "Related Analyses" feature
+        "overlapping_iocs": [
+            {
+                "ioc_id": r.ioc_id,
+                "type": r.type,
+                "value": r.value,
+                "other_analyses": r.other_analyses if isinstance(r.other_analyses, list) else json.loads(r.other_analyses),
+            }
+            for r in overlap_iocs_result
+        ],
+        "overlapping_techniques": [
+            {
+                "technique_id": r.tid,
+                "technique_name": r.technique_name,
+                "other_analyses": r.other_analyses if isinstance(r.other_analyses, list) else json.loads(r.other_analyses),
+            }
+            for r in overlap_techniques_result
+        ],
     }
 
 

@@ -131,3 +131,26 @@ def test_ioc_clusters_high_thresholds_empty(client, jwt_headers):
     )
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# ── Analysis detail overlap data tests ─────────────────────────────
+
+
+def test_analysis_detail_includes_overlap(client, jwt_headers):
+    """GET /api/analyses/{id} response includes overlap fields."""
+    import pytest
+
+    analyses_resp = client.get("/api/analyses", params={"limit": 1}, headers=jwt_headers)
+    assert analyses_resp.status_code == 200
+    body = analyses_resp.json()
+    analyses = body.get("analyses", body) if isinstance(body, dict) else body
+    if not analyses:
+        pytest.skip("No analysis data")
+    analysis_id = analyses[0]["id"]
+    resp = client.get(f"/api/analyses/{analysis_id}", headers=jwt_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "overlapping_iocs" in data
+    assert "overlapping_techniques" in data
+    assert isinstance(data["overlapping_iocs"], list)
+    assert isinstance(data["overlapping_techniques"], list)
