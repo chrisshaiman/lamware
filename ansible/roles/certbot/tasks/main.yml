@@ -30,18 +30,10 @@
     group: www-data
     mode: "0755"
 
-# Configure certbot to use webroot and reload nginx after renewal.
-# This sets up /etc/letsencrypt/renewal/<domain>.conf so that
-# certbot renew uses HTTP-01 automatically.
-- name: Configure renewal to use webroot authenticator
-  ansible.builtin.blockinfile:
-    path: "/etc/letsencrypt/renewal/{{ certbot_domain }}.conf"
-    marker: "# {mark} MANAGED BY ANSIBLE — webroot config"
-    block: |
-      authenticator = webroot
-      webroot_path = {{ certbot_webroot }},
-    create: false  # fail if cert doesn't exist yet
-  when: certbot_enabled
+# Renewal config is managed by certbot itself after initial cert issuance
+# via: certbot certonly --webroot -w /var/lib/letsencrypt -d <domain>
+# Do not modify /etc/letsencrypt/renewal/*.conf — certbot's format is
+# fragile and breaks on injected content.
 
 - name: Deploy post-renewal hook for nginx reload
   ansible.builtin.copy:

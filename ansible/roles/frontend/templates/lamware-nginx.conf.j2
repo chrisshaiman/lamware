@@ -21,7 +21,8 @@ limit_req_status 429;
 
 # HTTP — ACME challenges + HTTPS redirect
 server {
-    listen {{ frontend_nginx_http_port }};
+    listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_http_port }};
+    listen {{ public_ip }}:{{ frontend_nginx_http_port }};
     server_name {{ frontend_server_name }};
 
     # Let's Encrypt HTTP-01 challenge (certbot webroot)
@@ -36,7 +37,8 @@ server {
 }
 
 server {
-    listen {{ frontend_nginx_port }} ssl;
+    listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_port }} ssl;
+    listen {{ public_ip }}:{{ frontend_nginx_port }} ssl;
     server_name {{ frontend_server_name }};
 
     # TLS certificate (Let's Encrypt via certbot auto-renewal)

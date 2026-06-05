@@ -10,6 +10,10 @@
 # -----------------------------------------------------------------------------
 sandbox_hostname: malware-sandbox-01
 
+# Server's public IP — nginx binds to this + WireGuard for web access.
+# Cannot use 0.0.0.0 because INetSim binds port 80/443 on the detonation bridge.
+public_ip: ""
+
 # Public-facing domain name for the lamware dashboard and Keycloak.
 # Used by nginx (server_name), Keycloak (KC_HOSTNAME), CORS, and TLS certs.
 lamware_domain: lamware.example.com
