@@ -8,13 +8,15 @@
 # distinct analyses share each indicator, so analysts can quickly identify
 # infrastructure reused across multiple samples.
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..auth import AuthContext, require_auth
 from ..database import get_session
+from ..models.analysis import Analysis
 from ..models.ioc import AnalysisIoc, IocValue
+from ..models.sample import Sample
 
 router = APIRouter(prefix="/api/iocs", tags=["iocs"])
 
@@ -83,6 +85,52 @@ async def list_iocs(
             "first_seen": row.first_seen,
             "last_seen": row.last_seen,
             "analysis_count": row.analysis_count,
+        }
+        for row in rows
+    ]
+
+
+@router.get("/{ioc_id}/analyses")
+async def ioc_analyses(
+    ioc_id: int,
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    List all analyses that contain a specific IOC.
+
+    Lets analysts pivot from a single indicator to every pipeline run that
+    observed it — the core cross-sample correlation query.
+    """
+    ioc = session.get(IocValue, ioc_id)
+    if not ioc:
+        raise HTTPException(status_code=404, detail="IOC not found")
+
+    stmt = (
+        select(
+            Analysis.id.label("analysis_id"),
+            Sample.sha256,
+            Analysis.malware_family_guess.label("family"),
+            Analysis.created_at.label("submitted_at"),
+            AnalysisIoc.source_stage,
+            AnalysisIoc.confidence,
+        )
+        .join(AnalysisIoc, AnalysisIoc.analysis_id == Analysis.id)
+        .join(Sample, Sample.id == Analysis.sample_id)
+        .where(AnalysisIoc.ioc_id == ioc_id)
+        .order_by(Analysis.created_at.desc())
+    )
+
+    rows = session.exec(stmt).all()
+
+    return [
+        {
+            "analysis_id": row.analysis_id,
+            "sha256": row.sha256,
+            "family": row.family,
+            "submitted_at": row.submitted_at,
+            "source_stage": row.source_stage,
+            "confidence": row.confidence,
         }
         for row in rows
     ]
