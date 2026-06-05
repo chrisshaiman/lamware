@@ -106,3 +106,28 @@ def test_techniques_family_filter(client, jwt_headers):
     resp = client.get("/api/techniques", params={"family": "Emotet"}, headers=jwt_headers)
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+# ── IOC cluster (campaign detection) tests ─────────────────────────
+
+
+def test_ioc_clusters_returns_list(client, jwt_headers):
+    resp = client.get("/api/iocs/clusters", headers=jwt_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    for cluster in data:
+        assert "cluster_id" in cluster
+        assert "analyses" in cluster
+        assert "shared_iocs" in cluster
+        assert "shared_techniques" in cluster
+
+
+def test_ioc_clusters_high_thresholds_empty(client, jwt_headers):
+    resp = client.get(
+        "/api/iocs/clusters",
+        params={"min_shared_iocs": 100, "min_analyses": 100},
+        headers=jwt_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
