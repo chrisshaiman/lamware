@@ -8,6 +8,7 @@ import type { IocBrowseItem } from "#lib/types";
 interface IocListParams {
   q?: string;
   type?: string;
+  family?: string;
   limit?: number;
   offset?: number;
 }
