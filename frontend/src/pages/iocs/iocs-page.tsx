@@ -1,14 +1,20 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Network } from "lucide-react";
+import { Network, X } from "lucide-react";
 import { useIocsList } from "#hooks/use-iocs";
+import { useIocClusters } from "#hooks/use-ioc-clusters";
+import { useIocAnalyses } from "#hooks/use-ioc-analyses";
+import { CampaignCards } from "#components/shared/campaign-cards";
+import { FamilyFilter } from "#components/shared/family-filter";
+import { AnalysisListPanel } from "#components/shared/analysis-list-panel";
 import { SearchInput } from "#components/shared/search-input";
 import { MonoText } from "#components/shared/mono-text";
 import { formatRelativeTime } from "#lib/utils";
 import { IOC_TYPES } from "#lib/constants";
+import type { IocCluster } from "#lib/types";
 
 const PAGE_SIZE = 50;
 
@@ -18,12 +24,25 @@ export function IocsPage() {
   const type = searchParams.get("type") ?? "";
   const offset = parseInt(searchParams.get("offset") ?? "0", 10);
 
+  // Family filter — "all" means no filter
+  const [family, setFamily] = useState("all");
+
+  // Row expand — which IOC is expanded to show linked analyses
+  const [expandedIocId, setExpandedIocId] = useState<number | null>(null);
+
+  // Campaign cluster filter — restrict table to IOCs in the selected cluster
+  const [clusterFilter, setClusterFilter] = useState<number[] | null>(null);
+
   const { data: iocs, isLoading, isError } = useIocsList({
     q: q || undefined,
     type: type || undefined,
+    family: family !== "all" ? family : undefined,
     limit: PAGE_SIZE,
     offset,
   });
+
+  const { data: clusters = [] } = useIocClusters();
+  const { data: iocAnalyses = [], isLoading: analysesLoading } = useIocAnalyses(expandedIocId);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -38,6 +57,21 @@ export function IocsPage() {
     [setSearchParams],
   );
 
+  /** When a campaign card is clicked, filter the IOC table to that cluster's IOCs. */
+  const handleClusterClick = useCallback((cluster: IocCluster) => {
+    setClusterFilter(cluster.shared_iocs.map((i) => i.id));
+    setExpandedIocId(null);
+  }, []);
+
+  const clearClusterFilter = useCallback(() => {
+    setClusterFilter(null);
+  }, []);
+
+  // Apply cluster filter to displayed IOCs
+  const displayedIocs = clusterFilter && iocs
+    ? iocs.filter((ioc) => clusterFilter.includes(ioc.id))
+    : iocs;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -45,6 +79,10 @@ export function IocsPage() {
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">IOC Browser</h1>
       </div>
 
+      {/* Campaign cards */}
+      <CampaignCards clusters={clusters} onClusterClick={handleClusterClick} />
+
+      {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <SearchInput
           value={q}
@@ -62,6 +100,18 @@ export function IocsPage() {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        <FamilyFilter value={family} onChange={setFamily} />
+
+        {clusterFilter && (
+          <button
+            type="button"
+            onClick={clearClusterFilter}
+            className="inline-flex items-center gap-1 rounded-md border border-orange-700 bg-orange-900/30 px-2.5 py-1.5 text-xs font-medium text-orange-300 hover:bg-orange-900/50"
+          >
+            Campaign filter active
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
       {isLoading ? (
@@ -74,7 +124,7 @@ export function IocsPage() {
         <div className="rounded-md border border-red-800 bg-red-900/20 p-4 text-sm text-red-400">
           Failed to load IOCs.
         </div>
-      ) : !iocs || iocs.length === 0 ? (
+      ) : !displayedIocs || displayedIocs.length === 0 ? (
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-secondary)]">
           No IOCs found.
         </div>
@@ -91,28 +141,17 @@ export function IocsPage() {
               </tr>
             </thead>
             <tbody>
-              {iocs.map((ioc) => (
-                <tr key={ioc.id} className="border-b border-[var(--color-border-light)] transition-colors hover:bg-[var(--color-surface-hover)]">
-                  <td className="px-4 py-2.5">
-                    <span className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-xs text-[var(--color-text-muted)]">
-                      {ioc.type}
-                    </span>
-                  </td>
-                  <td className="max-w-md px-4 py-2.5">
-                    <MonoText className="break-all">{ioc.value}</MonoText>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className={`tabular-nums ${ioc.analysis_count > 1 ? "font-medium text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]"}`}>
-                      {ioc.analysis_count}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
-                    {ioc.first_seen ? formatRelativeTime(ioc.first_seen) : "\u2014"}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
-                    {ioc.last_seen ? formatRelativeTime(ioc.last_seen) : "\u2014"}
-                  </td>
-                </tr>
+              {displayedIocs.map((ioc) => (
+                <IocRow
+                  key={ioc.id}
+                  ioc={ioc}
+                  isExpanded={expandedIocId === ioc.id}
+                  onToggle={() =>
+                    setExpandedIocId(expandedIocId === ioc.id ? null : ioc.id)
+                  }
+                  analyses={expandedIocId === ioc.id ? iocAnalyses : []}
+                  analysesLoading={expandedIocId === ioc.id && analysesLoading}
+                />
               ))}
             </tbody>
           </table>
@@ -139,5 +178,58 @@ export function IocsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IOC row with expandable analysis panel
+// ---------------------------------------------------------------------------
+
+interface IocRowProps {
+  ioc: { id: number; type: string; value: string; first_seen: string | null; last_seen: string | null; analysis_count: number };
+  isExpanded: boolean;
+  onToggle: () => void;
+  analyses: { analysis_id: number; sha256: string; family: string | null; submitted_at: string; source_stage?: string }[];
+  analysesLoading: boolean;
+}
+
+function IocRow({ ioc, isExpanded, onToggle, analyses, analysesLoading }: IocRowProps) {
+  return (
+    <>
+      <tr className="border-b border-[var(--color-border-light)] transition-colors hover:bg-[var(--color-surface-hover)]">
+        <td className="px-4 py-2.5">
+          <span className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-xs text-[var(--color-text-muted)]">
+            {ioc.type}
+          </span>
+        </td>
+        <td className="max-w-md px-4 py-2.5">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="cursor-pointer text-left hover:underline"
+          >
+            <MonoText className="break-all">{ioc.value}</MonoText>
+          </button>
+        </td>
+        <td className="px-4 py-2.5 text-right">
+          <span className={`tabular-nums ${ioc.analysis_count > 1 ? "font-medium text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]"}`}>
+            {ioc.analysis_count}
+          </span>
+        </td>
+        <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
+          {ioc.first_seen ? formatRelativeTime(ioc.first_seen) : "\u2014"}
+        </td>
+        <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
+          {ioc.last_seen ? formatRelativeTime(ioc.last_seen) : "\u2014"}
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr>
+          <td colSpan={5}>
+            <AnalysisListPanel analyses={analyses} isLoading={analysesLoading} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
