@@ -4,7 +4,7 @@
 # Serves the React frontend from /opt/frontend/dist/ and proxies
 # /api/*, /health, /ws/*, /docs, /redoc to FastAPI on port 8001.
 #
-# Listens on wg0 (WireGuard) only — not exposed to the internet.
+# Listens on all interfaces — protected by OVH robot firewall + fail2ban.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -21,7 +21,7 @@ limit_req_status 429;
 
 # HTTP — ACME challenges + HTTPS redirect
 server {
-    listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_http_port }};
+    listen {{ frontend_nginx_http_port }};
     server_name {{ frontend_server_name }};
 
     # Let's Encrypt HTTP-01 challenge (certbot webroot)
@@ -36,10 +36,10 @@ server {
 }
 
 server {
-    listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_port }} ssl;
+    listen {{ frontend_nginx_port }} ssl;
     server_name {{ frontend_server_name }};
 
-    # Self-signed cert (replace with Let's Encrypt when a domain is set up)
+    # TLS certificate (Let's Encrypt via certbot auto-renewal)
     ssl_certificate {{ frontend_ssl_cert }};
     ssl_certificate_key {{ frontend_ssl_key }};
     ssl_protocols TLSv1.2 TLSv1.3;
