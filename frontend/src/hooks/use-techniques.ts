@@ -8,6 +8,7 @@ import type { TechniqueBrowseItem } from "#lib/types";
 interface TechniqueListParams {
   q?: string;
   tactic?: string;
+  family?: string;
   limit?: number;
   offset?: number;
 }

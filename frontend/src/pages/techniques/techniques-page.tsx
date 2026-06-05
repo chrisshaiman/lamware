@@ -1,10 +1,13 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Shield } from "lucide-react";
 import { useTechniquesList } from "#hooks/use-techniques";
+import { useTechniqueAnalyses } from "#hooks/use-technique-analyses";
+import { FamilyFilter } from "#components/shared/family-filter";
+import { AnalysisListPanel } from "#components/shared/analysis-list-panel";
 import { SearchInput } from "#components/shared/search-input";
 import { MonoText } from "#components/shared/mono-text";
 import { formatRelativeTime } from "#lib/utils";
@@ -19,15 +22,26 @@ export function TechniquesPage() {
   const tactic = searchParams.get("tactic") ?? "";
   const offset = parseInt(searchParams.get("offset") ?? "0", 10);
 
+  // Family filter — "all" means no filter
+  const [family, setFamily] = useState("all");
+
+  // Row expand — which technique is expanded to show linked analyses
+  const [expandedTechniqueId, setExpandedTechniqueId] = useState<number | null>(null);
+
   const { data: techniques, isLoading, isError } = useTechniquesList({
     q: q || undefined,
     tactic: tactic || undefined,
+    family: family !== "all" ? family : undefined,
     limit: PAGE_SIZE,
     offset,
   });
 
   // Fetch ALL techniques for the heatmap (unfiltered)
   const { data: allTechniques } = useTechniquesList({ limit: 500 });
+
+  // Fetch analyses for the expanded technique
+  const { data: techniqueAnalyses = [], isLoading: analysesLoading } =
+    useTechniqueAnalyses(expandedTechniqueId);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -76,6 +90,7 @@ export function TechniquesPage() {
             <option key={t} value={t}>{TACTIC_LABELS[t]}</option>
           ))}
         </select>
+        <FamilyFilter value={family} onChange={setFamily} />
       </div>
 
       {/* Table */}
@@ -107,40 +122,91 @@ export function TechniquesPage() {
             </thead>
             <tbody>
               {techniques.map((t) => (
-                <tr key={t.id} className="border-b border-[var(--color-border-light)] transition-colors hover:bg-[var(--color-surface-hover)]">
-                  <td className="px-4 py-2.5">
-                    <MonoText>{t.technique_id}</MonoText>
-                  </td>
-                  <td className="px-4 py-2.5 text-[var(--color-text-secondary)]">
-                    {t.technique_name}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      {t.tactics.map((tac) => (
-                        <button
-                          key={tac}
-                          onClick={() => setParam("tactic", tac)}
-                          className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-secondary)]"
-                        >
-                          {TACTIC_LABELS[tac as MitreTactic] ?? tac}
-                        </button>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span className={`tabular-nums ${t.analysis_count > 1 ? "font-medium text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]"}`}>
-                      {t.analysis_count}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
-                    {t.first_seen ? formatRelativeTime(t.first_seen) : "\u2014"}
-                  </td>
-                </tr>
+                <TechniqueRow
+                  key={t.id}
+                  technique={t}
+                  isExpanded={expandedTechniqueId === t.id}
+                  onToggle={() =>
+                    setExpandedTechniqueId(expandedTechniqueId === t.id ? null : t.id)
+                  }
+                  onTacticClick={(tac) => setParam("tactic", tac)}
+                  analyses={expandedTechniqueId === t.id ? techniqueAnalyses : []}
+                  analysesLoading={expandedTechniqueId === t.id && analysesLoading}
+                />
               ))}
             </tbody>
           </table>
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Technique row with expandable analysis panel
+// ---------------------------------------------------------------------------
+
+interface TechniqueRowProps {
+  technique: {
+    id: number;
+    technique_id: string;
+    technique_name: string;
+    tactics: string[];
+    analysis_count: number;
+    first_seen: string | null;
+  };
+  isExpanded: boolean;
+  onToggle: () => void;
+  onTacticClick: (tactic: string) => void;
+  analyses: { analysis_id: number; sha256: string; family: string | null; submitted_at: string; source_stage?: string }[];
+  analysesLoading: boolean;
+}
+
+function TechniqueRow({ technique, isExpanded, onToggle, onTacticClick, analyses, analysesLoading }: TechniqueRowProps) {
+  return (
+    <>
+      <tr className="border-b border-[var(--color-border-light)] transition-colors hover:bg-[var(--color-surface-hover)]">
+        <td className="px-4 py-2.5">
+          <MonoText>{technique.technique_id}</MonoText>
+        </td>
+        <td className="px-4 py-2.5">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="cursor-pointer text-left text-[var(--color-text-secondary)] hover:underline"
+          >
+            {technique.technique_name}
+          </button>
+        </td>
+        <td className="px-4 py-2.5">
+          <div className="flex flex-wrap gap-1">
+            {technique.tactics.map((tac) => (
+              <button
+                key={tac}
+                onClick={() => onTacticClick(tac)}
+                className="rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-secondary)]"
+              >
+                {TACTIC_LABELS[tac as MitreTactic] ?? tac}
+              </button>
+            ))}
+          </div>
+        </td>
+        <td className="px-4 py-2.5 text-right">
+          <span className={`tabular-nums ${technique.analysis_count > 1 ? "font-medium text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]"}`}>
+            {technique.analysis_count}
+          </span>
+        </td>
+        <td className="px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
+          {technique.first_seen ? formatRelativeTime(technique.first_seen) : "\u2014"}
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr>
+          <td colSpan={5}>
+            <AnalysisListPanel analyses={analyses} isLoading={analysesLoading} />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

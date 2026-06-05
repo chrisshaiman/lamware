@@ -169,6 +169,8 @@ export interface AnalysisDetail {
   capabilities: Capability[];
   signatures: Signature[];
   network_events: NetworkEvent[];
+  overlapping_iocs: OverlappingIoc[];
+  overlapping_techniques: OverlappingTechnique[];
 }
 
 /** Response from DELETE /api/analyses/{id}. */
@@ -301,6 +303,56 @@ export interface FeederActionResponse {
   status: string;
   pause_file?: string;
   consecutive_failures?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Sample submission
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// IOC / Technique cross-analysis linking
+// ---------------------------------------------------------------------------
+
+/** Analysis linked to a specific IOC via /api/iocs/{id}/analyses. */
+export interface IocAnalysisLink {
+  analysis_id: number;
+  sha256: string;
+  family: string | null;
+  submitted_at: string;
+  source_stage: string;
+  confidence?: string;
+}
+
+/** Analysis linked to a specific technique via /api/techniques/{id}/analyses. */
+export interface TechniqueAnalysisLink {
+  analysis_id: number;
+  sha256: string;
+  family: string | null;
+  submitted_at: string;
+  source_stage: string;
+}
+
+/** Cluster of analyses sharing IOCs, from /api/iocs/clusters. */
+export interface IocCluster {
+  cluster_id: number;
+  analyses: { analysis_id: number; sha256: string; family: string | null }[];
+  shared_iocs: { id: number; type: string; value: string }[];
+  shared_techniques: { id: number; technique_id: string; technique_name: string }[];
+}
+
+/** IOC that appears in other analyses (embedded in AnalysisDetail). */
+export interface OverlappingIoc {
+  ioc_id: number;
+  type: string;
+  value: string;
+  other_analyses: { analysis_id: number; sha256: string; family: string | null }[];
+}
+
+/** Technique that appears in other analyses (embedded in AnalysisDetail). */
+export interface OverlappingTechnique {
+  technique_id: string;
+  technique_name: string;
+  other_analyses: { analysis_id: number; sha256: string; family: string | null }[];
 }
 
 // ---------------------------------------------------------------------------

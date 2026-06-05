@@ -15,6 +15,7 @@ import { TechniquesSection } from "./techniques-section";
 import { SignaturesSection } from "./signatures-section";
 import { CapabilitiesSection } from "./capabilities-section";
 import { NetworkEventsSection } from "./network-events-section";
+import { RelatedAnalyses } from "./related-analyses";
 import { StageTimingsCard } from "./stage-timings-card";
 import { DownloadBar } from "./download-bar";
 
@@ -159,6 +160,10 @@ export function AnalysisDetailPage() {
       {/* Data sections */}
       <IocsSection iocs={analysis.iocs} />
       <TechniquesSection techniques={analysis.techniques} />
+      <RelatedAnalyses
+        overlappingIocs={analysis.overlapping_iocs ?? []}
+        overlappingTechniques={analysis.overlapping_techniques ?? []}
+      />
       <SignaturesSection signatures={analysis.signatures} />
       <CapabilitiesSection capabilities={analysis.capabilities} />
       <NetworkEventsSection events={analysis.network_events} />
