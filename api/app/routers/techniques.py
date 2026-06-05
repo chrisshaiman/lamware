@@ -31,6 +31,10 @@ async def list_techniques(
         default=None,
         description="Filter by tactic slug (e.g. defense-evasion, execution)",
     ),
+    family: str | None = Query(
+        default=None,
+        description="Filter to techniques seen in analyses matching this malware family (substring, case-insensitive)",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=1_000_000),
     auth: AuthContext = Depends(require_auth),
@@ -80,6 +84,15 @@ async def list_techniques(
         # Postgres ARRAY contains operator — checks if the tactic slug is in
         # the tactics varchar[] column.
         stmt = stmt.where(TechniqueValue.tactics.any(tactic))
+
+    if family:
+        family_analyses = (
+            select(Analysis.id)
+            .where(Analysis.malware_family_guess.ilike(f"%{family}%"))
+        ).subquery()
+        stmt = stmt.where(
+            AnalysisTechnique.analysis_id.in_(select(family_analyses.c.id))
+        )
 
     rows = session.exec(stmt).all()
 

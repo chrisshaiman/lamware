@@ -89,3 +89,20 @@ def test_technique_analyses_not_found(client, jwt_headers):
     """Non-existent technique returns 404."""
     r = client.get("/api/techniques/999999999/analyses", headers=jwt_headers)
     assert r.status_code == 404
+
+
+# ── Family filter tests ─────────────────────────────────────────────
+
+
+def test_iocs_family_filter(client, jwt_headers):
+    """GET /api/iocs?family=... returns 200 and a list."""
+    resp = client.get("/api/iocs", params={"family": "Emotet"}, headers=jwt_headers)
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_techniques_family_filter(client, jwt_headers):
+    """GET /api/techniques?family=... returns 200 and a list."""
+    resp = client.get("/api/techniques", params={"family": "Emotet"}, headers=jwt_headers)
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

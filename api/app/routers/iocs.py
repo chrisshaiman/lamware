@@ -28,6 +28,10 @@ async def list_iocs(
         default=None,
         description="Filter by IOC type (e.g. ipv4-addr, domain-name, url)",
     ),
+    family: str | None = Query(
+        default=None,
+        description="Filter to IOCs seen in analyses matching this malware family (substring, case-insensitive)",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=1_000_000),
     auth: AuthContext = Depends(require_auth),
@@ -74,6 +78,15 @@ async def list_iocs(
 
     if type:
         stmt = stmt.where(IocValue.type == type)
+
+    if family:
+        family_analyses = (
+            select(Analysis.id)
+            .where(Analysis.malware_family_guess.ilike(f"%{family}%"))
+        ).subquery()
+        stmt = stmt.where(
+            AnalysisIoc.analysis_id.in_(select(family_analyses.c.id))
+        )
 
     rows = session.exec(stmt).all()
 
