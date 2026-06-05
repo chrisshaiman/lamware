@@ -8,12 +8,14 @@
 # This endpoint surfaces frequency across all analyses so analysts can see
 # which techniques appear most often in analyzed samples.
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..auth import AuthContext, require_auth
 from ..database import get_session
+from ..models.analysis import Analysis
+from ..models.sample import Sample
 from ..models.technique import AnalysisTechnique, TechniqueValue
 
 router = APIRouter(prefix="/api/techniques", tags=["techniques"])
@@ -89,6 +91,50 @@ async def list_techniques(
             "tactics": row.tactics or [],
             "first_seen": row.first_seen,
             "analysis_count": row.analysis_count,
+        }
+        for row in rows
+    ]
+
+
+@router.get("/{technique_id}/analyses")
+async def technique_analyses(
+    technique_id: int,
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    List all analyses that exhibit a specific MITRE ATT&CK technique.
+
+    Lets analysts pivot from a technique to every pipeline run where it was
+    observed — useful for hunting shared TTPs across samples.
+    """
+    technique = session.get(TechniqueValue, technique_id)
+    if not technique:
+        raise HTTPException(status_code=404, detail="Technique not found")
+
+    stmt = (
+        select(
+            Analysis.id.label("analysis_id"),
+            Sample.sha256,
+            Analysis.malware_family_guess.label("family"),
+            Analysis.created_at.label("submitted_at"),
+            AnalysisTechnique.source_stage,
+        )
+        .join(AnalysisTechnique, AnalysisTechnique.analysis_id == Analysis.id)
+        .join(Sample, Sample.id == Analysis.sample_id)
+        .where(AnalysisTechnique.technique_id == technique_id)
+        .order_by(Analysis.created_at.desc())
+    )
+
+    rows = session.exec(stmt).all()
+
+    return [
+        {
+            "analysis_id": row.analysis_id,
+            "sha256": row.sha256,
+            "family": row.family,
+            "submitted_at": row.submitted_at,
+            "source_stage": row.source_stage,
         }
         for row in rows
     ]
