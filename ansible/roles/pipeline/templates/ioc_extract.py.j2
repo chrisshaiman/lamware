@@ -79,8 +79,41 @@ def is_benign_domain(domain: str) -> bool:
     return False
 
 
+BENIGN_FILE_PREFIXES = (
+    # Windows system directories — touched by every sandbox run
+    "\\device\\harddiskvolume",
+    "c:\\windows\\",
+    "c:\\programdata\\microsoft\\windows\\",
+    "c:\\users\\jsmith\\appdata\\local\\microsoft\\",
+    "c:\\users\\jsmith\\appdata\\roaming\\microsoft\\",
+    "c:\\users\\jsmith\\ntuser.dat",
+    # Common extensions that are OS noise
+    "activationstore.dat",
+    "usrclass.dat",
+    "wfpdiag.etl",
+)
+
+BENIGN_FILE_SUFFIXES = (
+    ".log1", ".log2", ".etl", ".blf",
+)
+
+BENIGN_MUTEXES = {
+    # Windows OS mutexes — present in every analysis
+    "bcdsyncmutant",
+    "dbwinmutex",
+    "rpccontrol",
+    "_sas_bss_",
+    "local\\sm0:0:0:0",
+    "global\\bfearfca",
+    "global\\i3_default_mutex",
+    "windows\\thinkvantage_mutex",
+    "shellreadyevent",
+    "connectioncount_mutex",
+}
+
+
 def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
-    """Check if an indicator is known benign (Windows noise)."""
+    """Check if an indicator is known benign (Windows/sandbox noise)."""
     v = value.lower().strip()
     if ioc_type in ("domain-name", "url"):
         domain = v
@@ -100,6 +133,14 @@ def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
                 for benign in BENIGN_DOMAINS:
                     if benign in ctx_lower:
                         return True
+    elif ioc_type == "file:name":
+        if any(v.startswith(p) for p in BENIGN_FILE_PREFIXES):
+            return True
+        if any(v.endswith(s) for s in BENIGN_FILE_SUFFIXES):
+            return True
+    elif ioc_type == "mutex":
+        if v in BENIGN_MUTEXES:
+            return True
     return False
 
 

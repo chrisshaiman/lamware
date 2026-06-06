@@ -9,6 +9,7 @@ interface IocListParams {
   q?: string;
   type?: string;
   family?: string;
+  hide_noise?: boolean;
   limit?: number;
   offset?: number;
 }

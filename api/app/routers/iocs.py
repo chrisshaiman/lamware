@@ -34,6 +34,10 @@ async def list_iocs(
         default=None,
         description="Filter to IOCs seen in analyses matching this malware family (substring, case-insensitive)",
     ),
+    hide_noise: bool = Query(
+        default=True,
+        description="Exclude sandbox artifact IOC types (file:name, mutex) that appear in most analyses",
+    ),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=1_000_000),
     auth: AuthContext = Depends(require_auth),
@@ -80,6 +84,11 @@ async def list_iocs(
 
     if type:
         stmt = stmt.where(IocValue.type == type)
+
+    if hide_noise and not type:
+        # Exclude high-volume sandbox artifact types unless user explicitly
+        # selects a type filter (which overrides noise hiding)
+        stmt = stmt.where(IocValue.type.notin_(["file:name", "mutex"]))
 
     if family:
         family_analyses = (
