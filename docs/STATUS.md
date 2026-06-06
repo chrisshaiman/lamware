@@ -5,11 +5,12 @@ For design rationale see ARCHITECTURE.md. For decisions see docs/DECISIONS.md.
 
 ---
 
-## Platform Status (2026-05-05)
+## Platform Status (2026-06-06)
 
-**Fully operational.** Seven-stage malware analysis pipeline with AI-assisted reverse
-engineering, cross-tool correlation, and web dashboard. Tested on Emotet (VB6 packer),
-CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
+**Public and operational.** Seven-stage malware analysis pipeline with AI-assisted reverse
+engineering, cross-tool correlation, and web dashboard. Public at lamware.shaiman.net
+(SSL Labs A+, Security Headers A). Tested on 10+ malware families including Emotet,
+CobaltStrike, NanoCore, Sliver, AsyncRAT, and BianLian.
 
 ### Analysis Pipeline — 7 stages
 
@@ -35,7 +36,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | 5.1 Plain English | Claude Haiku (non-technical explanation) | Podman (--network=host) | Complete |
 | 6. PDF report | WeasyPrint | Podman (--network=none) | Complete |
 
-### Supporting Infrastructure — 19 Ansible roles
+### Supporting Infrastructure — 24 Ansible roles
 
 | Role | Purpose | Status |
 |------|---------|--------|
@@ -68,6 +69,12 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | auto-feeder | Unattended MalwareBazaar ingestion with 6 guardrails | Complete |
 | network-monitor | Air-gap + QEMU breakout + process allowlist monitoring | Complete |
 | ntfy-alerts | Push notifications + daily digest with LLM highlights | Complete |
+| litellm | Claude API proxy — spend tracking, rate limiting | Complete |
+| keycloak | Enterprise SSO — PKCE S256, Podman container, OTP | Complete |
+| api | FastAPI REST backend — JWT/RBAC, audit logging | Complete |
+| frontend | React SPA + nginx — public-facing on lamware.shaiman.net | Complete |
+| fail2ban | SSH, nginx rate-limit, Keycloak auth jails | Complete |
+| certbot | Let's Encrypt auto-renewal, cert expiry monitoring | Complete |
 
 ### Database Features
 
@@ -82,14 +89,14 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | Sample relationship lineage | Schema ready, not populated |
 | Per-analysis LLM cost tracking | Complete |
 
-### React Frontend (port 443 via nginx, PR #57 + #58)
+### React Frontend (public at lamware.shaiman.net, PR #57 + #58 + #97)
 
 | Page | Status |
 |------|--------|
 | /analyses (analysis list) | Complete — paginated, search, severity/family filters |
-| /analyses/:id (detail view) | Complete — all sections, markdown narratives, downloads |
-| /iocs (IOC browser) | Complete — cross-sample frequency, type filter |
-| /techniques (ATT&CK matrix) | Complete — Navigator-style 14-column grid, click to filter |
+| /analyses/:id (detail view) | Complete — all sections, markdown narratives, downloads, Related Analyses overlap detection |
+| /iocs (IOC browser) | Complete — campaign detection cards, pivot-to-analyses, family filter, noise filtering |
+| /techniques (ATT&CK matrix) | Complete — Navigator-style 14-column grid, family filter, pivot-to-analyses |
 | /stats (statistics) | Complete — KPI cards, top families chart |
 | /pipeline (pipeline status) | Complete — running/completed cards, stage progress, 10s polling |
 | /alerts (operational health) | Complete — network monitor, disk, feeder controls |
@@ -97,7 +104,7 @@ CobaltStrike (native C beacon + ransomware), and NanoCore (.NET RAT).
 | /submit (sample upload) | Complete — drag-and-drop, progress, success/error states |
 
 Tech stack: Vite 8, React 19, TypeScript 6, Tailwind v4, Shadcn/ui, Nivo, TanStack Query/Table.
-Deployment: nginx reverse proxy on wg0 (10.200.0.1:443), self-signed SSL, proxies to FastAPI on 8001.
+Deployment: nginx reverse proxy on public IP + WireGuard, Let's Encrypt TLS (A+), proxies to FastAPI on 127.0.0.1:8001.
 Security cat mascot: 5 mood states, click for analysis facts, Konami code easter egg.
 34 Playwright smoke tests passing.
 
@@ -131,11 +138,17 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | LiteLLM PostgreSQL spend tracking | DONE | LiteLLM connected to dedicated PostgreSQL database for native per-request spend tracking. PR #79. |
 | Enterprise authentication (OAuth/SAML) | DONE | Keycloak SSO with PKCE, FastAPI JWT + RBAC + audit log, React keycloak-js. PRs #80-85. Pentested: 24 tests, 12 findings, 9 fixed. |
 | Security testing — pentest complete | DONE | Phase 1 manual (24 tests), Phase 2 Schemathesis (2007 cases), port audit, alert tuning. PRs #84-89. Formal report pending. |
-| Domain + TLS setup (lamware.shaiman.net) | 1 session | DNS A record → 10.200.0.1, Let's Encrypt via DNS-01, KC_HOSTNAME=lamware.shaiman.net, KC_HOSTNAME_STRICT=true. Fixes mobile access, variable issuer, and self-signed cert warnings. |
-| PKCE server-side enforcement | 30 min | Keycloak client setting: Proof Key for Code Exchange → S256 required. Currently optional — client-side only. Pentest finding. |
-| API rate limiting | 1 session | No rate limiting on any endpoint. Add nginx rate_limit or FastAPI middleware. Pentest finding. |
-| Pentest report PDF | 1-2 hrs | Formal report: 12 findings, methodology, evidence, remediation status. WeasyPrint. Portfolio deliverable. |
+| Domain + TLS setup (lamware.shaiman.net) | DONE | Let's Encrypt via DNS-01, auto-renewal via certbot HTTP-01, cert expiry monitoring via ntfy. Public-facing on 15.204.64.8. PRs #91-96. |
+| PKCE server-side enforcement | DONE | Verified S256 required in Keycloak admin console. |
+| API rate limiting | DONE | Three nginx limit_req zones: API 30r/s, auth 5r/s (burst 50), upload 2r/s. PR #91. |
+| OVH robot firewall | DONE | Enabled with deny-all rule. SSH (admin CIDR), WireGuard (0.0.0.0/0), HTTPS, HTTP, TCP established. Critical fix — was never enforcing since April 2026. PRs #93-94. |
+| fail2ban | DONE | SSH brute force, nginx rate-limit recidivist, Keycloak auth failure jails. PR #92. |
+| Keycloak production mode | DONE | Switched from start-dev to start. OTP enabled on admin account. PR #92. |
+| IOC/technique correlation | DONE | Campaign detection, pivot-to-analyses, family filter, Related Analyses section, noise filtering. PR #97. |
+| Domain parameterization | DONE | Replaced hardcoded lamware.shaiman.net with lamware_domain variable. PR #91. |
+| Pentest report PDF | 1-2 hrs | Formal report: findings, methodology, evidence, remediation status. WeasyPrint. Portfolio deliverable. Missing Phase 1 details from compacted context. |
 | CI/CD security-test Ansible role | 1 session | Automate RBAC tests, Schemathesis, Nuclei into post-deploy verification. |
+| Family name normalization | 1-2 hrs | LLM generates verbose family names ("vb6 downloader/dropper (likely guloader)"). Normalize to canonical names. |
 | Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
 
 ### Medium Priority
@@ -155,10 +168,10 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | ELF/Linux binary support | 1 session | Ghidra + Linux Volatility symbols. Needs Linux guest VM in CAPE. ~5% of samples. |
 | Batch/JS/VBS/HTA script analysis | DONE | Generic text/script catch-all handler (PR #77). Detects language, reads source, sends to LLM. Covers .bat, .cmd, .js, .jse, .wsf, .vbs, .vbe, .hta, .py, and any readable text. |
 | shellcheck + PSScriptAnalyzer | 1 hr | Shell (1 file) and PowerShell (9 files) linting. Low ROI — stable Packer provisioning scripts, rarely change. |
-| DAST: Schemathesis API fuzzing | 1 session | Fuzz all 10 FastAPI routers via /openapi.json. Priority targets: samples + feeder intake routers. Ansible post-deploy role + `make dast`. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
-| DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan of FastAPI/Flask. Ansible post-deploy role, reports to /opt/pipeline/reports/dast/. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
-| DAST: Nuclei misconfig sweep | 1-2 hrs | FastAPI/Flask misconfig templates (exposed /docs, CORS, debug mode, missing security headers). **Trigger: when adding multi-user access or removing WireGuard requirement.** |
-| /docs /redoc env-gating | 30 min | Disable Swagger/ReDoc in prod, enable only in dev via settings.env flag. **Trigger: when adding multi-user access or removing WireGuard requirement.** |
+| DAST: Schemathesis API fuzzing | DONE | 2007 fuzz cases, found integer overflow on offset params. PRs #84-89. |
+| DAST: Nuclei misconfig sweep | DONE | 6,522 templates, 1 low finding (Keycloak admin config — accepted). Run against public endpoint. |
+| DAST: ZAP Ajax Spider | 1 session | Headless browser crawl of React frontend + active scan. |
+| /docs /redoc env-gating | DONE | Gated behind LAMWARE_ENABLE_DOCS=false in production. PR #84. |
 | Remove static API key auth | DONE | Removed VITE_API_KEY from frontend build, X-API-Key fallback from FastAPI, API key from WebSocket auth. JWT-only auth path. |
 | Refactor auto-feeder to spool-based | 1 session | Replace direct `sudo -u pipeline run-pipeline` with spool drop pattern (same as UI submit). Eliminates sudo/NoNewPrivileges tradeoff. Requires reworking cost tracking, failure counting, and sequential processing — currently coupled to subprocess.run(). |
 | Test process alerting for all users | 1-2 hrs | Verify network-monitor process allowlists for all monitored users (cape, pipeline, auto-feeder, lamware-api). Simulate unexpected processes for each user and confirm alerts fire. Verify no remaining false positives after allowlist tuning. |
@@ -191,12 +204,12 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 |------|--------|-------|
 | File permissions audit | 2-3 hrs | Audit all deployed files for over-permissioning (chmod 777 work dirs, 755 vs 750, world-readable status files). Establish consistent permission model: what runs as root vs cape, what needs cross-user read access, whether a shared group would be cleaner than world-readable files. |
 | Process allowlist to pattern-based | 1-2 hrs | Replace exact-match CAPE_ALLOWLIST with regex/pattern matching. Current approach requires a commit for every new process. Pattern-based (e.g., match /home/cape paths, known prefixes) would be maintenance-free. |
+| Remove AWS references | In progress | Clean up leftover AWS and shared folder references from early design. Platform is OVH-only. |
 | WireGuard phone peer | DONE | Phone peer at 10.200.0.3, QR code config via qrencode. |
 | WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
 | Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
 | Host file integrity monitoring | 1-2 hrs | SHA256 baseline of iptables rules + QEMU binary. Low value for single-operator setup — only 2 files worth watching, and an attacker with root could disable the checker. |
 | Evasion-to-hardening agent | Design + build | Aggregate evasion hunter recommendations across all samples, rank by frequency, categorize by fix type (Packer/CAPE/QEMU). Near-term: dashboard view of outstanding evasion techniques. Long-term: autonomous agent that generates Packer scripts and Ansible tasks from evasion findings. |
-| Remove AWS references | 1 hr | Clean up leftover AWS and Shared folder references from early design. Platform is OVH-only — no AWS dependency. Grep for AWS, S3, shared references across all files. |
 | PowerShell in batch/VBS wrappers | 1-2 hrs | Extract PowerShell commands from .bat/.vbs wrapper scripts that call powershell. Rare as initial payload. |
 | Randomize UNTRUSTED_CODE delimiters | 15 min | Per-request random suffix on UNTRUSTED_CODE tags to prevent delimiter escape from malicious content. Low risk but easy hardening. |
 | Garble string decryptor | 1-2 weeks | Custom tool: Capstone + Unicorn + LIEF. No existing OSS tool works headless. Novel community contribution. GoReSym handles non-literal-obfuscated garble already. |
