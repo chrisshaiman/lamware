@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Network, X } from "lucide-react";
 import { useIocsList } from "#hooks/use-iocs";
 import { useIocClusters } from "#hooks/use-ioc-clusters";
@@ -120,6 +120,32 @@ export function IocsPage() {
           </button>
         )}
       </div>
+
+      {/* Campaign sample list — shown when a cluster is selected */}
+      {selectedCluster && (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+          <h3 className="mb-2 text-sm font-medium text-[var(--color-text-secondary)]">
+            Campaign Samples ({selectedCluster.analyses.length})
+          </h3>
+          <div className="space-y-1">
+            {selectedCluster.analyses.map((a) => (
+              <div key={a.analysis_id} className="flex items-center gap-2 text-sm">
+                <Link
+                  to={`/analyses/${a.analysis_id}`}
+                  className="font-mono text-xs text-[var(--color-accent)] hover:underline"
+                >
+                  {a.sha256.slice(0, 16)}...
+                </Link>
+                {a.family && (
+                  <span className="rounded border border-[var(--color-border)] bg-[var(--color-background)] px-1.5 py-0.5 text-xs text-[var(--color-text-secondary)]">
+                    {a.family}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-2">
