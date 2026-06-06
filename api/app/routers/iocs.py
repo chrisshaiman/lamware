@@ -160,13 +160,16 @@ async def ioc_clusters(
                 OR (type = 'domain-name' AND value IN ('localhost', 'localhost.localdomain'))
             )
         )
-        SELECT a1.analysis_id AS aid1, a2.analysis_id AS aid2,
+        SELECT s1.sample_id AS sid1, s2.sample_id AS sid2,
                array_agg(DISTINCT a1.ioc_id) AS shared_ioc_ids
         FROM analysis_iocs a1
         JOIN meaningful_iocs m1 ON m1.id = a1.ioc_id
+        JOIN analyses s1 ON s1.id = a1.analysis_id
         JOIN analysis_iocs a2
-            ON a1.ioc_id = a2.ioc_id AND a1.analysis_id < a2.analysis_id
-        GROUP BY a1.analysis_id, a2.analysis_id
+            ON a1.ioc_id = a2.ioc_id
+        JOIN analyses s2 ON s2.id = a2.analysis_id
+            AND s1.sample_id < s2.sample_id
+        GROUP BY s1.sample_id, s2.sample_id
         HAVING COUNT(DISTINCT a1.ioc_id) >= :min_shared
         """
     )
@@ -190,22 +193,20 @@ async def ioc_clusters(
         if ra != rb:
             parent[ra] = rb
 
-    # Track which IOCs are shared between each pair for later enrichment
-    pair_iocs: dict[tuple[int, int], list[int]] = {}
+    # Merge sample pairs into clusters via union-find
     for row in rows:
-        union(row.aid1, row.aid2)
-        pair_iocs[(row.aid1, row.aid2)] = list(row.shared_ioc_ids)
+        union(row.sid1, row.sid2)
 
-    # Group analyses by cluster root
+    # Group samples by cluster root
     clusters_map: dict[int, set[int]] = defaultdict(set)
     for row in rows:
-        root = find(row.aid1)
-        clusters_map[root].add(row.aid1)
-        clusters_map[root].add(row.aid2)
+        root = find(row.sid1)
+        clusters_map[root].add(row.sid1)
+        clusters_map[root].add(row.sid2)
 
-    # Step 3: Filter by min_analyses
+    # Step 3: Filter by min_analyses (actually min unique samples)
     clusters_map = {
-        root: aids for root, aids in clusters_map.items() if len(aids) >= min_analyses
+        root: sids for root, sids in clusters_map.items() if len(sids) >= min_analyses
     }
     if not clusters_map:
         return []
@@ -213,23 +214,23 @@ async def ioc_clusters(
     # Step 4: Enrich each cluster
     result = []
     cluster_id = 0
-    for _root, analysis_ids in clusters_map.items():
+    for _root, sample_ids in clusters_map.items():
         cluster_id += 1
-        aids_list = sorted(analysis_ids)
+        sids_list = sorted(sample_ids)
 
-        # Analysis details (sha256, family)
+        # Get the latest analysis per sample (deduplicate re-analyses)
         detail_sql = text(
             """
-            SELECT a.id AS analysis_id, s.sha256,
+            SELECT DISTINCT ON (s.id) a.id AS analysis_id, s.sha256,
                    a.malware_family_guess AS family
             FROM analyses a
             JOIN samples s ON s.id = a.sample_id
-            WHERE a.id = ANY(:aids)
-            ORDER BY a.id
+            WHERE s.id = ANY(:sids)
+            ORDER BY s.id, a.created_at DESC
             """
         )
         detail_rows = session.exec(
-            detail_sql, params={"aids": aids_list}
+            detail_sql, params={"sids": sids_list}
         ).all()
         analyses_out = [
             {
@@ -239,14 +240,18 @@ async def ioc_clusters(
             }
             for r in detail_rows
         ]
+        # Collect analysis IDs for IOC/technique enrichment
+        aids_list = [r.analysis_id for r in detail_rows]
 
-        # Shared IOCs: IOCs appearing in 2+ analyses within this cluster
+        # Shared IOCs: only network IOCs (same types used for clustering)
+        # appearing in 2+ analyses within this cluster
         shared_ioc_sql = text(
             """
             SELECT iv.id, iv.type, iv.value
             FROM ioc_values iv
             JOIN analysis_iocs ai ON ai.ioc_id = iv.id
             WHERE ai.analysis_id = ANY(:aids)
+              AND iv.type IN ('ipv4-addr', 'domain-name', 'url', 'ipv6-addr')
             GROUP BY iv.id, iv.type, iv.value
             HAVING COUNT(DISTINCT ai.analysis_id) >= 2
             ORDER BY iv.id
