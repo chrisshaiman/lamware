@@ -107,8 +107,8 @@ async def list_iocs(
 
 @router.get("/clusters")
 async def ioc_clusters(
-    min_shared_iocs: int = Query(default=2, ge=1, le=50),
-    min_analyses: int = Query(default=2, ge=2, le=100),
+    min_shared_iocs: int = Query(default=3, ge=1, le=50),
+    min_analyses: int = Query(default=3, ge=2, le=100),
     auth: AuthContext = Depends(require_auth),
     session: Session = Depends(get_session),
 ) -> list[dict]:
@@ -119,12 +119,32 @@ async def ioc_clusters(
     *min_shared_iocs* indicators, then returns clusters with at least
     *min_analyses* members enriched with shared IOCs and techniques.
     """
-    # Step 1: Find analysis pairs sharing >= min_shared_iocs IOCs
+    # Step 1: Find analysis pairs sharing >= min_shared_iocs IOCs.
+    # Exclude noise IOCs (private IPs, localhost, INetSim) that create
+    # false campaign links — these appear in nearly every analysis.
     pair_sql = text(
         """
+        WITH meaningful_iocs AS (
+            SELECT id FROM ioc_values
+            WHERE NOT (
+                (type = 'ipv4-addr' AND (
+                    value LIKE '127.%'
+                    OR value LIKE '10.%'
+                    OR value LIKE '192.168.%'
+                    OR value LIKE '172.16.%' OR value LIKE '172.17.%'
+                    OR value LIKE '172.18.%' OR value LIKE '172.19.%'
+                    OR value LIKE '172.2_.%' OR value LIKE '172.30.%'
+                    OR value LIKE '172.31.%'
+                    OR value = '0.0.0.0'
+                    OR value = '255.255.255.255'
+                ))
+                OR (type = 'domain-name' AND value IN ('localhost', 'localhost.localdomain'))
+            )
+        )
         SELECT a1.analysis_id AS aid1, a2.analysis_id AS aid2,
                array_agg(DISTINCT a1.ioc_id) AS shared_ioc_ids
         FROM analysis_iocs a1
+        JOIN meaningful_iocs m1 ON m1.id = a1.ioc_id
         JOIN analysis_iocs a2
             ON a1.ioc_id = a2.ioc_id AND a1.analysis_id < a2.analysis_id
         GROUP BY a1.analysis_id, a2.analysis_id
