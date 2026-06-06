@@ -30,14 +30,13 @@ export function IocsPage() {
   // Row expand — which IOC is expanded to show linked analyses
   const [expandedIocId, setExpandedIocId] = useState<number | null>(null);
 
-  // Campaign cluster filter — restrict table to IOCs in the selected cluster
-  const [clusterFilter, setClusterFilter] = useState<number[] | null>(null);
+  // Campaign cluster filter — show the selected cluster's IOCs directly
+  const [selectedCluster, setSelectedCluster] = useState<IocCluster | null>(null);
 
   const { data: iocs, isLoading, isError } = useIocsList({
     q: q || undefined,
     type: type || undefined,
     family: family !== "all" ? family : undefined,
-    hide_noise: clusterFilter ? false : undefined,
     limit: PAGE_SIZE,
     offset,
   });
@@ -58,19 +57,26 @@ export function IocsPage() {
     [setSearchParams],
   );
 
-  /** When a campaign card is clicked, filter the IOC table to that cluster's IOCs. */
+  /** When a campaign card is clicked, show that cluster's IOCs directly. */
   const handleClusterClick = useCallback((cluster: IocCluster) => {
-    setClusterFilter(cluster.shared_iocs.map((i) => i.id));
+    setSelectedCluster(cluster);
     setExpandedIocId(null);
   }, []);
 
   const clearClusterFilter = useCallback(() => {
-    setClusterFilter(null);
+    setSelectedCluster(null);
   }, []);
 
-  // Apply cluster filter to displayed IOCs
-  const displayedIocs = clusterFilter && iocs
-    ? iocs.filter((ioc) => clusterFilter.includes(ioc.id))
+  // When a cluster is selected, show its IOCs directly instead of the browse results
+  const displayedIocs = selectedCluster
+    ? selectedCluster.shared_iocs.map((ioc) => ({
+        id: ioc.id,
+        type: ioc.type,
+        value: ioc.value,
+        first_seen: "",
+        last_seen: "",
+        analysis_count: selectedCluster.analyses.length,
+      }))
     : iocs;
 
   return (
@@ -103,7 +109,7 @@ export function IocsPage() {
         </select>
         <FamilyFilter value={family} onChange={setFamily} />
 
-        {clusterFilter && (
+        {selectedCluster && (
           <button
             type="button"
             onClick={clearClusterFilter}
