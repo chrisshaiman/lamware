@@ -37,6 +37,7 @@ export function IocsPage() {
     q: q || undefined,
     type: type || undefined,
     family: family !== "all" ? family : undefined,
+    hide_noise: clusterFilter ? false : undefined,
     limit: PAGE_SIZE,
     offset,
   });
