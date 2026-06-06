@@ -120,13 +120,16 @@ async def ioc_clusters(
     *min_analyses* members enriched with shared IOCs and techniques.
     """
     # Step 1: Find analysis pairs sharing >= min_shared_iocs IOCs.
-    # Exclude noise IOCs (private IPs, localhost, INetSim) that create
-    # false campaign links — these appear in nearly every analysis.
+    # Only use network IOC types for clustering — file:name and mutex
+    # are sandbox artifacts (Windows system files, OS mutexes) that
+    # appear in nearly every analysis and create false campaign links.
+    # Private IPs and localhost are also excluded.
     pair_sql = text(
         """
         WITH meaningful_iocs AS (
             SELECT id FROM ioc_values
-            WHERE NOT (
+            WHERE type IN ('ipv4-addr', 'domain-name', 'url', 'ipv6-addr')
+              AND NOT (
                 (type = 'ipv4-addr' AND (
                     value LIKE '127.%'
                     OR value LIKE '10.%'
