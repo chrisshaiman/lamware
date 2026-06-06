@@ -86,9 +86,16 @@ async def list_iocs(
         stmt = stmt.where(IocValue.type == type)
 
     if hide_noise and not type:
-        # Exclude high-volume sandbox artifact types unless user explicitly
-        # selects a type filter (which overrides noise hiding)
+        # Exclude sandbox artifact types (always noise) and high-frequency
+        # IOCs (>10% of analyses — generic YARA rules, common strings).
+        # Type filter overrides noise hiding.
         stmt = stmt.where(IocValue.type.notin_(["file:name", "mutex"]))
+        total_analyses = session.exec(
+            select(func.count(func.distinct(AnalysisIoc.analysis_id)))
+        ).one()
+        if total_analyses > 0:
+            threshold = max(total_analyses * 0.10, 5)  # at least 5 to avoid filtering with tiny datasets
+            stmt = stmt.having(analysis_count_col <= threshold)
 
     if family:
         family_analyses = (
