@@ -146,7 +146,7 @@ in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON
 starting with { and ending with }.
 
 The JSON object must contain:
-- malware_family_guess: string (your assessment — may confirm or refine the programmatic guess)
+- malware_family_guess: string — use a short canonical name (e.g., "emotet", "cobaltstrike", "asyncrat", "guloader"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the code CAN do based on decompilation)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects (ONLY techniques \
 you found evidence for in the CODE that were not already identified by Cape signatures)
@@ -199,7 +199,7 @@ CRITICAL: Your final response MUST be a single valid JSON object with NO text be
 or after it. Do not write any preamble, explanation, or markdown — ONLY the JSON object.
 
 The JSON object must contain:
-- malware_family_guess: string (your assessment based on code patterns and class names)
+- malware_family_guess: string — use a short canonical name (e.g., "nanocore", "asyncrat", "agenttesla"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the code CAN do based on the decompiled source)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects (ONLY techniques \
 you found evidence for in the CODE that were not already identified by Cape signatures)
@@ -249,7 +249,7 @@ CRITICAL: Your final response MUST be a single valid JSON object with NO text be
 or after it. Do not write any preamble, explanation, or markdown — ONLY the JSON object.
 
 The JSON object must contain:
-- malware_family_guess: string (your assessment — check for known Go C2 frameworks)
+- malware_family_guess: string — use a short canonical name (e.g., "sliver", "cobaltstrike", "bianlian"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the code CAN do based on function/package analysis)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects (ONLY techniques \
 you found evidence for that were not already identified by Cape signatures)
@@ -298,7 +298,7 @@ in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON
 starting with { and ending with }.
 
 The JSON object must contain:
-- malware_family_guess: string (identify the family or tool used)
+- malware_family_guess: string — use a short canonical name (e.g., "exelastealer", "raccoon"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the code CAN do)
 - attack_techniques: list of {"id": "T1055.003", "name": "..."} objects
 - novel_techniques: list of strings (interesting evasion or exfiltration methods)
@@ -347,7 +347,7 @@ in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON
 starting with { and ending with }.
 
 The JSON object must contain:
-- malware_family_guess: string (identify the RAT/stealer family)
+- malware_family_guess: string — use a short canonical name (e.g., "jrat", "quasar", "remcos"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the code CAN do)
 - attack_techniques: list of {"id": "T1059", "name": "..."} objects
 - novel_techniques: list of strings (interesting evasion or communication methods)
@@ -415,7 +415,7 @@ in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON
 starting with { and ending with }.
 
 The JSON object must contain:
-- malware_family_guess: string (identify the malware family if recognizable)
+- malware_family_guess: string — use a short canonical name (e.g., "emotet", "lodarat"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the macro CAN do)
 - attack_techniques: list of {"id": "T1059", "name": "..."} objects
 - novel_techniques: list of strings (interesting evasion or obfuscation methods)
@@ -488,7 +488,7 @@ in a code block. Do not nest JSON inside string fields. Output ONLY the raw JSON
 starting with { and ending with }.
 
 The JSON object must contain:
-- malware_family_guess: string (identify the tool/family if recognizable)
+- malware_family_guess: string — use a short canonical name (e.g., "cobaltstrike", "snappyclient"). If unknown, use "unknown". No verbose descriptions.
 - capabilities: list of strings (what the script CAN do)
 - attack_techniques: list of {"id": "T1059.001", "name": "..."} objects
 - novel_techniques: list of strings (interesting evasion or obfuscation methods)

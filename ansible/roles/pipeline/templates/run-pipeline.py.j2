@@ -286,18 +286,45 @@ def determine_family(report: dict) -> str:
         llm_lower = llm_family.lower()
         # Check for known families in the LLM's verbose description
         known_names = [
+            # C2 frameworks
             "sliver", "merlin", "cobaltstrike", "cobalt strike",
-            "emotet", "trickbot", "qakbot", "asyncrat", "nanocore",
-            "remcos", "agenttesla", "formbook", "lokibot",
+            "meterpreter", "metasploit", "havoc", "brute ratel",
+            "bruteratel", "mythic", "poshc2",
+            # Banking/loader
+            "emotet", "trickbot", "qakbot", "qbot", "icedid",
+            "dridex", "pikabot", "smokeloader", "guloader",
+            "bumblebee", "darkgate",
+            # RATs
+            "asyncrat", "nanocore", "remcos", "agenttesla",
+            "njrat", "darkcomet", "quasar", "warzone", "netwire",
+            "orcus", "xworm", "dcrat", "venom rat", "venomrat",
+            "lime rat", "limerat",
+            # Stealers
+            "formbook", "lokibot", "raccoon", "redline", "vidar",
+            "lumma", "stealc", "rhadamanthys", "mystic stealer",
+            # Ransomware
             "lockbit", "blackcat", "alphv", "conti", "ryuk",
-            "guloader", "smokeloader", "bianlian",
-            "raccoon", "redline", "vidar", "lumma",
+            "royal", "akira", "play", "medusa", "clop",
+            "bianlian", "rhysida", "blackbasta",
+            # Other
+            "amadey", "systembc", "socks5systemz",
         ]
         for name in known_names:
             if name in llm_lower:
                 return _result(name.replace(" ", ""), "llm_interpretation")
-        # Use the raw LLM guess if no known name matched
-        # Truncate to first 50 chars for reasonable display
+
+        # Fallback: extract a clean short name from the LLM description.
+        # LLM often produces "VB6 dropper/downloader (likely guloader...)"
+        # Strip parenthetical qualifiers and take the first meaningful phrase.
+        import re
+        # Remove parenthetical notes like "(likely ...)" or "(possibly ...)"
+        cleaned = re.sub(r"\s*\(.*?\)", "", llm_family).strip()
+        # Remove common filler words
+        cleaned = re.sub(r"(?i)\b(likely|possibly|probably|variant of|appears to be|based on)\b", "", cleaned).strip()
+        # Collapse whitespace and truncate
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if cleaned:
+            return _result(cleaned[:50].lower(), "llm_interpretation")
         return _result(llm_family[:50].lower(), "llm_interpretation")
 
     # --- Priority 6: YARA rule-derived (last resort) ---
