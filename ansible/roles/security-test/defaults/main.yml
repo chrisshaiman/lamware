@@ -6,3 +6,8 @@ security_test_domain: "{{ lamware_domain | default('lamware.example.com') }}"
 security_test_api_url: "https://{{ security_test_domain }}"
 security_test_keycloak_url: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth"
 security_test_nuclei_version: "3.8.0"
+
+# ntfy defaults — overridden by vars/main.yml or vars/secrets.yml if set
+ntfy_enabled: false
+ntfy_url: "https://ntfy.sh"
+ntfy_topic: ""
