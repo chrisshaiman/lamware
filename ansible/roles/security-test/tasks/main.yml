@@ -1,0 +1,78 @@
+---
+# =============================================================================
+# roles/security-test/tasks/main.yml
+#
+# Installs post-deploy security smoke test tooling.
+# Run via: ansible-playbook security-test.yml -i inventory/hosts --ask-vault-pass
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create security-test directory
+  ansible.builtin.file:
+    path: "{{ security_test_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Check if nuclei is installed
+  ansible.builtin.command: "{{ security_test_install_dir }}/nuclei -version"
+  register: nuclei_check
+  changed_when: false
+  failed_when: false
+
+- name: Download nuclei binary
+  when: nuclei_check.rc != 0
+  block:
+    - name: Download nuclei release
+      ansible.builtin.get_url:
+        url: "https://github.com/projectdiscovery/nuclei/releases/download/v{{ security_test_nuclei_version }}/nuclei_{{ security_test_nuclei_version }}_linux_amd64.zip"
+        dest: /tmp/nuclei.zip
+        mode: "0644"
+
+    - name: Install unzip
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+
+    - name: Extract nuclei
+      ansible.builtin.unarchive:
+        src: /tmp/nuclei.zip
+        dest: "{{ security_test_install_dir }}/"
+        remote_src: true
+
+    - name: Make nuclei executable
+      ansible.builtin.file:
+        path: "{{ security_test_install_dir }}/nuclei"
+        mode: "0755"
+
+    - name: Clean up zip
+      ansible.builtin.file:
+        path: /tmp/nuclei.zip
+        state: absent
+
+- name: Deploy security smoke test script
+  ansible.builtin.template:
+    src: security-smoke-test.sh.j2
+    dest: "{{ security_test_install_dir }}/security-smoke-test.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Run security smoke tests
+  ansible.builtin.command:
+    cmd: "{{ security_test_install_dir }}/security-smoke-test.sh"
+  register: smoke_test_result
+  changed_when: false
+  failed_when: false
+
+- name: Display test results
+  ansible.builtin.debug:
+    msg: "{{ smoke_test_result.stdout_lines }}"
+
+- name: Fail playbook if tests failed
+  ansible.builtin.fail:
+    msg: "Security smoke tests failed. Check output above."
+  when: smoke_test_result.rc != 0

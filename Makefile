@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help
+.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help deploy security-test
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -60,6 +60,8 @@ help:
 	@echo "  make configure            Run Ansible against provisioned host"
 	@echo "  make all                  Full pipeline: lambda + image + infra + configure"
 	@echo "  make validate             Validate Packer + Terraform configs"
+	@echo "  make deploy TAGS=api      Deploy specific roles + run security tests"
+	@echo "  make security-test        Run post-deploy security smoke tests only"
 	@echo "  make clean                Remove local build artifacts"
 	@echo ""
 	@echo "  First-time setup order:"
@@ -289,6 +291,38 @@ validate:
 	@echo "==> Validating Ansible..."
 	@cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check -i inventory/hosts site.yml
 	@echo "==> All validation passed."
+
+# -----------------------------------------------------------------------------
+# Deploy + security test — deploy specific roles then run smoke tests
+# Usage: make deploy TAGS=api,frontend
+# -----------------------------------------------------------------------------
+
+TAGS ?= api,frontend
+
+deploy:
+	@echo "==> Deploying roles: $(TAGS)..."
+	@cd $(ANSIBLE_DIR) && \
+		ansible-playbook \
+			-i inventory/hosts \
+			site.yml \
+			--tags $(TAGS) \
+			--ask-vault-pass
+	@echo "==> Running post-deploy security tests..."
+	@cd $(ANSIBLE_DIR) && \
+		ansible-playbook \
+			-i inventory/hosts \
+			security-test.yml \
+			--ask-vault-pass
+	@echo "==> Deploy + test complete."
+
+security-test:
+	@echo "==> Running security smoke tests..."
+	@cd $(ANSIBLE_DIR) && \
+		ansible-playbook \
+			-i inventory/hosts \
+			security-test.yml \
+			--ask-vault-pass
+	@echo "==> Security tests complete."
 
 # -----------------------------------------------------------------------------
 # Clean

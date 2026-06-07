@@ -1,0 +1,31 @@
+---
+# =============================================================================
+# security-test.yml — Post-deploy security smoke tests
+#
+# Run after any Ansible deploy to verify security controls are in place.
+# Installs nuclei on first run, then executes fast (<30s) smoke tests.
+# Sends ntfy alert on failure.
+#
+# Usage:
+#   ansible-playbook security-test.yml -i inventory/hosts --ask-vault-pass
+#
+# Or via Makefile:
+#   make deploy TAGS=api,frontend   (chains deploy + test)
+#   make security-test              (test only)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Post-deploy security smoke tests
+  hosts: sandbox
+  become: true
+  gather_facts: false
+
+  vars_files:
+    - vars/main.yml
+    - vars/secrets.yml
+
+  roles:
+    - role: security-test
+      tags: [security-test]

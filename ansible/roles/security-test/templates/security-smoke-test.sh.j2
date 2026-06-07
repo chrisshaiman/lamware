@@ -1,0 +1,162 @@
+#!/bin/bash
+# =============================================================================
+# security-smoke-test.sh — post-deploy security verification
+#
+# Fast (<30s) smoke tests to verify security controls are in place
+# after an Ansible deploy. Sends ntfy alert on failure.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -uo pipefail
+
+API_URL="{{ security_test_api_url }}"
+KC_URL="{{ security_test_keycloak_url }}"
+DOMAIN="{{ security_test_domain }}"
+NUCLEI="{{ security_test_install_dir }}/nuclei"
+NTFY_URL="{{ ntfy_url }}/{{ ntfy_topic }}"
+NTFY_ENABLED={{ 'true' if ntfy_enabled | default(false) else 'false' }}
+RESULTS_DIR="{{ security_test_install_dir }}/results"
+
+PASSED=0
+FAILED=0
+FAILURES=""
+
+mkdir -p "$RESULTS_DIR"
+
+# -------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------
+
+pass() {
+    PASSED=$((PASSED + 1))
+    echo "  PASS: $1"
+}
+
+fail() {
+    FAILED=$((FAILED + 1))
+    FAILURES="${FAILURES}\n  - $1"
+    echo "  FAIL: $1"
+}
+
+# -------------------------------------------------------------------------
+# Test 1: API health endpoint
+# -------------------------------------------------------------------------
+echo "[1/7] API health check..."
+HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/health")
+if [ "$HTTP_CODE" = "200" ]; then
+    pass "API health endpoint returns 200"
+else
+    fail "API health endpoint returned $HTTP_CODE (expected 200)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 2: Keycloak health
+# -------------------------------------------------------------------------
+echo "[2/7] Keycloak health check..."
+KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$KC_URL/health/ready")
+if [ "$KC_CODE" = "200" ]; then
+    pass "Keycloak health endpoint returns 200"
+else
+    fail "Keycloak health returned $KC_CODE (expected 200)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 3: Unauthenticated API access blocked
+# -------------------------------------------------------------------------
+echo "[3/7] Auth enforcement..."
+UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/api/analyses")
+if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
+    pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
+else
+    fail "Unauthenticated /api/analyses returned $UNAUTH_CODE (expected 401/403)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 4: Docs endpoint gated
+# -------------------------------------------------------------------------
+echo "[4/7] Docs endpoint gated..."
+DOCS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/docs")
+if [ "$DOCS_CODE" = "404" ] || [ "$DOCS_CODE" = "401" ]; then
+    pass "/docs returns $DOCS_CODE (not exposed)"
+else
+    fail "/docs returned $DOCS_CODE (expected 404 — docs should be gated)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 5: TLS certificate valid
+# -------------------------------------------------------------------------
+echo "[5/7] TLS certificate check..."
+CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+if [ -n "$CERT_EXPIRY" ]; then
+    EXPIRY_EPOCH=$(date -d "$CERT_EXPIRY" +%s 2>/dev/null)
+    NOW_EPOCH=$(date +%s)
+    DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+    if [ "$DAYS_LEFT" -gt 7 ]; then
+        pass "TLS cert valid for $DAYS_LEFT more days"
+    else
+        fail "TLS cert expires in $DAYS_LEFT days"
+    fi
+else
+    fail "Could not read TLS certificate"
+fi
+
+# -------------------------------------------------------------------------
+# Test 6: HTTP redirects to HTTPS
+# -------------------------------------------------------------------------
+echo "[6/7] HTTP redirect check..."
+REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1/" -H "Host: $DOMAIN")
+if [ "$REDIRECT_CODE" = "301" ]; then
+    pass "HTTP redirects to HTTPS (301)"
+else
+    fail "HTTP returned $REDIRECT_CODE (expected 301 redirect)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 7: Nuclei quick scan
+# -------------------------------------------------------------------------
+echo "[7/7] Nuclei misconfig scan..."
+if [ -x "$NUCLEI" ]; then
+    NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
+    "$NUCLEI" -u "$API_URL" -t http/ -severity high,critical -timeout 10 \
+        -silent -no-color -o "$NUCLEI_OUT" 2>/dev/null
+    NUCLEI_FINDINGS=$(wc -l < "$NUCLEI_OUT" 2>/dev/null || echo "0")
+    if [ "$NUCLEI_FINDINGS" -eq 0 ]; then
+        pass "Nuclei: no high/critical findings"
+    else
+        fail "Nuclei: $NUCLEI_FINDINGS high/critical finding(s) — see $NUCLEI_OUT"
+    fi
+else
+    fail "Nuclei binary not found at $NUCLEI"
+fi
+
+# -------------------------------------------------------------------------
+# Summary + ntfy alert on failure
+# -------------------------------------------------------------------------
+echo ""
+echo "========================================="
+echo "  Results: $PASSED passed, $FAILED failed"
+echo "========================================="
+
+if [ "$FAILED" -gt 0 ]; then
+    echo -e "\nFailures:$FAILURES"
+
+    if [ "$NTFY_ENABLED" = "true" ]; then
+        curl -s -H "Title: lamware security test FAILED" \
+             -H "Priority: urgent" \
+             -H "Tags: rotating_light" \
+             -d "Post-deploy security test: $PASSED passed, $FAILED failed$(echo -e "$FAILURES")" \
+             "$NTFY_URL" >/dev/null 2>&1
+    fi
+    exit 1
+fi
+
+if [ "$NTFY_ENABLED" = "true" ]; then
+    curl -s -H "Title: lamware security test passed" \
+         -H "Priority: low" \
+         -H "Tags: white_check_mark" \
+         -d "Post-deploy: all $PASSED tests passed" \
+         "$NTFY_URL" >/dev/null 2>&1
+fi
+exit 0

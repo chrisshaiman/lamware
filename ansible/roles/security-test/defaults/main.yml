@@ -1,0 +1,8 @@
+---
+# roles/security-test/defaults/main.yml
+
+security_test_install_dir: /opt/security-test
+security_test_domain: "{{ lamware_domain | default('lamware.example.com') }}"
+security_test_api_url: "https://{{ security_test_domain }}"
+security_test_keycloak_url: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth"
+security_test_nuclei_version: "3.8.0"
