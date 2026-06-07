@@ -55,7 +55,7 @@ fi
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
 echo "[2/7] Keycloak health check..."
-KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$KC_URL/health/ready")
+KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
 else
@@ -88,7 +88,7 @@ fi
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
 echo "[5/7] TLS certificate check..."
-CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ public_ip | default('127.0.0.1') }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
 if [ -n "$CERT_EXPIRY" ]; then
     EXPIRY_EPOCH=$(date -d "$CERT_EXPIRY" +%s 2>/dev/null)
     NOW_EPOCH=$(date +%s)
@@ -106,7 +106,7 @@ fi
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
 echo "[6/7] HTTP redirect check..."
-REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1/" -H "Host: $DOMAIN")
+REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
 else
