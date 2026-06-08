@@ -49,6 +49,7 @@ export interface AnalysisListItem {
   malware_family_guess: string | null;
   pipeline_status: string | null;
   current_stage: string | null;
+  llm_cost_usd: number | null;
   sample: SampleSummary;
   ioc_count: number;
   technique_count: number;

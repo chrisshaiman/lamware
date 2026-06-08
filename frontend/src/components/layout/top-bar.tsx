@@ -14,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/pipeline": "Pipeline Status",
   "/alerts": "Operational Health",
   "/evasions": "Evasion Dashboard",
+  "/spend": "LLM Spend",
   "/submit": "Submit Sample",
 };
 

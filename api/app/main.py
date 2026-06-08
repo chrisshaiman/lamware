@@ -53,7 +53,7 @@ async def health() -> dict:
 
 from app.routers import analyses, iocs, techniques, families  # noqa: E402
 from app.routers import pipeline, alerts, stats, feeder, samples  # noqa: E402
-from app.routers import evasions  # noqa: E402
+from app.routers import evasions, spend  # noqa: E402
 from app.routers import ws  # noqa: E402
 
 app.include_router(analyses.router)
@@ -66,6 +66,7 @@ app.include_router(stats.router)
 app.include_router(feeder.router)
 app.include_router(samples.router)
 app.include_router(evasions.router)
+app.include_router(spend.router)
 app.include_router(ws.router)
 
 

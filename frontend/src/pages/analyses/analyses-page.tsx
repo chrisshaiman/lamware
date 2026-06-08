@@ -8,7 +8,7 @@ import { useAnalysesList } from "#hooks/use-analyses";
 import { SearchInput } from "#components/shared/search-input";
 import { SeverityBadge } from "#components/shared/severity-badge";
 import { MonoText } from "#components/shared/mono-text";
-import { formatBytes, formatRelativeTime } from "#lib/utils";
+import { formatBytes, formatRelativeTime, formatCost } from "#lib/utils";
 
 const PAGE_SIZE = 25;
 
@@ -137,6 +137,9 @@ export function AnalysesPage() {
                   <th className="px-4 py-3 text-right font-medium text-[var(--color-text-secondary)]">
                     Sigs
                   </th>
+                  <th className="px-4 py-3 text-right font-medium text-[var(--color-text-secondary)]">
+                    Cost
+                  </th>
                   <th className="px-4 py-3 text-left font-medium text-[var(--color-text-secondary)]">
                     When
                   </th>
@@ -183,6 +186,9 @@ export function AnalysesPage() {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-secondary)]">
                       {a.signature_count}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-xs text-[var(--color-text-muted)]">
+                      {a.llm_cost_usd != null ? formatCost(a.llm_cost_usd) : "\u2014"}
                     </td>
                     <td className="px-4 py-3 text-xs text-[var(--color-text-muted)]">
                       {a.started_at ? formatRelativeTime(a.started_at) : "\u2014"}
