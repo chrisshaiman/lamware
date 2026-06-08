@@ -16,6 +16,7 @@ import {
   useEvasions,
   type EvasionCategory,
   type EvasionTechnique,
+  type MitigationStatus,
 } from "#hooks/use-evasions";
 import { MonoText } from "#components/shared/mono-text";
 
@@ -61,6 +62,32 @@ const CATEGORY_META: Record<
   },
 };
 
+const STATUS_META: Record<
+  MitigationStatus,
+  { label: string; className: string; description: string }
+> = {
+  mitigated: {
+    label: "Mitigated",
+    className: "bg-green-900/50 text-green-400",
+    description: "Hardening deployed — this technique is defeated",
+  },
+  partial: {
+    label: "Partial",
+    className: "bg-yellow-900/50 text-yellow-400",
+    description: "Partially addressed — residual risk remains",
+  },
+  open: {
+    label: "Open",
+    className: "bg-red-900/50 text-red-400",
+    description: "Not yet addressed — could be fixed",
+  },
+  na: {
+    label: "N/A",
+    className: "bg-gray-800/50 text-gray-400",
+    description: "Detection engineering — not fixable in sandbox",
+  },
+};
+
 /** Display order for categories — actionable fixes first. */
 const CATEGORY_ORDER: EvasionCategory[] = [
   "guest_image",
@@ -69,6 +96,18 @@ const CATEGORY_ORDER: EvasionCategory[] = [
   "automation",
   "detection",
 ];
+
+function StatusBadge({ status }: { status: MitigationStatus }) {
+  const meta = STATUS_META[status];
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.className}`}
+      title={meta.description}
+    >
+      {meta.label}
+    </span>
+  );
+}
 
 function CategorySection({
   category,
@@ -86,6 +125,12 @@ function CategorySection({
   const Icon = meta.icon;
   const totalSamples = techniques.reduce((sum, t) => sum + t.sample_count, 0);
 
+  // Count statuses within this category
+  const statusCounts = { mitigated: 0, partial: 0, open: 0, na: 0 };
+  for (const t of techniques) {
+    statusCounts[t.status]++;
+  }
+
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
       <button
@@ -99,13 +144,29 @@ function CategorySection({
         )}
         <Icon className={`h-4 w-4 shrink-0 ${meta.color}`} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-[var(--color-text-primary)]">
               {meta.label}
             </span>
             <span className="rounded bg-[var(--color-background)] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-[var(--color-text-muted)]">
               {techniques.length} technique{techniques.length !== 1 ? "s" : ""} · {totalSamples} hit{totalSamples !== 1 ? "s" : ""}
             </span>
+            {/* Status summary chips */}
+            {statusCounts.mitigated > 0 && (
+              <span className="rounded bg-green-900/30 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+                {statusCounts.mitigated} mitigated
+              </span>
+            )}
+            {statusCounts.partial > 0 && (
+              <span className="rounded bg-yellow-900/30 px-1.5 py-0.5 text-[10px] font-medium text-yellow-400">
+                {statusCounts.partial} partial
+              </span>
+            )}
+            {statusCounts.open > 0 && (
+              <span className="rounded bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+                {statusCounts.open} open
+              </span>
+            )}
           </div>
           <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
             {meta.description}
@@ -117,16 +178,17 @@ function CategorySection({
         <div className="border-t border-[var(--color-border)] p-4 space-y-3">
           {techniques.map((t, i) => (
             <div key={i} className="space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-[var(--color-text-secondary)]">
+              <div className="flex items-center justify-between text-xs gap-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <StatusBadge status={t.status} />
+                  <span className="text-[var(--color-text-secondary)] truncate">
                     {t.technique}
                   </span>
                   {t.mitre_id && (
-                    <MonoText className="text-[10px]">{t.mitre_id}</MonoText>
+                    <MonoText className="text-[10px] shrink-0">{t.mitre_id}</MonoText>
                   )}
                 </div>
-                <span className="tabular-nums text-[var(--color-text-muted)]">
+                <span className="tabular-nums text-[var(--color-text-muted)] shrink-0">
                   {t.sample_count} sample{t.sample_count !== 1 ? "s" : ""}
                 </span>
               </div>
@@ -162,7 +224,15 @@ function CategorySection({
 }
 
 export function EvasionsPage() {
-  const { data, isLoading, isError } = useEvasions();
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [sortBy, setSortBy] = useState<"sample_count" | "status" | "category">("sample_count");
+
+  const { data, isLoading, isError } = useEvasions({
+    status: (statusFilter || undefined) as MitigationStatus | undefined,
+    category: (categoryFilter || undefined) as EvasionCategory | undefined,
+    sort: sortBy,
+  });
 
   if (isLoading) {
     return (
@@ -199,12 +269,19 @@ export function EvasionsPage() {
   }
 
   const maxCount =
-    data.techniques.length > 0 ? data.techniques[0].sample_count : 1;
+    data.techniques.length > 0
+      ? Math.max(...data.techniques.map((t) => t.sample_count))
+      : 1;
 
-  // Count categories that have techniques
   const nonEmptyCategories = CATEGORY_ORDER.filter(
     (cat) => (grouped.get(cat) ?? []).length > 0,
   );
+
+  // Overall status counts
+  const allStatusCounts = { mitigated: 0, partial: 0, open: 0, na: 0 };
+  for (const t of data.techniques) {
+    allStatusCounts[t.status]++;
+  }
 
   return (
     <div className="space-y-6">
@@ -218,45 +295,108 @@ export function EvasionsPage() {
         </span>
       </div>
 
-      {data.techniques.length === 0 ? (
+      {data.techniques.length === 0 && !statusFilter && !categoryFilter ? (
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-secondary)]">
           No evasion techniques detected across your samples yet.
         </div>
       ) : (
         <>
-          {/* Category summary bar */}
-          <div className="flex gap-3 flex-wrap">
-            {nonEmptyCategories.map((cat) => {
-              const meta = CATEGORY_META[cat];
-              const Icon = meta.icon;
-              const count = (grouped.get(cat) ?? []).length;
-              return (
-                <div
-                  key={cat}
-                  className="flex items-center gap-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5"
-                >
-                  <Icon className={`h-3.5 w-3.5 ${meta.color}`} />
-                  <span className="text-xs text-[var(--color-text-secondary)]">
-                    {meta.label}
-                  </span>
-                  <span className="text-xs font-medium tabular-nums text-[var(--color-text-muted)]">
-                    {count}
-                  </span>
-                </div>
-              );
-            })}
+          {/* Status summary + filter/sort controls */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Status summary chips (clickable as filters) */}
+            <button
+              onClick={() => setStatusFilter(statusFilter === "open" ? "" : "open")}
+              className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                statusFilter === "open"
+                  ? "border-red-700 bg-red-900/30 text-red-400"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-red-500" />
+              Open
+              <span className="font-medium tabular-nums">{allStatusCounts.open}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter(statusFilter === "partial" ? "" : "partial")}
+              className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                statusFilter === "partial"
+                  ? "border-yellow-700 bg-yellow-900/30 text-yellow-400"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-yellow-500" />
+              Partial
+              <span className="font-medium tabular-nums">{allStatusCounts.partial}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter(statusFilter === "mitigated" ? "" : "mitigated")}
+              className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                statusFilter === "mitigated"
+                  ? "border-green-700 bg-green-900/30 text-green-400"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-green-500" />
+              Mitigated
+              <span className="font-medium tabular-nums">{allStatusCounts.mitigated}</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter(statusFilter === "na" ? "" : "na")}
+              className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs transition-colors ${
+                statusFilter === "na"
+                  ? "border-gray-600 bg-gray-800/30 text-gray-400"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-gray-500" />
+              N/A
+              <span className="font-medium tabular-nums">{allStatusCounts.na}</span>
+            </button>
+
+            <div className="ml-auto flex items-center gap-2">
+              {/* Category filter */}
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
+              >
+                <option value="">All categories</option>
+                {CATEGORY_ORDER.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {CATEGORY_META[cat].label}
+                  </option>
+                ))}
+              </select>
+
+              {/* Sort */}
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
+              >
+                <option value="sample_count">Sort: Frequency</option>
+                <option value="status">Sort: Status</option>
+                <option value="category">Sort: Category</option>
+              </select>
+            </div>
           </div>
 
           {/* Grouped technique sections */}
-          {nonEmptyCategories.map((cat, i) => (
-            <CategorySection
-              key={cat}
-              category={cat}
-              techniques={grouped.get(cat) ?? []}
-              maxCount={maxCount}
-              defaultOpen={i === 0}
-            />
-          ))}
+          {nonEmptyCategories.length === 0 ? (
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-secondary)]">
+              No techniques match the current filters.
+            </div>
+          ) : (
+            nonEmptyCategories.map((cat, i) => (
+              <CategorySection
+                key={cat}
+                category={cat}
+                techniques={grouped.get(cat) ?? []}
+                maxCount={maxCount}
+                defaultOpen={i === 0}
+              />
+            ))
+          )}
 
           {/* Recommendations */}
           {data.recommendations.length > 0 && (

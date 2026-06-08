@@ -11,12 +11,15 @@ export type EvasionCategory =
   | "automation"
   | "detection";
 
+export type MitigationStatus = "mitigated" | "partial" | "open" | "na";
+
 export interface EvasionTechnique {
   technique: string;
   mitre_id: string | null;
   evidence: string | null;
   sample_count: number;
   category: EvasionCategory;
+  status: MitigationStatus;
 }
 
 export interface EvasionRecommendation {
@@ -30,11 +33,23 @@ export interface EvasionsResponse {
   recommendations: EvasionRecommendation[];
 }
 
-export function useEvasions() {
+export interface EvasionFilters {
+  status?: MitigationStatus;
+  category?: EvasionCategory;
+  sort?: "sample_count" | "status" | "category";
+}
+
+export function useEvasions(filters: EvasionFilters = {}) {
   return useQuery({
-    queryKey: ["evasions"],
+    queryKey: ["evasions", filters],
     queryFn: async () => {
-      const { data } = await apiClient.get<EvasionsResponse>("/api/evasions");
+      const params: Record<string, string> = {};
+      if (filters.status) params.status = filters.status;
+      if (filters.category) params.category = filters.category;
+      if (filters.sort) params.sort = filters.sort;
+      const { data } = await apiClient.get<EvasionsResponse>("/api/evasions", {
+        params,
+      });
       return data;
     },
     staleTime: 120_000,

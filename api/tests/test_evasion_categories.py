@@ -27,6 +27,7 @@ _end = _source.index("\n\n\n@router", _start)  # stop before the route decorator
 exec(_source[_start:_end], _ns)  # noqa: S102
 
 _categorize = _ns["_categorize"]
+_mitigation_status = _ns["_mitigation_status"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,3 +103,62 @@ def test_detection_engineering_fallback():
 def test_empty_and_unknown():
     assert _categorize("") == "detection"
     assert _categorize("Some Unknown Technique") == "detection"
+
+
+# ---------------------------------------------------------------------------
+# Mitigation status tests
+# ---------------------------------------------------------------------------
+
+
+def test_mitigated_techniques():
+    """Techniques defeated by deployed hardening."""
+    # CPUID / hypervisor bit — host-passthrough + feature disable
+    assert _mitigation_status("CPUID-based hypervisor detection", "qemu") == "mitigated"
+    # Hostname — Packer randomized DESKTOP-XXXXXXX
+    assert _mitigation_status("Computer Name / Hostname Enumeration", "guest_image") == "mitigated"
+    assert _mitigation_status("Environment/VM Detection via Username Query", "guest_image") == "mitigated"
+    # Screen resolution — 1920x1080
+    assert _mitigation_status("Screen Resolution Check", "automation") == "mitigated"
+    # Memory/disk — 4GB/60GB
+    assert _mitigation_status("Memory Size Check", "guest_image") == "mitigated"
+    # Hardware ID — real hardware passthrough
+    assert _mitigation_status("Hardware ID / Volume Serial Number Profiling", "guest_image") == "mitigated"
+    # DNS connectivity — INetSim
+    assert _mitigation_status("DNS/Network Connectivity Verification", "cape_config") == "mitigated"
+    # Clock — localtime + native TSC
+    assert _mitigation_status("Sandbox Clock Manipulation Detection / Stale Snapshot Detection", "cape_config") == "mitigated"
+    # System fingerprinting — decoy files + realistic profile
+    assert _mitigation_status("System Fingerprinting / Environment Enumeration", "guest_image") == "mitigated"
+
+
+def test_partial_techniques():
+    """Techniques partially addressed by hardening."""
+    # Storage device — DSDT patched but disk IDs may leak
+    assert _mitigation_status("Storage Device Enumeration (VM Disk Detection)", "qemu") == "partial"
+    # Virtual network — e1000 but MAC OUI 52:54:00
+    assert _mitigation_status("Virtual Network Adapter Detection", "qemu") == "partial"
+    # Timing/sleep — native TSC but no sleep skipping
+    assert _mitigation_status("Timing Evasion — Extended Sleep / Delayed Execution", "cape_config") == "partial"
+    # Date expiration — clock realistic but real date checked
+    assert _mitigation_status("Date/Time Expiration Check (Kill Date)", "cape_config") == "partial"
+    # Dead C2 — INetSim responds but protocol may not match
+    assert _mitigation_status("Dead C2 / Network Connectivity Probe", "cape_config") == "partial"
+    # Registry VM — some keys but not exhaustive
+    assert _mitigation_status("Registry-Based VM/Environment Detection", "guest_image") == "partial"
+
+
+def test_open_techniques():
+    """Techniques not yet addressed."""
+    # Human interaction — deferred
+    assert _mitigation_status("User Interaction / Human Presence Check", "automation") == "open"
+    # Parent process — not spoofed
+    assert _mitigation_status("Parent Process / Execution Context Check", "automation") == "open"
+    # Analysis tool detection
+    assert _mitigation_status("Process Enumeration for Analysis Tools", "automation") == "open"
+
+
+def test_na_for_detection_category():
+    """Detection engineering techniques are always N/A."""
+    assert _mitigation_status("Anti-Debug via SetUnhandledExceptionFilter", "detection") == "na"
+    assert _mitigation_status("EDR/Hook Evasion via ntdll Unhooking", "detection") == "na"
+    assert _mitigation_status("Language/Locale Geofencing", "detection") == "na"
