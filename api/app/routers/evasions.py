@@ -7,6 +7,15 @@
 # and aggregates across all analyses. Used by the React evasion dashboard
 # to show which sandbox evasion techniques are most common and which
 # are fixable via Packer/CAPE/QEMU changes.
+#
+# Techniques are categorized by fix type so analysts know where to act:
+#   guest_image  — fix in Packer template (registry, filenames, hardware IDs)
+#   qemu         — fix via QEMU patches (CPUID, ACPI, hypervisor artifacts)
+#   cape_config  — fix in CAPE config (timeouts, sleep skipping, clock)
+#   automation   — fix via agentic automation (mouse, keyboard, user interaction)
+#   detection    — can't fix in sandbox; write detection rules instead
+
+import re
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -17,6 +26,63 @@ from ..database import get_session
 
 router = APIRouter(prefix="/api/evasions", tags=["evasions"])
 
+# Ordered list of (category, compiled_regex) pairs. First match wins.
+# Patterns are matched case-insensitively against the technique name.
+_CATEGORY_RULES: list[tuple[str, re.Pattern[str]]] = [
+    # QEMU / hypervisor artifacts
+    ("qemu", re.compile(
+        r"cpuid|acpi|smbios|hypervisor|qemu|virtual.*adapter|"
+        r"virtual.*network|display device|"
+        r"storage device|mount point|disk.*detect|anti-vm|"
+        r"vm/sandbox|sandbox.*detect.*static|"
+        r"vm.*detect.*(?:display|disk|storage|device)",
+        re.IGNORECASE,
+    )),
+    # Guest image — things you fix in Packer
+    ("guest_image", re.compile(
+        r"registry.*(?:vm|environment|artifact)|hostname|computer name|"
+        r"username|hardware.?id|volume serial|mac address|"
+        r"memory.*check|available memory|disk size|"
+        r"environment.*fingerprint|system fingerprint|"
+        r"victim profil|environment.*enum|"
+        r"large.*binary|large.*file|file.?size.*evasion|"
+        r"inflated binary|oversized|bloat|"
+        r"pdb path|"
+        r"vm.*detect.*(?:username|registry|environment)",
+        re.IGNORECASE,
+    )),
+    # CAPE config — timeouts, sleep, clock, network simulation
+    ("cape_config", re.compile(
+        r"timing|sleep|delay|deferred|date.*expir|kill.*date|"
+        r"time.?bomb|temporal|uptime|clock|"
+        r"recently.?booted|"
+        r"dns.*connect|network.*connect|c2.*connect|"
+        r"dead c2|connectivity.*check|connectivity.*verif|"
+        r"kill.*switch.*domain|internet.*reach|"
+        r"external.*ip|network.*environment|"
+        r"inetsim|protocol.*not.*simul",
+        re.IGNORECASE,
+    )),
+    # Automation — human interaction, process enumeration for tools
+    ("automation", re.compile(
+        r"human.*interact|user.*interact|mouse|cursor|keyboard|"
+        r"screen.*resolution|user.*activ|"
+        r"parent.*process|execution.*context|"
+        r"process.*enum.*tool|analysis.*tool|"
+        r"enable.*content|social.*engineer",
+        re.IGNORECASE,
+    )),
+    # Everything else is detection engineering
+]
+
+
+def _categorize(technique: str) -> str:
+    """Assign a fix-type category to a freeform evasion technique name."""
+    for category, pattern in _CATEGORY_RULES:
+        if pattern.search(technique):
+            return category
+    return "detection"
+
 
 @router.get("")
 async def list_evasions(
@@ -26,7 +92,8 @@ async def list_evasions(
     """
     Aggregate evasion hunter findings across all analyses.
 
-    Returns techniques ranked by frequency, with MITRE IDs and evidence.
+    Returns techniques ranked by frequency with MITRE IDs, evidence,
+    and a fix-type category for each technique.
     """
     # Extract all evasion techniques from report_json JSONB
     sql = text("""
@@ -56,6 +123,7 @@ async def list_evasions(
             "mitre_id": row[1],
             "evidence": row[2],
             "sample_count": row[3],
+            "category": _categorize(row[0] or ""),
         }
         for row in rows
     ]

@@ -1,0 +1,104 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for evasion technique categorization logic.
+
+The _categorize function and _CATEGORY_RULES are pure regex logic with no
+app dependencies. We load just those symbols from the module source to
+avoid importing the full FastAPI app stack.
+"""
+
+import re
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Load _CATEGORY_RULES and _categorize without importing the router module
+# (which pulls in FastAPI, SQLModel, jwt, etc.)
+# ---------------------------------------------------------------------------
+_SRC = Path(__file__).resolve().parent.parent / "app" / "routers" / "evasions.py"
+_source = _SRC.read_text()
+
+# Extract everything between the first `_CATEGORY_RULES` definition and the
+# `def _categorize` function — then exec both into a private namespace.
+_ns: dict = {"re": re}
+# Grab from the _CATEGORY_RULES assignment through end of _categorize
+_start = _source.index("_CATEGORY_RULES")
+_end = _source.index("\n\n\n@router", _start)  # stop before the route decorator
+exec(_source[_start:_end], _ns)  # noqa: S102
+
+_categorize = _ns["_categorize"]
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_qemu_categories():
+    assert _categorize("Virtual Network Adapter Detection") == "qemu"
+    assert _categorize("Storage Device Enumeration (VM Disk Detection)") == "qemu"
+    assert _categorize("Virtual Machine Detection via Display Device Query") == "qemu"
+    assert _categorize("Storage Device / Mount Point Enumeration for VM Detection") == "qemu"
+    assert _categorize("VM/Sandbox Environment Detection via Static PE Anomaly") == "qemu"
+
+
+def test_registry_vm_detection_is_guest_image():
+    """Registry-based VM checks are fixed in Packer (guest image), not QEMU."""
+    assert _categorize("Registry-Based VM/Environment Detection") == "guest_image"
+    assert _categorize("Registry Artifact Checks (VM/Environment Detection)") == "guest_image"
+
+
+def test_guest_image_categories():
+    assert _categorize("Hardware ID / Volume Serial Number Profiling") == "guest_image"
+    assert _categorize("Computer Name / Hostname Enumeration") == "guest_image"
+    assert _categorize("System Fingerprinting / Environment Enumeration") == "guest_image"
+    assert _categorize("Environment / Victim Profiling via Hardware ID and Volume Serial Number") == "guest_image"
+    assert _categorize("Large File Size Evasion") == "guest_image"
+    assert _categorize("Large Binary Size as Anti-Analysis Mechanism") == "guest_image"
+    assert _categorize("Suspicious PDB Path (Development Artifact / Targeted Build Indicator)") == "guest_image"
+    assert _categorize("Environment/VM Detection via Username Query") == "guest_image"
+    assert _categorize("Hostname Enumeration for Environment Fingerprinting") == "guest_image"
+
+
+def test_cape_config_categories():
+    assert _categorize("Date/Time Expiration Check") == "cape_config"
+    assert _categorize("Timing Evasion — Extended Sleep / Delayed Execution") == "cape_config"
+    assert _categorize("DNS/Network Connectivity Verification") == "cape_config"
+    assert _categorize("Dead C2 / Network Connectivity Probe") == "cape_config"
+    assert _categorize("Date/Time Expiration Check (Kill Date)") == "cape_config"
+    assert _categorize("Timing / Sleep-Based Evasion (Inferred from CAPE Duration Gap)") == "cape_config"
+    assert _categorize("Sandbox Clock Manipulation Detection / Stale Snapshot Detection") == "cape_config"
+    assert _categorize("Kill Switch Domain Check (Network Connectivity / Sinkhole Detection)") == "cape_config"
+    assert _categorize("Stealth Network Communication / Protocol Not Simulated by INetSim") == "cape_config"
+    assert _categorize("External IP / Connectivity Verification") == "cape_config"
+    assert _categorize("Timing / Uptime / Recently Booted System Detection") == "cape_config"
+
+
+def test_automation_categories():
+    assert _categorize("User Interaction / Human Presence Check") == "automation"
+    assert _categorize("Process Enumeration for Analysis Tools") == "automation"
+    assert _categorize("Analysis Tool Detection via Process Enumeration") == "automation"
+    assert _categorize("Parent Process / Execution Context Check") == "automation"
+    assert _categorize("User Interaction Requirement — Social Engineering Gate (Enable Content Button)") == "automation"
+    assert _categorize("Cross-Process Memory Reading for Analysis Tool Detection") == "automation"
+
+
+def test_detection_engineering_fallback():
+    """Techniques that can't be fixed in the sandbox fall to detection."""
+    assert _categorize("Anti-Debug via SetUnhandledExceptionFilter") == "detection"
+    assert _categorize("EDR/Hook Evasion via ntdll Unhooking") == "detection"
+    assert _categorize("Language/Locale Geofencing") == "detection"
+    assert _categorize("Encrypted/Packed Payload with Conditional Decryption") == "detection"
+    assert _categorize("Vectored Exception Handler (VEH) Abuse for Control Flow Obfuscation") == "detection"
+    assert _categorize("Privilege/UAC Elevation Check") == "detection"
+    assert _categorize("TLS Callback Execution (Pre-EntryPoint Code)") == "detection"
+    assert _categorize("PE Overlay Payload Concealment") == "detection"
+    assert _categorize("SEH-Based Anti-Debug / Anti-Analysis") == "detection"
+    assert _categorize("In-Memory Payload Staging (Process Memory Injection)") == "detection"
+    assert _categorize("DLL Side-Loading / Unusual Extension DLL Load") == "detection"
+    assert _categorize("UPX Packing with Modified Headers (Anti-Unpacking)") == "detection"
+
+
+def test_empty_and_unknown():
+    assert _categorize("") == "detection"
+    assert _categorize("Some Unknown Technique") == "detection"
