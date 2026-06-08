@@ -1,0 +1,14 @@
+# auto-feeder-trigger.path — watches for trigger file to kick immediate cycle
+# Created by the API /feeder/resume endpoint. Fires auto-feeder.service
+# without needing sudo or elevated privileges.
+#
+# Managed by Ansible (auto-feeder role). Do not edit manually.
+
+[Unit]
+Description=Auto-feeder immediate trigger watcher
+
+[Path]
+PathExists={{ auto_feeder_pause_file }}.trigger
+
+[Install]
+WantedBy=multi-user.target

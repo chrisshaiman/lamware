@@ -1,0 +1,11 @@
+# auto-feeder-trigger.service — cleans trigger file and kicks auto-feeder
+# Activated by auto-feeder-trigger.path when the API creates the trigger file.
+#
+# Managed by Ansible (auto-feeder role). Do not edit manually.
+
+[Unit]
+Description=Auto-feeder immediate trigger handler
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'rm -f {{ auto_feeder_pause_file }}.trigger && systemctl start auto-feeder.service'
