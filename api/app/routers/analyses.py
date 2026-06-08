@@ -146,6 +146,7 @@ def list_analyses(
                     "file_mime": sample.file_mime,
                     "file_size": sample.file_size,
                 },
+                "llm_cost_usd": float(analysis.llm_cost_usd) if analysis.llm_cost_usd is not None else None,
                 "ioc_count": ioc_counts.get(analysis.id, 0),
                 "technique_count": tech_counts.get(analysis.id, 0),
                 "signature_count": sig_counts.get(analysis.id, 0),

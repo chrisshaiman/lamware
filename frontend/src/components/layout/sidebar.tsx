@@ -10,6 +10,7 @@ import {
   Activity,
   AlertTriangle,
   ShieldAlert,
+  DollarSign,
   Upload,
   X,
 } from "lucide-react";
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: "/pipeline", label: "Pipeline", icon: Activity },
   { to: "/alerts", label: "Alerts", icon: AlertTriangle },
   { to: "/evasions", label: "Evasions", icon: ShieldAlert },
+  { to: "/spend", label: "LLM Spend", icon: DollarSign },
   { to: "/submit", label: "Submit", icon: Upload, requiredRole: "analyst" },
 ];
 

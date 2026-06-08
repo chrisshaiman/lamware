@@ -4,11 +4,19 @@
 import { useQuery } from "@tanstack/react-query";
 import apiClient from "#lib/api-client";
 
+export type EvasionCategory =
+  | "guest_image"
+  | "qemu"
+  | "cape_config"
+  | "automation"
+  | "detection";
+
 export interface EvasionTechnique {
   technique: string;
   mitre_id: string | null;
   evidence: string | null;
   sample_count: number;
+  category: EvasionCategory;
 }
 
 export interface EvasionRecommendation {

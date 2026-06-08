@@ -14,6 +14,7 @@ import { StatsPage } from "#pages/stats/stats-page";
 import { PipelinePage } from "#pages/pipeline/pipeline-page";
 import { AlertsPage } from "#pages/alerts/alerts-page";
 import { EvasionsPage } from "#pages/evasions/evasions-page";
+import { SpendPage } from "#pages/spend/spend-page";
 import { SubmitPage } from "#pages/submit/submit-page";
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/pipeline" element={<PipelinePage />} />
           <Route path="/alerts" element={<AlertsPage />} />
           <Route path="/evasions" element={<EvasionsPage />} />
+          <Route path="/spend" element={<SpendPage />} />
           <Route path="/submit" element={<SubmitPage />} />
         </Route>
       </Routes>
