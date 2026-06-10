@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS investigation_sessions (
     analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
     user_sub        TEXT NOT NULL,
     model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
-    status          TEXT NOT NULL DEFAULT 'active',
+    status          TEXT NOT NULL DEFAULT 'active',  -- active, completed, abandoned
     total_input_tokens  INTEGER NOT NULL DEFAULT 0,
     total_output_tokens INTEGER NOT NULL DEFAULT 0,
     total_cost_usd  NUMERIC(10,4) NOT NULL DEFAULT 0,
@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_inv_sessions_user ON investigation_sessions(user_
 CREATE TABLE IF NOT EXISTS investigation_messages (
     id              BIGSERIAL PRIMARY KEY,
     session_id      BIGINT NOT NULL REFERENCES investigation_sessions(id) ON DELETE CASCADE,
-    role            TEXT NOT NULL,
+    role            TEXT NOT NULL,  -- user, assistant, tool_call, tool_result
     content         TEXT NOT NULL,
     tool_name       TEXT,
     input_tokens    INTEGER,
@@ -35,8 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_inv_messages_session ON investigation_messages(se
 CREATE TABLE IF NOT EXISTS investigation_pins (
     id              BIGSERIAL PRIMARY KEY,
     session_id      BIGINT NOT NULL REFERENCES investigation_sessions(id) ON DELETE CASCADE,
-    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
-    pin_type        TEXT NOT NULL,
+    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,  -- denormalized from sessions.analysis_id for direct lookup; must match
+    pin_type        TEXT NOT NULL,  -- ioc, technique, note
     value           TEXT NOT NULL,
     ioc_type        TEXT,
     context         TEXT NOT NULL DEFAULT '',

@@ -399,12 +399,12 @@ CREATE INDEX idx_pipeline_events_created ON pipeline_stage_events(created_at);
 -- Investigation agent — conversational deep-dive sessions
 -- =============================================================================
 
-CREATE TABLE IF NOT EXISTS investigation_sessions (
+CREATE TABLE investigation_sessions (
     id              BIGSERIAL PRIMARY KEY,
     analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
     user_sub        TEXT NOT NULL,
     model           TEXT NOT NULL DEFAULT 'claude-sonnet-4-6',
-    status          TEXT NOT NULL DEFAULT 'active',
+    status          TEXT NOT NULL DEFAULT 'active',  -- active, completed, abandoned
     total_input_tokens  INTEGER NOT NULL DEFAULT 0,
     total_output_tokens INTEGER NOT NULL DEFAULT 0,
     total_cost_usd  NUMERIC(10,4) NOT NULL DEFAULT 0,
@@ -413,13 +413,13 @@ CREATE TABLE IF NOT EXISTS investigation_sessions (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_inv_sessions_analysis ON investigation_sessions(analysis_id);
-CREATE INDEX IF NOT EXISTS idx_inv_sessions_user ON investigation_sessions(user_sub);
+CREATE INDEX idx_inv_sessions_analysis ON investigation_sessions(analysis_id);
+CREATE INDEX idx_inv_sessions_user ON investigation_sessions(user_sub);
 
-CREATE TABLE IF NOT EXISTS investigation_messages (
+CREATE TABLE investigation_messages (
     id              BIGSERIAL PRIMARY KEY,
     session_id      BIGINT NOT NULL REFERENCES investigation_sessions(id) ON DELETE CASCADE,
-    role            TEXT NOT NULL,
+    role            TEXT NOT NULL,  -- user, assistant, tool_call, tool_result
     content         TEXT NOT NULL,
     tool_name       TEXT,
     input_tokens    INTEGER,
@@ -427,13 +427,13 @@ CREATE TABLE IF NOT EXISTS investigation_messages (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_inv_messages_session ON investigation_messages(session_id);
+CREATE INDEX idx_inv_messages_session ON investigation_messages(session_id);
 
-CREATE TABLE IF NOT EXISTS investigation_pins (
+CREATE TABLE investigation_pins (
     id              BIGSERIAL PRIMARY KEY,
     session_id      BIGINT NOT NULL REFERENCES investigation_sessions(id) ON DELETE CASCADE,
-    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
-    pin_type        TEXT NOT NULL,
+    analysis_id     BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,  -- denormalized from sessions.analysis_id for direct lookup; must match
+    pin_type        TEXT NOT NULL,  -- ioc, technique, note
     value           TEXT NOT NULL,
     ioc_type        TEXT,
     context         TEXT NOT NULL DEFAULT '',
@@ -441,8 +441,8 @@ CREATE TABLE IF NOT EXISTS investigation_pins (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_inv_pins_session ON investigation_pins(session_id);
-CREATE INDEX IF NOT EXISTS idx_inv_pins_analysis ON investigation_pins(analysis_id);
+CREATE INDEX idx_inv_pins_session ON investigation_pins(session_id);
+CREATE INDEX idx_inv_pins_analysis ON investigation_pins(analysis_id);
 
 
 -- =============================================================================
