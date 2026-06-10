@@ -547,7 +547,7 @@ def _get_signatures(args: dict, session: Session) -> dict:
         SELECT name, severity, description, source_stage
         FROM signatures
         WHERE analysis_id = :aid
-        ORDER BY severity DESC
+        ORDER BY severity DESC LIMIT 200
         """
     )
     rows = session.exec(sql.bindparams(aid=args["analysis_id"])).all()
@@ -572,7 +572,7 @@ def _get_capabilities(args: dict, session: Session) -> dict:
         SELECT description, source_stage
         FROM capabilities
         WHERE analysis_id = :aid
-        ORDER BY id ASC
+        ORDER BY id ASC LIMIT 500
         """
     )
     rows = session.exec(sql.bindparams(aid=args["analysis_id"])).all()
