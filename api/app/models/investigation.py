@@ -25,7 +25,7 @@ investigation_pins: analyst-promoted findings from a session.
   IOCs, techniques, notes, and other analyst-marked insights with context.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlmodel import Field, SQLModel
@@ -33,18 +33,19 @@ from sqlmodel import Field, SQLModel
 
 class InvestigationSession(SQLModel, table=True):
     __tablename__ = "investigation_sessions"
+    model_config = {"protected_namespaces": ()}  # allow field named "model"
 
     id: int | None = Field(default=None, primary_key=True)
     analysis_id: int = Field(foreign_key="analyses.id")
     user_sub: str
-    llm_model: str = "claude-sonnet-4-6"
-    status: str = "active"  # active, completed, abandoned
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_cost_usd: Decimal | None = Field(default=None)
-    max_turns: int = 50
-    created_at: datetime | None = Field(default=None)
-    updated_at: datetime | None = Field(default=None)
+    model: str = Field(default="claude-sonnet-4-6")
+    status: str = Field(default="active")  # active, completed, abandoned
+    total_input_tokens: int = Field(default=0)
+    total_output_tokens: int = Field(default=0)
+    total_cost_usd: Decimal = Field(default=Decimal("0"))
+    max_turns: int = Field(default=50)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class InvestigationMessage(SQLModel, table=True):
@@ -57,7 +58,7 @@ class InvestigationMessage(SQLModel, table=True):
     tool_name: str | None = Field(default=None)
     input_tokens: int | None = Field(default=None)
     output_tokens: int | None = Field(default=None)
-    created_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class InvestigationPin(SQLModel, table=True):
@@ -69,6 +70,6 @@ class InvestigationPin(SQLModel, table=True):
     pin_type: str  # ioc, technique, note
     value: str
     ioc_type: str | None = Field(default=None)
-    context: str = ""
-    promoted: bool = False
-    created_at: datetime | None = Field(default=None)
+    context: str = Field(default="")
+    promoted: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
