@@ -27,17 +27,18 @@ import pytest
 # Stub every external dependency the router imports before loading it
 # ---------------------------------------------------------------------------
 
-# sqlalchemy
+# sqlalchemy — force-assigned so router.py's exec always sees this stub
+# regardless of which file collected first.
 _sa = types.ModuleType("sqlalchemy")
 _sa.text = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlalchemy", _sa)
+sys.modules["sqlalchemy"] = _sa
 
-# sqlmodel
+# sqlmodel — force-assigned; includes col/select that the router imports.
 _sm = types.ModuleType("sqlmodel")
 _sm.Session = MagicMock()  # type: ignore[attr-defined]
 _sm.col = MagicMock()  # type: ignore[attr-defined]
 _sm.select = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlmodel", _sm)
+sys.modules["sqlmodel"] = _sm
 
 # fastapi
 _fa = types.ModuleType("fastapi")
@@ -55,12 +56,14 @@ class _HTTPException(Exception):
 
 
 _fa.HTTPException = _HTTPException  # type: ignore[attr-defined]
-sys.modules.setdefault("fastapi", _fa)
+sys.modules["fastapi"] = _fa
 _fa_resp = types.ModuleType("fastapi.responses")
 _fa_resp.StreamingResponse = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("fastapi.responses", _fa_resp)
+sys.modules["fastapi.responses"] = _fa_resp
 
-# app package stubs — must be in place before importing submodules
+# app package stubs — must be in place before importing submodules.
+# Force-assign the stubs that the exec'd router source imports from directly
+# so this file is self-contained regardless of collection order.
 _app_pkg = types.ModuleType("app")
 sys.modules.setdefault("app", _app_pkg)
 
@@ -68,22 +71,27 @@ _app_config = types.ModuleType("app.config")
 _settings = MagicMock()
 _settings.investigation_max_turns = 50
 _settings.investigation_cost_alert_usd = 2.0
+# Include attributes used by other exec'd modules (orchestrator) so that if
+# any earlier file's setdefault lost the race the comparison still works.
+_settings.litellm_url = "http://127.0.0.1:4000"
+_settings.litellm_key = "sk-test"
+_settings.investigation_max_tool_calls_per_turn = 10
 _app_config.settings = _settings  # type: ignore[attr-defined]
-sys.modules.setdefault("app.config", _app_config)
+sys.modules["app.config"] = _app_config
 
 _app_auth = types.ModuleType("app.auth")
 _app_auth.require_auth = MagicMock()  # type: ignore[attr-defined]
 _app_auth.require_role = MagicMock()  # type: ignore[attr-defined]
 _app_auth.AuthContext = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.auth", _app_auth)
+sys.modules["app.auth"] = _app_auth
 
 _app_audit = types.ModuleType("app.audit")
 _app_audit.log_audit = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.audit", _app_audit)
+sys.modules["app.audit"] = _app_audit
 
 _app_db = types.ModuleType("app.database")
 _app_db.get_session = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.database", _app_db)
+sys.modules["app.database"] = _app_db
 
 # Investigate subpackage
 _inv_pkg = types.ModuleType("app.investigate")
@@ -91,11 +99,11 @@ sys.modules.setdefault("app.investigate", _inv_pkg)
 
 _inv_orch = types.ModuleType("app.investigate.orchestrator")
 _inv_orch.run_conversation_turn = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.investigate.orchestrator", _inv_orch)
+sys.modules["app.investigate.orchestrator"] = _inv_orch
 
 _inv_sp = types.ModuleType("app.investigate.system_prompt")
 _inv_sp.build_system_prompt = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.investigate.system_prompt", _inv_sp)
+sys.modules["app.investigate.system_prompt"] = _inv_sp
 
 _inv_models_pkg = types.ModuleType("app.models")
 sys.modules.setdefault("app.models", _inv_models_pkg)
@@ -104,7 +112,7 @@ _inv_models = types.ModuleType("app.models.investigation")
 _inv_models.InvestigationSession = MagicMock()  # type: ignore[attr-defined]
 _inv_models.InvestigationMessage = MagicMock()  # type: ignore[attr-defined]
 _inv_models.InvestigationPin = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("app.models.investigation", _inv_models)
+sys.modules["app.models.investigation"] = _inv_models
 
 # Stub the relative imports in investigate.py by inserting the stubs
 # under the dotted names the router uses after Python resolves relative imports.

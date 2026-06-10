@@ -19,19 +19,29 @@ from unittest.mock import MagicMock
 
 _sa = types.ModuleType("sqlalchemy")
 _sa.text = lambda sql: _FakeTextClause(sql)  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlalchemy", _sa)
+sys.modules["sqlalchemy"] = _sa
 
 _sm = types.ModuleType("sqlmodel")
 _sm.Session = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlmodel", _sm)
+_sm.col = MagicMock()  # type: ignore[attr-defined]
+_sm.select = MagicMock()  # type: ignore[attr-defined]
+sys.modules["sqlmodel"] = _sm
 
 # app.config is not imported by system_prompt.py but stub it anyway in case
-# the import machinery walks upward from app.investigate
+# the import machinery walks upward from app.investigate.  All numeric/string
+# attributes that any exec'd module compares against are set to concrete values
+# so that collection order doesn't matter.
 _cfg_pkg = types.ModuleType("app")
 _cfg_mod = types.ModuleType("app.config")
-_cfg_mod.settings = MagicMock()  # type: ignore[attr-defined]
+_settings_sp = MagicMock()
+_settings_sp.litellm_url = "http://127.0.0.1:4000"
+_settings_sp.litellm_key = "sk-test"
+_settings_sp.investigation_max_tool_calls_per_turn = 10
+_settings_sp.investigation_max_turns = 50
+_settings_sp.investigation_cost_alert_usd = 2.0
+_cfg_mod.settings = _settings_sp  # type: ignore[attr-defined]
 sys.modules.setdefault("app", _cfg_pkg)
-sys.modules.setdefault("app.config", _cfg_mod)
+sys.modules["app.config"] = _cfg_mod
 
 
 # ---------------------------------------------------------------------------

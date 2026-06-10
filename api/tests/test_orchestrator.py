@@ -28,18 +28,24 @@ from unittest.mock import AsyncMock, MagicMock
 # Stub external dependencies before loading orchestrator.py
 # ---------------------------------------------------------------------------
 
-# sqlalchemy stub — include text() mock so other test files that load after
-# this one (and get the already-installed stub via setdefault) don't fail
+# sqlalchemy stub — force-assigned so this file's exec always sees the right
+# stub regardless of collection order.
 _sa = types.ModuleType("sqlalchemy")
 _sa.text = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlalchemy", _sa)
+sys.modules["sqlalchemy"] = _sa
 
-# sqlmodel stub
+# sqlmodel stub — force-assigned; includes col/select so any module that
+# imports them from sqlmodel after this point also works.
 _sm = types.ModuleType("sqlmodel")
 _sm.Session = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlmodel", _sm)
+_sm.col = MagicMock()  # type: ignore[attr-defined]
+_sm.select = MagicMock()  # type: ignore[attr-defined]
+sys.modules["sqlmodel"] = _sm
 
-# app.config stub
+# app.config stub — force-assigned so orchestrator.py's exec always captures
+# the integer values it needs for numeric comparisons (e.g. the tool-call-limit
+# guard).  All attributes that any exec'd module compares against are set to
+# concrete (non-MagicMock) values.
 _cfg_pkg = types.ModuleType("app")
 _cfg_mod = types.ModuleType("app.config")
 
@@ -47,9 +53,11 @@ _settings = MagicMock()
 _settings.litellm_url = "http://127.0.0.1:4000"
 _settings.litellm_key = "sk-test"
 _settings.investigation_max_tool_calls_per_turn = 10
+_settings.investigation_max_turns = 50
+_settings.investigation_cost_alert_usd = 2.0
 _cfg_mod.settings = _settings  # type: ignore[attr-defined]
 sys.modules.setdefault("app", _cfg_pkg)
-sys.modules.setdefault("app.config", _cfg_mod)
+sys.modules["app.config"] = _cfg_mod
 
 # app.investigate.tools stub — provide TOOL_DEFINITIONS and execute_tool
 _inv_pkg = types.ModuleType("app.investigate")
@@ -85,14 +93,15 @@ _mock_execute_tool = MagicMock(return_value={"result": "ok"})
 _tools_mod.execute_tool = _mock_execute_tool  # type: ignore[attr-defined]
 
 sys.modules.setdefault("app.investigate", _inv_pkg)
-sys.modules.setdefault("app.investigate.tools", _tools_mod)
+sys.modules["app.investigate.tools"] = _tools_mod
 
-# httpx stub — provide AsyncClient with a usable context manager
+# httpx stub — force-assigned so orchestrator.py's exec always captures the
+# right HTTPStatusError / RequestError classes for its except clauses.
 _httpx_mod = types.ModuleType("httpx")
 _httpx_mod.AsyncClient = MagicMock()  # type: ignore[attr-defined]
 _httpx_mod.HTTPStatusError = type("HTTPStatusError", (Exception,), {})  # type: ignore[attr-defined]
 _httpx_mod.RequestError = type("RequestError", (Exception,), {})  # type: ignore[attr-defined]
-sys.modules.setdefault("httpx", _httpx_mod)
+sys.modules["httpx"] = _httpx_mod
 
 # ---------------------------------------------------------------------------
 # Load orchestrator.py via exec, replacing relative imports

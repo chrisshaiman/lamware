@@ -22,26 +22,40 @@ from unittest.mock import MagicMock
 # Stub external dependencies before loading tools.py
 # ---------------------------------------------------------------------------
 
-# sqlalchemy stub
+# sqlalchemy stub — force-assigned so this file's exec always sees it,
+# regardless of collection order.
 _sa = types.ModuleType("sqlalchemy")
 _sa.text = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlalchemy", _sa)
+sys.modules["sqlalchemy"] = _sa
 
-# sqlmodel stub
+# sqlmodel stub — force-assigned.  Includes col/select so that if the router
+# test collects after this file the router's setdefault still provides those
+# attributes; but the router test also force-assigns its own richer stub, so
+# the order doesn't matter.
 _sm = types.ModuleType("sqlmodel")
 _sm.Session = MagicMock()  # type: ignore[attr-defined]
-sys.modules.setdefault("sqlmodel", _sm)
+_sm.col = MagicMock()  # type: ignore[attr-defined]
+_sm.select = MagicMock()  # type: ignore[attr-defined]
+sys.modules["sqlmodel"] = _sm
 
-# app.config stub — provide a settings object with the fields tools.py reads
+# app.config stub — provide a settings object with the fields tools.py reads.
+# All numeric/string attributes that any exec'd module compares against are
+# set to concrete values so that whichever stub wins a later setdefault the
+# comparison still works.
 _cfg_pkg = types.ModuleType("app")
 _cfg_mod = types.ModuleType("app.config")
 
 _settings = MagicMock()
 _settings.sandbox_cmd = "/usr/local/bin/run-sandbox"
 _settings.ghidra_cmd = "/usr/local/bin/run-ghidra"
+_settings.litellm_url = "http://127.0.0.1:4000"
+_settings.litellm_key = "sk-test"
+_settings.investigation_max_tool_calls_per_turn = 10
+_settings.investigation_max_turns = 50
+_settings.investigation_cost_alert_usd = 2.0
 _cfg_mod.settings = _settings  # type: ignore[attr-defined]
 sys.modules.setdefault("app", _cfg_pkg)
-sys.modules.setdefault("app.config", _cfg_mod)
+sys.modules["app.config"] = _cfg_mod
 
 # The relative import in tools.py is `from ..config import settings`.
 # exec'ing the file in a flat namespace won't resolve relative imports, so we
