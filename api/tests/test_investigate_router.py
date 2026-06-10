@@ -165,6 +165,23 @@ def test_valid_models_are_strings():
 # ---------------------------------------------------------------------------
 
 
+def test_validate_pin_body_missing_value():
+    err = _validate_pin_body({})
+    assert err is not None
+    assert "value" in err
+
+
+def test_validate_pin_body_note_missing_value():
+    err = _validate_pin_body({"type": "note"})
+    assert err is not None
+    assert "value" in err
+
+
+def test_validate_pin_body_note_with_value_passes():
+    err = _validate_pin_body({"type": "note", "value": "Interesting RC4 key"})
+    assert err is None
+
+
 def test_validate_pin_body_valid_ioc():
     err = _validate_pin_body({"type": "ioc", "value": "1.2.3.4", "ioc_type": "ipv4-addr"})
     assert err is None

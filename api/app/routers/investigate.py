@@ -50,6 +50,8 @@ router = APIRouter(
 
 def _validate_pin_body(body: dict) -> str | None:
     """Validate POST /pin request body. Returns error message string or None."""
+    if not body.get("value") or not str(body.get("value")).strip():
+        return "value is required"
     pin_type = body.get("type")
     if pin_type not in {"ioc", "technique", "note"}:
         return f"pin type must be one of: ioc, technique, note (got {pin_type!r})"
@@ -516,10 +518,9 @@ def promote_pin(
 
     IOC pins are upserted into ioc_values and linked via analysis_iocs.
     Technique pins: technique_values has a NOT NULL tactics column with no
-    default, so promotion requires knowing the tactics array. Since pin data
-    only carries technique ID/value (not tactics), we skip DB upsert for
-    technique pins but still mark them promoted — the pin record captures the
-    finding, and an analyst can manually add to analysis_techniques if needed.
+    default. We cannot safely promote without tactics data, so we return
+    promotion_not_supported rather than writing misleading data. Analysts
+    should add technique findings to analysis_techniques manually.
     Note pins have no corresponding normalised table; they are marked promoted
     to indicate the analyst has reviewed and acknowledged them.
     """
@@ -564,17 +565,13 @@ def promote_pin(
         )
 
     elif pin.pin_type == "technique":
-        # technique_values.tactics is VARCHAR[] NOT NULL with no DEFAULT.
-        # Promotion would require us to supply a tactics array we don't have in
-        # the pin record, and guessing '{}'::varchar[] would produce misleading
-        # data. We mark the pin promoted (it's captured in investigation_pins)
-        # but skip the technique_values / analysis_techniques upsert.
-        # Analysts who want this in analysis_techniques should add it manually.
-        log.info(
-            "Technique pin %d promoted (recorded in pins only — "
-            "technique_values upsert skipped: tactics column is NOT NULL with no default)",
-            pin_id,
-        )
+        # technique_values.tactics is NOT NULL with no default and we have no
+        # tactic data here — a silent empty-array insert would corrupt the
+        # technique_frequency view. Surface the limitation instead of faking it.
+        return {
+            "status": "promotion_not_supported",
+            "reason": "Technique pins can't be auto-promoted (tactics data unavailable); add to the analysis manually if needed.",
+        }
 
     # pin_type == "note": nothing to promote into normalised tables; mark promoted.
 
