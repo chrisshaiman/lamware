@@ -44,6 +44,26 @@ router = APIRouter(
 
 
 # ---------------------------------------------------------------------------
+# Ownership helper — used by all session WRITE endpoints
+# ---------------------------------------------------------------------------
+
+
+def _get_owned_session(session_id: int, auth: AuthContext, db: Session) -> "InvestigationSession":
+    """Load a session and enforce write ownership.
+
+    Sessions are personal investigations: only the analyst who created one
+    (or an admin) may mutate it. Reads are intentionally open to all
+    authenticated users — see the design spec.
+    """
+    inv_session = db.get(InvestigationSession, session_id)
+    if inv_session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    if inv_session.user_sub != auth.user_id and "admin" not in auth.roles:
+        raise HTTPException(status_code=403, detail="Not your session")
+    return inv_session
+
+
+# ---------------------------------------------------------------------------
 # Pure helpers — unit-testable without DB or HTTP
 # ---------------------------------------------------------------------------
 
@@ -57,6 +77,11 @@ def _validate_pin_body(body: dict) -> str | None:
         return f"pin type must be one of: ioc, technique, note (got {pin_type!r})"
     if pin_type == "ioc" and not body.get("ioc_type"):
         return "ioc_type is required when type is 'ioc'"
+    value = str(body.get("value", ""))
+    if len(value) > 2048:
+        return "value too long (max 2048 chars)"
+    if any(ord(c) < 32 and c not in "\t" for c in value):
+        return "value contains control characters"
     return None
 
 
@@ -313,8 +338,8 @@ async def send_message(
     if not content:
         raise HTTPException(status_code=400, detail="content is required and must not be blank")
 
-    session = db.get(InvestigationSession, session_id)
-    if session is None or session.analysis_id != analysis_id:
+    session = _get_owned_session(session_id, auth, db)
+    if session.analysis_id != analysis_id:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found for analysis {analysis_id}")
 
     if session.status != "active":
@@ -478,9 +503,7 @@ def confirm_pin(
     db: Session = Depends(get_session),
 ) -> dict:
     """Confirm and save an analyst-pinned finding from a session."""
-    session = db.get(InvestigationSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    session = _get_owned_session(session_id, auth, db)
 
     error = _validate_pin_body(body)
     if error:
@@ -527,6 +550,7 @@ def promote_pin(
     pin = db.get(InvestigationPin, pin_id)
     if pin is None or pin.session_id != session_id:
         raise HTTPException(status_code=404, detail=f"Pin {pin_id} not found for session {session_id}")
+    _get_owned_session(session_id, auth, db)
 
     if pin.promoted:
         return {"status": "already_promoted"}
@@ -608,9 +632,7 @@ def update_model(
     db: Session = Depends(get_session),
 ) -> dict:
     """Switch the LLM model for a session. Must be one of VALID_MODELS."""
-    session = db.get(InvestigationSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    session = _get_owned_session(session_id, auth, db)
 
     model = body.get("model")
     if model not in VALID_MODELS:
@@ -639,9 +661,7 @@ def complete_session(
     db: Session = Depends(get_session),
 ) -> dict:
     """Mark an investigation session as completed."""
-    session = db.get(InvestigationSession, session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    session = _get_owned_session(session_id, auth, db)
 
     session.status = "completed"
     session.updated_at = datetime.now(timezone.utc)

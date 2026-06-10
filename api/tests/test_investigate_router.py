@@ -21,6 +21,7 @@ import types
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock
+import pytest
 
 # ---------------------------------------------------------------------------
 # Stub every external dependency the router imports before loading it
@@ -42,8 +43,18 @@ sys.modules.setdefault("sqlmodel", _sm)
 _fa = types.ModuleType("fastapi")
 _fa.APIRouter = MagicMock()  # type: ignore[attr-defined]
 _fa.Depends = MagicMock()  # type: ignore[attr-defined]
-_fa.HTTPException = Exception  # simplify — test code won't raise these
-_fa.HTTPException = MagicMock()  # type: ignore[attr-defined]
+
+
+class _HTTPException(Exception):
+    """Minimal HTTPException stub — carries status_code and detail."""
+
+    def __init__(self, status_code: int = 500, detail: str = "") -> None:
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
+
+
+_fa.HTTPException = _HTTPException  # type: ignore[attr-defined]
 sys.modules.setdefault("fastapi", _fa)
 _fa_resp = types.ModuleType("fastapi.responses")
 _fa_resp.StreamingResponse = MagicMock()  # type: ignore[attr-defined]
@@ -137,6 +148,7 @@ exec(_source_patched, _ns)  # noqa: S102
 VALID_MODELS = _ns["VALID_MODELS"]
 _validate_pin_body = _ns["_validate_pin_body"]
 _build_report_markdown = _ns["_build_report_markdown"]
+_get_owned_session = _ns["_get_owned_session"]
 
 
 # ---------------------------------------------------------------------------
@@ -444,3 +456,110 @@ def test_report_tool_result_truncation_one_over():
     ]
     md = _build_report_markdown(_SAMPLE_SESSION, msgs, [])
     assert "truncated" in md
+
+
+# ---------------------------------------------------------------------------
+# _get_owned_session — ownership enforcement
+# ---------------------------------------------------------------------------
+
+
+def _make_auth(user_id: str, roles: list[str] | None = None) -> MagicMock:
+    auth = MagicMock()
+    auth.user_id = user_id
+    auth.roles = roles or []
+    return auth
+
+
+def _make_session_obj(session_id: int, owner_sub: str) -> MagicMock:
+    """Return a fake InvestigationSession-like object."""
+    s = MagicMock()
+    s.id = session_id
+    s.user_sub = owner_sub
+    return s
+
+
+def _make_db(session_obj) -> MagicMock:
+    """Return a fake DB whose .get() returns session_obj."""
+    db = MagicMock()
+    db.get.return_value = session_obj
+    return db
+
+
+def test_owned_session_owner_passes():
+    """Session owner gets the session object back."""
+    auth = _make_auth("user-123")
+    session_obj = _make_session_obj(1, "user-123")
+    db = _make_db(session_obj)
+
+    result = _get_owned_session(1, auth, db)
+    assert result is session_obj
+
+
+def test_owned_session_admin_passes():
+    """Admin role bypasses ownership check."""
+    auth = _make_auth("admin-456", roles=["admin"])
+    session_obj = _make_session_obj(1, "user-123")  # different owner
+    db = _make_db(session_obj)
+
+    result = _get_owned_session(1, auth, db)
+    assert result is session_obj
+
+
+def test_owned_session_non_owner_raises_403():
+    """Non-owner without admin role gets 403."""
+    auth = _make_auth("other-user")
+    session_obj = _make_session_obj(1, "user-123")
+    db = _make_db(session_obj)
+
+    with pytest.raises(_HTTPException) as exc_info:
+        _get_owned_session(1, auth, db)
+    assert exc_info.value.status_code == 403
+    assert "Not your session" in exc_info.value.detail
+
+
+def test_owned_session_missing_raises_404():
+    """Missing session raises 404."""
+    auth = _make_auth("user-123")
+    db = _make_db(None)  # db.get returns None
+
+    with pytest.raises(_HTTPException) as exc_info:
+        _get_owned_session(99, auth, db)
+    assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# _validate_pin_body — pin value sanity checks (Change 3)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_pin_body_value_too_long():
+    """Value over 2048 chars is rejected."""
+    err = _validate_pin_body({"type": "note", "value": "x" * 2049})
+    assert err is not None
+    assert "2048" in err
+
+
+def test_validate_pin_body_value_at_limit_passes():
+    """Value of exactly 2048 chars is accepted."""
+    err = _validate_pin_body({"type": "note", "value": "x" * 2048})
+    assert err is None
+
+
+def test_validate_pin_body_control_char_rejected():
+    """Null byte (control char < 0x20) is rejected."""
+    err = _validate_pin_body({"type": "note", "value": "bad\x00value"})
+    assert err is not None
+    assert "control" in err
+
+
+def test_validate_pin_body_newline_rejected():
+    """Newline (\\n, ord 10 < 32) is a control char and should be rejected."""
+    err = _validate_pin_body({"type": "note", "value": "line1\nline2"})
+    assert err is not None
+    assert "control" in err
+
+
+def test_validate_pin_body_tab_allowed():
+    """Tab (\\t) is explicitly permitted despite ord < 32."""
+    err = _validate_pin_body({"type": "note", "value": "col1\tcol2"})
+    assert err is None
