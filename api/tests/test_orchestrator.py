@@ -512,6 +512,7 @@ def test_async_generator_tool_call_and_result():
     assert "tool_result" in event_types
     assert "token" in event_types
     assert "done" in event_types
+    assert event_types.index("tool_call") < event_types.index("tool_result")
 
     tool_call_event = next(e for e in events if e["event"] == "tool_call")
     assert tool_call_event["data"]["tool"] == "search_iocs"

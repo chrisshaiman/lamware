@@ -184,7 +184,7 @@ async def run_conversation_turn(
                         "Authorization": f"Bearer {settings.litellm_key}",
                         "Content-Type": "application/json",
                     },
-                    content=json.dumps(body),
+                    content=json.dumps(body, default=str),
                 ) as resp:
                     resp.raise_for_status()
                     async for line in resp.aiter_lines():
@@ -231,7 +231,8 @@ async def run_conversation_turn(
                 break
 
             # --- Tool loop ---
-            # Enforce per-turn cap before executing anything
+            # Cap is all-or-nothing per batch: if this batch would exceed the limit,
+            # none of it executes — keeps history coherent vs partially-executed batches.
             if tool_calls_used + len(tool_blocks) > settings.investigation_max_tool_calls_per_turn:
                 log.warning(
                     "Tool call limit (%d) exceeded in turn — stopping",
