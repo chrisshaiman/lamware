@@ -234,6 +234,7 @@ def list_sessions(
         "sessions": [
             {
                 "id": s.id,
+                "analysis_id": s.analysis_id,
                 "status": s.status,
                 "model": s.model,
                 "total_cost_usd": float(s.total_cost_usd),

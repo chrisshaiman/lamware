@@ -401,12 +401,14 @@ export interface InvestigationPin {
   pin_type: "ioc" | "technique" | "note";
   value: string;
   ioc_type: string | null;
-  context: string;
+  context: string | null;
   promoted: boolean;
   created_at: string;
 }
 
 export interface InvestigationSessionDetail extends InvestigationSession {
+  user_sub: string;
+  max_turns: number;
   total_input_tokens: number;
   total_output_tokens: number;
   messages: InvestigationMessage[];
