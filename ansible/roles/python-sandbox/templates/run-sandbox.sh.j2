@@ -1,0 +1,53 @@
+#!/bin/bash
+# =============================================================================
+# run-sandbox — execute a Python script in an isolated container
+#
+# Usage: echo '<script>' | run-sandbox [--data <payload_dir>]
+#
+# stdin:  Python script to execute (max {{ python_sandbox_max_script_size }} bytes)
+# stdout: combined script stdout/stderr (max {{ python_sandbox_max_output_size }} bytes)
+#
+# Isolation: no network, read-only root, all caps dropped, 256MB / 30s limits.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -uo pipefail
+
+VOLUME_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --data)
+            DATA_DIR="$(realpath "$2")"
+            if [ -d "$DATA_DIR" ]; then
+                VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
+            fi
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Read script from stdin with size cap
+SCRIPT=$(head -c {{ python_sandbox_max_script_size }})
+
+if [ -z "$SCRIPT" ]; then
+    echo "Error: empty script on stdin" >&2
+    exit 1
+fi
+
+podman run --rm -i \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ python_sandbox_container_memory }} \
+    --timeout={{ python_sandbox_container_timeout }} \
+    --tmpfs /tmp:size=50m \
+    "${VOLUME_ARGS[@]}" \
+    localhost/python-sandbox:latest \
+    python3 -u -c "$SCRIPT" 2>&1 | head -c {{ python_sandbox_max_output_size }}

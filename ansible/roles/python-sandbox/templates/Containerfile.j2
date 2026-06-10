@@ -1,0 +1,14 @@
+FROM docker.io/library/python:3.12-slim
+
+# Network isolation is enforced by podman --network=none, not by stripping
+# the stdlib. The image deliberately contains no pip-installed packages.
+
+RUN useradd -r -s /usr/sbin/nologin sandbox
+
+COPY helpers/ /helpers/helpers/
+
+# Make `from helpers.crypto import ...` work from any cwd
+ENV PYTHONPATH=/helpers
+
+USER sandbox
+WORKDIR /tmp
