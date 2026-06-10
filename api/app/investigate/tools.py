@@ -669,17 +669,22 @@ def _cape_task_id(report: dict) -> str | None:
     return str(tid) if tid else None
 
 
-def _get_cape_payloads(args: dict, report: dict) -> dict:
+def _resolve_dropped(report: dict) -> tuple[Path | None, dict | None]:
+    """Return (dropped_dir, None) on success, (None, error_dict) on failure."""
     task_id = _cape_task_id(report)
     if not task_id:
-        return {
-            "error": (
-                "No Cape task ID in report — sample may not have been detonated"
-            )
-        }
+        return None, {"error": "No Cape task ID in report — sample may not have been detonated"}
     dropped = CAPE_STORAGE / task_id / "dropped"
     if not dropped.is_dir():
-        return {"payloads": [], "count": 0, "note": "No dropped payloads directory"}
+        return None, {"error": "No dropped payloads directory for this analysis"}
+    return dropped, None
+
+
+def _get_cape_payloads(args: dict, report: dict) -> dict:
+    dropped, err = _resolve_dropped(report)
+    if err:
+        return err
+    task_id = _cape_task_id(report)
     payloads = [
         {"index": i, "filename": f.name, "size": f.stat().st_size}
         for i, f in enumerate(sorted(dropped.iterdir()))
@@ -689,16 +694,9 @@ def _get_cape_payloads(args: dict, report: dict) -> dict:
 
 
 def _read_payload(args: dict, report: dict) -> dict:
-    task_id = _cape_task_id(report)
-    if not task_id:
-        return {
-            "error": (
-                "No Cape task ID in report — sample may not have been detonated"
-            )
-        }
-    dropped = CAPE_STORAGE / task_id / "dropped"
-    if not dropped.is_dir():
-        return {"error": "No dropped payloads directory"}
+    dropped, err = _resolve_dropped(report)
+    if err:
+        return err
 
     files = sorted(f for f in dropped.iterdir() if f.is_file())
     idx = args["payload_index"]
@@ -729,7 +727,13 @@ def _get_pcap_summary(args: dict, report: dict) -> dict:
     # Cap to 50KB to avoid blowing up LLM context
     raw = json.dumps(pcap)
     if len(raw) > 51200:
-        top_keys = {k: f"<truncated — {len(json.dumps(v))} bytes>" for k, v in pcap.items()}
+        top_keys = {}
+        for k, v in pcap.items():
+            try:
+                size = len(json.dumps(v))
+            except (TypeError, ValueError):
+                size = f"<unserializable: {type(v).__name__}>"
+            top_keys[k] = f"<truncated — {size} bytes>"
         return {
             "note": "pcap_analysis exceeded 50KB — showing top-level keys only",
             "keys": top_keys,
@@ -761,13 +765,16 @@ def _get_api_traces(args: dict, report: dict) -> dict:
         total_calls = len(calls)
         calls = calls[:max_calls_per_process]
 
+        # Cape call entries may contain bytes/datetime — force JSON-safe via default=str
+        safe_calls = json.loads(json.dumps(calls, default=str))
+
         result.append(
             {
                 "process_name": proc_name,
                 "pid": proc.get("pid"),
                 "total_calls": total_calls,
-                "calls_shown": len(calls),
-                "calls": calls,
+                "calls_shown": len(safe_calls),
+                "calls": safe_calls,
             }
         )
 
@@ -789,12 +796,10 @@ def _run_python(args: dict, report: dict) -> dict:
 
     cmd = [settings.sandbox_cmd]
 
-    # Mount dropped payloads if available
-    task_id = _cape_task_id(report)
-    if task_id:
-        dropped = CAPE_STORAGE / task_id / "dropped"
-        if dropped.is_dir():
-            cmd += ["--data", str(dropped)]
+    # Mount dropped payloads if available — a missing dropped dir is not an error
+    dropped, _ = _resolve_dropped(report)
+    if dropped is not None:
+        cmd += ["--data", str(dropped)]
 
     try:
         result = subprocess.run(

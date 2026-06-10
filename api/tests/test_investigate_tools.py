@@ -80,12 +80,6 @@ _get_pcap_summary = _ns["_get_pcap_summary"]
 # ---------------------------------------------------------------------------
 
 
-def test_tool_count():
-    assert len(TOOL_DEFINITIONS) == 20, (
-        f"Expected 20 tool definitions, got {len(TOOL_DEFINITIONS)}"
-    )
-
-
 def test_tool_schema_shape():
     """Every tool must have name, description, and input_schema."""
     for tool in TOOL_DEFINITIONS:
@@ -120,6 +114,8 @@ def test_all_expected_tools_present():
     assert names == expected, (
         f"Missing: {expected - names}; Extra: {names - expected}"
     )
+    # Count is derived from the canonical set — no separate magic number to maintain
+    assert len(TOOL_DEFINITIONS) == len(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +293,35 @@ def test_get_api_traces_process_cap():
     report = {"cape": {"behavior": {"processes": many_procs}}}
     result = _get_api_traces({}, report)
     assert result["process_count"] <= 10
+
+
+def test_get_api_traces_non_json_calls_are_serializable():
+    """Calls containing bytes or datetime values must not break json.dumps (Fix 1)."""
+    import datetime
+
+    report = {
+        "cape": {
+            "behavior": {
+                "processes": [
+                    {
+                        "process_name": "weird.exe",
+                        "pid": 999,
+                        "calls": [
+                            # bytes value — not JSON-serializable natively
+                            {"api": "WriteFile", "args": {"data": b"\x00\x01\x02\x03"}},
+                            # datetime value — also not JSON-serializable natively
+                            {"api": "GetSystemTime", "args": {"ts": datetime.datetime(2026, 1, 1)}},
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    result = _get_api_traces({}, report)
+    # The whole result dict must survive json.dumps without raising TypeError
+    serialized = json.dumps(result)
+    assert "WriteFile" in serialized
+    assert "GetSystemTime" in serialized
 
 
 # ---------------------------------------------------------------------------
