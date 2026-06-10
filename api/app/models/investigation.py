@@ -42,10 +42,13 @@ class InvestigationSession(SQLModel, table=True):
     status: str = Field(default="active")  # active, completed, abandoned
     total_input_tokens: int = Field(default=0)
     total_output_tokens: int = Field(default=0)
-    total_cost_usd: Decimal = Field(default=Decimal("0"))
+    total_cost_usd: Decimal = Field(default_factory=lambda: Decimal("0"))
     max_turns: int = Field(default=50)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)},
+    )
 
 
 class InvestigationMessage(SQLModel, table=True):
@@ -69,7 +72,7 @@ class InvestigationPin(SQLModel, table=True):
     analysis_id: int = Field(foreign_key="analyses.id")
     pin_type: str  # ioc, technique, note
     value: str
-    ioc_type: str | None = Field(default=None)
+    ioc_type: str | None = Field(default=None)  # STIX-style IOC type when pin_type is "ioc" (e.g., ipv4-addr, domain-name)
     context: str = Field(default="")
     promoted: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
