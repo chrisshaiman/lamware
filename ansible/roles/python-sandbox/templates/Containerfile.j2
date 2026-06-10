@@ -3,6 +3,7 @@ FROM docker.io/library/python:3.12-slim
 # Network isolation is enforced by podman --network=none, not by stripping
 # the stdlib. The image deliberately contains no pip-installed packages.
 
+# Named user with real home avoids the /nonexistent tmpfs hack the ghidra image needs for nobody/getpwuid()
 RUN useradd -r -s /usr/sbin/nologin sandbox
 
 COPY helpers/ /helpers/helpers/

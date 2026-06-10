@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "helpers"))
 
 from crypto import xor_decrypt, rc4_decrypt, single_byte_xor_scan
@@ -97,3 +99,17 @@ def test_pe_overlay_offset_not_pe():
 
 def test_struct_unpack_at():
     assert struct_unpack_at("<HH", b"\x01\x00\x02\x00", 0) == (1, 2)
+
+
+def test_xor_decrypt_empty_key_raises():
+    with pytest.raises(ValueError):
+        xor_decrypt(b"data", b"")
+
+
+def test_rc4_decrypt_empty_key_raises():
+    with pytest.raises(ValueError):
+        rc4_decrypt(b"data", b"")
+
+
+def test_xor_decrypt_empty_data():
+    assert xor_decrypt(b"", b"\x41") == b""

@@ -3,12 +3,16 @@
 
 def xor_decrypt(data: bytes, key: bytes) -> bytes:
     """XOR decrypt data with a repeating key."""
+    if not key:
+        raise ValueError("key must be non-empty")
     key_len = len(key)
     return bytes(b ^ key[i % key_len] for i, b in enumerate(data))
 
 
 def rc4_decrypt(data: bytes, key: bytes) -> bytes:
     """RC4 (ARC4) decrypt/encrypt — symmetric, same function for both."""
+    if not key:
+        raise ValueError("key must be non-empty")
     S = list(range(256))
     j = 0
     for i in range(256):

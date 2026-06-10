@@ -4,10 +4,11 @@
 #
 # Usage: echo '<script>' | run-sandbox [--data <payload_dir>]
 #
-# stdin:  Python script to execute (max {{ python_sandbox_max_script_size }} bytes)
+# stdin:  Python script to execute (streamed directly into the container;
+#         max {{ python_sandbox_max_script_size }} bytes via head -c)
 # stdout: combined script stdout/stderr (max {{ python_sandbox_max_output_size }} bytes)
 #
-# Isolation: no network, read-only root, all caps dropped, 256MB / 30s limits.
+# Isolation: no network, read-only root, all caps dropped, 256MB / 1 CPU / 30s limits.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -21,9 +22,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --data)
             DATA_DIR="$(realpath "$2")"
-            if [ -d "$DATA_DIR" ]; then
-                VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
+            if [ ! -d "$DATA_DIR" ]; then
+                echo "Error: data directory not found: $DATA_DIR" >&2
+                exit 1
             fi
+            VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
             shift 2
             ;;
         *)
@@ -32,22 +35,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Read script from stdin with size cap
-SCRIPT=$(head -c {{ python_sandbox_max_script_size }})
-
-if [ -z "$SCRIPT" ]; then
-    echo "Error: empty script on stdin" >&2
+if ! podman image exists localhost/python-sandbox:latest; then
+    echo "Error: image localhost/python-sandbox:latest not found — deploy the python-sandbox role first" >&2
     exit 1
 fi
 
-podman run --rm -i \
+# Stream stdin directly into the container — no shell variable, no quoting concerns.
+# USER directive in Containerfile enforces non-root; no --user override needed.
+head -c {{ python_sandbox_max_script_size }} | podman run --rm -i \
     --network=none \
     --read-only \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --memory={{ python_sandbox_container_memory }} \
+    --cpus={{ python_sandbox_container_cpus }} \
     --timeout={{ python_sandbox_container_timeout }} \
     --tmpfs /tmp:size=50m \
     "${VOLUME_ARGS[@]}" \
     localhost/python-sandbox:latest \
-    python3 -u -c "$SCRIPT" 2>&1 | head -c {{ python_sandbox_max_output_size }}
+    python3 -u - 2>&1 | head -c {{ python_sandbox_max_output_size }}
