@@ -401,6 +401,9 @@ def execute_tool(
 
 
 def _search_iocs(args: dict, session: Session) -> dict:
+    # The optional type filter is always bound (NULL = no filter) rather than
+    # concatenated, so the query is a single static string — no SQL built from
+    # string fragments.
     sql = text(
         """
         SELECT DISTINCT a.id, a.malware_family_guess, a.severity,
@@ -409,15 +412,14 @@ def _search_iocs(args: dict, session: Session) -> dict:
         JOIN ioc_values iv ON ai.ioc_id = iv.id
         JOIN analyses a ON ai.analysis_id = a.id
         WHERE iv.value ILIKE :pattern
-        """
-        + (" AND iv.type = :ioc_type" if args.get("type") else "")
-        + """
+          AND (:ioc_type IS NULL OR iv.type = :ioc_type)
         ORDER BY a.id DESC LIMIT 50
         """
     )
-    params: dict = {"pattern": f"%{args['value']}%"}
-    if args.get("type"):
-        params["ioc_type"] = args["type"]
+    params: dict = {
+        "pattern": f"%{args['value']}%",
+        "ioc_type": args.get("type"),
+    }
     rows = session.exec(sql.bindparams(**params)).all()
     return {
         "matches": [
@@ -500,6 +502,7 @@ def _get_network_events(args: dict, session: Session) -> dict:
     # Schema columns: id, analysis_id, event_type, dns_query, dns_type,
     # dns_answers, http_method, http_url, http_host, http_status,
     # http_user_agent, src_ip, src_port, dst_ip, dst_port, timestamp
+    # Optional event_type filter bound as NULL = no filter (static query).
     sql = text(
         """
         SELECT event_type, dns_query, dns_type, dns_answers,
@@ -507,15 +510,11 @@ def _get_network_events(args: dict, session: Session) -> dict:
                src_ip, src_port, dst_ip, dst_port, timestamp
         FROM network_events
         WHERE analysis_id = :aid
-        """
-        + (" AND event_type = :etype" if args.get("type") else "")
-        + """
+          AND (:etype IS NULL OR event_type = :etype)
         ORDER BY timestamp ASC NULLS LAST LIMIT 200
         """
     )
-    params: dict = {"aid": args["analysis_id"]}
-    if args.get("type"):
-        params["etype"] = args["type"]
+    params: dict = {"aid": args["analysis_id"], "etype": args.get("type")}
     rows = session.exec(sql.bindparams(**params)).all()
     return {
         "events": [
@@ -587,21 +586,18 @@ def _get_capabilities(args: dict, session: Session) -> dict:
 
 
 def _get_iocs(args: dict, session: Session) -> dict:
+    # Optional type filter bound as NULL = no filter (static query).
     sql = text(
         """
         SELECT iv.type, iv.value, ai.source_stage, ai.confidence, ai.context
         FROM analysis_iocs ai
         JOIN ioc_values iv ON ai.ioc_id = iv.id
         WHERE ai.analysis_id = :aid
-        """
-        + (" AND iv.type = :ioc_type" if args.get("type") else "")
-        + """
+          AND (:ioc_type IS NULL OR iv.type = :ioc_type)
         ORDER BY iv.type, iv.value LIMIT 500
         """
     )
-    params: dict = {"aid": args["analysis_id"]}
-    if args.get("type"):
-        params["ioc_type"] = args["type"]
+    params: dict = {"aid": args["analysis_id"], "ioc_type": args.get("type")}
     rows = session.exec(sql.bindparams(**params)).all()
     return {
         "iocs": [
