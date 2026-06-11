@@ -134,6 +134,25 @@ def _build_openai_tools() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Thread-safe tool execution helper
+# ---------------------------------------------------------------------------
+
+
+def _execute_tool_with_own_session(tool_name: str, args: dict, report: dict, analysis_id: int) -> dict:
+    """Tool DB reads get their own session — SQLAlchemy sessions must not
+    cross threads, and the request session stays free for stream persistence.
+
+    execute_tool is sync and may block up to 130s (Ghidra); it is called via
+    asyncio.to_thread. The request-scoped Session must never be passed into a
+    thread — create a short-lived session here instead.
+    """
+    from sqlmodel import Session
+    from ..database import engine
+    with Session(engine) as tool_session:
+        return execute_tool(tool_name, args, tool_session, report, analysis_id)
+
+
+# ---------------------------------------------------------------------------
 # Main async generator
 # ---------------------------------------------------------------------------
 
@@ -238,6 +257,14 @@ async def run_conversation_turn(
                     "Tool call limit (%d) exceeded in turn — stopping",
                     settings.investigation_max_tool_calls_per_turn,
                 )
+                synthetic_text = (
+                    f"I have reached the tool call limit "
+                    f"({settings.investigation_max_tool_calls_per_turn} per turn) and cannot "
+                    "continue this turn. Please start a new message to continue."
+                )
+                # Yield the synthetic text as a token event so the router's
+                # accumulated assistant_content includes it before the break.
+                yield {"event": "token", "data": {"content": synthetic_text}}
                 yield {
                     "event": "error",
                     "data": {
@@ -247,14 +274,7 @@ async def run_conversation_turn(
                         ),
                     },
                 }
-                messages.append({
-                    "role": "assistant",
-                    "content": (
-                        f"I have reached the tool call limit "
-                        f"({settings.investigation_max_tool_calls_per_turn} per turn) and cannot "
-                        "continue this turn. Please start a new message to continue."
-                    ),
-                })
+                messages.append({"role": "assistant", "content": synthetic_text})
                 break
 
             # Append the assistant message with tool_calls in OpenAI format
@@ -294,8 +314,11 @@ async def run_conversation_turn(
                 yield {"event": "tool_call", "data": {"tool": tool_name, "args": args}}
 
                 # execute_tool is sync and may block up to 130s (Ghidra) — offload
+                # to a thread. Each call gets its own short-lived DB session via
+                # _execute_tool_with_own_session; SQLAlchemy sessions must not
+                # cross thread boundaries.
                 result = await asyncio.to_thread(
-                    execute_tool, tool_name, args, session, report, analysis_id
+                    _execute_tool_with_own_session, tool_name, args, report, analysis_id
                 )
 
                 # Emit pin_proposal event when pin_finding returns a proposal

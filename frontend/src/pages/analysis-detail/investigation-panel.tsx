@@ -349,7 +349,8 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
         }
         case "done": {
           if (data.cost_alert === true) setCostAlert(true);
-          // Invalidate list because done changes session status to completed.
+          // Invalidate the sessions list to refresh cost totals — session
+          // status changes only via the Complete button, not on done events.
           finaliseExchange(true);
           break;
         }

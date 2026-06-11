@@ -149,7 +149,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Pentest report PDF | 1-2 hrs | Formal report: findings, methodology, evidence, remediation status. WeasyPrint. Portfolio deliverable. Missing Phase 1 details from compacted context. |
 | CI/CD security-test Ansible role | 1 session | Automate RBAC tests, Schemathesis, Nuclei into post-deploy verification. |
 | Family name normalization | 1-2 hrs | LLM generates verbose family names ("vb6 downloader/dropper (likely guloader)"). Normalize to canonical names. |
-| Interactive investigation agent | 1-2 weeks | Conversational analyst workbench with Ghidra MCP for post-pipeline deep dives. Multi-tool agent with access to Ghidra project, Volatility results, CAPE artifacts. Enables ad-hoc questions against analyzed samples. Killer demo feature — no other sandbox offers conversational analysis. |
+| Interactive investigation agent | DONE | Conversational analyst workbench on the analysis detail page. 20 tools (search IOCs/techniques, run Ghidra/sandbox, Python sandbox, pin findings). SSE streaming chat panel, session model, cost tracking, markdown report export. Deploy requires postgres + python-sandbox + api + frontend tags. ADR-017. |
 
 ### Medium Priority
 

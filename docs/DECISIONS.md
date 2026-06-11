@@ -512,3 +512,61 @@ and Cape stores analysis results locally.
 - No structured IOC database (RDS) — defer until analysis volume justifies it
 - No API-driven sample submission — operator uses sample-feeder CLI directly
 - S3 evidence archival is a standalone future addition if chain-of-custody is needed
+
+---
+
+## ADR-017: Investigation agent architecture
+
+**Status:** Decided 2026-06-10
+
+**Context:**
+The investigation agent is a conversational LLM workbench mounted on the analysis
+detail page. It needed decisions on: (a) how to invoke sandbox/Ghidra tools from
+the FastAPI process, (b) what to persist and replay for the LLM conversation, and
+(c) how to handle ATT&CK technique promotion from pinned findings.
+
+**Decision (a) — Sandbox/Ghidra invocation via scoped sudo to the pipeline user:**
+`lamware-api` (running as `lamware-api` user) invokes `run-sandbox` and `run-ghidra`
+via `sudo -u pipeline`, delegated through `/etc/sudoers.d/lamware-api-investigate`.
+Rootless Podman storage is per-user (`/home/pipeline/.local/share/containers`), so
+the pipeline user must run the containers — there is no shared storage path that
+would work from a different user.
+
+A separate broker service (e.g., a queue-polling daemon running as pipeline) was
+evaluated and rejected as overkill for a single-operator deployment: it would add
+a new service, IPC channel, and failure mode with no security benefit beyond what
+the scoped sudoers rule already provides.
+
+Systemd hardening tradeoffs: `NoNewPrivileges` cannot be set (sudo requires it
+absent to gain credentials); `ProtectHome` must be false (sudo children inherit
+the mount namespace, so ProtectHome=true would make `/home/` read-only in-namespace,
+breaking pipeline's container storage). Compensating controls: `ProtectSystem=strict`
+keeps `/usr`, `/boot`, and `/etc` read-only; the sudoers rule restricts escalation to
+exactly two commands with no arguments beyond the task ID; containers run with
+`--network=none` and are rootless.
+
+**Decision (b) — tool_call/tool_result rows persisted but NOT replayed to the LLM:**
+Each turn's tool calls and results are written to `investigation_messages` for
+transcript and audit purposes, but subsequent turns are NOT reconstructed from the
+DB into the LLM message list. On each new turn the router sends only the chat
+history (user/assistant text rows). Tool exchange rows from prior turns are omitted.
+
+This avoids fragile OpenAI-format reconstruction (tool_calls arrays, matching IDs,
+content-null rules) and bounds token costs — prior tool results rarely add value to
+later turns. The conversation history provides sufficient context via the assistant's
+final text response that summarised each tool invocation.
+
+**Decision (c) — technique pins are not auto-promoted:**
+`technique_values.tactics` has a NOT NULL constraint (tactics come from MITRE lookup,
+not free text). Pin promotion for technique pins returns `promotion_not_supported`
+rather than inserting a row with empty tactics. Auto-promotion would require a live
+MITRE ATT&CK lookup at pin-confirm time, which adds latency and an external dependency
+to a path that should be lightweight. Analysts who want a technique in the DB can
+use the standard pipeline output, which populates techniques with full tactic data.
+
+**Consequences:**
+- sudo delegation requires `ProtectHome=false` in the systemd unit and `AF_NETLINK`
+  in `RestrictAddressFamilies` (rootless Podman uses netlink during namespace setup)
+- tool_call/tool_result rows accumulate per session; the transcript export includes them
+- `pin_finding` for technique type always returns `promotion_not_supported` — documented
+  in the API and surfaced in the frontend pin bar

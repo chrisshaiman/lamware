@@ -59,6 +59,13 @@ _cfg_mod.settings = _settings  # type: ignore[attr-defined]
 sys.modules.setdefault("app", _cfg_pkg)
 sys.modules["app.config"] = _cfg_mod
 
+# app.database stub — _execute_tool_with_own_session imports engine from here
+# at call time (lazy import inside function body). MagicMock engine is enough;
+# the sqlmodel.Session context manager is already stubbed above.
+_db_mod = types.ModuleType("app.database")
+_db_mod.engine = MagicMock()  # type: ignore[attr-defined]
+sys.modules["app.database"] = _db_mod
+
 # app.investigate.tools stub — provide TOOL_DEFINITIONS and execute_tool
 _inv_pkg = types.ModuleType("app.investigate")
 _tools_mod = types.ModuleType("app.investigate.tools")
@@ -119,6 +126,7 @@ _source_patched = (
         "from .tools import TOOL_DEFINITIONS, execute_tool",
         "from app.investigate.tools import TOOL_DEFINITIONS, execute_tool",
     )
+    .replace("from ..database import engine", "from app.database import engine")
 )
 
 _ns: dict = {}
