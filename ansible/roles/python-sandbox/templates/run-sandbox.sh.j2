@@ -26,6 +26,15 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: data directory not found: $DATA_DIR" >&2
                 exit 1
             fi
+            # Allowlist: only Cape analysis dirs may be mounted — prevents a
+            # compromised caller from exposing arbitrary host paths ro.
+            case "$DATA_DIR" in
+                {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}/*)  ;;
+                *)
+                    echo "Error: --data must be under {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}" >&2
+                    exit 1
+                    ;;
+            esac
             VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
             shift 2
             ;;

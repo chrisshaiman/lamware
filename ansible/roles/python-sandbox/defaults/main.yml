@@ -7,3 +7,4 @@ python_sandbox_container_cpus: "1"
 python_sandbox_container_timeout: "30"
 python_sandbox_max_script_size: 10240
 python_sandbox_max_output_size: 1048576
+python_sandbox_data_allowlist: /opt/CAPEv2/storage/analyses

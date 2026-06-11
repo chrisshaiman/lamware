@@ -26,6 +26,9 @@ fi
 # Tool mode
 # ---------------------------------------------------------------------------
 if [ "$1" = "--tool" ]; then
+    # SECURITY: this arg-count check is load-bearing — the lamware-api sudoers
+    # rule allows 'run-ghidra --tool *' and relies on this rejection of extra
+    # args. Do not relax it.
     if [ $# -ne 5 ]; then
         echo "Usage: run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>" >&2
         exit 1

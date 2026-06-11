@@ -27,6 +27,8 @@ ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# SystemCallFilter omitted: sudo delegation needs @setuid syscalls
 
 [Install]
 WantedBy=multi-user.target
