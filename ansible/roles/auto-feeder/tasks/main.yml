@@ -64,6 +64,22 @@
     mode: "0644"
   notify: Restart auto-feeder timer
 
+- name: Deploy immediate trigger path unit
+  ansible.builtin.template:
+    src: auto-feeder-trigger.path.j2
+    dest: /etc/systemd/system/auto-feeder-trigger.path
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy immediate trigger service unit
+  ansible.builtin.template:
+    src: auto-feeder-trigger.service.j2
+    dest: /etc/systemd/system/auto-feeder-trigger.service
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
@@ -75,9 +91,24 @@
     state: started
   when: auto_feeder_enabled
 
+- name: Enable auto-feeder trigger watcher
+  ansible.builtin.systemd:
+    name: auto-feeder-trigger.path
+    enabled: true
+    state: started
+  when: auto_feeder_enabled
+
 - name: Stop and disable auto-feeder timer (if disabled)
   ansible.builtin.systemd:
     name: auto-feeder.timer
+    enabled: false
+    state: stopped
+  when: not auto_feeder_enabled
+  failed_when: false
+
+- name: Stop and disable auto-feeder trigger watcher (if disabled)
+  ansible.builtin.systemd:
+    name: auto-feeder-trigger.path
     enabled: false
     state: stopped
   when: not auto_feeder_enabled

@@ -116,9 +116,20 @@ async def feeder_resume(
     if not _update_state({"consecutive_failures": 0}):
         log.warning("Resume succeeded (PAUSE removed) but failed to reset failure counter")
 
+    # Touch a trigger file that a systemd path unit watches.
+    # This fires auto-feeder.service immediately without needing sudo.
+    trigger_path = settings.pause_file + ".trigger"
+    kicked = False
+    try:
+        with open(trigger_path, "w") as f:
+            f.write("")
+        kicked = True
+    except OSError as exc:
+        log.warning("Could not create trigger file: %s", exc)
+
     log_audit(session, auth, action="feeder_resume", resource_type="feeder")
 
-    return {"status": "running"}
+    return {"status": "running", "immediate_kick": kicked}
 
 
 @router.post("/reset")

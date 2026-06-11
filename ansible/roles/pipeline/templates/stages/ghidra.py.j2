@@ -295,9 +295,13 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     # Propagate project_dir and program_name from the first successful
     # analysis to the top-level result — the interpret stage needs these
     # to broker tool calls back to Ghidra.
+    #
+    # The container saves the Ghidra project at /output/project (container
+    # mount). The wrapper copies /output/* to output_dir on the host, so
+    # the host-side project lives at output_dir/project.
     for af in result["analyzed_files"]:
         if af.get("analysis_success") and af.get("project_dir"):
-            result["project_dir"] = af["project_dir"]
+            result["project_dir"] = str(output_dir / "project")
             result["program_name"] = af.get("program_name", "")
             break
 

@@ -157,7 +157,10 @@ def analyze_with_headless(sample_path: Path) -> dict:
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")
             output["decompiled_functions"] = exported.get("decompiled_functions", [])
-            output["project_dir"] = exported.get("project_dir", "")
+            # ExportAnalysis reports the container-internal project_dir
+            # (e.g. /output/project/analysis.rep). Override with the known
+            # mount point so the host-side wrapper can resolve it.
+            output["project_dir"] = "/output/project"
             output["program_name"] = sample_path.name
         except (json.JSONDecodeError, KeyError) as e:
             output["parse_error"] = str(e)
@@ -286,7 +289,7 @@ def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0")
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")
             output["decompiled_functions"] = exported.get("decompiled_functions", [])
-            output["project_dir"] = exported.get("project_dir", "")
+            output["project_dir"] = "/output/project"
             output["program_name"] = sample_path.name
         except (json.JSONDecodeError, KeyError) as e:
             output["parse_error"] = str(e)
