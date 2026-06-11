@@ -64,6 +64,10 @@ sys.modules["app.config"] = _cfg_mod
 # the sqlmodel.Session context manager is already stubbed above.
 _db_mod = types.ModuleType("app.database")
 _db_mod.engine = MagicMock()  # type: ignore[attr-defined]
+# get_session included for symmetry with test_investigate_router.py's stub —
+# whichever wins the sys.modules slot during combined collection must be
+# complete for both the router and orchestrator call-time imports.
+_db_mod.get_session = MagicMock()  # type: ignore[attr-defined]
 sys.modules["app.database"] = _db_mod
 
 # app.investigate.tools stub — provide TOOL_DEFINITIONS and execute_tool

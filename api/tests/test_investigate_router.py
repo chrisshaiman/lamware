@@ -91,6 +91,12 @@ sys.modules["app.audit"] = _app_audit
 
 _app_db = types.ModuleType("app.database")
 _app_db.get_session = MagicMock()  # type: ignore[attr-defined]
+# `engine` is needed because the orchestrator's _execute_tool_with_own_session
+# lazily does `from app.database import engine`. When test files are collected
+# together this stub can win the sys.modules slot, so it must be complete or
+# that call-time import fails. Keep both stubs (here and test_orchestrator.py)
+# carrying get_session AND engine.
+_app_db.engine = MagicMock()  # type: ignore[attr-defined]
 sys.modules["app.database"] = _app_db
 
 # Investigate subpackage
