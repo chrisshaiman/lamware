@@ -94,6 +94,7 @@ export function InvestigationPinBar({
           <button
             onClick={() => onConfirm(proposal)}
             title="Accept pin"
+            aria-label={`Accept pin: ${proposal.value}`}
             className="shrink-0 hover:text-green-400"
           >
             <Check className="h-3 w-3" />
@@ -101,6 +102,7 @@ export function InvestigationPinBar({
           <button
             onClick={() => onDismiss(proposal)}
             title="Dismiss proposal"
+            aria-label={`Dismiss pin: ${proposal.value}`}
             className="shrink-0 hover:text-red-400"
           >
             <X className="h-3 w-3" />

@@ -251,6 +251,26 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
     // accepts or dismisses them.
   }, []);
 
+  const finaliseExchange = useCallback(
+    (alsoInvalidateList: boolean) => {
+      // Refetch first, THEN clear live state — the persisted rows now include
+      // everything that just streamed, so there's no gap.
+      if (sessionId !== undefined) {
+        void queryClient
+          .invalidateQueries({ queryKey: ["investigation", "session", sessionId] })
+          .then(() => clearLiveExchange());
+        if (alsoInvalidateList) {
+          void queryClient.invalidateQueries({
+            queryKey: ["investigation", "sessions", analysisId],
+          });
+        }
+      } else {
+        clearLiveExchange();
+      }
+    },
+    [analysisId, sessionId, queryClient, clearLiveExchange],
+  );
+
   // Reset per-session state when switching sessions — the React-recommended
   // "adjust state during render" pattern (avoids an extra effect pass).
   const [prevSessionId, setPrevSessionId] = useState(sessionId);
@@ -329,23 +349,13 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
         }
         case "done": {
           if (data.cost_alert === true) setCostAlert(true);
-          if (sessionId !== undefined) {
-            // Refetch first, THEN clear live state — the persisted rows now
-            // include everything that just streamed, so there's no gap.
-            void queryClient
-              .invalidateQueries({ queryKey: ["investigation", "session", sessionId] })
-              .then(() => clearLiveExchange());
-            void queryClient.invalidateQueries({
-              queryKey: ["investigation", "sessions", analysisId],
-            });
-          } else {
-            clearLiveExchange();
-          }
+          // Invalidate list because done changes session status to completed.
+          finaliseExchange(true);
           break;
         }
       }
     },
-    [analysisId, sessionId, queryClient, clearLiveExchange],
+    [finaliseExchange],
   );
 
   const { sendMessage, isStreaming, abort } = useInvestigationStream(
@@ -406,14 +416,10 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
   const handleAbort = () => {
     abort();
     // The backend persists whatever completed before the abort — refetch and
-    // fold the partial exchange into history.
-    if (sessionId !== undefined) {
-      void queryClient
-        .invalidateQueries({ queryKey: ["investigation", "session", sessionId] })
-        .then(() => clearLiveExchange());
-    } else {
-      clearLiveExchange();
-    }
+    // fold the partial exchange into history. Don't invalidate sessions list
+    // because abort doesn't change session status or final cost (cost updates
+    // are server-side only on completion).
+    finaliseExchange(false);
   };
 
   const handleModelChange = (model: string) => {
@@ -568,6 +574,7 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
             <button
               onClick={onClose}
               title="Close panel"
+              aria-label="Close panel"
               className="rounded p-1.5 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
             >
               <X className="h-4 w-4" />
@@ -584,7 +591,7 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
             This session has crossed the cost alert threshold. Consider switching to a cheaper
             model or completing the session.
           </span>
-          <button onClick={() => setCostAlert(false)} title="Dismiss" className="shrink-0">
+          <button onClick={() => setCostAlert(false)} title="Dismiss" aria-label="Dismiss" className="shrink-0">
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -711,7 +718,7 @@ export function InvestigationPanel({ analysisId, onClose }: InvestigationPanelPr
           {errorBanner && (
             <div className="mx-3 mt-2 flex items-start justify-between gap-2 rounded-md border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-400">
               <span className="min-w-0 break-words">{errorBanner}</span>
-              <button onClick={() => setErrorBanner(null)} title="Dismiss" className="shrink-0">
+              <button onClick={() => setErrorBanner(null)} title="Dismiss" aria-label="Dismiss" className="shrink-0">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
