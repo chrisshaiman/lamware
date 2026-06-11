@@ -15,9 +15,39 @@ We stub out the heavy imports (sqlalchemy, sqlmodel, fastapi, app.config, etc.)
 before importing the router module, so no DB or HTTP stack is needed.
 """
 
+import ast
 import json
 import sys
 import types
+from pathlib import Path
+
+
+def test_no_endpoint_shadows_imported_dependency():
+    """Endpoint handlers must not be named after imported FastAPI dependencies.
+
+    Regression guard for the get_session shadowing bug: naming the
+    GET /sessions/{session_id} handler `get_session` rebound the module-level
+    `get_session` (imported from ..database), so every endpoint defined after
+    it bound `Depends(get_session)` to the endpoint function — which takes
+    `session_id: int` — injecting a spurious required query param. This only
+    surfaces at FastAPI route construction, which the direct-call unit tests
+    bypass, so we catch it statically here.
+    """
+    src = (Path(__file__).resolve().parent.parent / "app" / "routers" / "investigate.py").read_text()
+    tree = ast.parse(src)
+    # Names imported into the module (these are dependency callables).
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name)
+    # Top-level function defs must not reuse an imported name.
+    func_names = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+    collisions = sorted(set(func_names) & imported)
+    assert not collisions, (
+        f"Function(s) {collisions} shadow imported dependencies — rename the "
+        f"endpoint handler(s) to avoid breaking Depends() resolution."
+    )
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock

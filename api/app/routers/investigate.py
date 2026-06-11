@@ -252,7 +252,7 @@ def list_sessions(
 
 
 @router.get("/sessions/{session_id}")
-def get_session(
+def get_session_detail(
     session_id: int,
     auth: AuthContext = Depends(require_auth),
     db: Session = Depends(get_session),
