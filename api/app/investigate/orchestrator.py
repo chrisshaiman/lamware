@@ -237,8 +237,10 @@ async def run_conversation_turn(
                 yield {"event": "error", "data": {"message": f"LLM API error: {exc.response.status_code}"}}
                 return
             except httpx.RequestError as exc:
+                # Full detail (which can include the internal proxy URL) goes to
+                # the server log only; the client gets a generic message.
                 log.error("LiteLLM request error: %s", exc)
-                yield {"event": "error", "data": {"message": f"LLM request failed: {exc}"}}
+                yield {"event": "error", "data": {"message": "LLM request failed (proxy unreachable)"}}
                 return
 
             # --- Decide what to do with the response ---
