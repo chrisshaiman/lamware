@@ -11,6 +11,7 @@
 
 import json
 import logging
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -794,7 +795,9 @@ def _run_python(args: dict, report: dict) -> dict:
     if len(script.encode()) > 10240:
         return {"error": "Script exceeds 10KB limit — shorten your script"}
 
-    cmd = [settings.sandbox_cmd]
+    # shlex.split so that env-var values like "sudo -u pipeline /usr/local/bin/run-sandbox"
+    # are split into a proper argv list rather than treated as a single executable name.
+    cmd = shlex.split(settings.sandbox_cmd)
 
     # Mount dropped payloads if available — a missing dropped dir is not an error
     dropped, _ = _resolve_dropped(report)
@@ -853,8 +856,9 @@ def _ghidra_tool(tool_name: str, args: dict, report: dict) -> dict:
             )
         }
 
-    cmd = [
-        settings.ghidra_cmd,
+    # shlex.split so that env-var values like "sudo -u pipeline /usr/local/bin/run-ghidra"
+    # are split into a proper argv list rather than treated as a single executable name.
+    cmd = shlex.split(settings.ghidra_cmd) + [
         "--tool", project_dir, program_name,
         tool_name,
         json.dumps(args),

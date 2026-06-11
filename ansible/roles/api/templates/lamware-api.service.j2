@@ -15,7 +15,10 @@ Restart=always
 RestartSec=5
 
 # Security hardening
-NoNewPrivileges=true
+# NoNewPrivileges intentionally omitted — the investigation agent uses
+# sudo -u pipeline to run-sandbox and run-ghidra in the pipeline user's
+# rootless Podman. Setting NoNewPrivileges=true would prevent sudo from
+# elevating, breaking both investigation tools. See /etc/sudoers.d/lamware-api-investigate.
 ProtectSystem=strict
 ReadWritePaths={{ api_install_dir }} /opt/pipeline/spool /opt/pipeline/control
 ProtectHome=true
