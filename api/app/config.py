@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # CORS — React dev server by default; extend in env file for prod WireGuard IP
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Investigation agent
+    litellm_url: str = "http://127.0.0.1:4000"
+    litellm_key: str = "sk-lamware"
+    investigation_max_turns: int = 50
+    investigation_cost_alert_usd: float = 2.0
+    investigation_max_tool_calls_per_turn: int = 10
+    sandbox_cmd: str = "/usr/local/bin/run-sandbox"
+    ghidra_cmd: str = "/usr/local/bin/run-ghidra"
+
     model_config = {"env_prefix": "LAMWARE_"}
 
 

@@ -22,6 +22,11 @@ other modules should import from here rather than from individual files.
 
 from app.models.analysis import Analysis
 from app.models.capability import Capability
+from app.models.investigation import (
+    InvestigationMessage,
+    InvestigationPin,
+    InvestigationSession,
+)
 from app.models.ioc import AnalysisIoc, IocValue
 from app.models.network_event import NetworkEvent
 from app.models.sample import Sample
@@ -38,4 +43,7 @@ __all__ = [
     "Signature",
     "Capability",
     "NetworkEvent",
+    "InvestigationSession",
+    "InvestigationMessage",
+    "InvestigationPin",
 ]

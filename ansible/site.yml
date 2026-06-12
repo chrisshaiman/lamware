@@ -98,6 +98,10 @@
     - role: ghidra
       tags: [ghidra]
 
+    # 13a. Python sandbox — isolated Python execution for investigation agent
+    - role: python-sandbox
+      tags: [python-sandbox, investigate]
+
     # 13b. .NET analysis — containerized ILSpy decompilation
     - role: dotnet-analysis
       tags: [dotnet-analysis]

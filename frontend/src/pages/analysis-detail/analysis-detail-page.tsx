@@ -1,8 +1,9 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, MessageSquare, Trash2 } from "lucide-react";
 import { useAnalysisDetail, useDeleteAnalysis } from "#hooks/use-analyses";
 import { SeverityBadge } from "#components/shared/severity-badge";
 import { formatTimestamp, formatCost, formatDuration } from "#lib/utils";
@@ -18,6 +19,7 @@ import { NetworkEventsSection } from "./network-events-section";
 import { RelatedAnalyses } from "./related-analyses";
 import { StageTimingsCard } from "./stage-timings-card";
 import { DownloadBar } from "./download-bar";
+import { InvestigationPanel } from "./investigation-panel";
 
 export function AnalysisDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +27,7 @@ export function AnalysisDetailPage() {
   const analysisId = id ? parseInt(id, 10) : undefined;
   const { data: analysis, isLoading, isError } = useAnalysisDetail(analysisId);
   const deleteMutation = useDeleteAnalysis();
+  const [showInvestigate, setShowInvestigate] = useState(false);
 
   if (isLoading) {
     return (
@@ -68,7 +71,8 @@ export function AnalysisDetailPage() {
       : null;
 
   return (
-    <div className="space-y-5">
+    <div className="flex gap-5 items-start">
+    <div className="min-w-0 flex-1 space-y-5">
       {/* Back link */}
       <Link
         to="/analyses"
@@ -99,16 +103,31 @@ export function AnalysisDetailPage() {
             {analysis.llm_cost_usd != null && <span>{formatCost(analysis.llm_cost_usd)}</span>}
           </div>
         </div>
-        <RequireRole role="admin">
-          <button
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending}
-            className="flex items-center gap-1.5 rounded-md border border-red-800 bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-900/40 disabled:opacity-50"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete
-          </button>
-        </RequireRole>
+        <div className="flex items-center gap-2">
+          <RequireRole role="analyst">
+            <button
+              onClick={() => setShowInvestigate((v) => !v)}
+              className={`hidden md:inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                showInvestigate
+                  ? "border-blue-700 bg-blue-900/40 text-blue-300 hover:bg-blue-900/60"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-alt)]"
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Investigate
+            </button>
+          </RequireRole>
+          <RequireRole role="admin">
+            <button
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="flex items-center gap-1.5 rounded-md border border-red-800 bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-900/40 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </button>
+          </RequireRole>
+        </div>
       </div>
 
       {/* Stage progress bar */}
@@ -167,6 +186,16 @@ export function AnalysisDetailPage() {
       <SignaturesSection signatures={analysis.signatures} />
       <CapabilitiesSection capabilities={analysis.capabilities} />
       <NetworkEventsSection events={analysis.network_events} />
+    </div>
+
+    {showInvestigate && (
+      <div className="hidden md:flex w-[40%] min-w-[420px] flex-col h-[calc(100vh-5rem)] sticky top-4">
+        <InvestigationPanel
+          analysisId={analysis.id}
+          onClose={() => setShowInvestigate(false)}
+        />
+      </div>
+    )}
     </div>
   );
 }

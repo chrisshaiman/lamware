@@ -368,3 +368,70 @@ export interface SubmitResponse {
   pipeline_pid: number;
   message: string;
 }
+
+// ---------------------------------------------------------------------------
+// Investigation agent
+// ---------------------------------------------------------------------------
+
+export type InvestigationModel =
+  | "claude-sonnet-4-6"
+  | "claude-opus-4-6"
+  | "claude-haiku-4-5";
+
+export interface InvestigationSession {
+  id: number;
+  analysis_id: number;
+  status: "active" | "completed" | "abandoned";
+  model: string;
+  total_cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvestigationMessage {
+  id: number;
+  role: "user" | "assistant" | "tool_call" | "tool_result";
+  content: string;
+  tool_name: string | null;
+  created_at: string;
+}
+
+export interface InvestigationPin {
+  id: number;
+  pin_type: "ioc" | "technique" | "note";
+  value: string;
+  ioc_type: string | null;
+  context: string | null;
+  promoted: boolean;
+  created_at: string;
+}
+
+export interface InvestigationSessionDetail extends InvestigationSession {
+  user_sub: string;
+  max_turns: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  messages: InvestigationMessage[];
+  pins: InvestigationPin[];
+}
+
+/** A pin proposed by the agent, awaiting analyst confirmation. */
+export interface PinProposal {
+  type: "ioc" | "technique" | "note";
+  value: string;
+  ioc_type?: string;
+  context: string;
+}
+
+export type InvestigationSSEEventType =
+  | "token"
+  | "tool_call"
+  | "tool_result"
+  | "pin_proposal"
+  | "done"
+  | "error";
+
+export interface InvestigationSSEEvent {
+  event: InvestigationSSEEventType;
+  data: Record<string, unknown>;
+}

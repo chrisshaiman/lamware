@@ -1,0 +1,86 @@
+---
+# =============================================================================
+# roles/python-sandbox/tasks/main.yml
+# Builds the Python sandbox container image for LLM-generated analysis scripts.
+#
+# Scripts submitted by the investigation agent run inside a rootless Podman
+# container with no network access, read-only root filesystem, and all
+# capabilities dropped. Payload files are optionally mounted read-only.
+#
+# Depends on: podman role (container runtime must be installed)
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+# -------------------------------------------------------------------------
+# Host directories
+# -------------------------------------------------------------------------
+
+- name: Create python-sandbox directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+  loop:
+    - "{{ python_sandbox_install_dir }}"
+
+# -------------------------------------------------------------------------
+# Container image build
+# -------------------------------------------------------------------------
+
+- name: Create container build directory
+  ansible.builtin.file:
+    path: "{{ python_sandbox_install_dir }}/build"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+
+- name: Deploy Containerfile
+  ansible.builtin.template:
+    src: Containerfile.j2
+    dest: "{{ python_sandbox_install_dir }}/build/Containerfile"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Copy helpers library into build context
+  ansible.builtin.copy:
+    src: helpers/
+    dest: "{{ python_sandbox_install_dir }}/build/helpers/"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Build python-sandbox container image
+  ansible.builtin.command:
+    cmd: >
+      podman build
+      --network=host
+      -t localhost/python-sandbox:latest
+      -f {{ python_sandbox_install_dir }}/build/Containerfile
+      {{ python_sandbox_install_dir }}/build
+  become: true
+  become_user: pipeline
+  changed_when: true
+
+# -------------------------------------------------------------------------
+# Host-side wrapper script
+# -------------------------------------------------------------------------
+
+- name: Deploy run-sandbox wrapper script
+  ansible.builtin.template:
+    src: run-sandbox.sh.j2
+    dest: "{{ python_sandbox_install_dir }}/run-sandbox"
+    owner: pipeline
+    group: pipeline
+    mode: "0750"
+
+- name: Create convenience symlink
+  ansible.builtin.file:
+    src: "{{ python_sandbox_install_dir }}/run-sandbox"
+    dest: /usr/local/bin/run-sandbox
+    state: link

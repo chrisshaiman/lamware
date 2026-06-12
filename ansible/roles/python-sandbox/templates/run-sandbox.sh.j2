@@ -1,0 +1,65 @@
+#!/bin/bash
+# =============================================================================
+# run-sandbox — execute a Python script in an isolated container
+#
+# Usage: echo '<script>' | run-sandbox [--data <payload_dir>]
+#
+# stdin:  Python script to execute (streamed directly into the container;
+#         max {{ python_sandbox_max_script_size }} bytes via head -c)
+# stdout: combined script stdout/stderr (max {{ python_sandbox_max_output_size }} bytes)
+#
+# Isolation: no network, read-only root, all caps dropped, 256MB / 1 CPU / 30s limits.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -uo pipefail
+
+VOLUME_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --data)
+            DATA_DIR="$(realpath "$2")"
+            if [ ! -d "$DATA_DIR" ]; then
+                echo "Error: data directory not found: $DATA_DIR" >&2
+                exit 1
+            fi
+            # Allowlist: only Cape analysis dirs may be mounted — prevents a
+            # compromised caller from exposing arbitrary host paths ro.
+            case "$DATA_DIR" in
+                {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}/*)  ;;
+                *)
+                    echo "Error: --data must be under {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}" >&2
+                    exit 1
+                    ;;
+            esac
+            VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+if ! podman image exists localhost/python-sandbox:latest; then
+    echo "Error: image localhost/python-sandbox:latest not found — deploy the python-sandbox role first" >&2
+    exit 1
+fi
+
+# Stream stdin directly into the container — no shell variable, no quoting concerns.
+# USER directive in Containerfile enforces non-root; no --user override needed.
+head -c {{ python_sandbox_max_script_size }} | podman run --rm -i \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ python_sandbox_container_memory }} \
+    --cpus={{ python_sandbox_container_cpus }} \
+    --timeout={{ python_sandbox_container_timeout }} \
+    --tmpfs /tmp:size=50m \
+    "${VOLUME_ARGS[@]}" \
+    localhost/python-sandbox:latest \
+    python3 -u - 2>&1 | head -c {{ python_sandbox_max_output_size }}

@@ -26,6 +26,9 @@ fi
 # Tool mode
 # ---------------------------------------------------------------------------
 if [ "$1" = "--tool" ]; then
+    # SECURITY: this arg-count check is load-bearing — the lamware-api sudoers
+    # rule allows 'run-ghidra --tool *' and relies on this rejection of extra
+    # args. Do not relax it.
     if [ $# -ne 5 ]; then
         echo "Usage: run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>" >&2
         exit 1
@@ -41,6 +44,18 @@ if [ "$1" = "--tool" ]; then
         exit 1
     fi
 
+    # Ghidra must acquire a write lock to open the project. The persisted
+    # project is owned pipeline:lamware (0750), but the container runs as
+    # nobody (65534) and cannot write the lock file there — opening fails with
+    # "Unable to lock project". Copy the project to a world-writable temp so
+    # the container can lock it. This also makes concurrent tool calls safe:
+    # each call operates on its own copy, with no lock contention on the
+    # shared persisted project.
+    WORK_PROJECT="$(mktemp -d)"
+    trap 'rm -rf "$WORK_PROJECT" 2>/dev/null || true' EXIT
+    cp -a "$PROJECT_DIR/." "$WORK_PROJECT/"
+    chmod -R a+rwX "$WORK_PROJECT"
+
     podman run --rm \
         --network=none \
         --read-only \
@@ -52,7 +67,7 @@ if [ "$1" = "--tool" ]; then
         --tmpfs /tmp:size=1g \
         --tmpfs /nonexistent:size=100m \
         --user 65534:65534 \
-        -v "$PROJECT_DIR:/project:rw" \
+        -v "$WORK_PROJECT:/project:rw" \
         localhost/ghidra:latest \
         --tool /project "$PROGRAM_NAME" "$TOOL_NAME" "$TOOL_ARGS"
 fi

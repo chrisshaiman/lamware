@@ -106,6 +106,27 @@
   no_log: true
   notify: Restart lamware-api
 
+- name: Allow lamware-api to run investigation tools as pipeline user
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/lamware-api-investigate
+    content: |
+      # Investigation agent: Ghidra queries and Python sandbox execution
+      # run in the pipeline user's rootless Podman. No password, restricted
+      # to the two wrapper commands only.
+      #
+      # run-ghidra is restricted to --tool mode; the wrapper enforces an exact
+      # arg count of 5 — any attempt to inject extra args is rejected by the
+      # script before Ghidra is invoked.
+      #
+      # run-sandbox has two entries (bare + wildcard) because sudo's * glob
+      # does not match the empty string; both are required to allow the command
+      # with and without the optional --data argument.
+      {{ api_user }} ALL=(pipeline) NOPASSWD: /usr/local/bin/run-sandbox, /usr/local/bin/run-sandbox *, /usr/local/bin/run-ghidra --tool *
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
 - name: Deploy lamware-api systemd service
   ansible.builtin.template:
     src: lamware-api.service.j2
