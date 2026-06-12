@@ -119,7 +119,13 @@ if [ "$1" = "--shellcode" ]; then
         localhost/ghidra:latest \
         --shellcode "/sample/$DUMP_NAME" "$BASE_ADDR"
 
-    cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
+    # Container wrote output as UID-mapped 'nobody'; reassign to the pipeline
+    # user inside the rootless userns so the copy can read it (see analysis
+    # mode below for the full rationale).
+    podman unshare chown -R 0:0 "$CONTAINER_OUTPUT" 2>/dev/null || true
+    if ! cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/; then
+        echo "Error: failed to copy Ghidra shellcode output to $OUTPUT_DIR" >&2
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -169,5 +175,17 @@ podman run --rm \
     localhost/ghidra:latest \
     "/sample/$SAMPLE_NAME"
 
-# Copy results back to the real output directory
-cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
+# Copy results back to the real output directory.
+#
+# The container runs as rootless-podman's UID-mapped 'nobody', so everything it
+# wrote — including the saved Ghidra project — is owned by a high subuid with
+# 0750/0640 perms, unreadable by the pipeline user. Reassign ownership to the
+# pipeline user *inside* the rootless user namespace (namespace uid 0 == host
+# pipeline uid) so the copy can read it and so tool-mode can later open the
+# project. Without this, cp silently copied an empty project (analysis.rep with
+# no data/) and agentic Ghidra tools failed with "Project data directory not
+# found". Do NOT silence the copy — a failure here means lost analysis output.
+podman unshare chown -R 0:0 "$CONTAINER_OUTPUT" 2>/dev/null || true
+if ! cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/; then
+    echo "Error: failed to copy Ghidra analysis output to $OUTPUT_DIR" >&2
+fi
