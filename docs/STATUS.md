@@ -148,6 +148,7 @@ detailed notes and the (mostly DONE) historical backlog.
 | Correlation engine — tested rule registry | 1 session | `cross_correlate` (the platform's thesis) is a ~170-line inline if-pile, Cape×Volatility only, zero tests, `import os` inside loops. Turn into a registry of pure-function rules, each `(report) -> finding \| None` with a fixture test. De-risks the thesis and lets it grow (PCAP×IOC, static-imports×dynamic-calls, etc.). |
 | Agentic orchestrator — correlation/hypothesis first | Design + build | LLM loop reusing the investigation-agent engine. **First use = "what corroborates/contradicts across tools, and what one thing confirms it?"** (augments coverage — low risk), NOT tool-routing (a wrong skip = silent coverage gap). Graduate to routing only after the deterministic baseline + correlation engine are solid and A/B data backs it. |
 | Alembic migrations | 1-2 hrs | Replace raw SQL + hand-numbered migrations (just added 3 investigation tables that way) before the next schema change. Schemas always change — do it sooner. Scaffold `alembic init`, configure for SQLModel, convert existing schema to initial migration. (Elevated from Future.) |
+| Post-deploy Playwright smoke gate | 1 session | **Deterministic** browser smoke run against the LIVE site automatically after every `ansible-playbook` (home: `security-test` role); pass/fail gate. Would have caught this session's 422 / SSE / empty-Ghidra bugs in <1 min instead of hours of hand-debugging. 34 Playwright tests + `playwright_*.py` scripts already exist — wire them to the live deploy, extend to the investigation chat / pins / spend surfaces, use a dedicated Keycloak test account + read-mostly checks so runs don't pollute prod data. A gate must be deterministic — no LLM in this path. |
 | Merge PR #101 (investigation agent) | — | 6/7 capabilities working; Ghidra agentic tools blocked on tonight's fix. Otherwise complete and CI-green. |
 
 **Medium**
@@ -157,7 +158,7 @@ detailed notes and the (mostly DONE) historical backlog.
 | Cleanup trio | 2-3 hrs | (1) WebSocket events broadcast to ALL authenticated users — multi-operator landmine; add per-user/tenant filtering. (2) Delete `aws/` dead code (ADR-016 greenlit). (3) Move inline imports to module level (cape.py.j2, run-pipeline.py.j2). Supersedes the old "Remove AWS references" item. |
 | Campaign graph from corpus | Design + build | Populate `sample_relationships` (schema-ready, never used) via shared IOCs / imphash / ssdeep / TLS JA3 → emergent threat intel from the corpus ("shares 18 IOCs + same C2 JA3 with 3 prior BianLian runs"). Per-sample tool → threat-intel platform. |
 | Detection engineering output | Design + build | Auto-draft Sigma / YARA / Suricata from each analysis; analyst confirms via the investigation agent's pin→promote flow. Closes the analysis→defense loop; strong blue-team + OSS value. |
-| Test harness | 1 session | App-boot (TestClient) integration + post-deploy functional smoke. Stub unit tests missed the get_session shadowing + empty-Ghidra bugs. Enabled by de-templating. Supersedes "Automated tests". |
+| App-boot integration tests (TestClient) | 1 session | Boot the real FastAPI app via `TestClient` + ephemeral sqlite/pg + seeded JWT; assert the OpenAPI schema and hit endpoints. Catches the wiring/route-construction class (e.g. get_session) faster than the browser but covers less surface — complements the HIGH post-deploy smoke gate. Supersedes "Automated tests". |
 
 **Low**
 
@@ -165,6 +166,7 @@ detailed notes and the (mostly DONE) historical backlog.
 |------|--------|-------|
 | Job queue / spool-based auto-feeder | Design + build | Single-sample sequential today; the queue is the natural next architectural unit and dissolves the auto-feeder sudo-subprocess wart. Combines "Multi-sample job queue" + "Refactor auto-feeder to spool-based". |
 | MCP server wrapping the corpus | 1-2 hrs | Expose IOC/technique/correlation/analysis queries as MCP — the investigation agent's 20-tool registry already exists. Reusable intelligence backend any LLM client can pivot through. |
+| Exploratory LLM Playwright agent | 1-2 hrs | Free-roaming agent that drives the browser and reports UI anomalies (started as `playwright_bug_hunt.py`). Good for unknown-unknowns; non-deterministic + token-costly — run on-demand/nightly, NEVER in the deploy gate path. |
 
 ### High Priority
 
