@@ -149,7 +149,7 @@ detailed notes and the (mostly DONE) historical backlog.
 | Agentic orchestrator — correlation/hypothesis first | Design + build | LLM loop reusing the investigation-agent engine. **First use = "what corroborates/contradicts across tools, and what one thing confirms it?"** (augments coverage — low risk), NOT tool-routing (a wrong skip = silent coverage gap). Graduate to routing only after the deterministic baseline + correlation engine are solid and A/B data backs it. |
 | Alembic migrations | 1-2 hrs | Replace raw SQL + hand-numbered migrations (just added 3 investigation tables that way) before the next schema change. Schemas always change — do it sooner. Scaffold `alembic init`, configure for SQLModel, convert existing schema to initial migration. (Elevated from Future.) |
 | Post-deploy Playwright smoke gate | 1 session | **Deterministic** browser smoke run against the LIVE site automatically after every `ansible-playbook` (home: `security-test` role); pass/fail gate. Would have caught this session's 422 / SSE / empty-Ghidra bugs in <1 min instead of hours of hand-debugging. 34 Playwright tests + `playwright_*.py` scripts already exist — wire them to the live deploy, extend to the investigation chat / pins / spend surfaces, use a dedicated Keycloak test account + read-mostly checks so runs don't pollute prod data. A gate must be deterministic — no LLM in this path. |
-| Merge PR #101 (investigation agent) | — | 6/7 capabilities working; Ghidra agentic tools blocked on tonight's fix. Otherwise complete and CI-green. |
+| Merge PR #101 (investigation agent) | DONE | Merged to main 2026-06-12 (merge commit 7f2e369). 6/7 capabilities live; Ghidra agentic tools still blocked on the separate empty-project pipeline bug. |
 
 **Medium**
 
