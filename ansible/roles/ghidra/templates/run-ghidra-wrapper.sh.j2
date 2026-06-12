@@ -70,6 +70,12 @@ if [ "$1" = "--tool" ]; then
         -v "$WORK_PROJECT:/project:rw" \
         localhost/ghidra:latest \
         --tool /project "$PROGRAM_NAME" "$TOOL_NAME" "$TOOL_ARGS"
+    # run-ghidra.py always prints a JSON result dict (with an "error" key on
+    # failure) and exits 0; propagate podman's exit code and STOP. Without this
+    # exit the script falls through to analysis mode below, whose arg-count
+    # check rejects the 5 tool-mode args and exits 1 — making the API discard
+    # otherwise-valid tool output (it gates on a non-zero return code).
+    exit $?
 fi
 
 # ---------------------------------------------------------------------------
@@ -126,6 +132,9 @@ if [ "$1" = "--shellcode" ]; then
     if ! cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/; then
         echo "Error: failed to copy Ghidra shellcode output to $OUTPUT_DIR" >&2
     fi
+    # Stop here so we don't fall through to analysis mode (which would reject
+    # the shellcode arg count and exit 1). Output JSON is already on stdout.
+    exit 0
 fi
 
 # ---------------------------------------------------------------------------
