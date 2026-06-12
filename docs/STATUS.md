@@ -129,6 +129,43 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 
 ## Backlog — Prioritized
 
+### Current Priority Order (reprioritized 2026-06-11, post architecture review)
+
+This is the curated current working order. The tier tables further below retain
+detailed notes and the (mostly DONE) historical backlog.
+
+**Tonight / Top**
+
+| Item | Notes |
+|------|-------|
+| Ghidra empty-project fix | Pipeline persists empty Ghidra projects (`.rep` has no `data/`) → investigation-agent tool-mode fails with "Project data directory not found". Lock-permission layer already fixed (commit 541ec3f). Look at `roles/ghidra/templates/run-ghidra.py.j2` `analyze_with_headless()`; debug by comparing `ls -laR /output/project` in-container vs post-`cp -a`. |
+
+**High**
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| De-template run-pipeline.py.j2 + decompose orchestrator | 1-2 sessions | 2050-line Jinja template; `run_pipeline()` ~1184 lines (698–1882); can't import/test/run locally. Root cause of: no pipeline unit tests, deploy-required iteration (how the get_session bug survived 120 green tests), and no seam to insert the agentic orchestrator. **Not a rewrite or language change** — Python stays Python; replace Jinja render with a runtime `config.json`, extract the pure helpers (`cross_correlate`, `determine_family`, `calculate_severity`, `build_mitre_mapping`) first. Incremental, behavior-preserving. (Elevated from "Convert .j2 to plain Python".) |
+| Correlation engine — tested rule registry | 1 session | `cross_correlate` (the platform's thesis) is a ~170-line inline if-pile, Cape×Volatility only, zero tests, `import os` inside loops. Turn into a registry of pure-function rules, each `(report) -> finding \| None` with a fixture test. De-risks the thesis and lets it grow (PCAP×IOC, static-imports×dynamic-calls, etc.). |
+| Agentic orchestrator — correlation/hypothesis first | Design + build | LLM loop reusing the investigation-agent engine. **First use = "what corroborates/contradicts across tools, and what one thing confirms it?"** (augments coverage — low risk), NOT tool-routing (a wrong skip = silent coverage gap). Graduate to routing only after the deterministic baseline + correlation engine are solid and A/B data backs it. |
+| Alembic migrations | 1-2 hrs | Replace raw SQL + hand-numbered migrations (just added 3 investigation tables that way) before the next schema change. Schemas always change — do it sooner. Scaffold `alembic init`, configure for SQLModel, convert existing schema to initial migration. (Elevated from Future.) |
+| Merge PR #101 (investigation agent) | — | 6/7 capabilities working; Ghidra agentic tools blocked on tonight's fix. Otherwise complete and CI-green. |
+
+**Medium**
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Cleanup trio | 2-3 hrs | (1) WebSocket events broadcast to ALL authenticated users — multi-operator landmine; add per-user/tenant filtering. (2) Delete `aws/` dead code (ADR-016 greenlit). (3) Move inline imports to module level (cape.py.j2, run-pipeline.py.j2). Supersedes the old "Remove AWS references" item. |
+| Campaign graph from corpus | Design + build | Populate `sample_relationships` (schema-ready, never used) via shared IOCs / imphash / ssdeep / TLS JA3 → emergent threat intel from the corpus ("shares 18 IOCs + same C2 JA3 with 3 prior BianLian runs"). Per-sample tool → threat-intel platform. |
+| Detection engineering output | Design + build | Auto-draft Sigma / YARA / Suricata from each analysis; analyst confirms via the investigation agent's pin→promote flow. Closes the analysis→defense loop; strong blue-team + OSS value. |
+| Test harness | 1 session | App-boot (TestClient) integration + post-deploy functional smoke. Stub unit tests missed the get_session shadowing + empty-Ghidra bugs. Enabled by de-templating. Supersedes "Automated tests". |
+
+**Low**
+
+| Item | Effort | Notes |
+|------|--------|-------|
+| Job queue / spool-based auto-feeder | Design + build | Single-sample sequential today; the queue is the natural next architectural unit and dissolves the auto-feeder sudo-subprocess wart. Combines "Multi-sample job queue" + "Refactor auto-feeder to spool-based". |
+| MCP server wrapping the corpus | 1-2 hrs | Expose IOC/technique/correlation/analysis queries as MCP — the investigation agent's 20-tool registry already exists. Reusable intelligence backend any LLM client can pivot through. |
+
 ### High Priority
 
 | Item | Effort | Notes |
@@ -188,9 +225,7 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | LiteLLM multi-provider fallback | 1 hr | Add fallback models (e.g., OpenAI GPT-4o) via LiteLLM model_list with fallback groups. Resilience if Anthropic API is down. |
 | Nivo trend charts | 2-3 hrs | Analysis-over-time line chart, severity breakdown pie chart on stats page |
 | Code splitting | 1 hr | React.lazy() per page to reduce initial bundle (currently 560KB) |
-| Alembic database migrations | 1-2 hrs | Replace raw SQL schema changes with versioned Alembic migrations. Scaffold `alembic init`, configure for SQLModel, convert existing schema to initial migration. Enables rollback, drift detection, and cleaner schema evolution. Do before the next batch of schema changes. |
 | Containerize FastAPI + React/nginx | 1 session | Root Podman + systemd pattern (same as LiteLLM). Improves portability for host migration. FastAPI: Python slim + uvicorn. React: nginx + Vite build output. Touches API and frontend Ansible roles, SSL cert mounts, volume config. |
-| Convert .j2 to plain Python | 3-4 hrs | config.json pattern, do during rebuild. Also fix inline imports at this time. |
 | Selective stage execution | Design + build | --skip, --only, --rerun flags with dependency tracking. Avoids re-running Cape/Volatility when only static analysis changed. |
 | Multi-sample job queue | Design + build | Concurrent pipeline runs |
 | Horizontal scaling | When needed | Split analysis from dashboard to second server |
@@ -204,7 +239,6 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 |------|--------|-------|
 | File permissions audit | 2-3 hrs | Audit all deployed files for over-permissioning (chmod 777 work dirs, 755 vs 750, world-readable status files). Establish consistent permission model: what runs as root vs cape, what needs cross-user read access, whether a shared group would be cleaner than world-readable files. |
 | Process allowlist to pattern-based | 1-2 hrs | Replace exact-match CAPE_ALLOWLIST with regex/pattern matching. Current approach requires a commit for every new process. Pattern-based (e.g., match /home/cape paths, known prefixes) would be maintenance-free. |
-| Remove AWS references | In progress | Clean up leftover AWS and shared folder references from early design. Platform is OVH-only. |
 | WireGuard phone peer | DONE | Phone peer at 10.200.0.3, QR code config via qrencode. |
 | WireGuard port restrictions | 1 hr | iptables rules on wg0 limiting access to SSH/dashboard/CAPE ports only. Per-peer ACLs (laptop=full, phone=dashboard only). |
 | Self-hosted ntfy | 1 hr | Replace public ntfy.sh with self-hosted instance on sandbox. Podman container, traffic stays on WireGuard. |
@@ -217,7 +251,6 @@ Security cat mascot: 5 mood states, click for analysis facts, Konami code easter
 | Linux guest VMs | 1-2 sessions | ELF binary analysis, different Volatility symbols. New Packer build + CAPE guest config. |
 | Threat intel enrichment | 2-3 hrs | VirusTotal, AbuseIPDB, Shodan lookups. API integrations per provider. |
 | Dashboard honeypot | 1-2 hrs | Canary, decoy endpoint, fake analysis results. |
-| Automated tests | 2-3 hrs | Pure functions in ioc_extract, cross_correlate are trivially testable. |
 | YARA rule auto-update | 1-2 hrs | Cron job for community rule repos. ansible-pull or scheduled task. |
 | AutoIt script support | 1-2 hrs | Exe2Aut decompiler. Same container pattern as ILSpy/GoReSym. |
 | Configurable dump cleanup | 1 hr | Make memory dump retention configurable instead of always deleted. |
@@ -307,6 +340,5 @@ sudo -u cape python3 /opt/sample-feeder/sample_feeder.py --recent 24 --limit 1 -
 
 ## Architecture Review Findings (remaining)
 
-- Inline imports in cape.py.j2 and run-pipeline.py.j2 — move to module level
 - Make memory dump cleanup configurable (currently always deleted)
-- Add automated tests — pure functions in ioc_extract, cross_correlate are trivially testable
+- (Inline imports + automated tests moved to "Current Priority Order" above: cleanup trio / test harness.)
