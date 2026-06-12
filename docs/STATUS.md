@@ -138,7 +138,7 @@ detailed notes and the (mostly DONE) historical backlog.
 
 | Item | Notes |
 |------|-------|
-| Ghidra empty-project fix | Pipeline persists empty Ghidra projects (`.rep` has no `data/`) → investigation-agent tool-mode fails with "Project data directory not found". Lock-permission layer already fixed (commit 541ec3f). Look at `roles/ghidra/templates/run-ghidra.py.j2` `analyze_with_headless()`; debug by comparing `ls -laR /output/project` in-container vs post-`cp -a`. |
+| Ghidra empty-project fix | **DONE (2026-06-12).** Two bugs: (1) the analysis container writes the project as rootless-podman UID-mapped `nobody` (0750), unreadable by pipeline, so `cp -a … 2>/dev/null` silently persisted an empty `.rep` — fixed with `podman unshare chown -R 0:0` + un-silenced copy; (2) tool-mode fell through to the analysis-mode arg check and exited 1, so the API discarded valid output — fixed by exiting tool/shellcode modes. Verified end-to-end: 2.6 MB program DB persists, `list_functions` returns 200 funcs, `decompile_function` returns pseudocode. Commits b538d0f + a0aef13. NOTE: only fixes *future* analyses — existing ~233 empty projects need re-analysis. |
 
 **High**
 
