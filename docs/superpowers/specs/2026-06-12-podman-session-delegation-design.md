@@ -73,12 +73,12 @@ Verified results through the exact pattern: run-sandbox stdin→`42` rc=0; faili
 
 ### Components
 
-Two wrapper templates, each gaining the same preamble:
+Two wrapper templates gain the same preamble, at different placements:
 
-1. `ansible/roles/python-sandbox/templates/run-sandbox.sh.j2`
-2. `ansible/roles/ghidra/templates/run-ghidra-wrapper.sh.j2`
+1. `ansible/roles/python-sandbox/templates/run-sandbox.sh.j2` — preamble at the **top** (after `set -uo pipefail`). run-sandbox is only ever called by the API, so every invocation needs the session.
+2. `ansible/roles/ghidra/templates/run-ghidra-wrapper.sh.j2` — preamble **inside the `--tool` branch only** (first statement after `if [ "$1" = "--tool" ]; then`). The analysis and shellcode modes are called by the **pipeline natively** (already working — analysis 827 persisted correctly), so they are left byte-for-byte unchanged. This is stronger than a top-level preamble + bus-check: the working native path cannot regress because its code is not touched.
 
-**Decision — duplicate the preamble in both wrappers rather than factor into a shared sourced snippet.** It is ~8 lines, the two roles are independently deployed, and a shared file would add a cross-role dependency and another deploy ordering concern. Duplication is the simpler, more isolated choice here. (If a third consumer appears, revisit.)
+**Decision — duplicate the ~8-line preamble in both wrappers rather than factor into a shared sourced snippet.** The two roles deploy independently; a shared file would add a cross-role dependency and another deploy-ordering concern. Duplication is the simpler, more isolated choice. (If a third consumer appears, revisit.)
 
 ### Data flow
 
