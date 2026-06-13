@@ -25,10 +25,14 @@ set -uo pipefail
 # no user session is reachable. See docs/superpowers/specs for full rationale.
 _uid="$(id -u)"
 if [ -z "${LAMWARE_IN_USER_SESSION:-}" ] && [ -S "/run/user/${_uid}/bus" ]; then
-    export LAMWARE_IN_USER_SESSION=1
+    # XDG_RUNTIME_DIR/DBUS let `env` reach pipeline's user manager. The guard
+    # must be passed to the UNIT via --setenv (systemd-run --user does not
+    # forward our env into the unit); without it the inner wrapper re-execs
+    # again and loses stdin.
     exec env XDG_RUNTIME_DIR="/run/user/${_uid}" \
              DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_uid}/bus" \
-             systemd-run --user --pipe --quiet --wait --collect -- "$0" "$@"
+             systemd-run --user --pipe --quiet --wait --collect \
+             --setenv=LAMWARE_IN_USER_SESSION=1 -- "$0" "$@"
 fi
 
 VOLUME_ARGS=()
