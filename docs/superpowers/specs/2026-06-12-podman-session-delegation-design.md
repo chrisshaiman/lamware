@@ -18,12 +18,15 @@ The API invokes these as `sudo -u pipeline /usr/local/bin/run-{sandbox,ghidra} .
 
 ### Root cause
 
-Rootless podman requires a PAM/systemd-user **login session** to resolve its per-user runtime (runroot) and storage. Evidence gathered 2026-06-12:
+The blocker is rootless podman's **pause process** — the long-lived helper (catatonit) that holds pipeline's user namespace open — together with a runroot baked into the storage DB. The pause process is anchored to pipeline's running user-manager runtime; a non-login `sudo -u pipeline` context cannot attach to it. (NB: this is *not* simply "podman needs a login session." Podman in principle only needs `XDG_RUNTIME_DIR` (or a `/tmp/containers-user-$UID` fallback) + `HOME` + subuid/subgid mappings. The failure here is the *namespace/pause-process state*, which env vars cannot reconstitute from outside the session.)
+
+Evidence gathered 2026-06-12:
 
 - `sudo -iu pipeline` (real login session) → podman works; `list_functions` returns 200, `decompile_function` parses its JSON arg.
 - `sudo -u pipeline` (non-login) → `podman info` produces **zero output**; image "not found".
-- Replicating the session via env vars does **not** work: tried `HOME`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, clean `env -i`, matching `TMPDIR`, explicit `--root`/`--runroot`, and pinning `runroot` in `storage.conf`. None succeed — it is the session, not any single variable.
-- `podman system reset` is not an option: pipeline's rootless storage holds ~12 GB across ~15 images (the entire analysis pipeline), and resetting would force a full rebuild.
+- Env-var replication does **not** work — tried `HOME`, `XDG_RUNTIME_DIR=/run/user/997`, `DBUS_SESSION_BUS_ADDRESS`, clean `env -i`, matching `TMPDIR`, explicit `--root`/`--runroot`, pinning `runroot` in `storage.conf`, and setting `XDG_RUNTIME_DIR` to the DB's exact runroot. The last surfaced the real error: `invalid internal status, try resetting the pause process with "podman system migrate": setting up the process`. So the runroot path is not the issue; the namespace/pause-process state is.
+- `systemd-run --user` works because it executes the command *inside* pipeline's lingering user manager, where the pause process is valid and the runtime matches the DB — verified end-to-end.
+- `podman system reset` (or `podman system migrate`, which resets the pause process) is not an option: pipeline's rootless storage holds ~12 GB across ~15 images (the entire analysis pipeline), and resetting would force a full rebuild and risk disrupting in-flight pipeline state.
 
 ### The constraint conflict
 
