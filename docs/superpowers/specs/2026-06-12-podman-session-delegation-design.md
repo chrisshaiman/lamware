@@ -1,0 +1,126 @@
+# Podman Session Delegation Fix — Design
+
+**Goal:** Make the investigation agent's sandbox and Ghidra tools work when invoked through the API, by having the tool wrappers re-enter pipeline's systemd user session before running rootless podman — without changing the API or relaxing the scoped sudoers rule.
+
+**Status:** Designed 2026-06-12. Supersedes the "stable runroot" direction in the runroot investigation notes.
+
+---
+
+## Problem
+
+The investigation API (running as `lamware-api`) delegates tool execution to the `pipeline` user via a scoped sudoers rule (ADR-017):
+
+```
+lamware-api ALL=(pipeline) NOPASSWD: /usr/local/bin/run-sandbox, /usr/local/bin/run-sandbox *, /usr/local/bin/run-ghidra --tool *
+```
+
+The API invokes these as `sudo -u pipeline /usr/local/bin/run-{sandbox,ghidra} ...` (a **non-login** shell). In that context rootless podman **fails to initialize at all** — it cannot find pipeline's image storage and reports "image not found" for the sandbox, and Ghidra tool calls fail. As a result, both tools are unusable through the agent UI even though the images are present and (after the empty-project fix, PR #102) Ghidra projects persist correctly.
+
+### Root cause
+
+Rootless podman requires a PAM/systemd-user **login session** to resolve its per-user runtime (runroot) and storage. Evidence gathered 2026-06-12:
+
+- `sudo -iu pipeline` (real login session) → podman works; `list_functions` returns 200, `decompile_function` parses its JSON arg.
+- `sudo -u pipeline` (non-login) → `podman info` produces **zero output**; image "not found".
+- Replicating the session via env vars does **not** work: tried `HOME`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, clean `env -i`, matching `TMPDIR`, explicit `--root`/`--runroot`, and pinning `runroot` in `storage.conf`. None succeed — it is the session, not any single variable.
+- `podman system reset` is not an option: pipeline's rootless storage holds ~12 GB across ~15 images (the entire analysis pipeline), and resetting would force a full rebuild.
+
+### The constraint conflict
+
+`sudo -iu` provides the needed session but requires the sudoers rule to permit a login **shell**, which would grant `lamware-api` arbitrary command execution as `pipeline` — defeating the scoped-sudo security model that is central to this project. Confirmed: lamware-api's current rule rejects `sudo -iu` ("a password is required"). So the fix must bridge to a session **without** loosening sudo.
+
+---
+
+## Design
+
+### Architecture
+
+`pipeline` has **lingering enabled** (`loginctl Linger=yes`), so its systemd **user manager** runs persistently with a live bus at `/run/user/997/bus`, independent of any interactive login. A non-login `pipeline` process can therefore submit work into that running session via `systemd-run --user`.
+
+Each tool wrapper gains a **re-exec preamble** at the top. When invoked outside the user session (the API's `sudo -u pipeline` case), it re-execs *itself* into the session:
+
+```sh
+# Re-enter pipeline's lingering systemd user session so rootless podman can
+# initialize. The scoped sudoers invocation (sudo -u pipeline) is a non-login
+# shell where podman cannot resolve its per-user runtime; systemd-run --user
+# runs us inside the persistent user manager where it can. Guard prevents an
+# infinite re-exec loop; the bus-socket check keeps the pipeline-native path
+# (which already works) unchanged when no user session is reachable.
+_uid="$(id -u)"
+if [ -z "${LAMWARE_IN_USER_SESSION:-}" ] && [ -S "/run/user/${_uid}/bus" ]; then
+    export LAMWARE_IN_USER_SESSION=1
+    exec env XDG_RUNTIME_DIR="/run/user/${_uid}" \
+             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_uid}/bus" \
+             systemd-run --user --pipe --quiet --wait --collect -- "$0" "$@"
+fi
+```
+
+The wrapper **body is unchanged** — the existing lock-fix copy, the `podman unshare chown` empty-project fix, and the exit-code handling all run as before, just now inside the session where podman works. The **API call and the sudoers rule are not touched**: the entire fix lives in the two wrapper templates.
+
+### Why `--pipe --quiet --wait --collect`
+
+Verified 2026-06-12 that this combination passes everything cleanly through `systemd-run --user`:
+
+- `--pipe` connects the transient unit's stdin/stdout/stderr to the wrapper's (so the sandbox script arrives on stdin and the tool's JSON result returns on stdout).
+- `--quiet` suppresses systemd-run's own resource-summary output, so only the tool's stdout flows back (without it, the summary pollutes stdout).
+- `--wait` runs synchronously and **propagates the unit's exit code** (verified: a script doing `sys.exit(3)` yields rc=3; the API's `_ghidra_tool` returncode check then behaves correctly).
+- `--collect` garbage-collects the transient unit after it exits.
+
+Verified results through the exact pattern: run-sandbox stdin→`42` rc=0; failing script→rc=3; run-ghidra `--tool ... list_functions '{}'`→`"count": 200`.
+
+### Components
+
+Two wrapper templates, each gaining the same preamble:
+
+1. `ansible/roles/python-sandbox/templates/run-sandbox.sh.j2`
+2. `ansible/roles/ghidra/templates/run-ghidra-wrapper.sh.j2`
+
+**Decision — duplicate the preamble in both wrappers rather than factor into a shared sourced snippet.** It is ~8 lines, the two roles are independently deployed, and a shared file would add a cross-role dependency and another deploy ordering concern. Duplication is the simpler, more isolated choice here. (If a third consumer appears, revisit.)
+
+### Data flow
+
+```
+API (lamware-api)
+  → sudo -u pipeline /usr/local/bin/run-X [args]   (stdin: script, for sandbox)   [UNCHANGED]
+    → wrapper preamble: not in session + bus present
+      → exec systemd-run --user --pipe --quiet --wait --collect -- run-X [args]
+        → wrapper body runs INSIDE pipeline's user session
+          → podman initializes correctly → tool runs
+        ← stdout (JSON result) + exit code flow back through --pipe
+  ← API captures stdout / returncode   [UNCHANGED]
+```
+
+### Backward compatibility (key safety property)
+
+The Ghidra `run-ghidra` wrapper is also called by the **pipeline itself** (analysis mode, shellcode mode) in a context where podman already works (analysis 827 persisted a 28 MB project correctly). The design must not regress that.
+
+- The **guard var** (`LAMWARE_IN_USER_SESSION`) prevents infinite re-exec.
+- The **bus-socket check** (`-S /run/user/$uid/bus`) means: if a user session is not reachable, the wrapper proceeds **without** re-exec — exactly today's behavior. The change only *adds* a working path for the non-login API delegation; it never removes the existing one.
+- If the pipeline-native context *does* have the bus (likely, since pipeline runs as pipeline with linger), the re-exec simply normalizes it into the session, which also works.
+
+Implementation must verify a full fresh pipeline analysis still completes after the change.
+
+### Error handling
+
+- Re-exec loop is impossible (guard var).
+- If `systemd-run` or the user bus is genuinely unavailable, the wrapper falls through to the non-session path and, on podman failure, emits the existing JSON error — the agent receives a real message, never a silent hang. No new failure modes versus today.
+- `~300ms` transient-unit spawn overhead per call — acceptable for interactive agent tools.
+
+### Testing / verification
+
+The verification **must exercise the exact non-login API path** (`sudo -u pipeline ...`), not a login shell — the lesson from the earlier Ghidra fix, whose "end-to-end" check used a login shell and masked this very bug.
+
+1. `sudo -u pipeline /usr/local/bin/run-sandbox <<< 'print(6*7)'` → `42`, rc 0.
+2. `sudo -u pipeline /usr/local/bin/run-ghidra --tool /opt/pipeline/reports/19e0b62abee9/project 6570890558b0fe7fd8903349ade634a47a61d3b9f7bf7c224826567d42b623fe list_functions '{}'` → `"count": 200`.
+3. End-to-end through the investigation agent UI on analysis 827: run_python and a Ghidra tool both return results.
+4. Regression: a full fresh pipeline analysis on a PE completes and persists a populated Ghidra project (native path intact).
+
+### Scope
+
+- **Files:** the two wrapper templates only.
+- **No** API change, **no** sudoers change, **no** new service, **no** image rebuild, **no** storage reset.
+- Preserves the ADR-017 scoped-sudo security model in full.
+
+### Security analysis
+
+No change to the trust boundary: `lamware-api` still may run exactly `run-sandbox` and `run-ghidra --tool *` as `pipeline` and nothing else. `systemd-run --user` runs *within pipeline's own* session as `pipeline` — it does not cross a privilege boundary or expose new capabilities. The transient units inherit the same `--network=none`, rootless, `--cap-drop=ALL` container constraints the wrappers already impose.
