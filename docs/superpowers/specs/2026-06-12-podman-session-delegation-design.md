@@ -126,4 +126,21 @@ The verification **must exercise the exact non-login API path** (`sudo -u pipeli
 
 ### Security analysis
 
-No change to the trust boundary: `lamware-api` still may run exactly `run-sandbox` and `run-ghidra --tool *` as `pipeline` and nothing else. `systemd-run --user` runs *within pipeline's own* session as `pipeline` — it does not cross a privilege boundary or expose new capabilities. The transient units inherit the same `--network=none`, rootless, `--cap-drop=ALL` container constraints the wrappers already impose.
+Approach A introduces no new privilege escalation or attack surface, and is the most least-privilege of the viable options.
+
+**Trust boundary (lamware-api → pipeline) — unchanged.** The scoped sudoers rule is untouched: `lamware-api` may still run only `run-sandbox` and `run-ghidra --tool *` as `pipeline`. The `systemd-run --user` call is *inside* the wrapper, after sudo has already dropped to `pipeline`, so the API gains no new capability. This is why `sudo -iu` was rejected — it would require granting a login *shell* (arbitrary execution as pipeline); Approach A gets the session without that, so it is strictly better than `-iu` here.
+
+**Privilege model — no crossing.** `systemd-run --user` is pipeline asking its *own* user-systemd manager to run a transient unit, as pipeline (same UID, no setuid). It is the user instance, not `--system` (which would need root).
+
+**Malware-containment boundary — unchanged (the one that matters most on this platform).** The boundary protecting the host from the *sample* is the container, and none of its constraints change: the wrapper body still runs podman `--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges --user 65534`, rootless (UID-mapped). Approach A only changes how the host-side wrapper reaches podman, not how the malware-running container is confined. A hypothetical container escape would land at `pipeline`-uid either way.
+
+**Versus alternatives.** `sudo -iu` grants shell access (worse); a podman API socket (B) exposes a surface that can do anything podman can (worse). A adds no socket, no shell, no new sudo scope.
+
+**Minor caveats (not vulnerabilities, recorded for completeness):**
+1. Pipeline's user bus socket `/run/user/997/bus` is `srw-rw-rw-`, but its parent `/run/user/997` is `0700 pipeline`, so no other user can traverse to it. Pre-existing systemd default, not introduced here.
+2. Relies on `Linger=yes` — pre-existing, standard for rootless-podman service accounts, not network-facing.
+3. The guard var `LAMWARE_IN_USER_SESSION` is at most a denial lever (if set, the wrapper skips re-exec and the tool fails — no escalation); it is caller-controlled (lamware-api), not reachable by malware inside a container.
+4. Transient-unit churn per tool call is bounded by the existing per-turn tool-call cap (the real flood control); minor upside is each call leaves a journald audit trail.
+5. The `--` in `systemd-run ... -- "$0" "$@"` is load-bearing — it prevents a tool argument from being parsed as a systemd-run option. Required.
+
+**Verification to include in the plan:** confirm the container's environment is clean — i.e., the transient unit does not leak host `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` into the analysis container (podman should only pass env via explicit `--env`; verify by inspecting the container env during a tool run).
