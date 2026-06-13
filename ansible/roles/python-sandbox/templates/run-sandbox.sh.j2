@@ -16,6 +16,25 @@
 
 set -uo pipefail
 
+# Re-enter pipeline's lingering systemd user session before touching podman.
+# The API delegates via `sudo -u pipeline` (a non-login shell) where rootless
+# podman cannot attach to its pause process (which holds the user namespace)
+# and fails with "image not found". systemd-run --user runs us inside the
+# persistent user manager where podman works. The guard var prevents an
+# infinite re-exec; the bus-socket check falls through to current behavior if
+# no user session is reachable. See docs/superpowers/specs for full rationale.
+_uid="$(id -u)"
+if [ -z "${LAMWARE_IN_USER_SESSION:-}" ] && [ -S "/run/user/${_uid}/bus" ]; then
+    # XDG_RUNTIME_DIR/DBUS let `env` reach pipeline's user manager. The guard
+    # must be passed to the UNIT via --setenv (systemd-run --user does not
+    # forward our env into the unit); without it the inner wrapper re-execs
+    # again and loses stdin.
+    exec env XDG_RUNTIME_DIR="/run/user/${_uid}" \
+             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_uid}/bus" \
+             systemd-run --user --pipe --quiet --wait --collect \
+             --setenv=LAMWARE_IN_USER_SESSION=1 -- "$0" "$@"
+fi
+
 VOLUME_ARGS=()
 
 while [[ $# -gt 0 ]]; do
