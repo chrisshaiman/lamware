@@ -167,6 +167,7 @@ detailed notes and the (mostly DONE) historical backlog.
 |------|--------|-------|
 | Job queue / spool-based auto-feeder | Design + build | Single-sample sequential today; the queue is the natural next architectural unit and dissolves the auto-feeder sudo-subprocess wart. Combines "Multi-sample job queue" + "Refactor auto-feeder to spool-based". |
 | MCP server wrapping the corpus | 1-2 hrs | Expose IOC/technique/correlation/analysis queries as MCP — the investigation agent's 20-tool registry already exists. Reusable intelligence backend any LLM client can pivot through. |
+| Greenfield podman rootless hardening (next host rebuild) | With host rebuild | Bake a stable `XDG_RUNTIME_DIR` + `loginctl enable-linger pipeline` + explicit `/etc/subuid`/`/etc/subgid` into the pipeline user-creation play, with clean storage init, so the rootless pause-process/runroot is consistent across login and non-login contexts — letting the `systemd-run --user` delegation workaround be removed. The proper fix for the investigation-agent tool delegation bug; requires a `podman system reset` (rebuild all ~15 pipeline images, ~12 GB), so do it opportunistically during a host rebuild (e.g., the OVH migration), not standalone. |
 | Exploratory LLM Playwright agent | 1-2 hrs | Free-roaming agent that drives the browser and reports UI anomalies (started as `playwright_bug_hunt.py`). Good for unknown-unknowns; non-deterministic + token-costly — run on-demand/nightly, NEVER in the deploy gate path. |
 
 ### High Priority
