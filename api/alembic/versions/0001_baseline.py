@@ -39,7 +39,11 @@ SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', '', false);
+-- NOTE: pg_dump's `SELECT pg_catalog.set_config('search_path', '', false);` was
+-- removed here. It blanks the connection search_path for the rest of the session,
+-- which breaks Alembic's unqualified `INSERT INTO alembic_version` bookkeeping when
+-- this runs via op.execute(). Every object below is already public-qualified, so
+-- dropping it is safe.
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
