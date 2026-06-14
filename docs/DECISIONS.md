@@ -570,3 +570,43 @@ use the standard pipeline output, which populates techniques with full tactic da
 - tool_call/tool_result rows accumulate per session; the transcript export includes them
 - `pin_finding` for technique type always returns `promotion_not_supported` — documented
   in the API and surfaced in the frontend pin bar
+
+## ADR-018: Adopt Alembic for malware_analysis schema migrations
+
+**Status:** Accepted (2026-06-13)
+
+**Context:** The `malware_analysis` schema was managed by a one-shot `schema.sql`
+plus hand-numbered, hand-idempotent `migration_00X.sql` files applied by the Ansible
+`postgres` role. There was no version tracking, no rollback, and no authoritative
+record of a database's schema revision. With more tables coming (campaign graph,
+detection-engineering output), the drift risk was compounding.
+
+**Decision:** Adopt Alembic for this database. The Alembic project lives in `api/`
+next to the models. The baseline revision `0001` is a raw-SQL snapshot captured from
+the live database via `pg_dump --schema-only`, embedded verbatim in the revision.
+The production database is adopted non-destructively with `alembic stamp 0001`;
+fresh databases are built with `alembic upgrade head`.
+
+At deploy, migrations run from a dedicated postgres-owned runner at
+`/opt/lamware-migrations/` (its own venv + a copy of the project), executed as the
+`postgres` user via Unix-socket peer auth. This preserves the existing privilege
+model — postgres performs DDL, the runtime `pipeline` user stays DML-only — and
+avoids the lamware-api venv (mode 0750, unreadable by postgres). A stamp-vs-upgrade
+guard in the `postgres` role chooses stamp vs upgrade based on the presence of the
+`alembic_version` and `samples` tables.
+
+**Phase A (this change)** runs Alembic alongside the legacy SQL files, which are
+retained (with deprecation headers) as a rollback net. Autogenerate is disabled
+(`target_metadata = None`) because the ORM models cover only part of the schema.
+
+**Phase B (later, gated)** retires the legacy `.sql` files once (1) `alembic current`
+= head on prod, (2) a real schema change has shipped end-to-end via a new revision,
+and (3) a fresh-DB `upgrade head` has been equivalence-diffed against prod. Completing
+the ORM models + enabling autogenerate is a separate fast-follow (Spec 2).
+
+**Consequences:**
+- New schema changes are versioned revisions in `api/alembic/versions/`; rollback via
+  `alembic downgrade` is available.
+- A dedicated `/opt/lamware-migrations/` venv is provisioned on the host.
+- During Phase A both mechanisms run; they coexist safely (legacy tasks are gated /
+  idempotent, and after stamping, `upgrade head` is a no-op).
