@@ -29,11 +29,11 @@ sudo -u postgres bash -c "cd ${RUNNER} && \
     ALEMBIC_DATABASE_URL=postgresql+psycopg2:///${DB_SCRATCH} \
     ./venv/bin/alembic -c alembic.ini upgrade head"
 
-echo "[*] Dumping schemas (comments/blank lines stripped, lines sorted)"
+echo "[*] Dumping schemas (comments, blanks, and pg_dump16 \\restrict markers stripped, sorted)"
 sudo -u postgres pg_dump --schema-only --no-owner --no-privileges "${DB_PROD}" \
-    | grep -vE '^--|^$' | grep -v 'alembic_version' | sort > /tmp/prod_schema.txt
+    | grep -vE '^--|^$|^\\(un)?restrict' | grep -v 'alembic_version' | sort > /tmp/prod_schema.txt
 sudo -u postgres pg_dump --schema-only --no-owner --no-privileges "${DB_SCRATCH}" \
-    | grep -vE '^--|^$' | grep -v 'alembic_version' | sort > /tmp/scratch_schema.txt
+    | grep -vE '^--|^$|^\\(un)?restrict' | grep -v 'alembic_version' | sort > /tmp/scratch_schema.txt
 
 echo "[*] Diffing"
 if diff -u /tmp/prod_schema.txt /tmp/scratch_schema.txt; then
