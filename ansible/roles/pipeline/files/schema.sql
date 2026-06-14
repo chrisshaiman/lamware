@@ -1,3 +1,6 @@
+-- DEPRECATED: superseded by Alembic revision 0001 (2026-06-13).
+-- Retained for rollback only during the Alembic verification window. DO NOT EDIT.
+-- New schema changes go through Alembic: api/alembic/versions/.
 -- =============================================================================
 -- Malware Analysis Pipeline — PostgreSQL Schema (v2)
 --

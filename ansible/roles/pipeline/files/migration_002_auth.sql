@@ -1,3 +1,6 @@
+-- DEPRECATED: superseded by Alembic revision 0001 (2026-06-13).
+-- Retained for rollback only during the Alembic verification window. DO NOT EDIT.
+-- New schema changes go through Alembic: api/alembic/versions/.
 -- migration_002_auth.sql
 -- Adds submitted_by column to analyses and creates audit_log table.
 -- Idempotent — safe to re-run.
