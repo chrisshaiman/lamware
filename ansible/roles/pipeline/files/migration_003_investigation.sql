@@ -1,3 +1,6 @@
+-- DEPRECATED: superseded by Alembic revision 0001 (2026-06-13).
+-- Retained for rollback only during the Alembic verification window. DO NOT EDIT.
+-- New schema changes go through Alembic: api/alembic/versions/.
 -- migration_003_investigation.sql
 -- Adds investigation agent tables for conversational deep-dive sessions.
 -- Idempotent — safe to re-run.
