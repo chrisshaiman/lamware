@@ -44,9 +44,9 @@ class Settings(BaseSettings):
     # Investigation agent
     litellm_url: str = "http://127.0.0.1:4000"
     litellm_key: str = "sk-lamware"
-    investigation_max_turns: int = 50
+    investigation_max_turns: int = 100
     investigation_cost_alert_usd: float = 2.0
-    investigation_max_tool_calls_per_turn: int = 10
+    investigation_max_tool_calls_per_turn: int = 20
     sandbox_cmd: str = "/usr/local/bin/run-sandbox"
     ghidra_cmd: str = "/usr/local/bin/run-ghidra"
 

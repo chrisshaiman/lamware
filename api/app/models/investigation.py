@@ -43,7 +43,7 @@ class InvestigationSession(SQLModel, table=True):
     total_input_tokens: int = Field(default=0)
     total_output_tokens: int = Field(default=0)
     total_cost_usd: Decimal = Field(default_factory=lambda: Decimal("0"))
-    max_turns: int = Field(default=50)
+    max_turns: int = Field(default=100)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
