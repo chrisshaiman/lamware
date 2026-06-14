@@ -21,11 +21,13 @@ sudo -u postgres dropdb --if-exists "${DB_SCRATCH}"
 sudo -u postgres createdb "${DB_SCRATCH}"
 
 echo "[*] Building scratch DB from alembic head"
-# Run from /tmp: Alembic 1.16+ probes ./pyproject.toml from the CWD, and the
-# postgres user cannot traverse the invoking user's home dir (-> PermissionError).
-# /tmp is readable by postgres and has no pyproject.toml, so discovery no-ops.
-( cd /tmp && sudo -u postgres env ALEMBIC_DATABASE_URL="postgresql+psycopg2:///${DB_SCRATCH}" \
-    "${RUNNER}/venv/bin/alembic" -c "${RUNNER}/alembic.ini" upgrade head )
+# Run as postgres with the CWD set to the runner dir. Alembic resolves
+# script_location relative to the CWD and (1.16+) probes ./pyproject.toml from
+# the CWD; the invoking user's home is unreadable by postgres. cd-ing into the
+# postgres-owned runner resolves both (scripts found, no pyproject there).
+sudo -u postgres bash -c "cd ${RUNNER} && \
+    ALEMBIC_DATABASE_URL=postgresql+psycopg2:///${DB_SCRATCH} \
+    ./venv/bin/alembic -c alembic.ini upgrade head"
 
 echo "[*] Dumping schemas (comments/blank lines stripped, lines sorted)"
 sudo -u postgres pg_dump --schema-only --no-owner --no-privileges "${DB_PROD}" \
