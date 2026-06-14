@@ -171,11 +171,16 @@
 - name: Install Alembic into the runner venv
   become: true
   become_user: postgres
-  ansible.builtin.command:
-    cmd: >
-      /opt/lamware-migrations/venv/bin/pip install
-      "alembic>=1.13" "SQLAlchemy>=2.0" "psycopg2-binary>=2.9"
-  changed_when: true
+  # pip module (not bare command) so re-deploys are a no-op once present: with
+  # state=present it does not re-hit PyPI when the requirements are satisfied,
+  # which keeps repeat deploys idempotent and offline-safe.
+  ansible.builtin.pip:
+    name:
+      - "alembic>=1.13"
+      - "SQLAlchemy>=2.0"
+      - "psycopg2-binary>=2.9"
+    virtualenv: /opt/lamware-migrations/venv
+    state: present
 
 - name: Copy alembic.ini into the runner
   ansible.builtin.copy:
