@@ -207,7 +207,7 @@
     query: >
       SELECT EXISTS (SELECT FROM information_schema.tables
       WHERE table_name = 'samples');
-  register: alembic_samples_check
+  register: postgres_alembic_samples_check
 
 - name: Check whether the alembic_version table exists
   become: true
@@ -217,7 +217,7 @@
     query: >
       SELECT EXISTS (SELECT FROM information_schema.tables
       WHERE table_name = 'alembic_version');
-  register: alembic_version_check
+  register: postgres_alembic_version_check
 
 # Guard (mutually exclusive, covers all four states):
 #   alembic_version exists                  -> upgrade head  (ongoing case)
@@ -235,8 +235,8 @@
   environment:
     ALEMBIC_DATABASE_URL: "postgresql+psycopg2:///{{ postgres_db_name }}"
   when:
-    - not alembic_version_check.query_result[0].exists
-    - alembic_samples_check.query_result[0].exists
+    - not postgres_alembic_version_check.query_result[0].exists
+    - postgres_alembic_samples_check.query_result[0].exists
   changed_when: true
 
 - name: Apply Alembic migrations (upgrade head)
@@ -248,8 +248,8 @@
   environment:
     ALEMBIC_DATABASE_URL: "postgresql+psycopg2:///{{ postgres_db_name }}"
   when: >
-    alembic_version_check.query_result[0].exists
-    or not alembic_samples_check.query_result[0].exists
+    postgres_alembic_version_check.query_result[0].exists
+    or not postgres_alembic_samples_check.query_result[0].exists
   changed_when: true
 
 - name: Grant table privileges to pipeline user
