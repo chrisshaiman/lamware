@@ -147,6 +147,106 @@
     path: /tmp/pipeline-migration-003.sql
     state: absent
 
+# --- Alembic migrations (Phase A: runs alongside the legacy SQL above) ---
+# The legacy schema.sql + migration_00X tasks above remain as a rollback net.
+# Alembic runs from a dedicated postgres-owned venv because the lamware-api venv
+# is mode 0750 and unreadable by postgres. DDL stays with the postgres user;
+# the runtime pipeline user remains DML-only.
+
+- name: Create Alembic migrations runner directory
+  ansible.builtin.file:
+    path: /opt/lamware-migrations
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Create venv for the Alembic runner
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/lamware-migrations/venv
+    creates: /opt/lamware-migrations/venv/bin/alembic
+
+- name: Install Alembic into the runner venv
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: >
+      /opt/lamware-migrations/venv/bin/pip install
+      "alembic>=1.13" "SQLAlchemy>=2.0" "psycopg2-binary>=2.9"
+  changed_when: true
+
+- name: Copy alembic.ini into the runner
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../api/alembic.ini"
+    dest: /opt/lamware-migrations/alembic.ini
+    owner: postgres
+    group: postgres
+    mode: "0640"
+
+- name: Copy the alembic project tree into the runner
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../api/alembic/"
+    dest: /opt/lamware-migrations/alembic/
+    owner: postgres
+    group: postgres
+    mode: "0640"
+    directory_mode: "0750"
+
+- name: Check whether the samples table exists (after legacy tasks)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ postgres_db_name }}"
+    query: >
+      SELECT EXISTS (SELECT FROM information_schema.tables
+      WHERE table_name = 'samples');
+  register: alembic_samples_check
+
+- name: Check whether the alembic_version table exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ postgres_db_name }}"
+    query: >
+      SELECT EXISTS (SELECT FROM information_schema.tables
+      WHERE table_name = 'alembic_version');
+  register: alembic_version_check
+
+# Guard (mutually exclusive, covers all four states):
+#   alembic_version exists                  -> upgrade head  (ongoing case)
+#   no alembic_version, samples exists      -> stamp 0001    (adopt existing schema:
+#                                              prod first run, OR fresh DB where the
+#                                              legacy schema.sql just built it)
+#   no alembic_version, no samples          -> upgrade head  (truly empty DB: build
+#                                              from Alembic — the post-Phase-B path)
+- name: Adopt existing schema at baseline (stamp 0001)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: /opt/lamware-migrations/venv/bin/alembic stamp 0001
+    chdir: /opt/lamware-migrations
+  environment:
+    ALEMBIC_DATABASE_URL: "postgresql+psycopg2:///{{ postgres_db_name }}"
+  when:
+    - not alembic_version_check.query_result[0].exists
+    - alembic_samples_check.query_result[0].exists
+  changed_when: true
+
+- name: Apply Alembic migrations (upgrade head)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: /opt/lamware-migrations/venv/bin/alembic upgrade head
+    chdir: /opt/lamware-migrations
+  environment:
+    ALEMBIC_DATABASE_URL: "postgresql+psycopg2:///{{ postgres_db_name }}"
+  when: >
+    alembic_version_check.query_result[0].exists
+    or not alembic_samples_check.query_result[0].exists
+  changed_when: true
+
 - name: Grant table privileges to pipeline user
   become: true
   become_user: postgres
