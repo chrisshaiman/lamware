@@ -599,14 +599,17 @@ guard in the `postgres` role chooses stamp vs upgrade based on the presence of t
 retained (with deprecation headers) as a rollback net. Autogenerate is disabled
 (`target_metadata = None`) because the ORM models cover only part of the schema.
 
-**Phase B (later, gated)** retires the legacy `.sql` files once (1) `alembic current`
-= head on prod, (2) a real schema change has shipped end-to-end via a new revision,
-and (3) a fresh-DB `upgrade head` has been equivalence-diffed against prod. Completing
-the ORM models + enabling autogenerate is a separate fast-follow (Spec 2).
+**Phase B (DONE, 2026-06-14)** retired the legacy `schema.sql` + `migration_00X.sql`
+files and their Ansible tasks. All three gates were met: (1) `alembic current` = head
+on prod, (2) migration `0002` (normalize the `infrastructure_overlap` view) shipped
+end-to-end via a revision, and (3) the fresh-DB `upgrade head` equivalence-diff against
+prod is clean. Alembic is now the sole schema-management mechanism. Completing the ORM
+models + enabling autogenerate remains a separate fast-follow (Spec 2).
 
 **Consequences:**
 - New schema changes are versioned revisions in `api/alembic/versions/`; rollback via
   `alembic downgrade` is available.
 - A dedicated `/opt/lamware-migrations/` venv is provisioned on the host.
-- During Phase A both mechanisms run; they coexist safely (legacy tasks are gated /
-  idempotent, and after stamping, `upgrade head` is a no-op).
+- Phase A ran Alembic alongside the legacy SQL as a rollback net; Phase B removed the
+  legacy mechanism, so a fresh host now builds the schema solely via `alembic upgrade
+  head` (0001 → 0002 → …). The schema's single source of truth is `api/alembic/`.
