@@ -25,7 +25,7 @@ cleanup() { sudo -u postgres dropdb --if-exists "${SCRATCH}" >/dev/null 2>&1 || 
 trap cleanup EXIT
 
 echo "[*] Staging recon copy of api/ at ${RECON} (as $(id -un))"
-rm -rf "${RECON}"
+sudo rm -rf "${RECON}"   # sudo: clears any prior run's postgres-owned remnants
 mkdir -p "${RECON}"
 cp -a "${SRC}/." "${RECON}/"
 
