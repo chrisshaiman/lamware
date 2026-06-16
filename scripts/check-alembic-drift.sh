@@ -29,7 +29,9 @@ sudo cp -a "${SRC}/." "${RECON}/"
 sudo chown -R postgres:postgres "${RECON}"
 
 echo "[*] Building recon venv (alembic + sqlmodel + psycopg2 + pytest)"
-sudo -u postgres python3 -m venv --copies "${RECON}/.venv"
+# Plain venv (symlinks) — matches the proven /opt/lamware-migrations runner recipe
+# on this host; --copies produced a venv without a working pip.
+sudo -u postgres python3 -m venv "${RECON}/.venv"
 sudo -u postgres "${RECON}/.venv/bin/pip" -q install \
     "alembic>=1.13" "sqlmodel>=0.0.22" "psycopg2-binary>=2.9" pytest
 
