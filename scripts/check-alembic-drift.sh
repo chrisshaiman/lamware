@@ -26,6 +26,10 @@ echo "[*] Staging recon copy of api/ at ${RECON} (postgres-owned; /opt is exec-a
 sudo rm -rf "${RECON}"
 sudo mkdir -p "${RECON}"
 sudo cp -a "${SRC}/." "${RECON}/"
+# Strip any venv/caches that rode along in the synced tree (e.g. a local api/.venv
+# from a Windows checkout) — a pre-existing .venv breaks `python3 -m venv` below.
+sudo rm -rf "${RECON}/.venv" "${RECON}/.pytest_cache"
+sudo find "${RECON}" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 sudo chown -R postgres:postgres "${RECON}"
 
 echo "[*] Building recon venv (alembic + sqlmodel + psycopg2 + pytest)"
