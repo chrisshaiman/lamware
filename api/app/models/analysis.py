@@ -24,7 +24,7 @@ pipeline_stage_events for fast dashboard queries.
 stage_timings holds per-stage elapsed seconds as a dict.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import Column
@@ -77,7 +77,7 @@ class Analysis(SQLModel, table=True):
     # Cost tracking (NUMERIC(8,4) in Postgres, Decimal in Python)
     llm_cost_usd: Decimal | None = Field(default=None)
 
-    created_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Denormalized pipeline tracking columns (fast dashboard queries).
     # Written by the pipeline alongside pipeline_stage_events inserts.
@@ -86,3 +86,6 @@ class Analysis(SQLModel, table=True):
 
     # Per-stage elapsed seconds — {"triage": 12.4, "cape": 180.1, ...}
     stage_timings: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+    # Submitter identity (added by migration_002_auth — ADR-017)
+    submitted_by: str | None = Field(default=None, max_length=255)
