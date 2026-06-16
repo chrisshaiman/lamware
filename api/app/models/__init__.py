@@ -21,6 +21,7 @@ other modules should import from here rather than from individual files.
 """
 
 from app.models.analysis import Analysis
+from app.models.audit import AuditLog
 from app.models.capability import Capability
 from app.models.investigation import (
     InvestigationMessage,
@@ -28,9 +29,14 @@ from app.models.investigation import (
     InvestigationSession,
 )
 from app.models.ioc import AnalysisIoc, IocValue
+from app.models.ioc_technique_mapping import IocTechniqueMapping
+from app.models.links import AnalysisTag, IocTag, SampleTag
 from app.models.network_event import NetworkEvent
+from app.models.pipeline_event import PipelineStageEvent
+from app.models.relationship import SampleRelationship
 from app.models.sample import Sample
 from app.models.signature import Signature
+from app.models.tag import Tag
 from app.models.technique import AnalysisTechnique, TechniqueValue
 
 __all__ = [
@@ -46,4 +52,12 @@ __all__ = [
     "InvestigationSession",
     "InvestigationMessage",
     "InvestigationPin",
+    "Tag",
+    "AnalysisTag",
+    "IocTag",
+    "SampleTag",
+    "SampleRelationship",
+    "PipelineStageEvent",
+    "IocTechniqueMapping",
+    "AuditLog",
 ]
