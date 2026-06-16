@@ -26,7 +26,7 @@ join table records which analyses observed each IOC and from which
 pipeline stage.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Field, SQLModel
 
@@ -37,9 +37,9 @@ class IocValue(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     type: str = Field(max_length=50)
     value: str  # TEXT in Postgres — no max_length restriction
-    first_seen: datetime | None = Field(default=None)
-    last_seen: datetime | None = Field(default=None)
-    created_at: datetime | None = Field(default=None)
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class AnalysisIoc(SQLModel, table=True):

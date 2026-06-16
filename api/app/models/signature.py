@@ -19,7 +19,7 @@ Behavioral signatures fired during Cape sandbox detonation.
 Severity uses Cape's 0-3 integer scale (0=info, 1=low, 2=medium, 3=high).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import Field, SQLModel
 
@@ -33,4 +33,4 @@ class Signature(SQLModel, table=True):
     severity: int | None = Field(default=0)           # 0–3 (Cape's scale)
     description: str | None = Field(default=None)
     source_stage: str = Field(default="Cape", max_length=50)
-    created_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
