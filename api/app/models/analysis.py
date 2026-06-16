@@ -86,3 +86,6 @@ class Analysis(SQLModel, table=True):
 
     # Per-stage elapsed seconds — {"triage": 12.4, "cape": 180.1, ...}
     stage_timings: dict | None = Field(default=None, sa_column=Column(JSONB))
+
+    # Submitter identity (added by migration_002_auth — ADR-017)
+    submitted_by: str | None = Field(default=None, max_length=255)
