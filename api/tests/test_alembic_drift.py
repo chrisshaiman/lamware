@@ -9,6 +9,7 @@ not compared.
 """
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,7 @@ def built_engine():
         conn.execute(sa.text("DROP SCHEMA public CASCADE"))
         conn.execute(sa.text("CREATE SCHEMA public"))
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=API_DIR,
         env={**os.environ, "ALEMBIC_DATABASE_URL": MIGRATION_URL},
         capture_output=True,
