@@ -3,10 +3,10 @@
 #
 # Alembic environment.
 #
-# Phase A: migrations-only. target_metadata is None so autogenerate is DISABLED.
-# The ORM models cover only ~13 of 19 tables; autogenerate against that partial
-# metadata would emit destructive op.drop_table(...) calls for the unmodeled
-# tables. Spec 2 completes the models and sets target_metadata = SQLModel.metadata.
+# Spec 2 (active): autogenerate is ENABLED when the `app` package is importable
+# (dev / host reconciliation) — target_metadata = SQLModel.metadata. The deployed
+# runner has no `app`/sqlmodel, so it falls back to None and runs upgrade/stamp
+# only. Autogenerate scope is tables + columns + nullability (see app/schema_meta).
 #
 # The database URL comes EXCLUSIVELY from ALEMBIC_DATABASE_URL. There is no
 # fallback to application settings: migrations need a DDL-capable connection, and
@@ -22,20 +22,24 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Spec 2: populate metadata from the ORM models where the app package is importable
-# (dev / host reconciliation). The deployed runner at /opt/lamware-migrations has
-# only the alembic project and no `app` package / sqlmodel, so fall back to None —
-# upgrade/stamp don't need metadata, and this keeps the runner working.
+# Populate metadata from the ORM models where importable (dev/host); the app-less
+# deployed runner keeps these as None (defaults below) and runs upgrade/stamp only.
+#
+# INVARIANT: app.models must NOT transitively import app.database or app.config —
+# those build the SQLAlchemy engine from LAMWARE_* env vars at import time, which
+# are absent in the alembic runner. Use TYPE_CHECKING / lazy imports if a model
+# ever needs a DB reference.
+target_metadata = None
+include_object = None
 try:
     import app.models  # noqa: F401 — registers all tables on SQLModel.metadata
     from sqlmodel import SQLModel
 
-    from app.schema_meta import include_object
+    from app.schema_meta import include_object  # noqa: F811 — rebinds the None default
 
     target_metadata = SQLModel.metadata
 except ModuleNotFoundError:
-    target_metadata = None
-    include_object = None
+    pass
 
 
 def _database_url() -> str:
