@@ -48,4 +48,4 @@ URL="postgresql+psycopg2:///${SCRATCH}"
 sudo -u postgres bash -c "cd '${RECON}' && \
     PYTHONDONTWRITEBYTECODE=1 \
     LAMWARE_MIGRATION_TEST_URL='${URL}' ALEMBIC_DATABASE_URL='${URL}' \
-    '${RECON}/.venv/bin/pytest' -p no:cacheprovider tests/test_alembic_drift.py -v"
+    '${RECON}/.venv/bin/pytest' -p no:cacheprovider --noconftest tests/test_alembic_drift.py -v"
