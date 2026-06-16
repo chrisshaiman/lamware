@@ -603,8 +603,15 @@ retained (with deprecation headers) as a rollback net. Autogenerate is disabled
 files and their Ansible tasks. All three gates were met: (1) `alembic current` = head
 on prod, (2) migration `0002` (normalize the `infrastructure_overlap` view) shipped
 end-to-end via a revision, and (3) the fresh-DB `upgrade head` equivalence-diff against
-prod is clean. Alembic is now the sole schema-management mechanism. Completing the ORM
-models + enabling autogenerate remains a separate fast-follow (Spec 2).
+prod is clean. Alembic is now the sole schema-management mechanism.
+
+**Spec 2 (DONE, 2026-06-15):** the ORM models now fully mirror the schema (8 missing
+tables added; existing NOT NULL timestamp columns made non-nullable), `env.py`
+`target_metadata` is `SQLModel.metadata` (conditionally — the app-less deployed runner
+falls back to `None`), and autogenerate is scoped to tables + columns + nullability via
+`include_object` (indexes/unique/FK/views remain hand-authored). A drift sentinel
+(`api/tests/test_alembic_drift.py`, run on the host via `scripts/check-alembic-drift.sh`)
+asserts models and DB stay in sync.
 
 **Consequences:**
 - New schema changes are versioned revisions in `api/alembic/versions/`; rollback via
