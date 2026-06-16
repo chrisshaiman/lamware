@@ -3,15 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Run the Alembic drift sentinel on the host against a throwaway scratch DB
-# (PostgreSQL 16, prod match). Builds an isolated recon copy of api/ in /tmp as the
-# INVOKING user (normal venv creation), then runs only the pytest process as the
-# postgres user for peer-auth DDL. Tears the scratch DB down on exit.
+# (PostgreSQL 16, prod match). Tears the scratch DB down on exit.
 #
-# Why split users: building a venv as the postgres user in /tmp tripped a symlink
-# permission error; creating it as the invoking user is the well-trodden path. The
-# recon tree is made world-readable/executable so postgres can read the code +
-# run the venv, and the test runs with PYTHONDONTWRITEBYTECODE so postgres needs
-# no write access. DDL (DROP/CREATE SCHEMA, upgrade head) needs postgres → peer auth.
+# IMPORTANT: this host mounts /tmp noexec/restricted (CIS hardening baseline), so a
+# venv cannot be built/run there. The recon dir therefore lives under /opt — the
+# same exec-allowed location as the deployed migration runner (/opt/lamware-migrations).
+# All work runs as the postgres user, which owns the /opt recon dir and provides
+# peer-auth DDL for DROP/CREATE SCHEMA + `alembic upgrade head`.
 #
 # Usage: copy a synced api/ tree to the host, then:
 #   scripts/check-alembic-drift.sh /path/to/synced/api
@@ -19,29 +17,27 @@ set -euo pipefail
 
 SRC="${1:?usage: check-alembic-drift.sh <path-to-synced-api-dir>}"
 SCRATCH="alembic_drift_check"
-RECON="/tmp/alembic-drift-recon"
+RECON="/opt/alembic-drift-recon"
 
 cleanup() { sudo -u postgres dropdb --if-exists "${SCRATCH}" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-echo "[*] Staging recon copy of api/ at ${RECON} (as $(id -un))"
-sudo rm -rf "${RECON}"   # sudo: clears any prior run's postgres-owned remnants
-mkdir -p "${RECON}"
-cp -a "${SRC}/." "${RECON}/"
+echo "[*] Staging recon copy of api/ at ${RECON} (postgres-owned; /opt is exec-allowed)"
+sudo rm -rf "${RECON}"
+sudo mkdir -p "${RECON}"
+sudo cp -a "${SRC}/." "${RECON}/"
+sudo chown -R postgres:postgres "${RECON}"
 
 echo "[*] Building recon venv (alembic + sqlmodel + psycopg2 + pytest)"
-python3 -m venv "${RECON}/.venv"
-"${RECON}/.venv/bin/pip" -q install \
+sudo -u postgres python3 -m venv --copies "${RECON}/.venv"
+sudo -u postgres "${RECON}/.venv/bin/pip" -q install \
     "alembic>=1.13" "sqlmodel>=0.0.22" "psycopg2-binary>=2.9" pytest
-
-echo "[*] Making recon world-readable/executable so postgres can run it"
-chmod -R a+rX "${RECON}"
 
 echo "[*] Recreating scratch DB ${SCRATCH}"
 sudo -u postgres dropdb --if-exists "${SCRATCH}"
 sudo -u postgres createdb "${SCRATCH}"
 
-echo "[*] Running drift test as postgres (peer-auth DDL; no bytecode writes)"
+echo "[*] Running drift test (peer auth as postgres)"
 URL="postgresql+psycopg2:///${SCRATCH}"
 sudo -u postgres bash -c "cd '${RECON}' && \
     PYTHONDONTWRITEBYTECODE=1 \
