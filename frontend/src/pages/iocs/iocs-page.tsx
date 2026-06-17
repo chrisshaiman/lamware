@@ -80,7 +80,7 @@ export function IocsPage() {
     : iocs;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="iocs-content">
       <div className="flex items-center gap-2">
         <Network className="h-5 w-5 text-[var(--color-text-secondary)]" />
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">IOC Browser</h1>

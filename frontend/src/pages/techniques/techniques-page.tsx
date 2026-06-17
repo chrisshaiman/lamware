@@ -57,7 +57,7 @@ export function TechniquesPage() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="techniques-content">
       <div className="flex items-center gap-2">
         <Shield className="h-5 w-5 text-[var(--color-text-secondary)]" />
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">MITRE ATT&CK</h1>
