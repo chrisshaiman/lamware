@@ -58,6 +58,26 @@
       ]
     }
   ],
+  "users": [
+    {
+      "username": "{{ keycloak_smoke_test_user | default('smoke-test') }}",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "smoke-test@lamware.test",
+      "firstName": "Smoke",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "{{ keycloak_smoke_test_password }}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["viewer"],
+      "clientRoles": {},
+      "groups": []
+    }
+  ],
   "loginTheme": "lamware",
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
