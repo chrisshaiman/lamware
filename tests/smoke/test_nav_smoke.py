@@ -8,6 +8,8 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import re
+
 import pytest
 from playwright.sync_api import expect
 
@@ -35,5 +37,9 @@ def test_login_succeeded(page, config):
 def test_nav_page_renders(page, config, path, heading, widget):
     """Each nav page loads with its heading and key widget visible."""
     page.goto(config["base_url"] + path)
-    expect(page.get_by_role("heading", name=heading).first).to_be_visible()
+    # Auto-wait for the SPA route to settle (keycloak-js may bounce a deep link through
+    # /auth before React mounts); a redirect-to-default then fails here as a clear URL
+    # mismatch rather than an opaque widget timeout.
+    expect(page).to_have_url(re.compile(re.escape(path)))
+    expect(page.get_by_role("heading", name=heading, exact=True).first).to_be_visible()
     expect(page.locator(widget).first).to_be_visible()

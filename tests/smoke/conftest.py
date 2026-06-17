@@ -53,8 +53,8 @@ def auth_state(browser, config) -> dict:
     the resulting SSO cookies are captured by storage_state and reused by every test.
     """
     context = browser.new_context()
+    context.set_default_timeout(15000)
     page = context.new_page()
-    page.set_default_timeout(15000)
 
     # Auto-redirects to the Keycloak login form.
     page.goto(config["base_url"])
