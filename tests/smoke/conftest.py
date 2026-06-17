@@ -9,10 +9,15 @@ License: Apache 2.0
 """
 
 import os
-import re
+from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
+
+# expect() assertions use their own 5s default; raise to match the suite's 15s intent.
+expect.set_options(timeout=15_000)
+
+ARTIFACTS_DIR = Path(__file__).parent / ".artifacts"
 
 
 def _config() -> dict:
@@ -63,18 +68,32 @@ def auth_state(browser, config) -> dict:
     page.fill("#username", config["user"])
     page.fill("#password", config["password"])
     page.click("#kc-login")
-
-    # Land back on the app shell at an authed route (default redirect -> /analyses).
-    page.wait_for_url(re.compile(re.escape(config["base_url"]) + r"/.*"))
-    page.wait_for_selector("aside")
-
+    try:
+        # The app shell (<aside>) only mounts after a successful auth round-trip.
+        page.wait_for_selector("aside", timeout=15_000)
+    except Exception as exc:
+        ARTIFACTS_DIR.mkdir(exist_ok=True)
+        shot = ARTIFACTS_DIR / "login-failure.png"
+        page.screenshot(path=str(shot))
+        on_keycloak = "/auth/" in page.url or page.locator("#kc-login").count() > 0
+        hint = (
+            "still on the Keycloak login page — bad credentials, an unverified email, "
+            "or a required user action (e.g. temporary password)"
+            if on_keycloak
+            else "reached the app origin but the <aside> app shell never rendered"
+        )
+        context.close()
+        raise RuntimeError(
+            f"Smoke login failed: {hint}. Landing URL: {page.url}. "
+            f"Screenshot: {shot}"
+        ) from exc
     state = context.storage_state()
     context.close()
     return state
 
 
 @pytest.fixture()
-def page(browser, auth_state):
+def page(browser, auth_state, request):
     """A fresh authenticated page per test (reuses the cached Keycloak SSO cookies)."""
     context = browser.new_context(
         storage_state=auth_state,
@@ -82,5 +101,25 @@ def page(browser, auth_state):
     )
     context.set_default_timeout(15000)
     page = context.new_page()
+    request.node._smoke_page = page
     yield page
     context.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """On a failed test, dump a screenshot + page HTML for post-mortem."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == "call" and report.failed:
+        page = getattr(item, "_smoke_page", None)
+        if page is not None:
+            ARTIFACTS_DIR.mkdir(exist_ok=True)
+            safe = item.name.replace("/", "_").replace("[", "_").replace("]", "_")
+            try:
+                page.screenshot(path=str(ARTIFACTS_DIR / f"{safe}.png"))
+                (ARTIFACTS_DIR / f"{safe}.html").write_text(
+                    page.content(), encoding="utf-8"
+                )
+            except Exception:
+                pass  # best-effort post-mortem; never mask the real failure
