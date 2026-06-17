@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help deploy security-test
+.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh infra-aws lambda configure validate clean configure-backend packer-setup help deploy security-test smoke smoke-setup
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -22,6 +22,7 @@ AWS_ENV         ?= prod
 ANSIBLE_USER    ?= root
 PACKER_DIR      := packer
 ANSIBLE_DIR     := ansible
+SMOKE_DIR       := tests/smoke
 OVH_DIR         := ovh
 AWS_DIR         := aws/envs/$(AWS_ENV)
 
@@ -313,7 +314,9 @@ deploy:
 			-i inventory/hosts \
 			security-test.yml \
 			--ask-vault-pass
-	@echo "==> Deploy + test complete."
+	@echo "==> Running post-deploy smoke gate..."
+	@$(MAKE) smoke
+	@echo "==> Deploy + test + smoke complete."
 
 security-test:
 	@echo "==> Running security smoke tests..."
@@ -323,6 +326,39 @@ security-test:
 			security-test.yml \
 			--ask-vault-pass
 	@echo "==> Security tests complete."
+
+smoke-setup:
+	@echo "==> Setting up smoke-gate venv + Chromium..."
+	@cd $(SMOKE_DIR) && python3.12 -m venv .venv
+	@cd $(SMOKE_DIR) && ./.venv/bin/pip -q install -r requirements.txt
+	@cd $(SMOKE_DIR) && ./.venv/bin/playwright install chromium
+	@echo "==> Smoke gate ready. Run 'make smoke'."
+
+smoke:
+	@echo "==> Running Playwright smoke gate against $${SMOKE_BASE_URL:-https://lamware.shaiman.net}..."
+	@if [ ! -x "$(SMOKE_DIR)/.venv/bin/python" ]; then \
+		echo "ERROR: smoke venv missing. Run 'make smoke-setup' first." && exit 1; \
+	fi
+	@PW_PASS="$$SMOKE_TEST_PASSWORD"; \
+	if [ -z "$$PW_PASS" ]; then \
+		echo "==> Extracting smoke test password from vault (enter vault pass)..."; \
+		PW_PASS=$$(cd $(ANSIBLE_DIR) && ansible-vault view vars/secrets.yml \
+			| sed -n 's/^keycloak_smoke_test_password:[[:space:]]*//p' | tr -d '"' | head -n1); \
+	fi; \
+	if [ -z "$$PW_PASS" ]; then \
+		echo "ERROR: could not resolve SMOKE_TEST_PASSWORD (env or vault)." && exit 1; \
+	fi; \
+	SMOKE_TEST_PASSWORD="$$PW_PASS" $(SMOKE_DIR)/.venv/bin/python -m pytest $(SMOKE_DIR) -q || { \
+		echo "==================== SMOKE GATE FAILED ===================="; \
+		if [ -n "$$NTFY_TOPIC" ]; then \
+			curl -s -H "Title: lamware smoke gate FAILED" -H "Priority: urgent" \
+				-H "Tags: rotating_light" \
+				-d "Post-deploy Playwright smoke gate failed" \
+				"https://ntfy.sh/$$NTFY_TOPIC" >/dev/null 2>&1 || true; \
+		fi; \
+		exit 1; \
+	}
+	@echo "==> Smoke gate passed."
 
 # -----------------------------------------------------------------------------
 # Clean
