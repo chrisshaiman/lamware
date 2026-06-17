@@ -33,7 +33,7 @@ export function AlertsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="alerts-content">
       <div className="flex items-center gap-2">
         <AlertTriangle className="h-5 w-5 text-[var(--color-text-secondary)]" />
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">

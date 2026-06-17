@@ -35,7 +35,7 @@ export function StatsPage() {
   if (!stats) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="stats-content">
       <div className="flex items-center gap-2">
         <BarChart3 className="h-5 w-5 text-[var(--color-text-secondary)]" />
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">Statistics</h1>
