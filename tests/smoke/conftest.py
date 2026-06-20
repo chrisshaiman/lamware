@@ -106,6 +106,49 @@ def page(browser, auth_state, request):
     context.close()
 
 
+@pytest.fixture(scope="session")
+def viewer_token(browser, auth_state, config) -> str:
+    """Capture the live viewer Bearer token off a real /api/* request.
+
+    keycloak-js holds the token in memory; the SPA's axios interceptor stamps
+    'Authorization: Bearer <jwt>' on every /api/* call. We navigate to /analyses (which
+    triggers GET /api/analyses) and lift the header — the only PKCE-compatible way to get a
+    raw viewer JWT (direct-access-grants are disabled).
+    """
+    context = browser.new_context(storage_state=auth_state)
+    context.set_default_timeout(15000)
+    page = context.new_page()
+    try:
+        with page.expect_request(
+            lambda r: "/api/" in r.url and bool(r.headers.get("authorization"))
+        ) as info:
+            page.goto(config["base_url"] + "/analyses")
+        header = info.value.headers.get("authorization", "")
+    except Exception as exc:
+        context.close()
+        raise RuntimeError(
+            "Could not capture a viewer Bearer token: no authenticated /api/* request "
+            "was observed on /analyses."
+        ) from exc
+    context.close()
+    if not header.lower().startswith("bearer "):
+        raise RuntimeError(
+            f"Captured /api/* request had no Bearer Authorization header (got: {header!r})."
+        )
+    return header.split(" ", 1)[1]
+
+
+@pytest.fixture(scope="session")
+def viewer_api(_playwright, config, viewer_token):
+    """A raw HTTP client carrying the viewer's Bearer token (no browser)."""
+    ctx = _playwright.request.new_context(
+        base_url=config["base_url"],
+        extra_http_headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    yield ctx
+    ctx.dispose()
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """On a failed test, dump a screenshot + page HTML for post-mortem."""
