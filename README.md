@@ -245,15 +245,18 @@ ssh sandbox 'sudo machinectl shell pipeline@ /bin/bash -c "sample-feeder --famil
 
 ## Security Model
 
-Every analysis tool runs in a Podman container with:
+Every analysis tool runs in a **rootless** Podman container with:
 
-- `--network=none` — no network access (LLM containers use `--network=host` to reach local LiteLLM proxy only)
+- `--network=none` — no network access (LLM containers use `--network=host` to reach the local LiteLLM proxy only)
 - `--read-only` — immutable filesystem
 - `--cap-drop=ALL` — no Linux capabilities
-- `--user 65534:65534` — unprivileged nobody user
+- `--security-opt=no-new-privileges` — no privilege escalation
+- Non-root execution — most wrappers pass `--user 65534:65534`; others (e.g. the Python sandbox) pin the user via the image `USER` directive. Because Podman runs **rootless**, even a container that runs as UID 0 maps to an unprivileged host UID — never host root. Containment (network/filesystem/caps), not the in-container UID, is the primary boundary.
 
 > [!WARNING]
 > **The detonation network is fully air-gapped.** `virbr-det` has no route to `eth0` or `wg0`. iptables DROP rules are enforced before any ACCEPT. INetSim simulates internet services for guest VMs. All admin access is through WireGuard VPN.
+>
+> **Verify containment before first detonation.** The `security-test` Ansible role (`make security-test`) checks the air-gap and core auth/TLS controls post-deploy; run it after any infrastructure change. A misconfigured `virbr-det` route or a hypervisor escape turns this into a live-malware box with network — treat the containment checks as mandatory, not optional.
 
 **LLM API isolation:**
 
@@ -264,10 +267,10 @@ Every analysis tool runs in a Podman container with:
 
 **LLM prompt injection mitigations:**
 
-- All binary data wrapped in `UNTRUSTED_DATA` / `UNTRUSTED_CODE` delimiters
-- LLM output is informational only — never modifies verdicts or triggers actions
-- Tool argument validation via regex whitelist before reaching Ghidra
-- Post-processing detection for prompt influence keywords
+- All binary data wrapped in `UNTRUSTED_DATA` / `UNTRUSTED_CODE` delimiters, with delimiter-escape and newline neutralisation on adversary-controlled fields
+- LLM output is informational only — never modifies verdicts or triggers actions (`pin_finding` returns *proposed* only; a separate analyst-confirmed step is required to persist anything)
+- **Pipeline interpret stage:** regex-whitelist validation of tool arguments before they reach Ghidra, plus post-processing detection for prompt-influence keywords
+- **Investigation agent:** the primary boundary is containment — Ghidra/sandbox tools run with no network, read-only, all capabilities dropped, and only ever return data to the analyst (no action or verdict side effects). *(Arg-shape validation at the agent's tool-dispatch boundary is a tracked hardening follow-up.)*
 - Full audit logging of prompts and responses
 - Triage/Cape/Volatility determine maliciousness — AI explains *how*, not *whether*
 
@@ -405,6 +408,8 @@ OVH Bare Metal
 +-- Unified logging with per-task log files
 +-- 20 Ansible roles for fully automated deployment
 ```
+
+> **Deployment target:** OVH bare metal is the supported, deployed architecture. The repo also contains a dormant AWS Terraform stack (`aws/`) and Lambda handlers (`src/`) from an earlier design — retained for reference per ADR-016 and slated for removal; they are **not** deployed or maintained.
 
 <details>
 <summary>Cost estimate</summary>

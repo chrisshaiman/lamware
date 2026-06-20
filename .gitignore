@@ -58,3 +58,6 @@ docs/superpowers/
 # OS
 .DS_Store
 *.swp
+
+# Build artifacts (Lambda bundles) — built in CI/release, not tracked
+src/*.zip

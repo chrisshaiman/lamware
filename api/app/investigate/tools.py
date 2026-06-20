@@ -391,8 +391,10 @@ def execute_tool(
 
         return {"error": f"Unknown tool: {tool_name}"}
     except Exception as e:
+        # Full detail (which can carry filesystem paths / host info) goes to the
+        # server log only; the model/analyst gets the exception type, not its message.
         log.exception("Tool %s failed", tool_name)
-        return {"error": f"{type(e).__name__}: {e}"}
+        return {"error": f"{tool_name} failed ({type(e).__name__})"}
 
 
 # ---------------------------------------------------------------------------
