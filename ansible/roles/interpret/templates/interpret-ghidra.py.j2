@@ -72,6 +72,37 @@ KNOWN_GOOD_CONTEXT = (
     "targeting or abusing these services (e.g., DGA subdomain of microsoft.com)."
 )
 
+INETSIM_CONTEXT = (
+    "SANDBOX NETWORK ENVIRONMENT: This sample was detonated in an air-gapped sandbox "
+    "whose only network peer is INetSim, a service simulator. You MUST account for this "
+    "when reasoning about network behavior:\n"
+    "- Every DNS query resolves to the sandbox gateway regardless of the real domain. The "
+    "domains/hostnames requested are meaningful IOCs, but the resolved IP is always INetSim "
+    "-- never a real C2 address.\n"
+    "- All HTTP/HTTPS/FTP/SMTP requests receive synthetic success responses (e.g. HTTP 200 "
+    "with placeholder content) from INetSim, not from real servers. The sample never reaches "
+    "genuine C2 or staging infrastructure.\n"
+    "- Therefore the absence of downloaded second-stage payloads, lack of real C2 responses, "
+    "and 'connected but nothing useful returned' are EXPECTED ARTIFACTS OF THE SIMULATION -- "
+    "NOT evidence of evasion, sandbox-detection, inertness, or an incomplete analysis. Do NOT "
+    "flag them as anomalous.\n"
+    "- HTTPS to INetSim uses a self-signed cert the sample will not trust; an aborted TLS "
+    "handshake here is an INetSim artifact.\n"
+    "Extract outbound INTENT as the network signal: contacted domains/hostnames, URI paths, "
+    "HTTP methods, User-Agent strings, request bodies, JA3/TLS fingerprints, beacon "
+    "timing/cadence, and protocol choices are the primary network IOCs. Report them as "
+    "ATTEMPTED C2/staging contact, and corroborate against statically-extracted config where "
+    "possible."
+)
+
+INETSIM_EVASION_NOTE = (
+    "Distinguish genuine sandbox-evasion (the sample detected the analysis environment and "
+    "deliberately withheld behavior) from a stalled execution (the sample needed a live "
+    "C2/next-stage that INetSim cannot provide). Low activity alone is not evasion -- cite a "
+    "concrete evasion technique (timing checks, VM artifacts, sandbox-process checks) before "
+    "concluding evasion."
+)
+
 
 def _bazaar_context(init_msg: dict) -> str:
     """Build context prefix from MalwareBazaar metadata if available."""
@@ -85,6 +116,7 @@ def _bazaar_context(init_msg: dict) -> str:
             f"discrepancy — do not silently override the community classification."
         )
     parts.append(KNOWN_GOOD_CONTEXT)
+    parts.append(INETSIM_CONTEXT)
     return "\n\n".join(parts) + "\n\n" if parts else ""
 
 
@@ -1755,7 +1787,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
             parts.append(f"- [{ioc.get('source', '?')}] {ioc.get('type', '?')}: {ioc.get('value', '?')[:80]} — {ioc.get('context', '')[:60]}")
         parts.append("")
 
-    prompt_text = KNOWN_GOOD_CONTEXT + "\n\n" + "\n".join(parts)
+    prompt_text = KNOWN_GOOD_CONTEXT + "\n\n" + INETSIM_CONTEXT + "\n\n" + "\n".join(parts)
 
     try:
         response = client.messages.create(
@@ -2089,7 +2121,9 @@ Technical summary: {executive}"""
 
     if ghidra_data.get("analysis_type") == "evasion_hunter":
         emit_status(f"Starting evasion analysis with {model}", 0)
-        evasion_text = _ctx + build_evasion_message(ghidra_data, config)
+        # _ctx already carries INETSIM_CONTEXT; add the evasion disambiguation note so
+        # the hunter does not misattribute INetSim-caused quiet to sandbox-evasion.
+        evasion_text = _ctx + INETSIM_EVASION_NOTE + "\n\n" + build_evasion_message(ghidra_data, config)
         try:
             response = client.messages.create(
                 model=model,
