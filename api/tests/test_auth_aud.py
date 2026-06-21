@@ -30,9 +30,9 @@ for _name in [m for m in sys.modules if m == "app" or m.startswith("app.")]:
 import app.auth as app_auth  # noqa: E402
 
 
-def test_default_allowlist_is_transitional():
-    """Shipped default accepts the dedicated audience plus transitional account."""
-    assert app_auth.settings.jwt_allowed_audiences == ["lamware-api", "account"]
+def test_default_allowlist_is_strict():
+    """Shipped default accepts only the dedicated lamware-api audience."""
+    assert app_auth.settings.jwt_allowed_audiences == ["lamware-api"]
 
 
 # --- Test key + token helpers ----------------------------------------------
@@ -89,7 +89,8 @@ def test_list_aud_intersecting_allowlist_accepted(monkeypatch):
     assert ctx.user_id == "user-123"
 
 
-def test_account_accepted_under_transitional_default(monkeypatch):
+def test_token_accepted_when_aud_matches_a_multi_entry_allowlist(monkeypatch):
+    """Intersection semantics: any single allowlisted audience is sufficient."""
     monkeypatch.setattr(
         app_auth.settings, "jwt_allowed_audiences", ["lamware-api", "account"]
     )
