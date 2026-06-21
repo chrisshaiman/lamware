@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from ..config import settings
+from .tool_validators import validate_tool_args
 
 log = logging.getLogger(__name__)
 
@@ -335,6 +336,9 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# Schema lookup for argument validation (built once from the tool definitions).
+_SCHEMA_BY_NAME = {t["name"]: t["input_schema"] for t in TOOL_DEFINITIONS}
+
 
 # ---------------------------------------------------------------------------
 # Dispatch
@@ -360,6 +364,11 @@ def execute_tool(
 ) -> dict:
     """Dispatch a tool call. Always returns a JSON-safe dict, never raises."""
     try:
+        err = validate_tool_args(tool_name, args, _SCHEMA_BY_NAME)
+        if err:
+            log.warning("Tool %s rejected by arg validation: %s", tool_name, err)
+            return {"error": err}
+
         if tool_name in _GHIDRA_TOOLS:
             return _ghidra_tool(tool_name, args, report)
 
