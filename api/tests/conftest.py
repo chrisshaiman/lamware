@@ -17,8 +17,15 @@ import pytest
 
 @pytest.fixture(scope="session")
 def base_url():
-    """API base URL."""
-    url = os.environ.get("LAMWARE_TEST_URL", "http://10.200.0.1:8001")
+    """API base URL for integration tests.
+
+    Integration tests hit the live deployed API. Skip them (rather than ConnectError)
+    when LAMWARE_TEST_URL is unset — mirrors the jwt_token fixture below. Set
+    LAMWARE_TEST_URL=http://10.200.0.1:8001 to run them locally against the sandbox.
+    """
+    url = os.environ.get("LAMWARE_TEST_URL", "")
+    if not url:
+        pytest.skip("LAMWARE_TEST_URL not set")
     return url.rstrip("/")
 
 
