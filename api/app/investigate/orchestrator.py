@@ -248,6 +248,14 @@ async def run_conversation_turn(
 
             if not tool_blocks:
                 # Final text response — append to messages and break
+                #
+                # No prompt-influence keyword scan here (unlike the pipeline's check_prompt_influence).
+                # That scan guards the pipeline's maliciousness VERDICT ("benign"/"not malicious"). The
+                # investigation agent emits no verdict — it is analyst-driven Q&A, output-only (pin_finding
+                # returns "proposed"; maliciousness is decided upstream). There is no verdict to protect, so a
+                # keyword scan over conversational text would be noisy and actionless. The agent path's controls
+                # are containment (no-net/read-only/cap-drop), output-only pins, analyst-auth, and execute_tool
+                # arg validation (see tool_validators.py).
                 messages.append({"role": "assistant", "content": accumulated_text})
                 break
 
