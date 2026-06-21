@@ -27,10 +27,11 @@ class Settings(BaseSettings):
     keycloak_client_id: str = "lamware-web"
 
     # JWT audience allowlist — a token is accepted only if its aud claim
-    # intersects this list. "account" is transitional (Keycloak stamps it on
-    # every realm token); drop it once all live tokens carry lamware-api.
+    # intersects this list. lamware-web stamps "lamware-api" into the access
+    # token via a Keycloak audience mapper, so only tokens minted for this API
+    # are accepted (a second realm client's token is rejected — confused-deputy).
     # Override with LAMWARE_JWT_ALLOWED_AUDIENCES (JSON list).
-    jwt_allowed_audiences: list[str] = ["lamware-api", "account"]
+    jwt_allowed_audiences: list[str] = ["lamware-api"]
 
     # API docs — disable in production
     enable_docs: bool = False

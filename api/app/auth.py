@@ -134,9 +134,9 @@ async def _validate_jwt(token: str) -> AuthContext:
             issuer=expected_issuer,
             audience=settings.jwt_allowed_audiences,
             # Accept a token only if its aud intersects the allowlist. lamware-web
-            # stamps "lamware-api" via a Keycloak audience mapper; "account" is
-            # transitional. Prevents a second realm client's token from being
-            # replayed against this API (confused-deputy).
+            # stamps "lamware-api" via a Keycloak audience mapper. Prevents a
+            # second realm client's token from being replayed against this API
+            # (confused-deputy).
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
