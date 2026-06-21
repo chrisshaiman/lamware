@@ -54,6 +54,16 @@
             "access.token.claim": "true",
             "userinfo.token.claim": "true"
           }
+        },
+        {
+          "name": "lamware-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "{{ keycloak_api_audience | default('lamware-api') }}",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
         }
       ]
     }
