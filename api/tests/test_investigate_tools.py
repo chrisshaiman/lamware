@@ -65,6 +65,14 @@ _TOOLS_SRC = (
 )
 _source = _TOOLS_SRC.read_text(encoding="utf-8")
 
+# Load the pure validator (no stubs needed) and inject it so tools.py's
+# `from .tool_validators import validate_tool_args` resolves during exec.
+_TV_SRC = (
+    Path(__file__).resolve().parent.parent / "app" / "investigate" / "tool_validators.py"
+)
+_tv_ns: dict = {}
+exec(_TV_SRC.read_text(encoding="utf-8"), _tv_ns)  # noqa: S102
+
 # Replace the relative import with direct references to our stubs so the
 # exec'd code can find `settings`, `text`, and `Session`.
 _source_patched = _source.replace(
@@ -76,9 +84,13 @@ _source_patched = _source.replace(
 ).replace(
     "from ..config import settings",
     "from app.config import settings",
+).replace(
+    "from .tool_validators import validate_tool_args",
+    "validate_tool_args = _INJECTED_validate_tool_args",
 )
 
 _ns: dict = {}
+_ns["_INJECTED_validate_tool_args"] = _tv_ns["validate_tool_args"]
 exec(_source_patched, _ns)  # noqa: S102
 
 # Pull out the symbols we want to test
@@ -87,6 +99,10 @@ _pin_finding = _ns["_pin_finding"]
 _cape_task_id = _ns["_cape_task_id"]
 _get_api_traces = _ns["_get_api_traces"]
 _get_pcap_summary = _ns["_get_pcap_summary"]
+execute_tool = _ns["execute_tool"]
+_GHIDRA_TOOLS = _ns["_GHIDRA_TOOLS"]
+GHIDRA_ARG_VALIDATORS = _tv_ns["GHIDRA_ARG_VALIDATORS"]
+_ns_ghidra_tool_orig = _ns["_ghidra_tool"]
 
 
 # ---------------------------------------------------------------------------
@@ -365,3 +381,49 @@ def test_get_pcap_summary_large_truncation():
     assert "keys" in result
     # Should NOT include the raw pcap_analysis blob
     assert "pcap_analysis" not in result
+
+
+# ---------------------------------------------------------------------------
+# Argument validation at the dispatch boundary
+# ---------------------------------------------------------------------------
+
+
+def test_execute_tool_rejects_bad_args_without_dispatch():
+    """An invalid Ghidra arg returns an error AND never reaches the subprocess."""
+    calls = []
+    _ns["_ghidra_tool"] = lambda *a, **k: calls.append(a) or {"ok": True}
+    try:
+        result = execute_tool(
+            "decompile_function",
+            {"name": "x" * 300},
+            session=None,
+            report={},
+            analysis_id=1,
+        )
+    finally:
+        _ns["_ghidra_tool"] = _ns_ghidra_tool_orig
+    assert "error" in result
+    assert calls == [], "validation must run before dispatch — _ghidra_tool was called"
+
+
+def test_execute_tool_allows_valid_args_to_dispatch():
+    """A valid arg passes validation and reaches the (spied) Ghidra dispatch."""
+    calls = []
+    _ns["_ghidra_tool"] = lambda *a, **k: calls.append(a) or {"ok": True}
+    try:
+        result = execute_tool(
+            "decompile_function",
+            {"name": "main"},
+            session=None,
+            report={},
+            analysis_id=1,
+        )
+    finally:
+        _ns["_ghidra_tool"] = _ns_ghidra_tool_orig
+    assert result == {"ok": True}
+    assert len(calls) == 1
+
+
+def test_ghidra_validators_match_registry():
+    """Every Ghidra tool has an arg validator (drift guard against the real registry)."""
+    assert set(GHIDRA_ARG_VALIDATORS) == _GHIDRA_TOOLS
