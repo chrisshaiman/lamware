@@ -183,7 +183,7 @@ External adversarial review, each claim verified against code before listing. **
 | Item | Pri | Notes |
 |------|-----|-------|
 | Reconcile agent prompt-injection defenses with README | DONE | **DONE — merged #114 (2026-06-21), live-validated** (Ghidra agentic tools happy-path on a native DarkVNC PE; Go sample correctly routes to GoReSym, no Ghidra tools). Arg validation at execute_tool (`tool_validators.py`, fail-closed) + regression test + a new `Test (api)` CI job (api unit suite now CI-gated); prompt-influence scan documented N/A for the agent path. NOTE: `GHIDRA_ARG_VALIDATORS` is a **manual mirror** of the pipeline's `TOOL_ARG_VALIDATORS` — keep in sync until de-templating. The README's advertised "regex arg whitelist before Ghidra" + "prompt-influence post-processing" DO exist — on the **pipeline** interpret path (`ansible/roles/pipeline/templates/stages/interpret.py.j2`: `TOOL_ARG_VALIDATORS`, `check_prompt_influence`) — but NOT on the **agentic investigation** path: `execute_tool`→`_ghidra_tool` (`api/app/investigate/tools.py`) does `json.dumps(args)` straight to the wrapper with no validation, and the orchestrator has no influence post-processing. Fix: (a) port arg-shape validation into `execute_tool` before dispatch (reuse the pipeline validators), (b) add influence post-processing to the agent loop or document why containment suffices, (c) correct the README to distinguish the two LLM paths. Real exploitability is LOW today (containment: `--network=none`/`--read-only`/`--cap-drop=ALL`, Ghidra `getAddress()` returns null on garbage, `pin_finding` output-only, analyst-authenticated) — but the doc claims a hot-path control that isn't there, and the security model is the headline. |
-| JWT: validate `aud` against an allowlist | MED | `api/app/auth.py` decodes with `options={"verify_aud": False}`; issuer pinning ≠ audience, so any token the realm issues for ANY client is accepted → confused-deputy risk if a second client is added. Validate `aud` ∈ {`account`, `<api-client-id>`} instead of disabling the check. |
+| JWT: validate `aud` against an allowlist | MED | In progress — feature/jwt-aud-allowlist. API now validates aud against LAMWARE_JWT_ALLOWED_AUDIENCES (transitional default ["lamware-api","account"]); lamware-web stamps lamware-api via a Keycloak audience mapper. Tighten to ["lamware-api"] in a follow-up once live tokens are confirmed (see runbook). |
 | Prompt-injection regression test | MED | Structural tests wrap untrusted data, but none feed an injection payload and assert no attacker-chosen tool args execute. Pairs with the HIGH item (add once `execute_tool` validation lands). |
 | Source LLM pricing from LiteLLM, not hardcoded dicts | MED | `orchestrator.py` `MODEL_COSTS` (and `_calculate_llm_cost` in db_ingest) hardcode per-token prices that drift on model updates; LiteLLM already tracks spend — read cost from its usage/spend response. Ties to "Separate manual-analysis cost category." **Latent, not broken (verified 2026-06-21):** `MODEL_COSTS` keys exactly match `VALID_MODELS` (`investigate.py`: sonnet-4-6/opus-4-6/haiku-4-5), so cost is correct today. Risk is the silent fallback — `MODEL_COSTS.get(model, {0.0,0.0})` costs any unknown/bumped model at **$0** with no error; three hand-synced lists (VALID_MODELS + MODEL_COSTS + db_ingest table) + stale prices on Anthropic changes. |
 | Extend ruff to api/ in CI | LOW | `ci.yml` runs `ruff check src/` only; `api/app` (the most security-sensitive Python) isn't ruff-linted (semgrep does cover it). Change to `ruff check src/ api/`. |
@@ -195,6 +195,23 @@ External adversarial review, each claim verified against code before listing. **
 | Rework api exec-with-stubs tests so test_ws_* run in CI | LOW | The api unit tests load tools.py via top-level `sys.modules` stubs + `exec`, which leak at import time and break `test_ws_endpoint`/`test_ws_manager` (real `fastapi`/`app` imports). A per-test fixture or `pytest --forked` can't fix import-time pollution. Fix = save/restore `sys.modules` around each module's exec, or import normally now that CI installs real api deps. Until then CI `--ignore`s the 2 ws tests. |
 
 Acceptable / no action: `_sanitize_untrusted` 512-char truncation is prompt-context-only (the stored IOC value is intact); optionally raise `max_len` for URL-type IOCs.
+
+#### Runbook: enabling strict JWT audience validation
+
+The realm template adds the `lamware-api` audience mapper, but Keycloak realm
+import is **create-only** — it does not retrofit the live realm. To roll out:
+
+1. Deploy the API (`--tags api`). It now enforces aud ∈ {lamware-api, account};
+   live tokens still carry `account`, so no lockout and no security gain yet.
+2. In the Keycloak admin console: Clients → `lamware-web` → Client scopes →
+   `lamware-web-dedicated` → Add mapper → By configuration → Audience →
+   Custom audience = `lamware-api`, "Add to access token" ON.
+3. Log in, capture a fresh access token (browser devtools), decode it, and
+   confirm `aud` contains `lamware-api`.
+4. `make smoke` — confirm login still works end-to-end.
+5. Follow-up commit: set `jwt_allowed_audiences = ["lamware-api"]` (drop
+   `account`), deploy `--tags api`. Audience validation now blocks any other
+   client's token.
 
 ### High Priority
 
