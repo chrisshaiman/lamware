@@ -206,10 +206,13 @@ import is **create-only** — it does not retrofit the live realm. To roll out:
 2. In the Keycloak admin console: Clients → `lamware-web` → Client scopes →
    `lamware-web-dedicated` → Add mapper → By configuration → Audience →
    Custom audience = `lamware-api`, "Add to access token" ON.
-3. Log in, capture a fresh access token (browser devtools), decode it, and
-   confirm `aud` contains `lamware-api`.
-4. `make smoke` — confirm login still works end-to-end.
-5. Follow-up commit: set `jwt_allowed_audiences = ["lamware-api"]` (drop
+3. `make smoke` — confirms login still works end-to-end AND that a freshly
+   issued access token carries `lamware-api`
+   (`tests/smoke/test_token_audience.py`, via the PKCE `viewer_token` fixture).
+   This is the automated replacement for hand-decoding a token in devtools, and
+   a permanent regression gate: if the mapper is ever removed, smoke fails before
+   strict validation can lock out the app.
+4. Follow-up commit: set `jwt_allowed_audiences = ["lamware-api"]` (drop
    `account`), deploy `--tags api`. Audience validation now blocks any other
    client's token.
 
