@@ -5,9 +5,3 @@ api_install_dir: /opt/lamware-api
 api_port: 8001
 api_host: "127.0.0.1"
 api_user: lamware-api
-
-# Where the pipeline role stages the shared package source (lamware_shared) that
-# the api venv installs. Defined here too so a tag-isolated `--tags api` deploy
-# doesn't fail on an undefined var (the pipeline role's default isn't loaded then).
-# Must match pipeline role's pipeline_install_dir.
-pipeline_install_dir: /opt/pipeline

@@ -98,7 +98,10 @@
 
 - name: Install lamware-shared into api venv
   ansible.builtin.pip:
-    name: "{{ pipeline_install_dir }}/pkg/shared"
+    # pipeline role stages the package here; inline default keeps a standalone
+    # `--tags api` run from failing on an undefined var (avoids defining a
+    # non-api_-prefixed var in this role's defaults, which ansible-lint forbids).
+    name: "{{ pipeline_install_dir | default('/opt/pipeline') }}/pkg/shared"
     state: present
     virtualenv: "{{ api_install_dir }}/venv"
 
