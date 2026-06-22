@@ -1,0 +1,16 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "lamware-shared"
+version = "0.1.0"
+description = "Shared code for the lamware platform (api + pipeline)"
+authors = [{ name = "Christopher Shaiman" }]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lamware_shared*"]
