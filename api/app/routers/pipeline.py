@@ -7,7 +7,7 @@
 # completed within the last 24 hours. Returns stage_timings and current_stage
 # so the frontend can render a live progress view.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
@@ -37,7 +37,7 @@ async def pipeline_status(
     Each entry includes stage_timings (per-stage elapsed seconds) and
     current_stage so clients can render a progress indicator.
     """
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=RECENT_WINDOW_HOURS)
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=RECENT_WINDOW_HOURS)
 
     # Fetch active and recently completed analyses together.
     # The OR predicate is expressed via SQLAlchemy's | operator on column
@@ -71,7 +71,7 @@ async def pipeline_status(
     return {
         "running": running,
         "recent_completed": recent,
-        "as_of": datetime.now(tz=timezone.utc).isoformat(),
+        "as_of": datetime.now(tz=UTC).isoformat(),
     }
 
 

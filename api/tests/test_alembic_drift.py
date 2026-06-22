@@ -57,9 +57,8 @@ def test_models_match_db(built_engine):
     import app.models  # noqa: F401 — register tables on metadata
     from alembic.autogenerate import compare_metadata
     from alembic.runtime.migration import MigrationContext
-    from sqlmodel import SQLModel
-
     from app.schema_meta import include_object
+    from sqlmodel import SQLModel
 
     with built_engine.connect() as conn:
         ctx = MigrationContext.configure(

@@ -24,7 +24,7 @@
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -147,6 +147,7 @@ def _execute_tool_with_own_session(tool_name: str, args: dict, report: dict, ana
     thread — create a short-lived session here instead.
     """
     from sqlmodel import Session
+
     from ..database import engine
     with Session(engine) as tool_session:
         return execute_tool(tool_name, args, tool_session, report, analysis_id)
@@ -193,7 +194,6 @@ async def run_conversation_turn(
             # --- Streaming call ---
             accumulated_text = ""
             accumulator = ToolCallAccumulator()
-            call_failed = False
 
             try:
                 async with client.stream(

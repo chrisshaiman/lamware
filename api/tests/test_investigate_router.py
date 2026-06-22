@@ -48,9 +48,8 @@ def test_no_endpoint_shadows_imported_dependency():
         f"Function(s) {collisions} shadow imported dependencies — rename the "
         f"endpoint handler(s) to avoid breaking Depends() resolution."
     )
-from decimal import Decimal
-from pathlib import Path
 from unittest.mock import MagicMock
+
 import pytest
 
 # ---------------------------------------------------------------------------

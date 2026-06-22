@@ -19,7 +19,7 @@ One row per unique binary, keyed by SHA256. Tracks file identity,
 metadata, and first/last-seen timestamps across all pipeline runs.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -37,6 +37,6 @@ class Sample(SQLModel, table=True):
     file_mime: str | None = Field(default=None, max_length=100)
     file_size: int | None = Field(default=None)
     entropy: float | None = Field(default=None)
-    first_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    last_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

@@ -28,7 +28,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
-        run: ruff check src/
+        run: ruff check src/ api/
 
       - name: Test (pytest)
         # tests/smoke is the live post-deploy Playwright gate (needs a browser + the live

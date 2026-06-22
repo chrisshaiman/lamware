@@ -9,7 +9,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,8 +17,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlmodel import Session, col, select
 
-from ..auth import AuthContext, require_auth, require_role
 from ..audit import log_audit
+from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
 from ..investigate.orchestrator import run_conversation_turn
@@ -145,10 +145,10 @@ def _build_report_markdown(session_dict: dict, messages: list[dict], pins: list[
                 data = {"raw": content}
             args_str = json.dumps(data.get("args", data), indent=2)
             lines.append(f"> **Tool:** `{tool_name}` — args")
-            lines.append(f"> ```json")
+            lines.append("> ```json")
             for arg_line in args_str.splitlines():
                 lines.append(f"> {arg_line}")
-            lines.append(f"> ```")
+            lines.append("> ```")
             lines.append("")
         elif role == "tool_result":
             # Show result as a truncated JSON code block in a blockquote
@@ -160,10 +160,10 @@ def _build_report_markdown(session_dict: dict, messages: list[dict], pins: list[
             if len(result_str) > 2000:
                 result_str = result_str[:2000] + "\n... [truncated]"
             lines.append(f"> **Result:** `{tool_name}`")
-            lines.append(f"> ```json")
+            lines.append("> ```json")
             for res_line in result_str.splitlines():
                 lines.append(f"> {res_line}")
-            lines.append(f"> ```")
+            lines.append("> ```")
             lines.append("")
 
     return "\n".join(lines)
@@ -459,7 +459,7 @@ async def send_message(
                     session.total_input_tokens += input_tokens
                     session.total_output_tokens += output_tokens
                     session.total_cost_usd += Decimal(str(cost))
-                    session.updated_at = datetime.now(timezone.utc)
+                    session.updated_at = datetime.now(UTC)
                     db.add(session)
                     db.commit()
 
@@ -643,7 +643,7 @@ def update_model(
         )
 
     session.model = model
-    session.updated_at = datetime.now(timezone.utc)
+    session.updated_at = datetime.now(UTC)
     db.add(session)
     db.commit()
 
@@ -665,7 +665,7 @@ def complete_session(
     session = _get_owned_session(session_id, auth, db)
 
     session.status = "completed"
-    session.updated_at = datetime.now(timezone.utc)
+    session.updated_at = datetime.now(UTC)
     db.add(session)
     db.commit()
 

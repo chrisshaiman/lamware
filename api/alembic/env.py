@@ -33,9 +33,8 @@ target_metadata = None
 include_object = None
 try:
     import app.models  # noqa: F401 — registers all tables on SQLModel.metadata
-    from sqlmodel import SQLModel
-
     from app.schema_meta import include_object  # noqa: F811 — rebinds the None default
+    from sqlmodel import SQLModel
 
     target_metadata = SQLModel.metadata
 except ModuleNotFoundError:

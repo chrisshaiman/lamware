@@ -7,7 +7,7 @@ import csv
 import io
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,8 +15,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import text
 from sqlmodel import Session, col, func, select
 
-from ..auth import AuthContext, require_auth, require_role
 from ..audit import log_audit
+from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
 from ..models import (
@@ -676,7 +676,7 @@ def export_iocs_stix(
             "created": (
                 analysis.started_at.isoformat()
                 if analysis.started_at
-                else datetime.now(timezone.utc).isoformat()
+                else datetime.now(UTC).isoformat()
             ),
         }
     )

@@ -5,7 +5,6 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
-
 from app.ws_manager import ConnectionManager
 
 

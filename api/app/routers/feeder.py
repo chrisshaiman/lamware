@@ -19,17 +19,17 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
-log = logging.getLogger(__name__)
-
-from ..auth import AuthContext, require_auth, require_role
 from ..audit import log_audit
+from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/feeder", tags=["feeder"])
 
@@ -58,7 +58,7 @@ async def feeder_status(
         "status": status,
         "paused": paused,
         "state": state,
-        "as_of": datetime.now(tz=timezone.utc).isoformat(),
+        "as_of": datetime.now(tz=UTC).isoformat(),
     }
 
 

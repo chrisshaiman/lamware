@@ -10,7 +10,7 @@
 
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -61,7 +61,7 @@ async def get_spend_summary(
         logs = []
 
     # Filter to requested date range
-    cutoff = datetime.now(timezone.utc).timestamp() - (days * 86400)
+    cutoff = datetime.now(UTC).timestamp() - (days * 86400)
     filtered = []
     for entry in logs:
         start_str = entry.get("startTime", "")
