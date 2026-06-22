@@ -96,6 +96,12 @@
   changed_when: true
   notify: Restart lamware-api
 
+- name: Install lamware-shared into api venv
+  ansible.builtin.pip:
+    name: "{{ pipeline_install_dir }}/pkg/shared"
+    state: present
+    virtualenv: "{{ api_install_dir }}/venv"
+
 - name: Deploy lamware-api environment file
   ansible.builtin.template:
     src: lamware-api.env.j2
