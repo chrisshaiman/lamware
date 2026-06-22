@@ -4,9 +4,23 @@
 
 Normal import: tool_validators imports only lamware_shared, so no DB/app
 stack is needed once lamware_shared is installed.
+
+sys.modules cleanup: other test files (test_orchestrator.py, test_system_prompt.py)
+register stub ModuleType objects for app.investigate so their exec()-loaded sources
+resolve against fakes instead of the real DB/FastAPI stack.  Those stubs must be
+evicted before we attempt a genuine import here, otherwise Python resolves
+`app.investigate` to the bare ModuleType and cannot find tool_validators under it.
 """
 
-from app.investigate.tool_validators import validate_tool_args
+import sys
+
+# Evict any stub registrations for the app.investigate namespace so that our
+# normal import below gets the real module from the filesystem.
+for _key in list(sys.modules):
+    if _key.startswith("app.investigate"):
+        del sys.modules[_key]
+
+from app.investigate.tool_validators import validate_tool_args  # noqa: E402
 
 _SCHEMA = {
     "decompile_function": {
