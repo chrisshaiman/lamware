@@ -1,0 +1,16 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "lamware-pipeline"
+version = "0.1.0"
+description = "lamware analysis pipeline (de-templated package)"
+authors = [{ name = "Christopher Shaiman" }]
+requires-python = ">=3.12"
+dependencies = ["lamware-shared", "pydantic>=2"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lamware_pipeline*"]

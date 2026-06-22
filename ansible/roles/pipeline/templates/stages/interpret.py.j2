@@ -17,44 +17,16 @@ import subprocess
 import time
 from pathlib import Path
 
-
-# Tool argument validation — regex whitelist per tool
-TOOL_ARG_VALIDATORS = {
-    "decompile_function": {"name": r"^.{1,200}$"},
-    "get_xrefs_to": {"name": r"^.{1,200}$"},
-    "get_xrefs_from": {"name": r"^.{1,200}$"},
-    "get_strings_at": {"address": r"^0x[0-9a-fA-F]{1,16}$", "range": r"^[0-9]{1,6}$"},
-    "list_functions": {"filter": r"^[A-Za-z0-9_*?]{0,100}$"},
-    "get_data_at": {"address": r"^0x[0-9a-fA-F]{1,16}$", "length": r"^[0-9]{1,5}$"},
-}
+from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidra_args
 
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
 
 def validate_tool_args(tool_name: str, args: dict) -> str | None:
-    """Validate tool arguments against regex whitelist. Returns error or None."""
-    validators = TOOL_ARG_VALIDATORS.get(tool_name)
-    if validators is None:
+    """Validate a pipeline tool call. Preserves the prior Unknown-tool behavior."""
+    if tool_name not in GHIDRA_ARG_VALIDATORS:
         return f"Unknown tool: {tool_name}"
-    for arg_name, arg_value in args.items():
-        pattern = validators.get(arg_name)
-        if pattern is None:
-            continue
-        if not re.match(pattern, str(arg_value)):
-            return f"Invalid {arg_name}: must match {pattern}"
-    if "range" in args:
-        try:
-            if int(args["range"]) > 4096:
-                return "range must be <= 4096"
-        except (ValueError, TypeError):
-            return "range must be numeric"
-    if "length" in args:
-        try:
-            if int(args["length"]) > 65536:
-                return "length must be <= 65536"
-        except (ValueError, TypeError):
-            return "length must be numeric"
-    return None
+    return validate_ghidra_args(tool_name, args)
 
 
 def run_ghidra_tool(project_dir: str, program_name: str,

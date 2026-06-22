@@ -180,6 +180,44 @@
     state: present
     break_system_packages: true
 
+# -------------------------------------------------------------------------
+# lamware packages — deliver source trees and install system-wide so both
+# the pipeline user (system python3) and the lamware-api venv can import
+# lamware_shared. lamware_pipeline is pipeline-only.
+# -------------------------------------------------------------------------
+
+- name: Create package staging directory
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/pkg"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0755"
+
+- name: Deploy lamware-shared package source
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../shared"
+    dest: "{{ pipeline_install_dir }}/pkg/"
+    owner: pipeline
+    group: lamware
+    mode: "0644"
+
+- name: Deploy lamware-pipeline package source
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../pipeline"
+    dest: "{{ pipeline_install_dir }}/pkg/"
+    owner: pipeline
+    group: lamware
+    mode: "0644"
+
+- name: Install lamware-shared and lamware-pipeline system-wide
+  ansible.builtin.pip:
+    name:
+      - "{{ pipeline_install_dir }}/pkg/shared"
+      - "{{ pipeline_install_dir }}/pkg/pipeline"
+    state: present
+    break_system_packages: true
+
 - name: Fix pip package permissions for pipeline user
   ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
   args:
@@ -215,6 +253,19 @@
     opts: "size=12g,uid=pipeline,gid=lamware,mode=2750"
     state: mounted
   when: pipeline_volatility_ramdisk | default('') | length > 0
+
+- name: Deploy pipeline config.json
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ pipeline_install_dir }}/config.json"
+    owner: pipeline
+    group: lamware
+    mode: "0640"
+
+- name: Verify lamware packages importable (api + pipeline share lamware_shared)
+  ansible.builtin.command:
+    cmd: python3 -c "import lamware_shared, lamware_pipeline"
+  changed_when: false
 
 - name: Deploy run-pipeline.py
   ansible.builtin.template:

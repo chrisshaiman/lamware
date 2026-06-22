@@ -1,0 +1,8 @@
+{
+  "malfind_enabled": {{ pipeline_malfind_enabled | default(true) | to_json }},
+  "malfind_max_candidates": {{ pipeline_malfind_max_candidates | default(5) }},
+  "malfind_min_size": {{ pipeline_malfind_min_size | default(256) }},
+  "malfind_max_size": {{ pipeline_malfind_max_size | default(10485760) }},
+  "malfind_min_score": {{ pipeline_malfind_min_score | default(2) }},
+  "malfind_benign_processes": {{ (pipeline_malfind_benign_processes | default(['csrss.exe', 'smss.exe', 'MsMpEng.exe', 'fontdrvhost.exe'])) | to_json }}
+}

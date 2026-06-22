@@ -61,3 +61,7 @@ docs/superpowers/
 
 # Build artifacts (Lambda bundles) — built in CI/release, not tracked
 src/*.zip
+
+# Python build artifacts (pip install -e generates these)
+build/
+*.egg-info/
