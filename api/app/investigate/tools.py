@@ -277,8 +277,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "run_python",
         "description": (
-            "Execute a Python script in an isolated sandbox (no network, 30s timeout, "
-            "256MB). Pre-loaded helpers: "
+            "Execute a Python script in an isolated sandbox (no network, "
+            f"{settings.sandbox_timeout_seconds}s timeout, {settings.sandbox_memory_mb}MB). "
+            "Pre-loaded helpers: "
             "`from helpers.crypto import xor_decrypt, rc4_decrypt, single_byte_xor_scan`; "
             "`from helpers.encoding import b64_decode, b64_variants, hex_to_bytes, "
             "bytes_to_hex, rot13`; "
@@ -292,7 +293,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "script": {
                     "type": "string",
-                    "description": "Python script (max 10KB)",
+                    "description": f"Python script (max {settings.sandbox_max_script_bytes // 1024}KB)",
                 },
             },
             "required": ["script"],
@@ -799,8 +800,9 @@ def _get_api_traces(args: dict, report: dict) -> dict:
 
 def _run_python(args: dict, report: dict) -> dict:
     script = args["script"]
-    if len(script.encode()) > 10240:
-        return {"error": "Script exceeds 10KB limit — shorten your script"}
+    if len(script.encode()) > settings.sandbox_max_script_bytes:
+        kb = settings.sandbox_max_script_bytes // 1024
+        return {"error": f"Script exceeds {kb}KB limit — shorten your script"}
 
     # shlex.split so that env-var values like "sudo -u pipeline /usr/local/bin/run-sandbox"
     # are split into a proper argv list rather than treated as a single executable name.
@@ -811,16 +813,21 @@ def _run_python(args: dict, report: dict) -> dict:
     if dropped is not None:
         cmd += ["--data", str(dropped)]
 
+    # Outer backstop = the container's own timeout + 10s margin. The container
+    # (run-sandbox, python_sandbox_container_timeout) is the authoritative limit;
+    # this just ensures the subprocess can't hang past it.
+    outer_timeout = settings.sandbox_timeout_seconds + 10
+
     try:
         result = subprocess.run(
             cmd,
             input=script,
             capture_output=True,
             text=True,
-            timeout=40,
+            timeout=outer_timeout,
         )
     except subprocess.TimeoutExpired:
-        return {"error": "Sandbox timed out after 40 seconds"}
+        return {"error": f"Sandbox timed out (>{outer_timeout}s)"}
 
     out = result.stdout
     err = result.stderr
