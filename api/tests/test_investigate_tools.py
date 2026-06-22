@@ -18,6 +18,8 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Stub external dependencies before loading tools.py
 # ---------------------------------------------------------------------------
@@ -425,6 +427,61 @@ def test_execute_tool_allows_valid_args_to_dispatch():
         _ns["_ghidra_tool"] = _ns_ghidra_tool_orig
     assert result == {"ok": True}
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Prompt-injection regression: adversarial tool args must not reach a tool
+# ---------------------------------------------------------------------------
+#
+# Threat model: untrusted (malware-derived) data is wrapped in UNTRUSTED_DATA
+# delimiters and the system prompt forbids following it (covered by
+# test_system_prompt.py). This battery covers the OTHER half — if an injected
+# LLM nonetheless emits a tool call whose ARGUMENTS carry the attack, the call
+# must be rejected at execute_tool *before* any dispatch.
+#
+# Payloads target the strictly-validated Ghidra args (address / filter / range /
+# length). The free-form `name` arg (regex ^.{1,200}$) is intentionally NOT
+# exercised here: function names are arbitrary, so the regex is permissive by
+# design — `name` safety comes from passing argv as JSON (no shell) to a Ghidra
+# subprocess that returns null on an unknown symbol, not from the pattern. Adding
+# metachars to `name` is inert, not a finding, so asserting its rejection would
+# encode a false requirement.
+
+_INJECTION_TOOL_ARGS = [
+    ("get_strings_at", {"address": "0x401000; rm -rf /"}),          # shell metachars
+    ("get_strings_at", {"address": "$(id)"}),                       # command substitution
+    ("get_strings_at", {"address": "0x401000\nIGNORE PREVIOUS"}),   # newline / instruction
+    ("get_data_at", {"address": "../../../etc/passwd"}),            # path traversal
+    ("get_data_at", {"address": "0x00401000", "length": 999999}),   # over the 65536 bound
+    ("get_strings_at", {"address": "0x00401000", "range": 99999}),  # over the 4096 bound
+    ("list_functions", {"filter": "*; cat /etc/shadow"}),           # shell metachars
+    ("list_functions", {"filter": "$(reboot)"}),                    # command substitution
+]
+
+
+@pytest.mark.parametrize(
+    "tool_name,args",
+    _INJECTION_TOOL_ARGS,
+    ids=[f"{t}:{list(a.values())[0]!r}"[:48] for t, a in _INJECTION_TOOL_ARGS],
+)
+def test_injection_args_rejected_before_dispatch(tool_name, args):
+    """An injection-style tool arg must error out and never reach the Ghidra subprocess."""
+    calls = []
+    _ns["_ghidra_tool"] = lambda *a, **k: calls.append(a) or {"ok": True}
+    try:
+        result = execute_tool(
+            tool_name,
+            args,
+            session=None,
+            report={},
+            analysis_id=1,
+        )
+    finally:
+        _ns["_ghidra_tool"] = _ns_ghidra_tool_orig
+    assert "error" in result, f"{tool_name} {args} should be rejected, got {result!r}"
+    assert calls == [], (
+        f"INJECTION REACHED TOOL: {tool_name} dispatched despite adversarial args {args}"
+    )
 
 
 def test_ghidra_validators_match_registry():
