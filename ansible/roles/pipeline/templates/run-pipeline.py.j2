@@ -21,6 +21,7 @@ License: Apache 2.0
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 import uuid
@@ -49,6 +50,7 @@ from stages.interpret import run_interpret, run_summarize, run_plain_english
 from ioc_extract import extract_iocs, map_iocs_to_techniques
 from db_ingest import ingest_to_db, mark_pdf_generated
 from pipeline_status import create_analysis_row, update_stage, complete_pipeline
+from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.correlation import (
     build_mitre_mapping,
     calculate_severity,
@@ -118,14 +120,16 @@ REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
 CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
 CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
 
-# Malfind shellcode analysis config
-MALFIND_ENABLED = {% if pipeline_malfind_enabled | default(true) %}True{% else %}False{% endif %}
-
-MALFIND_MAX_CANDIDATES = {{ pipeline_malfind_max_candidates | default(5) }}
-MALFIND_MIN_SIZE = {{ pipeline_malfind_min_size | default(256) }}
-MALFIND_MAX_SIZE = {{ pipeline_malfind_max_size | default(10485760) }}
-MALFIND_MIN_SCORE = {{ pipeline_malfind_min_score | default(2) }}
-MALFIND_BENIGN_PROCESSES = {{ (pipeline_malfind_benign_processes | default(['csrss.exe', 'smss.exe', 'MsMpEng.exe', 'fontdrvhost.exe'])) | to_json }}
+# Malfind shellcode analysis config — loaded from Ansible-rendered config.json
+_PIPELINE_CONFIG = PipelineConfig.load(
+    os.environ.get("LAMWARE_PIPELINE_CONFIG", "{{ pipeline_install_dir }}/config.json")
+)
+MALFIND_ENABLED = _PIPELINE_CONFIG.malfind_enabled
+MALFIND_MAX_CANDIDATES = _PIPELINE_CONFIG.malfind_max_candidates
+MALFIND_MIN_SIZE = _PIPELINE_CONFIG.malfind_min_size
+MALFIND_MAX_SIZE = _PIPELINE_CONFIG.malfind_max_size
+MALFIND_MIN_SCORE = _PIPELINE_CONFIG.malfind_min_score
+MALFIND_BENIGN_PROCESSES = _PIPELINE_CONFIG.malfind_benign_processes
 
 # PCAP analysis config
 PCAP_ENABLED = {% if pipeline_pcap_enabled | default(true) %}True{% else %}False{% endif %}

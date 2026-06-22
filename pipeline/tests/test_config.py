@@ -5,9 +5,8 @@
 import json
 
 import pytest
-from pydantic import ValidationError
-
 from lamware_pipeline.config import PipelineConfig
+from pydantic import ValidationError
 
 _VALID = {
     "malfind_enabled": True,
