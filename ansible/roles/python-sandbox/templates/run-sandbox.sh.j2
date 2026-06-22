@@ -8,7 +8,7 @@
 #         max {{ python_sandbox_max_script_size }} bytes via head -c)
 # stdout: combined script stdout/stderr (max {{ python_sandbox_max_output_size }} bytes)
 #
-# Isolation: no network, read-only root, all caps dropped, 256MB / 1 CPU / 30s limits.
+# Isolation: no network, read-only root, all caps dropped, {{ python_sandbox_container_memory }} / {{ python_sandbox_container_cpus }} CPU / {{ python_sandbox_container_timeout }}s limits.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0

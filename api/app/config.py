@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     sandbox_cmd: str = "/usr/local/bin/run-sandbox"
     ghidra_cmd: str = "/usr/local/bin/run-ghidra"
 
+    # run_python sandbox limits — single-sourced from the python-sandbox Ansible role
+    # (python_sandbox_container_timeout / _container_memory / _max_script_size), written
+    # into the env file by lamware-api.env.j2 so the wrapper and the API agree. The outer
+    # subprocess timeout in _run_python adds a backstop margin over sandbox_timeout_seconds.
+    sandbox_timeout_seconds: int = 30
+    sandbox_memory_mb: int = 256
+    sandbox_max_script_bytes: int = 10240
+
     model_config = {"env_prefix": "LAMWARE_"}
 
 
