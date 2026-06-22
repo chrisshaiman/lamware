@@ -1,0 +1,119 @@
+{
+  "bazaar_family": "",
+  "cape": {
+    "malscore": 8.5,
+    "signatures": [
+      {
+        "name": "injection_process",
+        "severity": 3,
+        "families": ["sliver"]
+      },
+      {
+        "name": "network_cnc_http",
+        "severity": 2,
+        "families": []
+      }
+    ],
+    "extracted_configs": [],
+    "injection_buffers": [
+      {
+        "target_pid": 1234,
+        "injection_address": "0x00410000",
+        "path": ""
+      }
+    ],
+    "network": {
+      "dns_queries": [
+        {"query": "c2.evil.example.com"}
+      ]
+    },
+    "mitre_ttps": [
+      {
+        "id": "T1055",
+        "source_signature": "injection_process"
+      },
+      {
+        "id": "T1071",
+        "source_signature": "network_cnc_http"
+      }
+    ],
+    "process_cmdlines": {
+      "1234": "C:\\Windows\\System32\\svchost.exe -k netsvcs",
+      "5678": "C:\\Windows\\explorer.exe"
+    },
+    "task_id": null
+  },
+  "triage": {
+    "yara_matches": [
+      {"rule": "win_sliver_auto"},
+      {"rule": "win_sliver_strings"},
+      {"rule": "win_sliver_mutex"},
+      {"rule": "suspicious_pe_injection"},
+      {"rule": "generic_shellcode"},
+      {"rule": "meterpreter_payload"}
+    ]
+  },
+  "volatility": {
+    "plugins": {
+      "malfind": [
+        {
+          "PID": 1234,
+          "Start VPN": 4259840,
+          "Hexdump": "4d 5a 90 00 03 00 00 00 04 00 00 00 ff ff 00 00"
+        }
+      ],
+      "dlllist": [
+        {
+          "Process": "svchost.exe",
+          "PID": 1234,
+          "Path": "C:\\Windows\\System32\\svchost.exe",
+          "Name": "svchost.exe"
+        }
+      ],
+      "cmdline": [
+        {
+          "PID": 1234,
+          "Args": "C:\\Windows\\System32\\svchost.exe -k netsvcs"
+        },
+        {
+          "PID": 5678,
+          "Args": "C:\\Windows\\explorer.exe"
+        }
+      ]
+    }
+  },
+  "ghidra": {
+    "analyzed_files": []
+  },
+  "go_analysis": {
+    "analysis_success": false,
+    "strings_of_interest": []
+  },
+  "evasion_analysis": {
+    "enabled": false,
+    "analysis": null
+  },
+  "dotnet_analysis": {
+    "analysis_success": false
+  },
+  "llm_interpretation": {
+    "analysis": {
+      "malware_family_guess": "",
+      "capabilities": ["process injection", "network C2", "persistence", "anti-analysis", "credential theft"],
+      "attack_techniques": [
+        {
+          "id": "T1055",
+          "name": "Process Injection"
+        },
+        {
+          "id": "T1082",
+          "name": "System Information Discovery"
+        }
+      ]
+    }
+  },
+  "office_analysis": {},
+  "powershell_analysis": {},
+  "cross_correlations": [],
+  "family": "unknown"
+}
