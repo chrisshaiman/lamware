@@ -23,6 +23,12 @@ ignore = [
     "E501",  # line too long — ruff format handles wrapping
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Several api test modules set up sys.modules stubs / fixtures (the exec-with-stubs
+# loaders and the auth-test purge block) before importing the module under test, so
+# E402 (import-not-at-top) is expected and intentional there. Production code stays strict.
+"api/tests/*" = ["E402"]
+
 [tool.bandit]
 exclude_dirs = [
     "tests",

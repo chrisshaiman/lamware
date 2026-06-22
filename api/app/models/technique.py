@@ -24,7 +24,7 @@ ARRAY(String) requires the SQLAlchemy Column wrapper; SQLModel Field() alone
 cannot express array column types.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Column, String
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -42,8 +42,8 @@ class TechniqueValue(SQLModel, table=True):
         default=None,
         sa_column=Column(ARRAY(String(100))),
     )
-    first_seen: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class AnalysisTechnique(SQLModel, table=True):

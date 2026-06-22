@@ -23,7 +23,7 @@ dns_answers is JSONB (array of answer records) because DNS responses
 are variable-length structured data that doesn't fit a flat column.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
@@ -60,4 +60,4 @@ class NetworkEvent(SQLModel, table=True):
 
     # Common
     timestamp: datetime | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

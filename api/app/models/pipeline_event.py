@@ -1,7 +1,7 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 """SQLModel for the `pipeline_stage_events` table (per-stage status events)."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -14,4 +14,4 @@ class PipelineStageEvent(SQLModel, table=True):
     stage: str = Field(max_length=50)
     status: str = Field(max_length=20)
     detail: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

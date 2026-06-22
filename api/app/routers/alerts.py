@@ -20,7 +20,7 @@
 import json
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -51,7 +51,7 @@ async def get_alerts(
         "disk": _read_disk_usage(),
         "latest_digest": _read_latest_digest(),
         "cost_today_usd": _query_cost_today(session),
-        "as_of": datetime.now(tz=timezone.utc).isoformat(),
+        "as_of": datetime.now(tz=UTC).isoformat(),
     }
 
 

@@ -20,7 +20,7 @@ LLM output is non-deterministic, so exact-text deduplication creates
 false distinctions. Aggregation happens at query time instead.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
@@ -32,4 +32,4 @@ class Capability(SQLModel, table=True):
     analysis_id: int = Field(foreign_key="analyses.id")
     description: str                                  # TEXT — free-form LLM output
     source_stage: str = Field(max_length=50)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

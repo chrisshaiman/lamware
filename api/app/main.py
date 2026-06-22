@@ -51,11 +51,21 @@ async def health() -> dict:
 # API routers — added here as each task is completed
 # ---------------------------------------------------------------------------
 
-from app.routers import analyses, iocs, techniques, families  # noqa: E402
-from app.routers import pipeline, alerts, stats, feeder, samples  # noqa: E402
-from app.routers import evasions, spend  # noqa: E402
-from app.routers import ws  # noqa: E402
-from app.routers import investigate  # noqa: E402
+from app.routers import (  # noqa: E402  # noqa: E402  # noqa: E402
+    alerts,
+    analyses,
+    evasions,
+    families,
+    feeder,
+    investigate,  # noqa: E402
+    iocs,
+    pipeline,
+    samples,
+    spend,
+    stats,
+    techniques,
+    ws,  # noqa: E402
+)
 
 app.include_router(analyses.router)
 app.include_router(iocs.router)
@@ -80,6 +90,7 @@ app.include_router(investigate.router)
 @app.on_event("startup")
 async def _startup():
     import logging
+
     from app.auth import fetch_jwks
     from app.routers.ws import start_pg_listener
     try:

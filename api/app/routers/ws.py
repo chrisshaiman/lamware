@@ -13,6 +13,7 @@
 import asyncio
 import json
 import logging
+from datetime import UTC
 
 import asyncpg
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -34,9 +35,9 @@ ACTIVE_STATUSES = {"running", "pending"}
 
 def _get_current_state(session: Session) -> dict:
     """Query current pipeline state — same as GET /api/pipeline/status."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=24)
     stmt = (
         select(Analysis, Sample)
         .join(Sample, Sample.id == Analysis.sample_id)
@@ -79,7 +80,7 @@ def _get_current_state(session: Session) -> dict:
     return {
         "running": running,
         "recent_completed": recent,
-        "as_of": datetime.now(tz=timezone.utc).isoformat(),
+        "as_of": datetime.now(tz=UTC).isoformat(),
     }
 
 
@@ -97,7 +98,7 @@ async def websocket_pipeline(websocket: WebSocket):
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         msg = json.loads(raw)
-    except (asyncio.TimeoutError, json.JSONDecodeError):
+    except (TimeoutError, json.JSONDecodeError):
         await websocket.close(code=4001, reason="Auth timeout or invalid message")
         return
 

@@ -6,9 +6,8 @@
 import json
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.main import app
+from fastapi.testclient import TestClient
 
 
 def test_ws_closes_without_auth_message():

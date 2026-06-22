@@ -22,7 +22,7 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Stub external dependencies before loading orchestrator.py

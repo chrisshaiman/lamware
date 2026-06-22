@@ -25,7 +25,7 @@ investigation_pins: analyst-promoted findings from a session.
   IOCs, techniques, notes, and other analyst-marked insights with context.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlmodel import Field, SQLModel
@@ -44,10 +44,10 @@ class InvestigationSession(SQLModel, table=True):
     total_output_tokens: int = Field(default=0)
     total_cost_usd: Decimal = Field(default_factory=lambda: Decimal("0"))
     max_turns: int = Field(default=100)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)},
+        default_factory=lambda: datetime.now(UTC),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
 
 
@@ -61,7 +61,7 @@ class InvestigationMessage(SQLModel, table=True):
     tool_name: str | None = Field(default=None)
     input_tokens: int | None = Field(default=None)
     output_tokens: int | None = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class InvestigationPin(SQLModel, table=True):
@@ -75,4 +75,4 @@ class InvestigationPin(SQLModel, table=True):
     ioc_type: str | None = Field(default=None)  # STIX-style IOC type when pin_type is "ioc" (e.g., ipv4-addr, domain-name)
     context: str = Field(default="")
     promoted: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
