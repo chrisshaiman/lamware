@@ -210,6 +210,19 @@
     group: lamware
     mode: "0644"
 
+- name: Ensure staged package source is traversable by the lamware group
+  # Both the pipeline venv (owner) and the api venv (group lamware) install
+  # from this tree. Symbolic +X grants execute (traverse) on directories only,
+  # leaving files non-executable. Idempotent on already-deployed hosts, unlike
+  # copy's directory_mode (which only touches newly created dirs).
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/pkg"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "u=rwX,g=rX,o="
+    recurse: true
+
 # pydantic (a lamware-pipeline dep) needs typing_extensions>=4.14.1, but the host's
 # copy was installed by apt (no pip RECORD) so pip cannot uninstall/upgrade it. Install
 # a newer copy into /usr/local (which precedes the distro path on sys.path) via
