@@ -171,19 +171,10 @@
     groups: lamware
     append: true
 
-- name: Install pipeline Python dependencies
-  ansible.builtin.pip:
-    name:
-      - requests
-      - weasyprint
-      - markdown
-    state: present
-    break_system_packages: true
-
 # -------------------------------------------------------------------------
-# lamware packages — deliver source trees and install system-wide so both
-# the pipeline user (system python3) and the lamware-api venv can import
-# lamware_shared. lamware_pipeline is pipeline-only.
+# lamware packages — deliver source trees to the host so the pipeline venv
+# (pipeline user) and the lamware-api venv can each install lamware_shared
+# from the same on-disk source. lamware_pipeline is pipeline-only.
 # -------------------------------------------------------------------------
 
 - name: Create package staging directory
@@ -210,30 +201,106 @@
     group: lamware
     mode: "0644"
 
-# pydantic (a lamware-pipeline dep) needs typing_extensions>=4.14.1, but the host's
-# copy was installed by apt (no pip RECORD) so pip cannot uninstall/upgrade it. Install
-# a newer copy into /usr/local (which precedes the distro path on sys.path) via
-# --ignore-installed, so the next step never attempts to remove the dpkg-managed one.
-- name: Stage a pip-managed typing_extensions ahead of the distro copy
-  ansible.builtin.pip:
-    name: "typing_extensions>=4.14.1"
-    state: present
-    break_system_packages: true
-    extra_args: "--ignore-installed"
+- name: Ensure staged package source is traversable by the lamware group
+  # Both the pipeline venv (owner) and the api venv (group lamware) install
+  # from this tree. Symbolic +X grants execute (traverse) on directories only,
+  # leaving files non-executable. Idempotent on already-deployed hosts, unlike
+  # copy's directory_mode (which only touches newly created dirs).
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/pkg"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "u=rwX,g=rX,o="
+    recurse: true
 
-- name: Install lamware-shared and lamware-pipeline system-wide
-  ansible.builtin.pip:
-    name:
-      - "{{ pipeline_install_dir }}/pkg/shared"
-      - "{{ pipeline_install_dir }}/pkg/pipeline"
-    state: present
-    break_system_packages: true
+# -------------------------------------------------------------------------
+# Pipeline virtualenv — the host-side orchestrator (run-pipeline.py), report
+# generator, and wrapper DB-failure handler run from this venv, so the
+# pipeline runtime no longer depends on --break-system-packages.
+#
+# The `pipeline` user is iptables-network-locked (cannot reach PyPI), so:
+#   * the venv is created as the pipeline user (offline — bundled ensurepip)
+#   * a wheelhouse is built as ROOT (root is not network-locked, and building
+#     on the host guarantees correct platform/python3.12 wheels)
+#   * all installs run as the pipeline user, offline, from that wheelhouse
+# -------------------------------------------------------------------------
 
-- name: Fix pip package permissions for pipeline user
-  ansible.builtin.shell: chmod -R a+rX /usr/local/lib/python3.12/dist-packages/
-  args:
-    executable: /bin/bash
-  changed_when: false
+- name: Ensure python3-venv is installed (for the pipeline virtualenv)
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Create the pipeline virtualenv (offline; bundled ensurepip)
+  ansible.builtin.command:
+    cmd: python3 -m venv "{{ pipeline_install_dir }}/venv"
+    creates: "{{ pipeline_install_dir }}/venv/bin/pip"
+  become: true
+  become_user: pipeline
+
+- name: Create the pipeline wheelhouse directory
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/wheelhouse"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+
+- name: Check whether the wheelhouse already holds wheels
+  ansible.builtin.find:
+    paths: "{{ pipeline_install_dir }}/wheelhouse"
+    patterns: "*.whl"
+  register: pipeline_wheelhouse_existing
+
+- name: Populate the wheelhouse as root (reaches PyPI; the pipeline user cannot)
+  # Building on the host guarantees wheels match the host platform + python3.12.
+  # Includes pip/setuptools/wheel because py3.12 venvs omit setuptools, and the
+  # offline source-builds of the lamware packages need a build backend.
+  ansible.builtin.command:
+    cmd: >
+      python3 -m pip download
+      --dest {{ pipeline_install_dir }}/wheelhouse
+      pip setuptools wheel
+      requests weasyprint markdown psycopg2-binary pydantic
+  register: pipeline_wheelhouse
+  changed_when: "'Saved' in pipeline_wheelhouse.stdout"
+  when: pipeline_wheelhouse_existing.matched | int == 0
+
+- name: Bootstrap build tools into the venv (offline)
+  ansible.builtin.command:
+    cmd: >
+      {{ pipeline_install_dir }}/venv/bin/pip install
+      --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
+      --upgrade pip setuptools wheel
+  become: true
+  become_user: pipeline
+  register: pipeline_venv_buildtools
+  changed_when: "'Successfully installed' in pipeline_venv_buildtools.stdout"
+
+- name: Install third-party runtime deps into the venv (offline, as pipeline)
+  ansible.builtin.command:
+    cmd: >
+      {{ pipeline_install_dir }}/venv/bin/pip install
+      --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
+      requests weasyprint markdown psycopg2-binary
+  become: true
+  become_user: pipeline
+  register: pipeline_venv_thirdparty
+  changed_when: "'Successfully installed' in pipeline_venv_thirdparty.stdout"
+
+- name: Install lamware-shared + lamware-pipeline into the venv (offline, as pipeline)
+  # --no-build-isolation: use the venv's just-installed setuptools instead of
+  # fetching a build backend from PyPI (which the pipeline user cannot reach).
+  ansible.builtin.command:
+    cmd: >
+      {{ pipeline_install_dir }}/venv/bin/pip install
+      --no-index --no-build-isolation --find-links {{ pipeline_install_dir }}/wheelhouse
+      {{ pipeline_install_dir }}/pkg/shared
+      {{ pipeline_install_dir }}/pkg/pipeline
+  become: true
+  become_user: pipeline
+  register: pipeline_venv_local
+  changed_when: "'Successfully installed' in pipeline_venv_local.stdout"
 
 - name: Create pipeline directories
   ansible.builtin.file:
@@ -273,9 +340,15 @@
     group: lamware
     mode: "0640"
 
-- name: Verify lamware packages importable (api + pipeline share lamware_shared)
+- name: Verify the pipeline venv imports every runtime dep (as the pipeline user)
+  become: true
+  become_user: pipeline
   ansible.builtin.command:
-    cmd: python3 -c "import lamware_shared, lamware_pipeline"
+    cmd: >
+      {{ pipeline_install_dir }}/venv/bin/python -c
+      "import lamware_shared, lamware_pipeline, psycopg2, weasyprint, requests, markdown;
+      from lamware_pipeline.config import PipelineConfig;
+      from lamware_shared.tool_validators import validate_ghidra_args"
   changed_when: false
 
 - name: Deploy run-pipeline.py
