@@ -375,26 +375,29 @@
   no_log: true  # contains cape_api_key
 
 - name: Deploy pipeline stage modules
-  ansible.builtin.template:
+  # These 13 stage modules contain no Jinja — plain Python deployed verbatim.
+  # copy: resolves src from the role's files/ dir (cape.py.j2 stays a template
+  # below because it carries the cape_api_key secret).
+  ansible.builtin.copy:
     src: "stages/{{ item }}"
-    dest: "{{ pipeline_install_dir }}/stages/{{ item | replace('.j2', '') }}"
+    dest: "{{ pipeline_install_dir }}/stages/{{ item }}"
     owner: pipeline
     group: pipeline
     mode: "0640"
   loop:
-    - __init__.py.j2
-    - triage.py.j2
-    - volatility.py.j2
-    - pcap.py.j2
-    - dotnet.py.j2
-    - go.py.j2
-    - pyinstaller.py.j2
-    - java.py.j2
-    - office.py.j2
-    - powershell.py.j2
-    - script_analysis.py.j2
-    - ghidra.py.j2
-    - interpret.py.j2
+    - __init__.py
+    - triage.py
+    - volatility.py
+    - pcap.py
+    - dotnet.py
+    - go.py
+    - pyinstaller.py
+    - java.py
+    - office.py
+    - powershell.py
+    - script_analysis.py
+    - ghidra.py
+    - interpret.py
 
 # cape.py.j2 contains cape_api_key — deploy separately with no_log
 - name: Deploy cape stage module (contains API key)

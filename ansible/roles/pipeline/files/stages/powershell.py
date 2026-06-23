@@ -101,6 +101,13 @@ def extract_powershell_from_cape(report: dict) -> list[dict]:
                     "command_line": cmdline[:500],
                 })
             except Exception:
+                # A blob that matched the encoded-command regex but failed to
+                # decode is anomalous (truncated capture, or deliberate evasion)
+                # — surface it instead of silently dropping it.
+                log.warning(
+                    "powershell: matched encoded command for pid %s but base64 "
+                    "decode failed; skipping", pid_str,
+                )
                 continue
 
     return results
