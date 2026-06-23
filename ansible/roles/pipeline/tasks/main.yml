@@ -266,6 +266,20 @@
   changed_when: "'Saved' in pipeline_wheelhouse.stdout"
   when: pipeline_wheelhouse_existing.matched | int == 0
 
+- name: Make the wheelhouse readable by the pipeline user
+  # The populate step runs as ROOT (the pipeline user is network-locked), and on
+  # a hardened host root's umask leaves the downloaded wheels 0600 root:root —
+  # unreadable by the become_user: pipeline installs that follow. Hand ownership
+  # to pipeline:lamware and grant traverse/read (symbolic +X = dirs only). Runs
+  # UNCONDITIONALLY (not gated on the populate `when`) so a wheelhouse left
+  # root-owned by an earlier failed run self-heals on the next converge.
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/wheelhouse"
+    owner: pipeline
+    group: lamware
+    mode: "u=rwX,g=rX,o="
+    recurse: true
+
 - name: Bootstrap build tools into the venv (offline)
   ansible.builtin.command:
     cmd: >
