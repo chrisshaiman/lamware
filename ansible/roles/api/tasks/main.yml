@@ -97,18 +97,25 @@
   notify: Restart lamware-api
 
 - name: Install lamware-shared into api venv
-  # MUST run as the api service user (like the venv-create + dep-install tasks
-  # above) — installing as root leaves the package root-owned 0600, unreadable by
-  # the lamware-api service, which then crash-loops on `import lamware_shared`.
-  become: true
-  become_user: "{{ api_user }}"
   ansible.builtin.pip:
     # pipeline role stages the package here; inline default keeps a standalone
     # `--tags api` run from failing on an undefined var (avoids defining a
     # non-api_-prefixed var in this role's defaults, which ansible-lint forbids).
+    # Installs as root (the play's become) — root can always read the staged
+    # source (it's only group-lamware-traversable). forcereinstall so a stale
+    # copy is always replaced cleanly; the next task fixes perms for the service.
     name: "{{ pipeline_install_dir | default('/opt/pipeline') }}/pkg/shared"
     state: forcereinstall
     virtualenv: "{{ api_install_dir }}/venv"
+
+- name: Make lamware-shared readable by the lamware-api service user
+  # The root install leaves it root-owned 0600/0700 — unreadable by the
+  # lamware-api service, which would crash-loop on `import lamware_shared` (502).
+  # Mirrors the pipeline role's perm-fix for its system-wide install.
+  ansible.builtin.shell: >
+    chmod -R a+rX
+    {{ api_install_dir }}/venv/lib/python3.12/site-packages/lamware_shared*
+  changed_when: false
 
 - name: Verify the api service user can import the shared validator
   # Imports the actual submodule the app uses, AS the service user, against the
