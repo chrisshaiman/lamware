@@ -210,6 +210,17 @@
     group: lamware
     mode: "0644"
 
+# pydantic (a lamware-pipeline dep) needs typing_extensions>=4.14.1, but the host's
+# copy was installed by apt (no pip RECORD) so pip cannot uninstall/upgrade it. Install
+# a newer copy into /usr/local (which precedes the distro path on sys.path) via
+# --ignore-installed, so the next step never attempts to remove the dpkg-managed one.
+- name: Stage a pip-managed typing_extensions ahead of the distro copy
+  ansible.builtin.pip:
+    name: "typing_extensions>=4.14.1"
+    state: present
+    break_system_packages: true
+    extra_args: "--ignore-installed"
+
 - name: Install lamware-shared and lamware-pipeline system-wide
   ansible.builtin.pip:
     name:
