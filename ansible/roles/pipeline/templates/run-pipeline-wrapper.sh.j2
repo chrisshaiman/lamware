@@ -15,12 +15,12 @@ set -uo pipefail
 # Unbuffered output so progress is visible in real time
 export PYTHONUNBUFFERED=1
 
-python3 {{ pipeline_install_dir }}/run-pipeline.py "$@"
+{{ pipeline_install_dir }}/venv/bin/python {{ pipeline_install_dir }}/run-pipeline.py "$@"
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
     echo "[!] Pipeline exited with code $EXIT_CODE — marking stale runs as failed"
-    python3 -c "
+    {{ pipeline_install_dir }}/venv/bin/python -c "
 import psycopg2
 try:
     conn = psycopg2.connect(
