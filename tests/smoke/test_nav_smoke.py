@@ -30,7 +30,10 @@ def test_login_succeeded(page, config):
     """The cached session authenticates and the app shell renders on the default route."""
     page.goto(config["base_url"])
     expect(page.locator("aside")).to_be_visible()
-    assert "/analyses" in page.url
+    # The index route is <Navigate to="/analyses" replace/>, which fires a render-tick
+    # AFTER the shell (aside) mounts. Use Playwright's auto-waiting URL assertion (as the
+    # nav tests below do) rather than a bare assert that races the client-side redirect.
+    expect(page).to_have_url(re.compile(r"/analyses"))
 
 
 @pytest.mark.parametrize("path,heading,widget", ROUTES, ids=[r[0] for r in ROUTES])
