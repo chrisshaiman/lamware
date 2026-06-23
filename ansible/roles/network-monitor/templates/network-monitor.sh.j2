@@ -197,8 +197,7 @@ fi
 # --- pipeline user: pipeline + containers + feeders ---
 pipeline_patterns=(
     # Pipeline execution
-    'python3 /opt/pipeline/run-pipeline.py*'
-    '*/python3 /opt/pipeline/run-pipeline.py*'
+    '/opt/pipeline/venv/bin/python* /opt/pipeline/run-pipeline.py*'
     '/bin/bash /usr/local/bin/run-pipeline*'
     '/bin/bash */run-pipeline*'
     '*/run-pipeline /tmp/*'
@@ -209,7 +208,7 @@ pipeline_patterns=(
     '/bin/sh -c *ntfy-alerts*'
     '/opt/pipeline/cleanup.sh*'
     '/bin/sh -c *pipeline*'
-    'python3 /opt/pipeline/generate-report.py*'
+    '/opt/pipeline/venv/bin/python* /opt/pipeline/generate-report.py*'
     # Podman containers
     'podman'
     'podman run --rm*'
