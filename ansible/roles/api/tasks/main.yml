@@ -96,14 +96,39 @@
   changed_when: true
   notify: Restart lamware-api
 
+- name: Stage a writable copy of lamware-shared for the api venv build
+  # pip builds a local source dir IN-TREE (setuptools writes egg_info into it).
+  # The shared staging dir is owned by `pipeline` and only group-READABLE
+  # (g=rX, no write), so a become_user: lamware-api build cannot write egg_info
+  # there → "Cannot update time stamp of directory 'lamware_shared.egg-info'".
+  # Give the service user its own writable copy to build from. (The pipeline
+  # venv installs from the staging dir directly because `pipeline` owns it.)
+  ansible.builtin.copy:
+    src: "{{ pipeline_install_dir | default('/opt/pipeline') }}/pkg/shared/"
+    dest: "{{ api_install_dir }}/lamware-shared-src/"
+    remote_src: true
+    owner: "{{ api_user }}"
+    group: "{{ api_user }}"
+    mode: preserve
+
+- name: Remove stale build artifacts from the api build copy
+  # The staged tree may carry a pipeline-owned egg-info/build from a prior build;
+  # strip them so the service-user build starts clean.
+  ansible.builtin.file:
+    path: "{{ api_install_dir }}/lamware-shared-src/{{ item }}"
+    state: absent
+  loop:
+    - lamware_shared.egg-info
+    - build
+    - dist
+
 - name: Install lamware-shared into the api venv (as the service user)
-  # become_user: the service user installs into its own venv, so the files
-  # are service-readable with no follow-up chmod. Reads the staged source via
-  # group lamware (made traversable in the pipeline role). lamware_shared is
-  # pure-stdlib, but the api host is not network-locked so build isolation is
-  # fine either way. forcereinstall replaces a stale copy cleanly.
+  # Builds from the api-owned writable copy and installs into the service-owned
+  # venv, so the files are service-readable with no follow-up chmod. lamware_shared
+  # is pure-stdlib; the api host is not network-locked so build isolation is fine.
+  # forcereinstall replaces a stale copy cleanly.
   ansible.builtin.pip:
-    name: "{{ pipeline_install_dir | default('/opt/pipeline') }}/pkg/shared"
+    name: "{{ api_install_dir }}/lamware-shared-src"
     state: forcereinstall
     virtualenv: "{{ api_install_dir }}/venv"
   become: true
