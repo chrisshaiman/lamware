@@ -100,7 +100,14 @@ def extract_powershell_from_cape(report: dict) -> list[dict]:
                     "pid": pid_str,
                     "command_line": cmdline[:500],
                 })
-            except Exception:  # nosec B112 - skip un-decodable base64/UTF-16 PowerShell blobs
+            except Exception:
+                # A blob that matched the encoded-command regex but failed to
+                # decode is anomalous (truncated capture, or deliberate evasion)
+                # — surface it instead of silently dropping it.
+                log.warning(
+                    "powershell: matched encoded command for pid %s but base64 "
+                    "decode failed; skipping", pid_str,
+                )
                 continue
 
     return results
