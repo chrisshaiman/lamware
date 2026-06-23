@@ -246,6 +246,12 @@
     group: lamware
     mode: "0750"
 
+- name: Check whether the wheelhouse already holds wheels
+  ansible.builtin.find:
+    paths: "{{ pipeline_install_dir }}/wheelhouse"
+    patterns: "*.whl"
+  register: pipeline_wheelhouse_existing
+
 - name: Populate the wheelhouse as root (reaches PyPI; the pipeline user cannot)
   # Building on the host guarantees wheels match the host platform + python3.12.
   # Includes pip/setuptools/wheel because py3.12 venvs omit setuptools, and the
@@ -258,6 +264,7 @@
       requests weasyprint markdown psycopg2-binary pydantic
   register: pipeline_wheelhouse
   changed_when: "'Saved' in pipeline_wheelhouse.stdout"
+  when: pipeline_wheelhouse_existing.matched | int == 0
 
 - name: Bootstrap build tools into the venv (offline)
   ansible.builtin.command:
