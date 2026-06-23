@@ -100,7 +100,7 @@ def extract_powershell_from_cape(report: dict) -> list[dict]:
                     "pid": pid_str,
                     "command_line": cmdline[:500],
                 })
-            except Exception:
+            except Exception:  # nosec B112 - skip un-decodable base64/UTF-16 PowerShell blobs
                 continue
 
     return results
