@@ -172,9 +172,9 @@
     append: true
 
 # -------------------------------------------------------------------------
-# lamware packages — deliver source trees and install system-wide so both
-# the pipeline user (system python3) and the lamware-api venv can import
-# lamware_shared. lamware_pipeline is pipeline-only.
+# lamware packages — deliver source trees to the host so the pipeline venv
+# (pipeline user) and the lamware-api venv can each install lamware_shared
+# from the same on-disk source. lamware_pipeline is pipeline-only.
 # -------------------------------------------------------------------------
 
 - name: Create package staging directory
