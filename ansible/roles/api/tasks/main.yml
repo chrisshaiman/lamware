@@ -97,13 +97,30 @@
   notify: Restart lamware-api
 
 - name: Install lamware-shared into api venv
+  # MUST run as the api service user (like the venv-create + dep-install tasks
+  # above) — installing as root leaves the package root-owned 0600, unreadable by
+  # the lamware-api service, which then crash-loops on `import lamware_shared`.
+  become: true
+  become_user: "{{ api_user }}"
   ansible.builtin.pip:
     # pipeline role stages the package here; inline default keeps a standalone
     # `--tags api` run from failing on an undefined var (avoids defining a
     # non-api_-prefixed var in this role's defaults, which ansible-lint forbids).
     name: "{{ pipeline_install_dir | default('/opt/pipeline') }}/pkg/shared"
-    state: present
+    state: forcereinstall
     virtualenv: "{{ api_install_dir }}/venv"
+
+- name: Verify the api service user can import the shared validator
+  # Imports the actual submodule the app uses, AS the service user, against the
+  # api venv — so a bad/unreadable install fails the deploy instead of silently
+  # 502'ing after restart. (The pipeline role's verify only imports the top
+  # package as root, which missed this.)
+  become: true
+  become_user: "{{ api_user }}"
+  ansible.builtin.command: >
+    {{ api_install_dir }}/venv/bin/python
+    -c "from lamware_shared.tool_validators import validate_ghidra_args"
+  changed_when: false
 
 - name: Deploy lamware-api environment file
   ansible.builtin.template:
