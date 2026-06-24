@@ -46,6 +46,33 @@ _VALID = {
     "evasion_min_binary_size": 51200,
     "volatility_ramdisk": "/opt/pipeline/ramdisk",
     "volatility_parallel_workers": 7,
+    # Phase 2b-2 — collections
+    "interpret": {
+        "model": "claude-sonnet-4-6",
+        "escalation_threshold": 5,
+        "escalation_model": "claude-opus-4-6",
+        "max_output_tokens": 4096,
+        "max_tool_calls": 10,
+        "max_imports": 200,
+        "max_strings": 100,
+        "max_string_length": 500,
+        "summary_model": "claude-haiku-4-5",
+    },
+    "volatility_triggers": [
+        "injection_createremotethread",
+        "process_hollowing",
+        "packed_binary",
+    ],
+    "volatility_extra_plugins": {
+        "injection": {
+            "triggers": ["injection_createremotethread", "injection_rwx"],
+            "plugins": ["windows.handles"],
+        },
+        "rootkit": {
+            "triggers": ["rootkit_ssdt_hook"],
+            "plugins": ["windows.ssdt", "windows.callbacks"],
+        },
+    },
 }
 
 
@@ -94,3 +121,37 @@ def test_rejects_missing_field(tmp_path):
     p.write_text(json.dumps(bad))
     with pytest.raises(ValidationError):
         PipelineConfig.load(str(p))
+
+
+def test_interpret_submodel(tmp_path):
+    """INTERPRET_CONFIG is rebuilt from the nested submodel via model_dump();
+    its keys must match what the orchestrator body indexes."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    dumped = cfg.interpret.model_dump()
+    assert dumped == _VALID["interpret"]
+    assert dumped["model"] == "claude-sonnet-4-6"
+    assert dumped["summary_model"] == "claude-haiku-4-5"
+
+
+def test_interpret_max_output_tokens_landmine(tmp_path):
+    """interpret-role default (4096) overrides the dead inline default(2048).
+    The deployed effective value is 4096."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    assert cfg.interpret.max_output_tokens == 4096
+
+
+def test_volatility_collections_are_plain(tmp_path):
+    """VOLATILITY_TRIGGERS stays a list; VOLATILITY_EXTRA_PLUGINS stays a plain
+    nested dict (not a submodel) so the body iterates it unchanged."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    assert cfg.volatility_triggers == _VALID["volatility_triggers"]
+    assert isinstance(cfg.volatility_extra_plugins, dict)
+    assert cfg.volatility_extra_plugins["rootkit"]["plugins"] == [
+        "windows.ssdt", "windows.callbacks",
+    ]

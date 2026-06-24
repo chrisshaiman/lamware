@@ -3,13 +3,28 @@
 """Runtime pipeline configuration, read from a Jinja-rendered config.json.
 
 Phase 1 covers the malfind block (the config round-trip POC). Phase 2b-1 landed
-the scalar tuning knobs + analysis-tool CMD paths (malfind from Phase 1);
-collections and secrets are still pending. Secrets (cape_api_key, db_password)
-are intentionally NOT here — they stay in the no_log env path.
+the scalar tuning knobs + analysis-tool CMD paths (malfind from Phase 1). Phase
+2b-2 landed the collection values: the interpret submodel plus the volatility
+triggers and extra-plugins maps. Secrets (cape_api_key, db_password) are
+intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
 
 from pydantic import BaseModel
+
+
+class InterpretConfig(BaseModel):
+    """LLM-interpretation stage knobs. model_dump() reproduces the dict the
+    orchestrator body passes as interpret_config= and indexes by key name."""
+    model: str
+    escalation_threshold: int
+    escalation_model: str
+    max_output_tokens: int
+    max_tool_calls: int
+    max_imports: int
+    max_strings: int
+    max_string_length: int
+    summary_model: str
 
 
 class PipelineConfig(BaseModel):
@@ -49,6 +64,11 @@ class PipelineConfig(BaseModel):
     evasion_min_binary_size: int
     volatility_ramdisk: str
     volatility_parallel_workers: int
+
+    # Phase 2b-2 — collections
+    interpret: InterpretConfig
+    volatility_triggers: list[str]
+    volatility_extra_plugins: dict[str, dict[str, list[str]]]
 
     @classmethod
     def load(cls, path: str) -> "PipelineConfig":
