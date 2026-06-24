@@ -32,5 +32,19 @@
   "evasion_max_signatures": {{ pipeline_evasion_max_signatures | default(5) }},
   "evasion_min_binary_size": {{ pipeline_evasion_min_binary_size | default(51200) }},
   "volatility_ramdisk": {{ (pipeline_volatility_ramdisk | default('')) | to_json }},
-  "volatility_parallel_workers": {{ pipeline_volatility_parallel_workers | default(3) }}
+  "volatility_parallel_workers": {{ pipeline_volatility_parallel_workers | default(3) }},
+
+  "interpret": {
+    "model": {{ interpret_model | default('claude-sonnet-4-6') | to_json }},
+    "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
+    "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
+    "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
+    "max_tool_calls": {{ interpret_max_tool_calls | default(10) }},
+    "max_imports": {{ interpret_max_imports | default(200) }},
+    "max_strings": {{ interpret_max_strings | default(100) }},
+    "max_string_length": {{ interpret_max_string_length | default(500) }},
+    "summary_model": {{ interpret_summary_model | default('claude-haiku-4-5') | to_json }}
+  },
+  "volatility_triggers": {{ pipeline_volatility_triggers | to_json }},
+  "volatility_extra_plugins": {{ pipeline_volatility_extra_plugins | default({}) | to_json }}
 }
