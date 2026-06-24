@@ -354,6 +354,15 @@
     group: lamware
     mode: "0640"
 
+- name: Deploy pipeline secrets env file
+  ansible.builtin.template:
+    src: pipeline.env.j2
+    dest: "{{ pipeline_install_dir }}/pipeline.env"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+  no_log: true  # contains cape_api_key
+
 - name: Verify the pipeline venv imports every runtime dep (as the pipeline user)
   become: true
   become_user: pipeline

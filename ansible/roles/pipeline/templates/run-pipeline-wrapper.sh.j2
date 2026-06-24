@@ -15,6 +15,12 @@ set -uo pipefail
 # Unbuffered output so progress is visible in real time
 export PYTHONUNBUFFERED=1
 
+# Source pipeline secrets (CAPE_API_KEY, etc.) so the orchestrator inherits them.
+# set -a exports everything sourced; the file is absent on a fresh box pre-deploy, so guard it.
+set -a
+[ -f {{ pipeline_install_dir }}/pipeline.env ] && . {{ pipeline_install_dir }}/pipeline.env
+set +a
+
 {{ pipeline_install_dir }}/venv/bin/python {{ pipeline_install_dir }}/run-pipeline.py "$@"
 EXIT_CODE=$?
 
