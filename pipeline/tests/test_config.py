@@ -1,6 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for PipelineConfig (malfind slice + Phase 2b-1 scalars/CMD paths)."""
+"""Tests for PipelineConfig (malfind + 2b-1 scalars/CMD paths + 2b-2 collections)."""
 
 import json
 
