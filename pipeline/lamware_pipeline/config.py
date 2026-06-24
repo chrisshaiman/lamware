@@ -10,12 +10,13 @@ intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class InterpretConfig(BaseModel):
     """LLM-interpretation stage knobs. model_dump() reproduces the dict the
     orchestrator body passes as interpret_config= and indexes by key name."""
+    model_config = ConfigDict(extra="forbid")
     model: str
     escalation_threshold: int
     escalation_model: str
@@ -28,6 +29,7 @@ class InterpretConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     malfind_enabled: bool
     malfind_max_candidates: int
     malfind_min_size: int

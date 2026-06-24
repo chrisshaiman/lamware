@@ -155,3 +155,22 @@ def test_volatility_collections_are_plain(tmp_path):
     assert cfg.volatility_extra_plugins["rootkit"]["plugins"] == [
         "windows.ssdt", "windows.callbacks",
     ]
+
+
+def test_rejects_unknown_top_level_key(tmp_path):
+    """extra='forbid' surfaces a config.json key the model doesn't know about —
+    a dropped/renamed key is a deploy bug we want loud, not silently ignored."""
+    bad = dict(_VALID, surprise_key="oops")
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(bad))
+    with pytest.raises(ValidationError):
+        PipelineConfig.load(str(p))
+
+
+def test_rejects_unknown_interpret_key(tmp_path):
+    bad = json.loads(json.dumps(_VALID))
+    bad["interpret"]["surprise_key"] = "oops"
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(bad))
+    with pytest.raises(ValidationError):
+        PipelineConfig.load(str(p))
