@@ -88,11 +88,8 @@ def add_file_logging(log_dir: Path) -> None:
 # Configuration
 # -------------------------------------------------------------------------
 # Non-secret values come from config.json (rendered by Ansible from config.json.j2)
-# via PipelineConfig. Secrets and collections are migrated in later sub-PRs:
+# via PipelineConfig. The one remaining secret is migrated in a later sub-PR:
 #   - CAPE_API_KEY .......... secret, Phase 2b-3 (env file)
-#   - INTERPRET_CONFIG ...... nested dict, Phase 2b-2
-#   - VOLATILITY_TRIGGERS ... list, Phase 2b-2
-#   - VOLATILITY_EXTRA_PLUGINS  nested dict, Phase 2b-2
 
 CAPE_API_KEY = "{{ cape_api_key }}"
 
@@ -116,20 +113,10 @@ PDF_CMD = _PIPELINE_CONFIG.pdf_cmd
 INTERPRET_CMD = _PIPELINE_CONFIG.interpret_cmd
 PCAP_CMD = _PIPELINE_CONFIG.pcap_cmd
 
-# Interpret (LLM stage) scalars — the INTERPRET_CONFIG dict is Phase 2b-2
+# Interpret (LLM stage) — scalars + the INTERPRET_CONFIG dict (from the nested submodel)
 INTERPRET_ENABLED = _PIPELINE_CONFIG.interpret_enabled
 INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
-INTERPRET_CONFIG = {
-    "model": "{{ interpret_model | default('claude-sonnet-4-6') }}",
-    "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
-    "escalation_model": "{{ interpret_escalation_model | default('claude-opus-4-6') }}",
-    "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
-    "max_tool_calls": {{ interpret_max_tool_calls | default(10) }},
-    "max_imports": {{ interpret_max_imports | default(200) }},
-    "max_strings": {{ interpret_max_strings | default(100) }},
-    "max_string_length": {{ interpret_max_string_length | default(500) }},
-    "summary_model": "{{ interpret_summary_model | default('claude-haiku-4-5') }}",
-}
+INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
 
 # Cape + report-output scalars
 REPORTS_DIR = Path(_PIPELINE_CONFIG.reports_dir)
@@ -157,8 +144,8 @@ EVASION_MIN_BINARY_SIZE = _PIPELINE_CONFIG.evasion_min_binary_size
 VOLATILITY_RAMDISK = _PIPELINE_CONFIG.volatility_ramdisk
 VOLATILITY_PARALLEL_WORKERS = _PIPELINE_CONFIG.volatility_parallel_workers
 
-# Volatility trigger signatures — Cape signature names that trigger Stage 3 (Phase 2b-2)
-VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
+# Volatility trigger signatures — Cape signature names that trigger Stage 3
+VOLATILITY_TRIGGERS = _PIPELINE_CONFIG.volatility_triggers
 
 # Standard Volatility plugins (always run when triggered)
 VOLATILITY_STANDARD_PLUGINS = [
@@ -170,8 +157,8 @@ VOLATILITY_STANDARD_PLUGINS = [
     "windows.dlllist",
 ]
 
-# Extra plugins mapped by trigger category (Phase 2b-2)
-VOLATILITY_EXTRA_PLUGINS = {{ pipeline_volatility_extra_plugins | default({}) | to_json }}
+# Extra plugins mapped by trigger category
+VOLATILITY_EXTRA_PLUGINS = _PIPELINE_CONFIG.volatility_extra_plugins
 
 
 # -------------------------------------------------------------------------
