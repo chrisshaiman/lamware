@@ -262,12 +262,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             try:
                 compile_dt = datetime.fromisoformat(pe_timestamp)
                 # Set clock to compile time + 7-30 days (plausible execution window)
-                offset_days = random.randint(7, 30)
+                offset_days = random.randint(7, 30)  # nosec B311 — jitter for sandbox guest-clock anti-evasion, not security/crypto
                 guest_dt = compile_dt + timedelta(days=offset_days)
                 # Don't set clock to the future
                 now = datetime.now(timezone.utc)
                 if guest_dt > now:
-                    guest_dt = now - timedelta(days=random.randint(1, 7))
+                    guest_dt = now - timedelta(days=random.randint(1, 7))  # nosec B311 — jitter for sandbox guest-clock anti-evasion, not security/crypto
                 cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
                 log.info(f"  Guest clock: {cape_clock} (PE compiled {pe_timestamp[:10]}, +{offset_days}d)")
             except Exception as e:
