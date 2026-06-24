@@ -305,10 +305,16 @@
 - name: Install lamware-shared + lamware-pipeline into the venv (offline, as pipeline)
   # --no-build-isolation: use the venv's just-installed setuptools instead of
   # fetching a build backend from PyPI (which the pipeline user cannot reach).
+  # --force-reinstall --no-deps: the local packages keep version 0.1.0 across code
+  # changes, so a plain `pip install <dir>` reports "already satisfied" and SKIPS the
+  # reinstall — silently shipping stale package code (e.g. an outdated PipelineConfig)
+  # on every redeploy. Force the rebuild; --no-deps scopes it to just these two
+  # packages (their third-party deps already came from the wheelhouse above).
   ansible.builtin.command:
     cmd: >
       {{ pipeline_install_dir }}/venv/bin/pip install
       --no-index --no-build-isolation --find-links {{ pipeline_install_dir }}/wheelhouse
+      --force-reinstall --no-deps
       {{ pipeline_install_dir }}/pkg/shared
       {{ pipeline_install_dir }}/pkg/pipeline
   become: true
