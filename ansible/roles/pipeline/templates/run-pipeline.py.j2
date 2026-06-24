@@ -85,26 +85,40 @@ def add_file_logging(log_dir: Path) -> None:
 
 
 # -------------------------------------------------------------------------
-# Configuration (injected by Ansible template)
+# Configuration
 # -------------------------------------------------------------------------
+# Non-secret values come from config.json (rendered by Ansible from config.json.j2)
+# via PipelineConfig. Secrets and collections are migrated in later sub-PRs:
+#   - CAPE_API_KEY .......... secret, Phase 2b-3 (env file)
+#   - INTERPRET_CONFIG ...... nested dict, Phase 2b-2
+#   - VOLATILITY_TRIGGERS ... list, Phase 2b-2
+#   - VOLATILITY_EXTRA_PLUGINS  nested dict, Phase 2b-2
 
-CAPE_API_URL = "{{ cape_api_url }}"
 CAPE_API_KEY = "{{ cape_api_key }}"
-TRIAGE_CMD = "{{ triage_install_dir }}/run-triage"
-VOLATILITY_CMD = "{{ volatility_install_dir }}/run-volatility"
-GHIDRA_CMD = "{{ ghidra_install_dir }}/run-ghidra"
-DOTNET_CMD = "{{ dotnet_analysis_install_dir | default('/opt/dotnet-analysis') }}/run-dotnet-analysis"
-GO_CMD = "{{ go_analysis_install_dir | default('/opt/go-analysis') }}/run-go-analysis"
-PYINSTALLER_CMD = "{{ pyinstaller_analysis_install_dir | default('/opt/pyinstaller-analysis') }}/run-pyinstaller-analysis"
-JAVA_CMD = "{{ java_analysis_install_dir | default('/opt/java-analysis') }}/run-java-analysis"
-OFFICE_CMD = "{{ office_macro_analysis_install_dir | default('/opt/office-macro-analysis') }}/run-office-analysis"
-POWERSHELL_CMD = "{{ powershell_analysis_install_dir | default('/opt/powershell-analysis') }}/run-powershell-analysis"
-SCREENSHOT_CMD = "{{ screenshot_analysis_install_dir | default('/opt/screenshot-analysis') }}/run-screenshot-analysis"
-PDF_CMD = "{{ pdf_generation_install_dir | default('/opt/pdf-generation') }}/run-pdf-generation"
-INTERPRET_CMD = "{{ interpret_install_dir | default('/opt/interpret') }}/run-interpret"
-INTERPRET_ENABLED = {% if interpret_enabled | default(true) %}True{% else %}False{% endif %}
 
-INTERPRET_TIMEOUT = {{ interpret_timeout | default(300) }}
+_PIPELINE_CONFIG = PipelineConfig.load(
+    os.environ.get("LAMWARE_PIPELINE_CONFIG", "{{ pipeline_install_dir }}/config.json")
+)
+
+# Analysis-tool command paths
+CAPE_API_URL = _PIPELINE_CONFIG.cape_api_url
+TRIAGE_CMD = _PIPELINE_CONFIG.triage_cmd
+VOLATILITY_CMD = _PIPELINE_CONFIG.volatility_cmd
+GHIDRA_CMD = _PIPELINE_CONFIG.ghidra_cmd
+DOTNET_CMD = _PIPELINE_CONFIG.dotnet_cmd
+GO_CMD = _PIPELINE_CONFIG.go_cmd
+PYINSTALLER_CMD = _PIPELINE_CONFIG.pyinstaller_cmd
+JAVA_CMD = _PIPELINE_CONFIG.java_cmd
+OFFICE_CMD = _PIPELINE_CONFIG.office_cmd
+POWERSHELL_CMD = _PIPELINE_CONFIG.powershell_cmd
+SCREENSHOT_CMD = _PIPELINE_CONFIG.screenshot_cmd
+PDF_CMD = _PIPELINE_CONFIG.pdf_cmd
+INTERPRET_CMD = _PIPELINE_CONFIG.interpret_cmd
+PCAP_CMD = _PIPELINE_CONFIG.pcap_cmd
+
+# Interpret (LLM stage) scalars — the INTERPRET_CONFIG dict is Phase 2b-2
+INTERPRET_ENABLED = _PIPELINE_CONFIG.interpret_enabled
+INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
 INTERPRET_CONFIG = {
     "model": "{{ interpret_model | default('claude-sonnet-4-6') }}",
     "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
@@ -116,14 +130,13 @@ INTERPRET_CONFIG = {
     "max_string_length": {{ interpret_max_string_length | default(500) }},
     "summary_model": "{{ interpret_summary_model | default('claude-haiku-4-5') }}",
 }
-REPORTS_DIR = Path("{{ pipeline_reports_dir }}")
-CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
-CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
 
-# Malfind shellcode analysis config — loaded from Ansible-rendered config.json
-_PIPELINE_CONFIG = PipelineConfig.load(
-    os.environ.get("LAMWARE_PIPELINE_CONFIG", "{{ pipeline_install_dir }}/config.json")
-)
+# Cape + report-output scalars
+REPORTS_DIR = Path(_PIPELINE_CONFIG.reports_dir)
+CAPE_POLL_INTERVAL = _PIPELINE_CONFIG.cape_poll_interval
+CAPE_TIMEOUT = _PIPELINE_CONFIG.cape_timeout
+
+# Malfind shellcode analysis config (Phase 1)
 MALFIND_ENABLED = _PIPELINE_CONFIG.malfind_enabled
 MALFIND_MAX_CANDIDATES = _PIPELINE_CONFIG.malfind_max_candidates
 MALFIND_MIN_SIZE = _PIPELINE_CONFIG.malfind_min_size
@@ -132,22 +145,19 @@ MALFIND_MIN_SCORE = _PIPELINE_CONFIG.malfind_min_score
 MALFIND_BENIGN_PROCESSES = _PIPELINE_CONFIG.malfind_benign_processes
 
 # PCAP analysis config
-PCAP_ENABLED = {% if pipeline_pcap_enabled | default(true) %}True{% else %}False{% endif %}
-
-PCAP_CMD = "{{ pcap_analysis_install_dir | default('/opt/pcap-analysis') }}/run-pcap-analysis"
-PCAP_TIMEOUT = {{ pipeline_pcap_timeout | default(120) }}
+PCAP_ENABLED = _PIPELINE_CONFIG.pcap_enabled
+PCAP_TIMEOUT = _PIPELINE_CONFIG.pcap_timeout
 
 # Evasion hunter — LLM analysis of low-activity samples
-EVASION_HUNTER_ENABLED = {% if pipeline_evasion_hunter_enabled | default(true) %}True{% else %}False{% endif %}
-
-EVASION_MAX_SIGNATURES = {{ pipeline_evasion_max_signatures | default(5) }}
-EVASION_MIN_BINARY_SIZE = {{ pipeline_evasion_min_binary_size | default(51200) }}
+EVASION_HUNTER_ENABLED = _PIPELINE_CONFIG.evasion_hunter_enabled
+EVASION_MAX_SIGNATURES = _PIPELINE_CONFIG.evasion_max_signatures
+EVASION_MIN_BINARY_SIZE = _PIPELINE_CONFIG.evasion_min_binary_size
 
 # Volatility performance — ramdisk and parallel execution
-VOLATILITY_RAMDISK = "{{ pipeline_volatility_ramdisk | default('') }}"
-VOLATILITY_PARALLEL_WORKERS = {{ pipeline_volatility_parallel_workers | default(3) }}
+VOLATILITY_RAMDISK = _PIPELINE_CONFIG.volatility_ramdisk
+VOLATILITY_PARALLEL_WORKERS = _PIPELINE_CONFIG.volatility_parallel_workers
 
-# Volatility trigger signatures — Cape signature names that trigger Stage 3
+# Volatility trigger signatures — Cape signature names that trigger Stage 3 (Phase 2b-2)
 VOLATILITY_TRIGGERS = {{ pipeline_volatility_triggers | to_json }}
 
 # Standard Volatility plugins (always run when triggered)
@@ -160,7 +170,7 @@ VOLATILITY_STANDARD_PLUGINS = [
     "windows.dlllist",
 ]
 
-# Extra plugins mapped by trigger category
+# Extra plugins mapped by trigger category (Phase 2b-2)
 VOLATILITY_EXTRA_PLUGINS = {{ pipeline_volatility_extra_plugins | default({}) | to_json }}
 
 
