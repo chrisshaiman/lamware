@@ -46,5 +46,10 @@
     "summary_model": {{ interpret_summary_model | default('claude-haiku-4-5') | to_json }}
   },
   "volatility_triggers": {{ pipeline_volatility_triggers | to_json }},
-  "volatility_extra_plugins": {{ pipeline_volatility_extra_plugins | default({}) | to_json }}
+  "volatility_extra_plugins": {{ pipeline_volatility_extra_plugins | default({}) | to_json }},
+
+  "db_host": {{ (postgres_listen_address | default('127.0.0.1')) | to_json }},
+  "db_port": {{ postgres_port | default(5432) }},
+  "db_name": {{ (postgres_db_name | default('malware_analysis')) | to_json }},
+  "db_user": {{ (postgres_db_user | default('pipeline')) | to_json }}
 }
