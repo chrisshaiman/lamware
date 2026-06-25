@@ -9,8 +9,13 @@ Requires=litellm.service
 
 [Service]
 Type=simple
+# /run/litellm is owned root:pipeline 0750 so only the pipeline group (which launches the
+# rootless interpret container) + root can reach the socket — not every local user. The
+# socket inode stays 0666 because the container's rootless process maps to a host subuid,
+# not the pipeline gid; the directory does the host-side gating instead.
+Group=pipeline
 RuntimeDirectory=litellm
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
 ExecStart=/usr/bin/socat UNIX-LISTEN:/run/litellm/litellm.sock,fork,mode=0666 TCP:127.0.0.1:{{ litellm_port }}
 Restart=always
 RestartSec=5

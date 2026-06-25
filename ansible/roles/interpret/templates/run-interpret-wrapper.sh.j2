@@ -14,7 +14,9 @@ set -euo pipefail
 
 # LiteLLM is reachable ONLY through the bind-mounted Unix socket; the container runs
 # with --network=none (no host network namespace). Fail clearly if the socket bridge
-# (litellm-socket.service) is not up.
+# (litellm-socket.service) is not up. LITELLM_BASE_URL's host is cosmetic — all requests
+# route over LITELLM_UDS (httpx ignores the URL host); the non-resolvable .invalid host
+# means a non-UDS fallback fails CLOSED instead of silently reaching a host-network LiteLLM.
 SOCK=/run/litellm/litellm.sock
 if [ ! -S "$SOCK" ]; then
     echo "[!] LiteLLM socket $SOCK missing — is litellm-socket.service running?" >&2
@@ -34,6 +36,6 @@ podman run --rm -i \
     --user 65534:65534 \
     -v "$SOCK":/run/litellm.sock:ro \
     -e LITELLM_API_KEY="{{ litellm_master_key | default('sk-lamware') }}" \
-    -e LITELLM_BASE_URL="http://127.0.0.1:{{ litellm_port | default(4000) }}/anthropic" \
+    -e LITELLM_BASE_URL="http://litellm.invalid/anthropic" \
     -e LITELLM_UDS=/run/litellm.sock \
     localhost/interpret:latest

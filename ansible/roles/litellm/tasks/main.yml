@@ -75,6 +75,15 @@
     name: socat
     state: present
 
+- name: Ensure the pipeline group exists (the socket dir is group-owned by it)
+  # litellm runs BEFORE the pipeline role in site.yml, but the socket RuntimeDirectory must
+  # be pipeline-group-owned so the rootless interpret launcher (pipeline) can bind-mount the
+  # socket. The pipeline role remains the source of truth for the pipeline user + group
+  # membership; this only guarantees the group node exists when the bridge starts.
+  ansible.builtin.group:
+    name: pipeline
+    system: true
+
 - name: Deploy LiteLLM socket-bridge systemd service
   ansible.builtin.template:
     src: litellm-socket.service.j2
@@ -95,3 +104,24 @@
   # A later role (interpret) probes the socket; flush here so the probe validates the
   # CURRENT socket config rather than a restart still queued until end-of-play.
   ansible.builtin.meta: flush_handlers
+
+- name: Stat the LiteLLM socket directory
+  ansible.builtin.stat:
+    path: /run/litellm
+  register: litellm_sock_dir
+
+- name: Assert the socket directory is locked down (0750 root:pipeline)
+  # Directory mode is the one socket-bridge control whose enforcement is NOT visible in
+  # behavior — a future Ansible refactor could silently widen it and nothing else would
+  # surface the drift. Fail the deploy if it does.
+  ansible.builtin.assert:
+    that:
+      - litellm_sock_dir.stat.exists
+      - litellm_sock_dir.stat.pw_name == 'root'
+      - litellm_sock_dir.stat.gr_name == 'pipeline'
+      - litellm_sock_dir.stat.mode == '0750'
+    fail_msg: >-
+      /run/litellm must be 0750 root:pipeline (got
+      {{ litellm_sock_dir.stat.mode | default('absent') }}
+      {{ litellm_sock_dir.stat.pw_name | default('') }}:{{ litellm_sock_dir.stat.gr_name | default('') }})
+    success_msg: "/run/litellm is 0750 root:pipeline"
