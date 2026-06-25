@@ -85,3 +85,34 @@
     src: "{{ interpret_install_dir }}/run-interpret"
     dest: /usr/local/bin/run-interpret
     state: link
+
+- name: Deploy interpret network-isolation probe
+  ansible.builtin.copy:
+    src: netcheck.py
+    dest: "{{ interpret_install_dir }}/netcheck.py"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Verify interpret network isolation (--network=none probe container)
+  # Proves the container CAN reach LiteLLM via the socket and CANNOT reach host
+  # services. Runs as the pipeline user (same rootless context that runs interpret).
+  # Requires litellm-socket.service up — deploy with --tags litellm,interpret.
+  become: true
+  become_user: pipeline
+  # Pass the key via the env (not the argv) so it isn't visible in ps/process listings;
+  # podman -e LITELLM_API_KEY (no value) forwards it from this environment. Output stays
+  # visible (no no_log) so a probe failure is debuggable.
+  environment:
+    LITELLM_API_KEY: "{{ litellm_master_key | default('sk-lamware') }}"
+  ansible.builtin.command:
+    cmd: >
+      podman run --rm --network=none
+      --user 65534:65534
+      -v /run/litellm/litellm.sock:/run/litellm.sock:ro
+      -v {{ interpret_install_dir }}/netcheck.py:/opt/netcheck.py:ro
+      -e LITELLM_API_KEY
+      --entrypoint python3
+      localhost/interpret:latest
+      /opt/netcheck.py
+  changed_when: false

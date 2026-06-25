@@ -1,0 +1,19 @@
+# /etc/systemd/system/litellm-socket.service — managed by Ansible
+# Bridges a Unix socket → LiteLLM's TCP port so the interpret container can reach
+# LiteLLM under --network=none (no host network namespace). Additive: LiteLLM's
+# own TCP port is unchanged.
+[Unit]
+Description=LiteLLM Unix-socket bridge (for --network=none interpret)
+After=litellm.service
+Requires=litellm.service
+
+[Service]
+Type=simple
+RuntimeDirectory=litellm
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/socat UNIX-LISTEN:/run/litellm/litellm.sock,fork,mode=0666 TCP:127.0.0.1:{{ litellm_port }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

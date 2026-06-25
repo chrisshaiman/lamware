@@ -32,6 +32,7 @@ import sys
 from typing import Any
 
 import anthropic
+import httpx
 
 # ---------------------------------------------------------------------------
 # Configuration — injected by Jinja2 at deploy time, with env overrides
@@ -1820,9 +1821,14 @@ def main() -> None:
         sys.exit(1)
 
     base_url = os.environ.get("LITELLM_BASE_URL", "")
+    uds = os.environ.get("LITELLM_UDS", "")
     client_kwargs: dict[str, Any] = {"api_key": api_key}
     if base_url:
         client_kwargs["base_url"] = base_url
+    if uds:
+        # Reach LiteLLM over a bind-mounted Unix socket so the container can run with
+        # --network=none. httpx routes over the socket regardless of base_url's host.
+        client_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
     client = anthropic.Anthropic(**client_kwargs)
 
     # ---- Wait for init or summarize message ----

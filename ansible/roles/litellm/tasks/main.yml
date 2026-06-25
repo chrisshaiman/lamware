@@ -69,3 +69,29 @@
   retries: 10
   delay: 5
   until: litellm_health.status == 200
+
+- name: Install socat (for the LiteLLM Unix-socket bridge)
+  ansible.builtin.apt:
+    name: socat
+    state: present
+
+- name: Deploy LiteLLM socket-bridge systemd service
+  ansible.builtin.template:
+    src: litellm-socket.service.j2
+    dest: /etc/systemd/system/litellm-socket.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart LiteLLM socket bridge
+
+- name: Enable and start the LiteLLM socket bridge
+  ansible.builtin.systemd:
+    name: litellm-socket
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Flush handlers (apply litellm + socket-bridge restarts now)
+  # A later role (interpret) probes the socket; flush here so the probe validates the
+  # CURRENT socket config rather than a restart still queued until end-of-play.
+  ansible.builtin.meta: flush_handlers
