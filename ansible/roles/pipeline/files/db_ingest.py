@@ -9,6 +9,7 @@ import os
 import sys
 
 from lamware_pipeline.config import PipelineConfig
+from lamware_pipeline.db import build_insert, build_update
 
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
@@ -296,18 +297,15 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
 
         if existing_analysis_id:
             # Update the early-created row
-            set_clause = ", ".join(f"{k} = %s" for k in analysis_values)
             cur.execute(
-                f"UPDATE analyses SET {set_clause} WHERE id = %s",  # nosec B608 — set_clause is code-defined column names only; values passed via execute() params, not interpolated
+                build_update("analyses", list(analysis_values), "id"),
                 list(analysis_values.values()) + [existing_analysis_id],
             )
             analysis_id = existing_analysis_id
         else:
             # Insert new row (backward compatible)
-            cols = ", ".join(analysis_values.keys())
-            placeholders = ", ".join(["%s"] * len(analysis_values))
             cur.execute(
-                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",  # nosec B608 — cols are code-defined column names, placeholders are %s; values passed via execute() params, not interpolated
+                build_insert("analyses", list(analysis_values)),
                 list(analysis_values.values()),
             )
             analysis_id = cur.fetchone()[0]
