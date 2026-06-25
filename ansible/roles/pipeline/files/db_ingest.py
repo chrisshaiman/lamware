@@ -298,7 +298,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             # Update the early-created row
             set_clause = ", ".join(f"{k} = %s" for k in analysis_values)
             cur.execute(
-                f"UPDATE analyses SET {set_clause} WHERE id = %s",
+                f"UPDATE analyses SET {set_clause} WHERE id = %s",  # nosec B608 — set_clause is code-defined column names only; values passed via execute() params, not interpolated
                 list(analysis_values.values()) + [existing_analysis_id],
             )
             analysis_id = existing_analysis_id
@@ -307,7 +307,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             cols = ", ".join(analysis_values.keys())
             placeholders = ", ".join(["%s"] * len(analysis_values))
             cur.execute(
-                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",
+                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",  # nosec B608 — cols are code-defined column names, placeholders are %s; values passed via execute() params, not interpolated
                 list(analysis_values.values()),
             )
             analysis_id = cur.fetchone()[0]

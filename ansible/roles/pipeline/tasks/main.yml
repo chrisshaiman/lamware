@@ -433,17 +433,17 @@
     group: pipeline
     mode: "0640"
 
-- name: Deploy pipeline helper modules (contain DB password)
-  ansible.builtin.template:
+- name: Deploy pipeline DB helper modules (config-driven, no secret)
+  # Plain Python now — DB conn from config.json, password from pipeline.env at runtime.
+  ansible.builtin.copy:
     src: "{{ item }}"
-    dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
+    dest: "{{ pipeline_install_dir }}/{{ item }}"
     owner: pipeline
     group: pipeline
     mode: "0640"
-  no_log: true
   loop:
-    - db_ingest.py.j2
-    - pipeline_status.py.j2
+    - db_ingest.py
+    - pipeline_status.py
 
 - name: Deploy pipeline wrapper script
   ansible.builtin.template:
@@ -452,7 +452,6 @@
     owner: pipeline
     group: pipeline
     mode: "0750"
-  no_log: true  # contains DB password
 
 - name: Deploy generate-report.py
   # Plain Python now (static shebang, no Jinja) — copy: from the role's files/.
