@@ -189,3 +189,9 @@ def test_db_connection_fields(tmp_path):
     assert cfg.db_port == 5432
     assert cfg.db_name == "malware_analysis"
     assert cfg.db_user == "pipeline"
+
+
+def test_fixture_config_loads():
+    from pathlib import Path
+    cfg_path = Path(__file__).parent / "fixtures" / "config.json"
+    PipelineConfig.load(str(cfg_path))  # raises if the checked-in fixture drifts from the model

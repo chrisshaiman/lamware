@@ -1,0 +1,77 @@
+{
+  "malfind_enabled": true,
+  "malfind_max_candidates": 5,
+  "malfind_min_size": 256,
+  "malfind_max_size": 10485760,
+  "malfind_min_score": 2,
+  "malfind_benign_processes": [
+    "csrss.exe",
+    "smss.exe"
+  ],
+  "cape_api_url": "http://10.200.0.1:8000/apiv2",
+  "triage_cmd": "/opt/triage/run-triage",
+  "volatility_cmd": "/opt/volatility3/run-volatility",
+  "ghidra_cmd": "/opt/ghidra/run-ghidra",
+  "dotnet_cmd": "/opt/dotnet-analysis/run-dotnet-analysis",
+  "go_cmd": "/opt/go-analysis/run-go-analysis",
+  "pyinstaller_cmd": "/opt/pyinstaller-analysis/run-pyinstaller-analysis",
+  "java_cmd": "/opt/java-analysis/run-java-analysis",
+  "office_cmd": "/opt/office-macro-analysis/run-office-analysis",
+  "powershell_cmd": "/opt/powershell-analysis/run-powershell-analysis",
+  "screenshot_cmd": "/opt/screenshot-analysis/run-screenshot-analysis",
+  "pdf_cmd": "/opt/pdf-generation/run-pdf-generation",
+  "interpret_cmd": "/opt/interpret/run-interpret",
+  "pcap_cmd": "/opt/pcap-analysis/run-pcap-analysis",
+  "interpret_enabled": true,
+  "interpret_timeout": 300,
+  "reports_dir": "/opt/pipeline/reports",
+  "cape_poll_interval": 30,
+  "cape_timeout": 1200,
+  "pcap_enabled": true,
+  "pcap_timeout": 120,
+  "evasion_hunter_enabled": true,
+  "evasion_max_signatures": 10,
+  "evasion_min_binary_size": 51200,
+  "volatility_ramdisk": "/opt/pipeline/ramdisk",
+  "volatility_parallel_workers": 7,
+  "interpret": {
+    "model": "claude-sonnet-4-6",
+    "escalation_threshold": 5,
+    "escalation_model": "claude-opus-4-6",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 10,
+    "max_imports": 200,
+    "max_strings": 100,
+    "max_string_length": 500,
+    "summary_model": "claude-haiku-4-5"
+  },
+  "volatility_triggers": [
+    "injection_createremotethread",
+    "process_hollowing",
+    "packed_binary"
+  ],
+  "volatility_extra_plugins": {
+    "injection": {
+      "triggers": [
+        "injection_createremotethread",
+        "injection_rwx"
+      ],
+      "plugins": [
+        "windows.handles"
+      ]
+    },
+    "rootkit": {
+      "triggers": [
+        "rootkit_ssdt_hook"
+      ],
+      "plugins": [
+        "windows.ssdt",
+        "windows.callbacks"
+      ]
+    }
+  },
+  "db_host": "127.0.0.1",
+  "db_port": 5432,
+  "db_name": "malware_analysis",
+  "db_user": "pipeline"
+}
