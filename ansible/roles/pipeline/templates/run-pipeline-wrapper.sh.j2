@@ -27,6 +27,7 @@ EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
     echo "[!] Pipeline exited with code $EXIT_CODE — marking stale runs as failed"
     {{ pipeline_install_dir }}/venv/bin/python -c "
+import os
 import psycopg2
 try:
     conn = psycopg2.connect(
@@ -34,7 +35,7 @@ try:
         port={{ postgres_port | default(5432) }},
         dbname='{{ postgres_db_name | default('malware_analysis') }}',
         user='{{ postgres_db_user | default('pipeline') }}',
-        password='{{ pipeline_db_password | default('') }}',
+        password=os.environ.get('PIPELINE_DB_PASSWORD', ''),
     )
     conn.autocommit = True
     cur = conn.cursor()
