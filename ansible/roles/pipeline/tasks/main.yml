@@ -367,7 +367,7 @@
     owner: pipeline
     group: pipeline
     mode: "0640"
-  no_log: true  # contains cape_api_key
+  no_log: true  # contains cape_api_key + db password
 
 - name: Verify the pipeline venv imports every runtime dep (as the pipeline user)
   become: true
