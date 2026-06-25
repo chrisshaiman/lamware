@@ -101,10 +101,16 @@
   changed_when: false
 
 # -------------------------------------------------------------------------
-# Network lockdown — restrict pipeline user to localhost services only.
-# The interpret container uses --network=host, so these rules apply to
-# LLM API calls. Direct internet access is blocked; all Claude traffic
-# goes through the LiteLLM proxy on localhost:4000.
+# Network lockdown — restrict the PIPELINE USER's OWN outbound to the localhost
+# services its in-process code actually uses: PostgreSQL (db_ingest /
+# pipeline_status) and the CAPE API (cape stage). Everything else is DROPped, so a
+# compromised pipeline process cannot reach the internet or arbitrary hosts.
+#
+# NOTE: these rules do NOT govern the interpret (LLM) container. That runs as a
+# rootless subuid — never the pipeline uid — so uid_owner never matched it; it is
+# isolated separately via --network=none + a bind-mounted LiteLLM Unix socket. The
+# 4000 (LiteLLM) and 27017 (Mongo) ACCEPTs below are VESTIGIAL — no pipeline-uid
+# process reaches either directly; the DROP-all already covers them.
 # -------------------------------------------------------------------------
 
 - name: Allow pipeline user to reach LiteLLM proxy (localhost:4000)

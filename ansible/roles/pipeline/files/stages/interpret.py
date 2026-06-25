@@ -2,7 +2,8 @@
 Stage 4.5: LLM Interpretation — agentic Claude analysis of Ghidra output.
 
 The orchestrator brokers JSON lines between two containers:
-  - interpret container (--network=host) holds the Claude conversation
+  - interpret container (--network=none; reaches LiteLLM via a bind-mounted Unix
+    socket, no host network namespace) holds the Claude conversation
   - Ghidra tool container (--network=none) executes per-query
 
 Tool arguments are validated via regex whitelist before reaching Ghidra.
