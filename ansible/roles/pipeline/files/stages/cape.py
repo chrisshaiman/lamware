@@ -7,21 +7,27 @@ License: Apache 2.0
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 import requests
 
+from lamware_pipeline.config import PipelineConfig
+
 
 # -------------------------------------------------------------------------
-# Configuration (injected by Ansible template)
+# Configuration (loaded from config.json; secret from the environment)
 # -------------------------------------------------------------------------
 
-CAPE_API_URL = "{{ cape_api_url }}"
-CAPE_API_KEY = "{{ cape_api_key }}"
-CAPE_POLL_INTERVAL = {{ pipeline_cape_poll_interval }}
-CAPE_TIMEOUT = {{ pipeline_cape_timeout }}
+_CFG = PipelineConfig.load(
+    os.environ.get("LAMWARE_PIPELINE_CONFIG", "/opt/pipeline/config.json")
+)
+CAPE_API_URL = _CFG.cape_api_url
+CAPE_API_KEY = os.environ.get("CAPE_API_KEY", "")
+CAPE_POLL_INTERVAL = _CFG.cape_poll_interval
+CAPE_TIMEOUT = _CFG.cape_timeout
 
 
 def cape_headers() -> dict:
@@ -210,10 +216,11 @@ def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]
                 else:
                     continue
             except (UnicodeDecodeError, ValueError):
-                # Fallback: try latin-1 direct encoding
+                # Fallback: try latin-1 direct encoding. A malformed buffer in
+                # an untrusted report should be skipped, not abort extraction.
                 try:
                     raw_bytes = buffer_data.encode("latin-1") if isinstance(buffer_data, str) else buffer_data
-                except Exception:
+                except (UnicodeEncodeError, ValueError):
                     continue
 
             if len(raw_bytes) < 8:
