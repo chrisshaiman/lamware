@@ -32,13 +32,14 @@
     mode: "0644"
 
 - name: Deploy generate-report.py
-  ansible.builtin.template:
-    src: "../../pipeline/templates/generate-report.py.j2"
+  # Single-sourced from the pipeline role's files/ (plain Python now, static shebang,
+  # no Jinja/secret) — copy: instead of template:, into the pdf-generation build context.
+  ansible.builtin.copy:
+    src: "../../pipeline/files/generate-report.py"
     dest: "{{ pdf_generation_install_dir }}/build/generate-report.py"
     owner: pipeline
     group: pipeline
     mode: "0755"
-  no_log: true
 
 - name: Build pdf-generation container image
   ansible.builtin.command:
