@@ -5,7 +5,9 @@
 Phase 1 covers the malfind block (the config round-trip POC). Phase 2b-1 landed
 the scalar tuning knobs + analysis-tool CMD paths (malfind from Phase 1). Phase
 2b-2 landed the collection values: the interpret submodel plus the volatility
-triggers and extra-plugins maps. Secrets (cape_api_key, db_password) are
+triggers and extra-plugins maps. Phase 3b landed the non-secret DB connection
+fields (db_host/db_port/db_name/db_user) so db_ingest/pipeline_status can stop
+carrying their own Jinja for them. Secrets (cape_api_key, db_password) are
 intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
@@ -71,6 +73,12 @@ class PipelineConfig(BaseModel):
     interpret: InterpretConfig
     volatility_triggers: list[str]
     volatility_extra_plugins: dict[str, dict[str, list[str]]]
+
+    # Phase 3b — DB connection (non-secret; PIPELINE_DB_PASSWORD comes from the env)
+    db_host: str
+    db_port: int
+    db_name: str
+    db_user: str
 
     @classmethod
     def load(cls, path: str) -> "PipelineConfig":

@@ -73,6 +73,11 @@ _VALID = {
             "plugins": ["windows.ssdt", "windows.callbacks"],
         },
     },
+    # Phase 3b — DB connection (non-secret; password is in pipeline.env)
+    "db_host": "127.0.0.1",
+    "db_port": 5432,
+    "db_name": "malware_analysis",
+    "db_user": "pipeline",
 }
 
 
@@ -174,3 +179,13 @@ def test_rejects_unknown_interpret_key(tmp_path):
     p.write_text(json.dumps(bad))
     with pytest.raises(ValidationError):
         PipelineConfig.load(str(p))
+
+
+def test_db_connection_fields(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    assert cfg.db_host == "127.0.0.1"
+    assert cfg.db_port == 5432
+    assert cfg.db_name == "malware_analysis"
+    assert cfg.db_user == "pipeline"
