@@ -1,4 +1,4 @@
-#!{{ pipeline_install_dir }}/venv/bin/python
+#!/opt/pipeline/venv/bin/python
 """
 generate-report.py — Render a pipeline analysis report as PDF.
 

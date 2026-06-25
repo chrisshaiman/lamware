@@ -424,15 +424,14 @@
     mode: "0640"
   no_log: true
 
-- name: Deploy pipeline helper modules
-  ansible.builtin.template:
-    src: "{{ item }}"
-    dest: "{{ pipeline_install_dir }}/{{ item | replace('.j2', '') }}"
+- name: Deploy pipeline helper modules (no secrets, plain .py)
+  # ioc_extract has no Jinja — deployed verbatim via copy: from the role's files/.
+  ansible.builtin.copy:
+    src: ioc_extract.py
+    dest: "{{ pipeline_install_dir }}/ioc_extract.py"
     owner: pipeline
     group: pipeline
     mode: "0640"
-  loop:
-    - ioc_extract.py.j2
 
 - name: Deploy pipeline helper modules (contain DB password)
   ansible.builtin.template:
@@ -456,8 +455,9 @@
   no_log: true  # contains DB password
 
 - name: Deploy generate-report.py
-  ansible.builtin.template:
-    src: generate-report.py.j2
+  # Plain Python now (static shebang, no Jinja) — copy: from the role's files/.
+  ansible.builtin.copy:
+    src: generate-report.py
     dest: "{{ pipeline_install_dir }}/generate-report.py"
     owner: pipeline
     group: pipeline
