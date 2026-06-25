@@ -120,7 +120,7 @@ flowchart TB
     end
 ```
 
-> **LLM network path:** LLM containers use `--network=host` to reach the self-hosted LiteLLM proxy on `localhost:4000`. LiteLLM is the only process with outbound HTTPS to Anthropic's API. The Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. All other analysis containers are fully air-gapped with `--network=none`.
+> **LLM network path:** the interpret (LLM-broker) container — the one component touching malware-derived LLM I/O — runs with **`--network=none`** (no host network namespace) and reaches the self-hosted LiteLLM proxy solely through a **bind-mounted Unix socket** (a root `socat` bridge fronts LiteLLM's `localhost:4000`). So it cannot route to host services (Postgres/Keycloak/Mongo/CAPE) or the internet — only LiteLLM. LiteLLM is the only process with outbound HTTPS to Anthropic's API; the Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. **Every** analysis container is `--network=none`.
 
 ---
 
@@ -247,7 +247,7 @@ ssh sandbox 'sudo machinectl shell pipeline@ /bin/bash -c "sample-feeder --famil
 
 Every analysis tool runs in a **rootless** Podman container with:
 
-- `--network=none` — no network access (LLM containers use `--network=host` to reach the local LiteLLM proxy only)
+- `--network=none` — no network access for **every** analysis container; the interpret (LLM-broker) container reaches LiteLLM only through a bind-mounted Unix socket, never the network
 - `--read-only` — immutable filesystem
 - `--cap-drop=ALL` — no Linux capabilities
 - `--security-opt=no-new-privileges` — no privilege escalation
