@@ -390,9 +390,9 @@
     mode: "0750"
 
 - name: Deploy pipeline stage modules
-  # These 13 stage modules contain no Jinja — plain Python deployed verbatim.
-  # copy: resolves src from the role's files/ dir (cape.py.j2 stays a template
-  # below because it carries the cape_api_key secret).
+  # These stage modules contain no Jinja — plain Python deployed verbatim.
+  # copy: resolves src from the role's files/ dir. cape.py reads its config
+  # from config.json and the CAPE_API_KEY secret from the environment.
   ansible.builtin.copy:
     src: "stages/{{ item }}"
     dest: "{{ pipeline_install_dir }}/stages/{{ item }}"
@@ -413,16 +413,7 @@
     - script_analysis.py
     - ghidra.py
     - interpret.py
-
-# cape.py.j2 contains cape_api_key — deploy separately with no_log
-- name: Deploy cape stage module (contains API key)
-  ansible.builtin.template:
-    src: "stages/cape.py.j2"
-    dest: "{{ pipeline_install_dir }}/stages/cape.py"
-    owner: pipeline
-    group: pipeline
-    mode: "0640"
-  no_log: true
+    - cape.py
 
 - name: Deploy pipeline helper modules (no secrets, plain .py)
   # ioc_extract has no Jinja — deployed verbatim via copy: from the role's files/.
