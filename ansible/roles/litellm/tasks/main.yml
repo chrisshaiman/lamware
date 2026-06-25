@@ -90,3 +90,8 @@
     state: started
     enabled: true
     daemon_reload: true
+
+- name: Flush handlers (apply litellm + socket-bridge restarts now)
+  # A later role (interpret) probes the socket; flush here so the probe validates the
+  # CURRENT socket config rather than a restart still queued until end-of-play.
+  meta: flush_handlers
