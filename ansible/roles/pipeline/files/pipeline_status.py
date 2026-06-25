@@ -11,19 +11,25 @@ License: Apache 2.0
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lamware_pipeline.config import PipelineConfig
 
 
 # -------------------------------------------------------------------------
 # Configuration (injected by Ansible template)
 # -------------------------------------------------------------------------
 
-DB_HOST = "{{ postgres_listen_address | default('127.0.0.1') }}"
-DB_PORT = {{ postgres_port | default(5432) }}
-DB_NAME = "{{ postgres_db_name | default('malware_analysis') }}"
-DB_USER = "{{ postgres_db_user | default('pipeline') }}"
-DB_PASSWORD = "{{ pipeline_db_password | default('') }}"
+_CFG = PipelineConfig.load(
+    os.environ.get("LAMWARE_PIPELINE_CONFIG", "/opt/pipeline/config.json")
+)
+DB_HOST = _CFG.db_host
+DB_PORT = _CFG.db_port
+DB_NAME = _CFG.db_name
+DB_USER = _CFG.db_user
+DB_PASSWORD = os.environ.get("PIPELINE_DB_PASSWORD", "")
 
 
 def _get_conn():

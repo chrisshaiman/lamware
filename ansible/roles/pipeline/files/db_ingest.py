@@ -5,7 +5,10 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import os
 import sys
+
+from lamware_pipeline.config import PipelineConfig
 
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
@@ -107,11 +110,14 @@ MITRE_TACTICS = {
 # Configuration (injected by Ansible template)
 # -------------------------------------------------------------------------
 
-DB_HOST = "{{ postgres_listen_address | default('127.0.0.1') }}"
-DB_PORT = {{ postgres_port | default(5432) }}
-DB_NAME = "{{ postgres_db_name | default('malware_analysis') }}"
-DB_USER = "{{ postgres_db_user | default('pipeline') }}"
-DB_PASSWORD = "{{ pipeline_db_password | default('') }}"
+_CFG = PipelineConfig.load(
+    os.environ.get("LAMWARE_PIPELINE_CONFIG", "/opt/pipeline/config.json")
+)
+DB_HOST = _CFG.db_host
+DB_PORT = _CFG.db_port
+DB_NAME = _CFG.db_name
+DB_USER = _CFG.db_user
+DB_PASSWORD = os.environ.get("PIPELINE_DB_PASSWORD", "")
 
 
 # LLM pricing per million tokens (update when model pricing changes)
@@ -292,7 +298,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             # Update the early-created row
             set_clause = ", ".join(f"{k} = %s" for k in analysis_values)
             cur.execute(
-                f"UPDATE analyses SET {set_clause} WHERE id = %s",
+                f"UPDATE analyses SET {set_clause} WHERE id = %s",  # nosec B608 — set_clause is code-defined column names only; values passed via execute() params, not interpolated
                 list(analysis_values.values()) + [existing_analysis_id],
             )
             analysis_id = existing_analysis_id
@@ -301,7 +307,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             cols = ", ".join(analysis_values.keys())
             placeholders = ", ".join(["%s"] * len(analysis_values))
             cur.execute(
-                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",
+                f"INSERT INTO analyses ({cols}) VALUES ({placeholders}) RETURNING id",  # nosec B608 — cols are code-defined column names, placeholders are %s; values passed via execute() params, not interpolated
                 list(analysis_values.values()),
             )
             analysis_id = cur.fetchone()[0]
