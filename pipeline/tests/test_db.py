@@ -5,9 +5,8 @@
 These prove the builders use sql composition (not f-strings) and emit one
 placeholder per value + safely-quoted identifiers — no DB connection needed.
 """
-from psycopg2 import sql
-
 from lamware_pipeline.db import build_insert, build_update
+from psycopg2 import sql
 
 
 def _leaves(composable):
