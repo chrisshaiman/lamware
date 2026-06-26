@@ -299,3 +299,12 @@ def test_injection_corroborated_silent_when_malfind_in_other_pid():
         "volatility": {"plugins": {"malfind": [{"PID": 9999, "Start VPN": 0x1000, "Hexdump": "90"}]}},
     }
     assert rule_injection_corroborated(report) == []
+
+
+def test_injection_corroborated_silent_when_target_pid_is_none():
+    from lamware_pipeline.correlation_rules import rule_injection_corroborated
+    report = {
+        "cape": {"injection_buffers": [{"injection_address": "0x1000", "path": ""}]},  # no target_pid
+        "volatility": {"plugins": {"malfind": [{"PID": 1234, "Start VPN": 0x1000, "Hexdump": "90"}]}},
+    }
+    assert rule_injection_corroborated(report) == []

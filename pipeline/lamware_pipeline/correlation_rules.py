@@ -338,16 +338,18 @@ def rule_injection_corroborated(report: dict) -> list[dict]:
     if not (isinstance(malfind, list) and injection_bufs):
         return findings
 
-    malfind_pids: dict = {}
+    malfind_pids = {}
     for region in malfind:
         pid = region.get("PID")
         if pid is not None:
             malfind_pids[pid] = malfind_pids.get(pid, 0) + 1
 
+    seen_target_pids: set = set()
     target_pids = []
     for buf in injection_bufs:
         pid = buf.get("target_pid")
-        if pid is not None and pid not in target_pids:
+        if pid is not None and pid not in seen_target_pids:
+            seen_target_pids.add(pid)
             target_pids.append(pid)
 
     for pid in target_pids:
