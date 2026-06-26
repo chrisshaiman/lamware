@@ -1,13 +1,11 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""Cross-tool correlation + family/severity/MITRE helpers (extracted verbatim
-from the pipeline orchestrator; pure functions of the report dict).
+"""Family/severity/MITRE helpers (pure functions of the report dict).
 
-Source: ansible/roles/pipeline/templates/run-pipeline.py.j2:175-691
-The only change from the source is hoisting the two in-loop `import os`
-statements (original lines 549 and 613, both inside cross_correlate) and the
-in-function `import re` (original line 319, inside determine_family) to this
-module top. No other logic has been altered.
+cross_correlate() now lives in correlation_rules.py and is re-exported here
+for backward compatibility. This module retains determine_family(),
+calculate_severity(), and build_mitre_mapping() — the family-detection
+priority chain, severity scoring, and MITRE ATT&CK mapping helpers.
 """
 import re
 

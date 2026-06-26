@@ -13,6 +13,10 @@ historical key shape (type, severity, title, detail, sources, mitre, ...).
 import os
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
+# Volatility 3 malfind emits a 64-byte hexdump by default; this bound must exceed
+# the largest hexdump the pipeline produces, or self-modification past this offset
+# is not compared. Kept bounded (not a full-buffer read) so adversary-controlled
+# buffers can't force large reads.
 _BUFFER_SAMPLE_BYTES = 128
 _MAX_DROPPED_FILES = 1000
 
@@ -42,7 +46,7 @@ def _gather_dropped_files(report: dict) -> list[str]:
             names.append(path)
     # Impure: list the CAPE dropped dir if task_id known and path is contained
     task_id = report.get("cape", {}).get("task_id")
-    if task_id is not None:
+    if task_id:
         dropped_dir = os.path.join(_CAPE_STORAGE_ROOT, str(task_id), "dropped")
         if _within_storage_root(dropped_dir) and os.path.isdir(dropped_dir):
             try:
