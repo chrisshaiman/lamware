@@ -10,6 +10,7 @@ the gathered inputs before returning so raw payload bytes are never persisted.
 Each rule is a pure function (report: dict) -> list[dict]; findings preserve the
 historical key shape (type, severity, title, detail, sources, mitre, ...).
 """
+import ipaddress
 import os
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
@@ -239,6 +240,83 @@ def rule_cmdline_spoofing(report: dict) -> list[dict]:
     return findings
 
 
+# --- New rule: C2 confirmed live in memory ---
+
+_C2_CONFIG_KEY_HINTS = ("c2", "cnc", "cncs", "address", "host", "server")
+_SKIP_FOREIGN = {"", "0.0.0.0", "::", "*", "127.0.0.1"}
+
+
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _cape_c2_ip_indicators(cape: dict) -> set:
+    """IP literals Cape flagged as C2, from extracted_configs + network hosts."""
+    ips: set[str] = set()
+
+    def _consume(value):
+        if isinstance(value, str) and _is_ip_literal(value):
+            ips.add(value)
+        elif isinstance(value, list):
+            for item in value:
+                _consume(item)
+
+    for cfg in cape.get("extracted_configs", []):
+        if not isinstance(cfg, dict):
+            continue
+        for key, value in cfg.items():
+            if any(hint in key.lower() for hint in _C2_CONFIG_KEY_HINTS):
+                _consume(value)
+
+    network = cape.get("network", {})
+    if isinstance(network, dict):
+        for host in network.get("hosts", []):
+            if isinstance(host, dict):
+                _consume(host.get("ip", ""))
+            else:
+                _consume(host)
+    return ips
+
+
+def rule_c2_live_in_memory(report: dict) -> list[dict]:
+    """Cape-identified C2 IP that is also an active foreign connection in
+    Volatility netscan → the C2 channel was live at capture. IP-literal match only
+    (domain->IP resolution is future work)."""
+    findings = []
+    cape = report.get("cape", {})
+    netscan = report.get("volatility", {}).get("plugins", {}).get("netscan", [])
+    if not isinstance(netscan, list) or not netscan:
+        return findings
+
+    c2_ips = _cape_c2_ip_indicators(cape)
+    if not c2_ips:
+        return findings
+
+    seen_ips = set()
+    for conn in netscan:
+        foreign = conn.get("ForeignAddr", "")
+        if foreign in _SKIP_FOREIGN or foreign not in c2_ips or foreign in seen_ips:
+            continue
+        seen_ips.add(foreign)
+        findings.append({
+            "type": "c2_live_in_memory",
+            "severity": "high",
+            "title": f"C2 endpoint {foreign} was live in memory",
+            "detail": (f"Cape config/network identified {foreign} as C2; Volatility "
+                       f"netscan shows an active connection to it "
+                       f"(PID {conn.get('PID', '?')}, {conn.get('State', '?')})."),
+            "indicator": foreign,
+            "pid": conn.get("PID", 0),
+            "sources": ["Cape", "Volatility"],
+            "mitre": "T1071 — Application Layer Protocol",
+        })
+    return findings
+
+
 # -------------------------------------------------------------------------
 # Registry + entrypoint
 # -------------------------------------------------------------------------
@@ -247,6 +325,7 @@ _RULES = [
     rule_dropped_file_loaded,
     rule_shellcode_self_modified,
     rule_cmdline_spoofing,
+    rule_c2_live_in_memory,
 ]
 
 

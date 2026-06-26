@@ -205,3 +205,32 @@ def test_cross_correlate_pops_inputs_so_bytes_are_not_persisted(tmp_path, monkey
     ]}}
     cr.cross_correlate(report)
     assert "_correlation_inputs" not in report  # gathered bytes must not persist
+
+
+# --- rule_c2_live_in_memory ---
+
+def test_c2_live_in_memory_fires_when_config_ip_in_netscan():
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = {
+        "cape": {"extracted_configs": [{"C2": "203.0.113.7", "version": "1.2"}]},
+        "volatility": {"plugins": {"netscan": [
+            {"ForeignAddr": "203.0.113.7", "PID": 1337, "State": "ESTABLISHED"}
+        ]}},
+    }
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1
+    assert findings[0]["type"] == "c2_live_in_memory"
+    assert findings[0]["severity"] == "high"
+    assert findings[0]["indicator"] == "203.0.113.7"
+    assert findings[0]["pid"] == 1337
+
+
+def test_c2_live_in_memory_silent_when_ip_not_connected():
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = {
+        "cape": {"extracted_configs": [{"C2": "203.0.113.7"}]},
+        "volatility": {"plugins": {"netscan": [
+            {"ForeignAddr": "127.0.0.1", "PID": 1, "State": "LISTENING"}
+        ]}},
+    }
+    assert rule_c2_live_in_memory(report) == []
