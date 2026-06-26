@@ -32,7 +32,23 @@ EXPECTED_MITRE = [
     {'id': 'T1071', 'source_signature': 'network_cnc_http', 'sources': ['Cape']},
     {'id': 'T1082', 'name': 'System Information Discovery', 'sources': ['AI Reverse Engineering']},
 ]
-EXPECTED_CORRELATIONS = []
+# Updated 2026-06-25: rule_injection_corroborated (new) fires on this fixture —
+# Cape flagged injection into PID 1234 and Volatility malfind found a region in
+# PID 1234. This is an INTENTIONAL new detection (see
+# docs/superpowers/specs/2026-06-25-correlation-rule-registry-design.md), NOT
+# extraction drift. The "never change the expected value to match" rule guards
+# against masking extraction divergence, which this is not.
+EXPECTED_CORRELATIONS = [
+    {
+        "type": "injection_corroborated",
+        "severity": "medium",
+        "title": "Process injection into PID 1234 corroborated in memory",
+        "detail": "Cape flagged injection into PID 1234; Volatility malfind found 1 anomalous executable region(s) in that process.",
+        "pid": 1234,
+        "sources": ["Cape", "Volatility"],
+        "mitre": "T1055 — Process Injection",
+    }
+]
 
 
 # ---------------------------------------------------------------------------

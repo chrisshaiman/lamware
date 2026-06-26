@@ -271,3 +271,31 @@ def test_c2_live_in_memory_fires_from_network_hosts_list():
     findings = rule_c2_live_in_memory(report)
     assert len(findings) == 1
     assert findings[0]["indicator"] == "198.51.100.9"
+
+
+# --- rule_injection_corroborated ---
+
+def test_injection_corroborated_fires_when_target_pid_has_malfind_region():
+    from lamware_pipeline.correlation_rules import rule_injection_corroborated
+    report = {
+        "cape": {"injection_buffers": [{"target_pid": 1234, "injection_address": "0x1000", "path": ""}]},
+        "volatility": {"plugins": {"malfind": [
+            {"PID": 1234, "Start VPN": 0x1000, "Hexdump": "90 90"},
+            {"PID": 1234, "Start VPN": 0x2000, "Hexdump": "cc cc"},
+        ]}},
+    }
+    findings = rule_injection_corroborated(report)
+    assert len(findings) == 1
+    assert findings[0]["type"] == "injection_corroborated"
+    assert findings[0]["severity"] == "medium"
+    assert findings[0]["pid"] == 1234
+    assert "2 anomalous executable region(s)" in findings[0]["detail"]
+
+
+def test_injection_corroborated_silent_when_malfind_in_other_pid():
+    from lamware_pipeline.correlation_rules import rule_injection_corroborated
+    report = {
+        "cape": {"injection_buffers": [{"target_pid": 1234, "injection_address": "0x1000", "path": ""}]},
+        "volatility": {"plugins": {"malfind": [{"PID": 9999, "Start VPN": 0x1000, "Hexdump": "90"}]}},
+    }
+    assert rule_injection_corroborated(report) == []

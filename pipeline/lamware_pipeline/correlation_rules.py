@@ -320,6 +320,52 @@ def rule_c2_live_in_memory(report: dict) -> list[dict]:
     return findings
 
 
+# --- New rule: injection corroborated in memory ---
+
+def rule_injection_corroborated(report: dict) -> list[dict]:
+    """Cape flagged injection into a PID AND Volatility malfind found an anomalous
+    executable region in that same PID → injection confirmed in memory.
+
+    severity=medium (not high): injection is common and malfind is FP-prone, so
+    this corroboration is a confidence signal, not an impact escalation; and
+    calculate_severity already adds +10 for the presence of injection_buffers, so
+    scoring it high would double-count. medium is score-neutral.
+    """
+    findings = []
+    cape = report.get("cape", {})
+    malfind = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
+    injection_bufs = cape.get("injection_buffers", [])
+    if not (isinstance(malfind, list) and injection_bufs):
+        return findings
+
+    malfind_pids: dict = {}
+    for region in malfind:
+        pid = region.get("PID")
+        if pid is not None:
+            malfind_pids[pid] = malfind_pids.get(pid, 0) + 1
+
+    target_pids = []
+    for buf in injection_bufs:
+        pid = buf.get("target_pid")
+        if pid is not None and pid not in target_pids:
+            target_pids.append(pid)
+
+    for pid in target_pids:
+        if pid in malfind_pids:
+            n = malfind_pids[pid]
+            findings.append({
+                "type": "injection_corroborated",
+                "severity": "medium",
+                "title": f"Process injection into PID {pid} corroborated in memory",
+                "detail": (f"Cape flagged injection into PID {pid}; Volatility malfind "
+                           f"found {n} anomalous executable region(s) in that process."),
+                "pid": pid,
+                "sources": ["Cape", "Volatility"],
+                "mitre": "T1055 — Process Injection",
+            })
+    return findings
+
+
 # -------------------------------------------------------------------------
 # Registry + entrypoint
 # -------------------------------------------------------------------------
@@ -329,6 +375,7 @@ _RULES = [
     rule_shellcode_self_modified,
     rule_cmdline_spoofing,
     rule_c2_live_in_memory,
+    rule_injection_corroborated,
 ]
 
 
