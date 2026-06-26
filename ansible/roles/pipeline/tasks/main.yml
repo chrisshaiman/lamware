@@ -108,12 +108,13 @@
 #
 # NOTE: these rules do NOT govern the interpret (LLM) container. That runs as a
 # rootless subuid — never the pipeline uid — so uid_owner never matched it; it is
-# isolated separately via --network=none + a bind-mounted LiteLLM Unix socket. The
-# 4000 (LiteLLM) and 27017 (Mongo) ACCEPTs below are VESTIGIAL — no pipeline-uid
-# process reaches either directly; the DROP-all already covers them.
+# isolated separately via --network=none + a bind-mounted LiteLLM Unix socket.
+# LiteLLM (4000) and Mongo (27017) are intentionally NOT allowed for the pipeline
+# user — no pipeline-uid process reaches them directly. The state:absent tasks below
+# remove those formerly-vestigial allows so the DROP-all is the only rule covering them.
 # -------------------------------------------------------------------------
 
-- name: Allow pipeline user to reach LiteLLM proxy (localhost:4000)
+- name: Remove vestigial pipeline→LiteLLM allow (no pipeline-uid path; interpret is isolated)
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
@@ -121,6 +122,7 @@
     out_interface: lo
     destination_port: "4000"
     jump: ACCEPT
+    state: absent
     comment: "pipeline: LiteLLM proxy"
 
 - name: Allow pipeline user to reach PostgreSQL (localhost:5432)
@@ -143,7 +145,7 @@
     jump: ACCEPT
     comment: "pipeline: CAPE API"
 
-- name: Allow pipeline user to reach MongoDB (localhost:27017)
+- name: Remove vestigial pipeline→MongoDB allow (no pipeline-uid path; CAPE owns Mongo)
   ansible.builtin.iptables:
     chain: OUTPUT
     protocol: tcp
@@ -151,6 +153,7 @@
     out_interface: lo
     destination_port: "27017"
     jump: ACCEPT
+    state: absent
     comment: "pipeline: MongoDB"
 
 - name: Block all other outbound traffic from pipeline user
