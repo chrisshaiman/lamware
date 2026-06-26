@@ -234,3 +234,40 @@ def test_c2_live_in_memory_silent_when_ip_not_connected():
         ]}},
     }
     assert rule_c2_live_in_memory(report) == []
+
+
+def test_c2_live_in_memory_silent_when_c2_ip_is_skipped_address():
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = {
+        "cape": {"extracted_configs": [{"C2": "0.0.0.0"}]},
+        "volatility": {"plugins": {"netscan": [
+            {"ForeignAddr": "0.0.0.0", "PID": 1, "State": "ESTABLISHED"}
+        ]}},
+    }
+    assert rule_c2_live_in_memory(report) == []
+
+
+def test_c2_live_in_memory_dedups_multiple_connections_to_same_c2():
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = {
+        "cape": {"extracted_configs": [{"C2": "203.0.113.7"}]},
+        "volatility": {"plugins": {"netscan": [
+            {"ForeignAddr": "203.0.113.7", "PID": 100, "State": "ESTABLISHED"},
+            {"ForeignAddr": "203.0.113.7", "PID": 200, "State": "ESTABLISHED"},
+        ]}},
+    }
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1
+
+
+def test_c2_live_in_memory_fires_from_network_hosts_list():
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = {
+        "cape": {"network": {"hosts": ["198.51.100.9", "8.8.8.8"]}},
+        "volatility": {"plugins": {"netscan": [
+            {"ForeignAddr": "198.51.100.9", "PID": 77, "State": "ESTABLISHED"}
+        ]}},
+    }
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1
+    assert findings[0]["indicator"] == "198.51.100.9"

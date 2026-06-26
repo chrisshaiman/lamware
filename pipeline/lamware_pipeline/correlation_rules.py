@@ -255,7 +255,7 @@ def _is_ip_literal(value: str) -> bool:
 
 
 def _cape_c2_ip_indicators(cape: dict) -> set:
-    """IP literals Cape flagged as C2, from extracted_configs + network hosts."""
+    """IP literals from Cape config keys that suggest C2 (key-hint match) plus the network hosts list."""
     ips: set[str] = set()
 
     def _consume(value):
@@ -264,6 +264,9 @@ def _cape_c2_ip_indicators(cape: dict) -> set:
         elif isinstance(value, list):
             for item in value:
                 _consume(item)
+        elif isinstance(value, dict):
+            for v in value.values():
+                _consume(v)
 
     for cfg in cape.get("extracted_configs", []):
         if not isinstance(cfg, dict):
