@@ -6,6 +6,8 @@ Rules are pure functions of the report dict, so each is tested with an inline
 dict fixture (no filesystem). enrich (the only impure step) is tested separately
 with tmp_path + a monkeypatched storage root.
 """
+import pytest
+
 import lamware_pipeline.correlation_rules as cr
 from lamware_pipeline.correlation_rules import (
     enrich_correlation_inputs,
@@ -42,6 +44,16 @@ def test_dropped_file_loaded_silent_when_no_overlap():
     assert rule_dropped_file_loaded(report) == []
 
 
+def test_dropped_file_loaded_silent_when_no_dropped_files():
+    report = {
+        "_correlation_inputs": {"dropped_files": [], "buffer_samples": {}},
+        "volatility": {"plugins": {"dlllist": [
+            {"Process": "svc.exe", "PID": 1, "Path": "C:\\\\Windows\\\\System32\\\\ntdll.dll", "Name": "ntdll.dll"}
+        ]}},
+    }
+    assert rule_dropped_file_loaded(report) == []
+
+
 # --- rule_shellcode_self_modified ---
 
 def test_shellcode_self_modified_fires_when_bytes_differ():
@@ -56,6 +68,8 @@ def test_shellcode_self_modified_fires_when_bytes_differ():
     findings = rule_shellcode_self_modified(report)
     assert len(findings) == 1
     assert findings[0]["type"] == "shellcode_self_modified"
+    # before/after are capped at 64B in production; these 4-byte inputs are
+    # always shorter, so the cap is a no-op here.
     assert findings[0]["before"] == (b"AAAA").hex()
     assert findings[0]["after"] == (b"BBBB").hex()
 
@@ -114,6 +128,27 @@ def test_enrich_rejects_path_outside_storage_root(tmp_path, monkeypatch):
     outside.write_bytes(b"TOPSECRET")
     report = {"cape": {"task_id": 1, "injection_buffers": [
         {"target_pid": 5, "injection_address": "0x1000", "path": str(outside)}
+    ]}}
+    enrich_correlation_inputs(report)
+    assert report["_correlation_inputs"]["buffer_samples"] == {}
+
+
+def test_enrich_rejects_symlink_outside_storage_root(tmp_path, monkeypatch):
+    # A symlink INSIDE the storage root whose target is OUTSIDE must be rejected
+    # (realpath resolves the link before the containment check).
+    root = tmp_path / "storage"
+    buf_dir = root / "1" / "dropped"
+    buf_dir.mkdir(parents=True)
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    outside = tmp_path / "secret.bin"
+    outside.write_bytes(b"TOPSECRET")
+    link = buf_dir / "link.bin"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+    report = {"cape": {"task_id": 1, "injection_buffers": [
+        {"target_pid": 5, "injection_address": "0x1000", "path": str(link)}
     ]}}
     enrich_correlation_inputs(report)
     assert report["_correlation_inputs"]["buffer_samples"] == {}
