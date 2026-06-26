@@ -308,3 +308,19 @@ def test_injection_corroborated_silent_when_target_pid_is_none():
         "volatility": {"plugins": {"malfind": [{"PID": 1234, "Start VPN": 0x1000, "Hexdump": "90"}]}},
     }
     assert rule_injection_corroborated(report) == []
+
+
+def test_enrich_reads_buffer_under_pipeline_reports_root(tmp_path, monkeypatch):
+    # Injection buffers live under the pipeline reports tree (output_dir/cape_injections),
+    # NOT the CAPE storage tree — enrich must read from there too (regression guard).
+    reports = tmp_path / "reports"
+    inj_dir = reports / "task1" / "cape_injections"
+    inj_dir.mkdir(parents=True)
+    monkeypatch.setattr(cr, "_PIPELINE_REPORTS_ROOT", str(reports))
+    buf = inj_dir / "inject.bin"
+    buf.write_bytes(b"SHELLCODE")
+    report = {"cape": {"task_id": "task1", "injection_buffers": [
+        {"target_pid": 5, "injection_address": "0x1000", "path": str(buf)}
+    ]}}
+    enrich_correlation_inputs(report)
+    assert report["_correlation_inputs"]["buffer_samples"]["5:0x1000"] == (b"SHELLCODE").hex()

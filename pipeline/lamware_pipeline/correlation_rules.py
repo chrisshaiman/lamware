@@ -14,6 +14,7 @@ import ipaddress
 import os
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
+_PIPELINE_REPORTS_ROOT = "/opt/pipeline/reports"
 # Volatility 3 malfind emits a 64-byte hexdump by default; this bound must exceed
 # the largest hexdump the pipeline produces, or self-modification past this offset
 # is not compared. Kept bounded (not a full-buffer read) so adversary-controlled
@@ -28,14 +29,24 @@ _MAX_DROPPED_FILES = 1000
 # by cross_correlate() before return so payload bytes never persist.
 # -------------------------------------------------------------------------
 
-def _within_storage_root(path: str) -> bool:
-    """True if `path` resolves to a location under the CAPE storage root."""
+def _within_allowed_root(path: str) -> bool:
+    """True if `path` resolves under an allowed read root (defends against traversal
+    via a poisoned path value). Dropped files live under the CAPE storage tree;
+    injection-buffer dumps live under the pipeline reports tree
+    (output_dir/cape_injections). Both roots are read at call time so tests can
+    monkeypatch them. NOTE: hardcoded for parity with the existing storage-root
+    constant; a future config-driven version could source these from PipelineConfig."""
     try:
         real = os.path.realpath(path)
-        return os.path.commonpath([real, _CAPE_STORAGE_ROOT]) == _CAPE_STORAGE_ROOT
     except (ValueError, OSError):
-        # commonpath raises ValueError across drives / mixed abs-rel paths
         return False
+    for root in (_CAPE_STORAGE_ROOT, _PIPELINE_REPORTS_ROOT):
+        try:
+            if os.path.commonpath([real, root]) == root:
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
 
 
 def _gather_dropped_files(report: dict) -> list[str]:
@@ -49,7 +60,7 @@ def _gather_dropped_files(report: dict) -> list[str]:
     task_id = report.get("cape", {}).get("task_id")
     if task_id:
         dropped_dir = os.path.join(_CAPE_STORAGE_ROOT, str(task_id), "dropped")
-        if _within_storage_root(dropped_dir) and os.path.isdir(dropped_dir):
+        if _within_allowed_root(dropped_dir) and os.path.isdir(dropped_dir):
             try:
                 for fname in os.listdir(dropped_dir):
                     names.append(fname)
@@ -66,7 +77,7 @@ def _gather_buffer_samples(report: dict) -> dict:
     samples: dict[str, str] = {}
     for buf in report.get("cape", {}).get("injection_buffers", []):
         buf_path = buf.get("path", "")
-        if not buf_path or not _within_storage_root(buf_path):
+        if not buf_path or not _within_allowed_root(buf_path):
             continue
         key = f"{buf.get('target_pid', 0)}:{buf.get('injection_address', '')}"
         try:
