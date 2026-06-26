@@ -6,9 +6,8 @@ Rules are pure functions of the report dict, so each is tested with an inline
 dict fixture (no filesystem). enrich (the only impure step) is tested separately
 with tmp_path + a monkeypatched storage root.
 """
-import pytest
-
 import lamware_pipeline.correlation_rules as cr
+import pytest
 from lamware_pipeline.correlation_rules import (
     enrich_correlation_inputs,
     evaluate_rules,
@@ -16,7 +15,6 @@ from lamware_pipeline.correlation_rules import (
     rule_dropped_file_loaded,
     rule_shellcode_self_modified,
 )
-
 
 # --- rule_dropped_file_loaded ---
 
