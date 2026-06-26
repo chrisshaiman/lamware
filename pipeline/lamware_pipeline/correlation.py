@@ -9,8 +9,16 @@ statements (original lines 549 and 613, both inside cross_correlate) and the
 in-function `import re` (original line 319, inside determine_family) to this
 module top. No other logic has been altered.
 """
-import os
 import re
+
+from .correlation_rules import cross_correlate  # noqa: F401  (back-compat public re-export)
+
+__all__ = [
+    "determine_family",
+    "calculate_severity",
+    "build_mitre_mapping",
+    "cross_correlate",
+]
 
 
 def determine_family(report: dict) -> str:
@@ -359,171 +367,3 @@ def build_mitre_mapping(report: dict) -> list[dict]:
                 }
 
     return list(techniques.values())
-
-
-# -------------------------------------------------------------------------
-# Cross-tool correlation — findings that no single tool produces alone
-# -------------------------------------------------------------------------
-
-def cross_correlate(report: dict) -> list[dict]:
-    """Cross-reference Cape and Volatility data to find corroborated findings.
-
-    These are things an analyst would manually check — we automate them.
-    Each finding cites which tools corroborated it.
-    """
-    findings = []
-    cape = report.get("cape", {})
-    vol = report.get("volatility", {})
-    vol_plugins = vol.get("plugins", {})
-
-    # --- 1. Dropped files confirmed loaded (Cape dropped files × dlllist) ---
-    # Cape says a file was dropped. dlllist confirms it was loaded by a process.
-    dropped_files = []
-    for af in report.get("ghidra", {}).get("analyzed_files", []):
-        # Shellcode artifacts may contain file paths from injected memory
-        for path in af.get("shellcode_artifacts", {}).get("file_paths", []):
-            dropped_files.append(path)
-    # Also check Cape's dropped file list
-    cape_task_id = cape.get("task_id")
-    if cape_task_id:
-        dropped_dir = f"/opt/CAPEv2/storage/analyses/{cape_task_id}/dropped"
-        if os.path.isdir(dropped_dir):
-            for f in os.listdir(dropped_dir):
-                dropped_files.append(f)
-
-    dlllist = vol_plugins.get("dlllist", [])
-    if isinstance(dlllist, list) and dropped_files:
-        loaded_dlls = set()
-        for entry in dlllist:
-            dll_path = entry.get("Path", "")
-            dll_name = entry.get("Name", "")
-            if dll_path:
-                loaded_dlls.add(dll_path.lower())
-                loaded_dlls.add(dll_name.lower() if dll_name else "")
-
-        for dropped in dropped_files:
-            dropped_name = dropped.lower().split("\\")[-1].split("/")[-1]
-            if dropped_name in loaded_dlls or any(dropped_name in dll for dll in loaded_dlls if dll):
-                pid_loaded_by = []
-                for entry in dlllist:
-                    if dropped_name in (entry.get("Path", "") + entry.get("Name", "")).lower():
-                        pid_loaded_by.append(f"{entry.get('Process', '?')} (pid {entry.get('PID', '?')})")
-                findings.append({
-                    "type": "dropped_file_loaded",
-                    "severity": "high",
-                    "title": f"Dropped file '{dropped_name}' was loaded and executed",
-                    "detail": f"Cape observed this file being written to disk. Volatility confirms it was loaded by: {', '.join(set(pid_loaded_by[:5]))}",
-                    "sources": ["Cape", "Volatility"],
-                    "mitre": "T1059 — Execution",
-                })
-
-    # --- 2. Shellcode self-modification (Cape buffer × malfind hexdump) ---
-    # Cape captured the bytes as they were written. Malfind shows what's in
-    # memory now. If they differ, the shellcode modified itself after injection.
-    injection_bufs = cape.get("injection_buffers", [])
-    malfind = vol_plugins.get("malfind", [])
-    if isinstance(malfind, list) and injection_bufs:
-        for buf in injection_bufs:
-            target_pid = buf.get("target_pid", 0)
-            inject_addr = buf.get("injection_address", "")
-            # Find the corresponding malfind region
-            for region in malfind:
-                region_pid = region.get("PID", 0)
-                region_start = region.get("Start VPN", 0)
-                if isinstance(region_start, int):
-                    region_start_hex = f"0x{region_start:08x}"
-                else:
-                    region_start_hex = str(region_start)
-
-                if region_pid == target_pid and inject_addr == region_start_hex:
-                    # Compare first bytes
-                    hexdump = region.get("Hexdump", "")
-                    try:
-                        malfind_bytes = bytes(
-                            int(h, 16) for h in hexdump.split()
-                            if h and len(h) == 2 and all(c in "0123456789abcdefABCDEF" for c in h)
-                        ) if hexdump else b""
-                    except (ValueError, TypeError):
-                        malfind_bytes = b""
-
-                    # Get Cape buffer first bytes for comparison
-                    buf_path = buf.get("path", "")
-                    if buf_path:
-                        try:
-                            with open(buf_path, "rb") as f:
-                                cape_bytes = f.read(len(malfind_bytes))
-                        except (OSError, FileNotFoundError):
-                            cape_bytes = b""
-                    else:
-                        cape_bytes = b""
-
-                    if cape_bytes and malfind_bytes and cape_bytes != malfind_bytes[:len(cape_bytes)]:
-                        findings.append({
-                            "type": "shellcode_self_modified",
-                            "severity": "high",
-                            "title": f"Injected shellcode self-modified in PID {target_pid} at {inject_addr}",
-                            "detail": "Memory content differs from what was originally injected.",
-                            "before": cape_bytes[:64].hex(),
-                            "after": malfind_bytes[:64].hex(),
-                            "pid": target_pid,
-                            "address": inject_addr,
-                            "sources": ["Cape", "Volatility"],
-                            "mitre": "T1027 — Obfuscated Files or Information",
-                        })
-                    break
-
-    # --- 3. Command line spoofing (Cape process creation × Volatility cmdline) ---
-    # Cape logged the original command line at process creation.
-    # Volatility reads the command line from the PEB in memory.
-    # If they differ, the process overwrote its own command line.
-    cmdline = vol_plugins.get("cmdline", [])
-    if isinstance(cmdline, list):
-        vol_cmdlines = {}
-        for entry in cmdline:
-            pid = entry.get("PID", 0)
-            args = entry.get("Args", "")
-            if pid and args:
-                vol_cmdlines[pid] = args
-
-        # Cape command lines extracted during extract_cape_intel
-        cape_cmdlines = cape.get("process_cmdlines", {})
-
-        # Benign cmdline differences — COM servers get -Embedding at launch,
-        # PEB may not reflect it. Not malicious command line spoofing.
-        benign_flags = ["-embedding", "-secured", "/prefetch:", "-servername:"]
-
-        def is_benign_difference(before: str, after: str) -> bool:
-            """Check if cmdline difference is a known benign pattern."""
-            b = before.strip().lower()
-            a = after.strip().lower()
-            # Check if the only difference is a benign flag
-            for flag in benign_flags:
-                if b.replace(flag, "").strip() == a.replace(flag, "").strip():
-                    return True
-                # Also handle the flag with different casing/spacing
-                b_no_flag = " ".join(p for p in b.split() if flag not in p.lower())
-                a_no_flag = " ".join(p for p in a.split() if flag not in p.lower())
-                if b_no_flag == a_no_flag:
-                    return True
-            return False
-
-        for pid, cape_cmd in cape_cmdlines.items():
-            vol_cmd = vol_cmdlines.get(pid, "")
-            if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
-                # Normalize — ignore minor whitespace/case differences
-                if vol_cmd.strip().lower() != cape_cmd.strip().lower():
-                    if is_benign_difference(cape_cmd, vol_cmd):
-                        continue
-                    findings.append({
-                        "type": "cmdline_spoofing",
-                        "severity": "critical",
-                        "title": f"Command line spoofing detected in PID {pid}",
-                        "detail": "Process command line changed between execution and memory dump.",
-                        "before": cape_cmd[:300],
-                        "after": vol_cmd[:300],
-                        "pid": pid,
-                        "sources": ["Cape", "Volatility"],
-                        "mitre": "T1036 — Masquerading",
-                    })
-
-    return findings
