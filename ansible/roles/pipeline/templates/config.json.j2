@@ -51,5 +51,7 @@
   "db_host": {{ (postgres_listen_address | default('127.0.0.1')) | to_json }},
   "db_port": {{ postgres_port | default(5432) }},
   "db_name": {{ (postgres_db_name | default('malware_analysis')) | to_json }},
-  "db_user": {{ (postgres_db_user | default('pipeline')) | to_json }}
+  "db_user": {{ (postgres_db_user | default('pipeline')) | to_json }},
+  "relationship_max_ioc_frequency": {{ pipeline_relationship_max_ioc_frequency | default(20) }},
+  "relationship_ssdeep_threshold": {{ pipeline_relationship_ssdeep_threshold | default(80) }}
 }

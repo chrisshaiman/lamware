@@ -78,6 +78,9 @@ _VALID = {
     "db_port": 5432,
     "db_name": "malware_analysis",
     "db_user": "pipeline",
+    # Campaign-graph relationship thresholds (2026-06-26)
+    "relationship_max_ioc_frequency": 20,
+    "relationship_ssdeep_threshold": 80,
 }
 
 
@@ -189,6 +192,14 @@ def test_db_connection_fields(tmp_path):
     assert cfg.db_port == 5432
     assert cfg.db_name == "malware_analysis"
     assert cfg.db_user == "pipeline"
+
+
+def test_relationship_threshold_fields(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    assert cfg.relationship_max_ioc_frequency == 20
+    assert cfg.relationship_ssdeep_threshold == 80
 
 
 def test_fixture_config_loads():
