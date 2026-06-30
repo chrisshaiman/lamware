@@ -444,6 +444,7 @@
   loop:
     - db_ingest.py
     - pipeline_status.py
+    - backfill_relationships.py
 
 - name: Deploy pipeline wrapper script
   ansible.builtin.template:
