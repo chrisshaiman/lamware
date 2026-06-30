@@ -93,3 +93,111 @@ def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
                 edges.append(edge)
     edges.sort(key=lambda e: (e["parent_id"], e["child_id"]))
     return edges
+
+
+# ---------------------------------------------------------------------------
+# Thin SQL layer (psycopg2). Validated end-to-end at deploy via the backfill;
+# only the static upsert SQL is unit-asserted here.
+# ---------------------------------------------------------------------------
+
+# Private/localhost/broadcast exclusion — mirrors the meaningful-IOC filter in
+# api/app/routers/iocs.py (/api/iocs/clusters). Static text, no interpolation.
+_SHARED_IOC_SQL = """
+WITH meaningful AS (
+    SELECT id, type, value FROM ioc_values
+    WHERE type = ANY(%(types)s)
+      AND NOT (
+        (type = 'ipv4-addr' AND (
+            value LIKE '127.%%' OR value LIKE '10.%%' OR value LIKE '192.168.%%'
+            OR value LIKE '172.16.%%' OR value LIKE '172.17.%%' OR value LIKE '172.18.%%'
+            OR value LIKE '172.19.%%' OR value LIKE '172.2_.%%' OR value LIKE '172.30.%%'
+            OR value LIKE '172.31.%%' OR value = '0.0.0.0' OR value = '255.255.255.255'
+        ))
+        OR (type = 'domain-name' AND value IN ('localhost', 'localhost.localdomain'))
+      )
+),
+my_iocs AS (
+    SELECT DISTINCT ai.ioc_id
+    FROM analysis_iocs ai JOIN analyses a ON a.id = ai.analysis_id
+    WHERE a.sample_id = %(sid)s AND ai.ioc_id IN (SELECT id FROM meaningful)
+),
+freq AS (
+    SELECT ai.ioc_id, COUNT(DISTINCT a.sample_id) AS sample_count
+    FROM analysis_iocs ai JOIN analyses a ON a.id = ai.analysis_id
+    WHERE ai.ioc_id IN (SELECT ioc_id FROM my_iocs)
+    GROUP BY ai.ioc_id
+)
+SELECT DISTINCT a2.sample_id AS other_sample_id, m.id AS ioc_id,
+       m.type AS ioc_type, m.value AS ioc_value, f.sample_count
+FROM my_iocs mi
+JOIN meaningful m ON m.id = mi.ioc_id
+JOIN freq f ON f.ioc_id = mi.ioc_id
+JOIN analysis_iocs a2i ON a2i.ioc_id = mi.ioc_id
+JOIN analyses a2 ON a2.id = a2i.analysis_id AND a2.sample_id <> %(sid)s
+"""
+
+_SSDEEP_SQL = """
+SELECT id, ssdeep FROM samples
+WHERE id <> %(sid)s AND ssdeep IS NOT NULL AND ssdeep <> ''
+"""
+
+_UPSERT_SQL = """
+INSERT INTO sample_relationships (parent_id, child_id, relationship, context)
+VALUES %s
+ON CONFLICT (parent_id, child_id, relationship) DO NOTHING
+"""
+
+
+def fetch_shared_ioc_candidates(conn, sample_id: int):
+    """Return (candidates, freq_by_ioc) of samples sharing a meaningful IOC."""
+    with conn.cursor() as cur:
+        cur.execute(_SHARED_IOC_SQL, {"types": list(_ALLOWED_IOC_TYPES), "sid": sample_id})
+        rows = cur.fetchall()
+    candidates = [
+        {"other_sample_id": r[0], "ioc_id": r[1], "ioc_type": r[2], "ioc_value": r[3]}
+        for r in rows
+    ]
+    freq_by_ioc = {r[1]: r[4] for r in rows}
+    return candidates, freq_by_ioc
+
+
+def fetch_ssdeep_candidates(conn, sample_id: int):
+    """Return (this_sample_ssdeep, [(other_id, other_ssdeep), ...])."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT ssdeep FROM samples WHERE id = %(sid)s", {"sid": sample_id})
+        row = cur.fetchone()
+        this_ssdeep = (row[0] if row else "") or ""
+        if not this_ssdeep:
+            return "", []
+        cur.execute(_SSDEEP_SQL, {"sid": sample_id})
+        others = [(r[0], r[1]) for r in cur.fetchall()]
+    return this_ssdeep, others
+
+
+def upsert_edges(conn, edges: list) -> int:
+    """Batch-insert edges, skipping duplicates (idempotent). Returns rows inserted."""
+    if not edges:
+        return 0
+    import psycopg2.extras
+    rows = [(e["parent_id"], e["child_id"], e["relationship"], e["context"]) for e in edges]
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, _UPSERT_SQL, rows)
+        return cur.rowcount
+
+
+def compute_and_write_edges(conn, sample_id: int, config) -> int:
+    """Compute all edges for sample_id vs the corpus and upsert them. Commits.
+    Returns the number of new edges written."""
+    import ppdeep  # lazy: pure-core unit tests don't need ppdeep installed
+
+    candidates, freq_by_ioc = fetch_shared_ioc_candidates(conn, sample_id)
+    edges = select_shared_ioc_edges(
+        sample_id, candidates, freq_by_ioc, config.relationship_max_ioc_frequency
+    )
+    this_ssdeep, others = fetch_ssdeep_candidates(conn, sample_id)
+    edges += select_ssdeep_edges(
+        sample_id, this_ssdeep, others, config.relationship_ssdeep_threshold, ppdeep.compare
+    )
+    written = upsert_edges(conn, edges)
+    conn.commit()
+    return written

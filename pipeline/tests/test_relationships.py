@@ -120,3 +120,16 @@ def test_ssdeep_edge_fires_at_exact_threshold():
 def test_ssdeep_edge_skipped_just_below_threshold():
     edges = select_ssdeep_edges(2, "HASH", [(9, "X")], threshold=80, compare_fn=lambda a, b: 79)
     assert edges == []
+
+
+def test_upsert_sql_is_idempotent_on_conflict():
+    from lamware_pipeline.relationships import _UPSERT_SQL
+    sql = _UPSERT_SQL.upper()
+    assert "INSERT INTO SAMPLE_RELATIONSHIPS" in sql
+    assert "ON CONFLICT" in sql and "DO NOTHING" in sql
+
+
+def test_upsert_edges_empty_is_noop():
+    from lamware_pipeline.relationships import upsert_edges
+    # No edges -> returns 0 without touching the connection.
+    assert upsert_edges(conn=None, edges=[]) == 0
