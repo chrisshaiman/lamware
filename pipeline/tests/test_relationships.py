@@ -104,3 +104,19 @@ def test_ssdeep_compare_error_skips_pair_not_crash():
         raise ValueError("malformed hash")
     edges = select_ssdeep_edges(2, "HASH", [(9, "OTHER")], threshold=80, compare_fn=boom)
     assert edges == []
+
+
+def test_shared_ioc_skips_disallowed_type():
+    candidates = [{"other_sample_id": 9, "ioc_id": 1, "ioc_type": "file:name", "ioc_value": "evil.dll"}]
+    edges = select_shared_ioc_edges(2, candidates, {1: 1}, max_freq=20)
+    assert edges == []
+
+
+def test_ssdeep_edge_fires_at_exact_threshold():
+    edges = select_ssdeep_edges(2, "HASH", [(9, "X")], threshold=80, compare_fn=lambda a, b: 80)
+    assert len(edges) == 1
+
+
+def test_ssdeep_edge_skipped_just_below_threshold():
+    edges = select_ssdeep_edges(2, "HASH", [(9, "X")], threshold=80, compare_fn=lambda a, b: 79)
+    assert edges == []

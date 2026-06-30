@@ -24,7 +24,7 @@ _REL_SSDEEP = "ssdeep_similar"
 _CONTEXT_MAX_VALUES = 3  # how many shared indicator values to name in context
 
 
-def normalize_edge(sample_a: int, sample_b: int, relationship: str, context: str):
+def normalize_edge(sample_a: int, sample_b: int, relationship: str, context: str) -> dict | None:
     """Order a symmetric edge as parent_id = min, child_id = max (stored once).
     Returns None for a self-edge."""
     if sample_a == sample_b:
@@ -52,6 +52,8 @@ def select_shared_ioc_edges(sample_id: int, candidates: list, freq_by_ioc: dict,
     """
     grouped: dict = {}  # (other_sample_id, relationship) -> [ioc_value, ...]
     for c in candidates:
+        if c["ioc_type"] not in _ALLOWED_IOC_TYPES:
+            continue
         if freq_by_ioc.get(c["ioc_id"], 0) > max_freq:
             continue
         rel = _REL_JA3 if c["ioc_type"] == "ja3" else _REL_NETWORK
@@ -85,6 +87,8 @@ def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
             continue
         if score is not None and score >= threshold:
             edge = normalize_edge(sample_id, other_id, _REL_SSDEEP, f"ssdeep score={score}")
+            # normalize_edge only returns None for self-edges (already guarded above);
+            # the check is belt-and-suspenders.
             if edge:
                 edges.append(edge)
     edges.sort(key=lambda e: (e["parent_id"], e["child_id"]))
