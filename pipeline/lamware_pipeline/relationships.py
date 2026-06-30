@@ -85,7 +85,7 @@ def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
             continue
         try:
             score = compare_fn(ssdeep, other_hash)
-        except Exception:
+        except Exception:  # nosec B112 - a malformed stored hash must skip the pair, not crash
             continue
         if score is not None and score >= threshold:
             edge = normalize_edge(sample_id, other_id, _REL_SSDEEP, f"ssdeep score={score}")
