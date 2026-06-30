@@ -15,6 +15,8 @@ join already-extracted IOC strings — string/set/integer ops only.
 
 # IOC types that can form a cross-sample edge. JA3 is a TLS fingerprint; the rest
 # are network indicators. Excludes noisy types like file:name and mutex.
+# (ipv6-addr is forward-looking — ioc_extract.py emits no IPv6 IOCs today, so it
+# simply never matches until a v6 producer is added.)
 _ALLOWED_IOC_TYPES = ("ipv4-addr", "ipv6-addr", "domain-name", "url", "ja3")
 
 _REL_NETWORK = "shares_network_ioc"
@@ -188,7 +190,9 @@ def upsert_edges(conn, edges: list) -> int:
     import psycopg2.extras  # lazy (like ppdeep): module imports without psycopg2
     rows = [(e["parent_id"], e["child_id"], e["relationship"], e["context"]) for e in edges]
     with conn.cursor() as cur:
-        psycopg2.extras.execute_values(cur, _UPSERT_SQL, rows)
+        # page_size=len(rows) so this is one statement and cur.rowcount is the
+        # true total (the default page_size=100 would only report the last page).
+        psycopg2.extras.execute_values(cur, _UPSERT_SQL, rows, page_size=max(len(rows), 1))
         return cur.rowcount
 
 
