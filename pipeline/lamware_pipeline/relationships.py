@@ -213,3 +213,34 @@ def compute_and_write_edges(conn, sample_id: int, config) -> int:
     written = upsert_edges(conn, edges)
     conn.commit()
     return written
+
+
+def write_relationships_safe(conn, sample_id: int, config) -> int:
+    """Non-fatal ingest hook: compute + write edges, never raising. On error,
+    roll back the (uncommitted) edge work so the connection stays usable and
+    return 0 — the analysis ingest (already committed) is unaffected."""
+    try:
+        n = compute_and_write_edges(conn, sample_id, config)
+        if n:
+            print(f"  Relationships: wrote {n} cross-sample edge(s) for sample {sample_id}")
+        return n
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"  [!] Relationship computation skipped (non-fatal): {e}")
+        return 0
+
+
+def backfill_all(conn, config) -> int:
+    """Compute + write edges for every sample in the corpus. Returns total edges
+    written. Errors propagate (unlike the ingest hook) so a backfill failure is
+    visible to the operator."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM samples ORDER BY id")
+        sample_ids = [r[0] for r in cur.fetchall()]
+    total = 0
+    for sid in sample_ids:
+        total += compute_and_write_edges(conn, sid, config)
+    return total

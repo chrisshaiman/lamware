@@ -133,3 +133,57 @@ def test_upsert_edges_empty_is_noop():
     from lamware_pipeline.relationships import upsert_edges
     # No edges -> returns 0 without touching the connection.
     assert upsert_edges(conn=None, edges=[]) == 0
+
+
+import lamware_pipeline.relationships as rel
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def execute(self, *a, **k):
+        pass
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConn:
+    def __init__(self, rows=None):
+        self._rows = rows or []
+        self.rolled_back = False
+        self.committed = False
+    def cursor(self):
+        return _FakeCursor(self._rows)
+    def rollback(self):
+        self.rolled_back = True
+    def commit(self):
+        self.committed = True
+
+
+def test_write_relationships_safe_swallows_errors(monkeypatch):
+    def boom(conn, sample_id, config):
+        raise RuntimeError("db exploded")
+    monkeypatch.setattr(rel, "compute_and_write_edges", boom)
+    conn = _FakeConn()
+    # Must not raise; returns 0; rolls back the edge work so the conn stays usable.
+    assert rel.write_relationships_safe(conn, 1, config=object()) == 0
+    assert conn.rolled_back is True
+
+
+def test_write_relationships_safe_returns_count(monkeypatch):
+    monkeypatch.setattr(rel, "compute_and_write_edges", lambda conn, sid, config: 4)
+    assert rel.write_relationships_safe(_FakeConn(), 1, config=object()) == 4
+
+
+def test_backfill_all_runs_every_sample(monkeypatch):
+    calls = []
+    monkeypatch.setattr(rel, "compute_and_write_edges",
+                        lambda conn, sid, config: calls.append(sid) or 2)
+    conn = _FakeConn(rows=[(10,), (11,), (12,)])  # samples query result
+    total = rel.backfill_all(conn, config=object())
+    assert calls == [10, 11, 12]
+    assert total == 6
