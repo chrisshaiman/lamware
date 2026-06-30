@@ -100,8 +100,10 @@ def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
 # only the static upsert SQL is unit-asserted here.
 # ---------------------------------------------------------------------------
 
-# Private/localhost/broadcast exclusion — mirrors the meaningful-IOC filter in
-# api/app/routers/iocs.py (/api/iocs/clusters). Static text, no interpolation.
+# The private/localhost/broadcast EXCLUSION predicate mirrors api/app/routers/iocs.py
+# (/api/iocs/clusters) character-for-character. The TYPE SET intentionally diverges:
+# we include 'ja3' (split into a separate shares_ja3 relationship), which /clusters
+# does not — do not "sync" the two by removing ja3. Static text, no interpolation.
 _SHARED_IOC_SQL = """
 WITH meaningful AS (
     SELECT id, type, value FROM ioc_values
@@ -162,7 +164,12 @@ def fetch_shared_ioc_candidates(conn, sample_id: int):
 
 
 def fetch_ssdeep_candidates(conn, sample_id: int):
-    """Return (this_sample_ssdeep, [(other_id, other_ssdeep), ...])."""
+    """Return (this_sample_ssdeep, [(other_id, other_ssdeep), ...]).
+
+    Loads all other samples' non-empty ssdeep hashes for a Python-side O(corpus)
+    compare. Fine at current scale; a very large corpus would want a chunk-prefix
+    prefilter or batching.
+    """
     with conn.cursor() as cur:
         cur.execute("SELECT ssdeep FROM samples WHERE id = %(sid)s", {"sid": sample_id})
         row = cur.fetchone()
@@ -178,7 +185,7 @@ def upsert_edges(conn, edges: list) -> int:
     """Batch-insert edges, skipping duplicates (idempotent). Returns rows inserted."""
     if not edges:
         return 0
-    import psycopg2.extras
+    import psycopg2.extras  # lazy (like ppdeep): module imports without psycopg2
     rows = [(e["parent_id"], e["child_id"], e["relationship"], e["context"]) for e in edges]
     with conn.cursor() as cur:
         psycopg2.extras.execute_values(cur, _UPSERT_SQL, rows)
@@ -186,8 +193,13 @@ def upsert_edges(conn, edges: list) -> int:
 
 
 def compute_and_write_edges(conn, sample_id: int, config) -> int:
-    """Compute all edges for sample_id vs the corpus and upsert them. Commits.
-    Returns the number of new edges written."""
+    """Compute all edges for sample_id vs the corpus and upsert them. Returns the
+    number of new edges written.
+
+    Commits on `conn` — so any other pending work on `conn` must already be
+    committed before calling this. The db_ingest hook calls it only AFTER the
+    analysis ingest has committed, so the edge upsert is its own transaction.
+    """
     import ppdeep  # lazy: pure-core unit tests don't need ppdeep installed
 
     candidates, freq_by_ioc = fetch_shared_ioc_candidates(conn, sample_id)
