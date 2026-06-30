@@ -5,12 +5,12 @@
 Pure functions are tested with inline data (no DB). The compare function for
 ssdeep is injected, so these tests don't need ppdeep installed.
 """
+import lamware_pipeline.relationships as rel
 from lamware_pipeline.relationships import (
     normalize_edge,
     select_shared_ioc_edges,
     select_ssdeep_edges,
 )
-
 
 # --- normalize_edge ---
 
@@ -133,9 +133,6 @@ def test_upsert_edges_empty_is_noop():
     from lamware_pipeline.relationships import upsert_edges
     # No edges -> returns 0 without touching the connection.
     assert upsert_edges(conn=None, edges=[]) == 0
-
-
-import lamware_pipeline.relationships as rel
 
 
 class _FakeCursor:
