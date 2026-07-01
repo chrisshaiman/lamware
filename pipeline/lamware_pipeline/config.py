@@ -80,6 +80,10 @@ class PipelineConfig(BaseModel):
     db_name: str
     db_user: str
 
+    # Campaign-graph relationship thresholds (2026-06-26)
+    relationship_max_ioc_frequency: int
+    relationship_ssdeep_threshold: int
+
     @classmethod
     def load(cls, path: str) -> "PipelineConfig":
         return cls.model_validate_json(Path(path).read_text())

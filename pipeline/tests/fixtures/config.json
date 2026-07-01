@@ -73,5 +73,7 @@
   "db_host": "127.0.0.1",
   "db_port": 5432,
   "db_name": "malware_analysis",
-  "db_user": "pipeline"
+  "db_user": "pipeline",
+  "relationship_max_ioc_frequency": 20,
+  "relationship_ssdeep_threshold": 80
 }

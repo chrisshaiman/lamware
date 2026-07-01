@@ -10,6 +10,7 @@ import sys
 
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.db import build_insert, build_update
+from lamware_pipeline.relationships import write_relationships_safe
 
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
@@ -454,6 +455,11 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
 
         conn.commit()
         print(f"  DB: ingested analysis {analysis_id} for sample {sample_id}")
+
+        # Cross-sample campaign edges (non-fatal enrichment, separate from the
+        # committed ingest above). A failure here never fails the analysis ingest.
+        write_relationships_safe(conn, sample_id, _CFG)
+
         return analysis_id
 
     except Exception as e:
