@@ -271,6 +271,7 @@
       --dest {{ pipeline_install_dir }}/wheelhouse
       pip setuptools wheel
       requests weasyprint markdown psycopg2-binary pydantic
+      ppdeep==20260221
   register: pipeline_wheelhouse
   changed_when: "'Saved' in pipeline_wheelhouse.stdout"
   when: pipeline_wheelhouse_existing.matched | int == 0
@@ -305,7 +306,7 @@
     cmd: >
       {{ pipeline_install_dir }}/venv/bin/pip install
       --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
-      requests weasyprint markdown psycopg2-binary
+      requests weasyprint markdown psycopg2-binary ppdeep==20260221
   become: true
   become_user: pipeline
   register: pipeline_venv_thirdparty
