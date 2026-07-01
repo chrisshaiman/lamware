@@ -70,6 +70,17 @@ def select_shared_ioc_edges(sample_id: int, candidates: list, freq_by_ioc: dict,
     return edges
 
 
+def _safe_compare(compare_fn, a: str, b: str):
+    """Run the injected fuzzy-hash compare, returning None (not raising) on any
+    error so a single malformed stored hash skips its pair instead of crashing
+    edge computation. compare_fn is adversary-influenced input (the hashes derive
+    from sample content), so a broad catch is deliberate here."""
+    try:
+        return compare_fn(a, b)
+    except Exception:
+        return None
+
+
 def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
                         threshold: int, compare_fn) -> list:
     """Build ssdeep_similar edges where compare_fn(ssdeep, other) >= threshold.
@@ -83,10 +94,7 @@ def select_ssdeep_edges(sample_id: int, ssdeep: str, others: list,
     for other_id, other_hash in others:
         if other_id == sample_id or not other_hash:
             continue
-        try:
-            score = compare_fn(ssdeep, other_hash)
-        except Exception:  # nosec B112 - a malformed stored hash must skip the pair, not crash
-            continue
+        score = _safe_compare(compare_fn, ssdeep, other_hash)
         if score is not None and score >= threshold:
             edge = normalize_edge(sample_id, other_id, _REL_SSDEEP, f"ssdeep score={score}")
             # normalize_edge only returns None for self-edges (already guarded above);
