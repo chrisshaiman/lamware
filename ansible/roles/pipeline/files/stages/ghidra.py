@@ -20,7 +20,6 @@ from pathlib import Path
 
 from stages.volatility import extract_shellcode_artifacts
 
-
 # Cape signatures that indicate dropped/unpacked payloads worth analyzing
 GHIDRA_TRIGGERS = [
     "packed_binary",
@@ -252,6 +251,33 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
     return analysis
 
 
+def propagate_project_dir(analyzed_files: list[dict],
+                          output_dir: Path) -> tuple[str | None, str | None]:
+    """Resolve the canonical host project_dir/program_name for the interpret stage.
+
+    run-ghidra.py runs *inside* the container and records the container mount
+    path ("/output/project") on every per-file result. The wrapper copies the
+    container's /output/* to ``output_dir`` on the host, so the persisted
+    project actually lives at ``output_dir/project``.
+
+    This finds the first successfully analyzed file, returns the host project
+    path and its program name, and — critically — rewrites that file's
+    ``project_dir`` to the host path in place. Downstream consumers (the
+    interpret broker at run-pipeline's native-PE path passes this exact dict to
+    ``run_ghidra_tool``, which shells out to run-ghidra on the HOST) would
+    otherwise inherit "/output/project" and fail every tool call with
+    "realpath: No such file or directory".
+
+    Returns (None, None) if no successful analysis produced a project.
+    """
+    for af in analyzed_files:
+        if af.get("analysis_success") and af.get("project_dir"):
+            host_project = str(output_dir / "project")
+            af["project_dir"] = host_project
+            return host_project, af.get("program_name", "")
+    return None, None
+
+
 def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                ghidra_cmd: str, get_cape_signatures_fn,
                shellcode_candidates: list[dict] | None = None) -> dict:
@@ -293,16 +319,14 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
             result["analyzed_files"].append(sc_result)
 
     # Propagate project_dir and program_name from the first successful
-    # analysis to the top-level result — the interpret stage needs these
-    # to broker tool calls back to Ghidra.
-    #
-    # The container saves the Ghidra project at /output/project (container
-    # mount). The wrapper copies /output/* to output_dir on the host, so
-    # the host-side project lives at output_dir/project.
-    for af in result["analyzed_files"]:
-        if af.get("analysis_success") and af.get("project_dir"):
-            result["project_dir"] = str(output_dir / "project")
-            result["program_name"] = af.get("program_name", "")
-            break
+    # analysis to the top-level result — the interpret stage needs these to
+    # broker tool calls back to Ghidra. This also normalizes the per-file
+    # project_dir from the container mount path to the host path (see
+    # propagate_project_dir); the native-PE interpret path brokers off that
+    # per-file dict, so leaving it as "/output/project" breaks every tool call.
+    project_dir, program_name = propagate_project_dir(result["analyzed_files"], output_dir)
+    if project_dir:
+        result["project_dir"] = project_dir
+        result["program_name"] = program_name
 
     return result
