@@ -1,14 +1,23 @@
 ---
 # =============================================================================
 # roles/podman/tasks/main.yml
-# Installs Podman (rootless, daemonless container runtime) for running
-# analysis tool stages in isolated containers.
+# Host-wide Podman enablement for rootless container runtimes.
 #
-# The konstruktoid hardening role disables several features that rootless
-# Podman needs. This role re-enables them in a targeted way:
-#   - user.max_user_namespaces (disabled by hardening)
-#   - AppArmor profiles for podman/crun (block library loading on hardened hosts)
-#   - vfs storage driver (overlay fails with hardened mount options)
+# Installs Podman and re-enables the kernel/AppArmor features the konstruktoid
+# hardening role disables but rootless Podman needs (unprivileged user
+# namespaces; AppArmor profiles that block library loading).
+#
+# Per-USER Podman provisioning (subuid/subgid, storage config) lives in the role
+# that owns each runtime: the pipeline role sets up the pipeline user's Podman
+# (overlay driver) where the analysis-tool containers actually run.
+#
+# HISTORY: this role formerly also provisioned a rootless Podman stack for the
+# cape user on the vfs storage driver, back when the analysis tools ran under
+# cape. Commit b5d7cec migrated all 13 tool roles to the dedicated pipeline user,
+# so the cape-side Podman is no longer used. Its provisioning is removed here —
+# under vfs (full-copy layers) it silently bloated ~cape storage to 100G+ and
+# left a stale `podman pause` process each converge (the old verify task). The
+# absent tasks below tear down that vestige so it can't re-accumulate.
 #
 # Container isolation is provided by run-time flags (--cap-drop=ALL,
 # --network=none, --read-only, --security-opt=no-new-privileges) rather
@@ -26,16 +35,6 @@
       - slirp4netns
     state: present
     update_cache: true
-
-- name: Ensure cape user has subuid/subgid ranges for rootless Podman
-  ansible.builtin.lineinfile:
-    path: "{{ item.file }}"
-    line: "{{ cape_user }}:100000:65536"
-    create: true
-    mode: "0644"
-  loop:
-    - { file: /etc/subuid }
-    - { file: /etc/subgid }
 
 # konstruktoid hardening disables unprivileged user namespaces.
 # Podman needs them for rootless container operation.
@@ -60,40 +59,18 @@
   changed_when: true
   failed_when: false
 
-# overlay storage driver fails with hardened mount options on /home.
-# vfs is slower but works without special mount permissions.
-- name: Ensure containers config directory exists
+# ---------------------------------------------------------------------------
+# Tear down the vestigial cape-user Podman stack (tools moved to the pipeline
+# user in b5d7cec). Removes the vfs config + storage so it can't silently
+# re-accumulate. Idempotent — a no-op once gone. cape's Podman is unused: no
+# tool role runs under cape, and no cape systemd unit invokes podman.
+# ---------------------------------------------------------------------------
+- name: Remove vestigial cape-user Podman config
   ansible.builtin.file:
     path: "/home/{{ cape_user }}/.config/containers"
-    state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
-    mode: "0755"
-
-# overlay storage driver fails with hardened mount options on /home.
-# vfs is slower but works without special mount permissions.
-- name: Configure Podman to use vfs storage driver
-  ansible.builtin.copy:
-    content: |
-      [storage]
-      driver = "vfs"
-    dest: "/home/{{ cape_user }}/.config/containers/storage.conf"
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
-    mode: "0644"
-
-- name: Clean stale overlay storage (switch to vfs)
-  ansible.builtin.file:
-    path: "/home/{{ cape_user }}/.local/share/containers/storage"
     state: absent
 
-- name: Verify Podman works for cape user
-  ansible.builtin.shell: |
-    podman version --format {% raw %}'{{.Client.Version}}'{% endraw %}
-  args:
-    executable: /bin/bash
-  become: true
-  become_user: "{{ cape_user }}"
-  changed_when: false
-  register: podman_verify
-  failed_when: podman_verify.rc != 0
+- name: Remove vestigial cape-user Podman storage
+  ansible.builtin.file:
+    path: "/home/{{ cape_user }}/.local/share/containers"
+    state: absent
