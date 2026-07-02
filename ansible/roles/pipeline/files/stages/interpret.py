@@ -30,10 +30,44 @@ def validate_tool_args(tool_name: str, args: dict) -> str | None:
     return validate_ghidra_args(tool_name, args)
 
 
+def ghidra_unavailable_error(analysis_type: str | None) -> str:
+    """Error returned to the LLM when it calls a Ghidra tool with no project.
+
+    Non-native analysis paths (script/office/.NET/…) build init payloads with
+    no project_dir — no Ghidra project exists for them. Without this guard the
+    broker shelled out `run-ghidra --tool "" ""`, and every call failed with a
+    confusing "realpath: '': No such file or directory" that polluted the
+    final narrative. Tell the LLM plainly, and tell it to stop trying.
+    """
+    return (
+        f"No Ghidra project is available for this analysis "
+        f"(analysis_type={analysis_type or 'unknown'}). Ghidra tools only work "
+        "for natively analyzed PE/ELF binaries. Do not retry Ghidra tools; "
+        "base your analysis on the data already provided."
+    )
+
+
+def audit_filename(analysis_type: str | None) -> str:
+    """Per-invocation audit log filename under llm_audit/.
+
+    run_interpret runs up to three times per pipeline run (main
+    interpretation, evasion_analysis, visual_analysis) against the same
+    output_dir; a single shared filename meant the last writer — usually a
+    tool-less pass — clobbered the real tool log to []. The main native-PE
+    pass has no analysis_type and keeps the historical name.
+    """
+    if not analysis_type:
+        return "tool_calls.json"
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", analysis_type)
+    return f"tool_calls_{safe}.json"
+
+
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
                     ghidra_cmd: str) -> dict:
     """Execute a single Ghidra tool call in a container."""
+    if not project_dir or not program_name:
+        return {"error": ghidra_unavailable_error(None)}
     try:
         result = subprocess.run(
             [ghidra_cmd, "--tool", project_dir, program_name,
@@ -102,9 +136,11 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     proc.stdin.write(init_msg + "\n")
     proc.stdin.flush()
 
-    # Audit log
+    # Audit log — filename keyed by analysis_type so the multiple
+    # run_interpret invocations per pipeline run don't clobber each other.
     audit_dir = output_dir / "llm_audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / audit_filename(ghidra_result.get("analysis_type"))
     tool_call_log = []
 
     try:
@@ -149,11 +185,11 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     "possible_prompt_influence": influenced,
                     "analysis": analysis,
                     "usage": msg.get("usage", {}),
-                    "audit": {"tool_call_log": str(audit_dir / "tool_calls.json")},
+                    "audit": {"tool_call_log": str(audit_path)},
                 }
 
                 # Save audit log
-                with (audit_dir / "tool_calls.json").open("w") as f:
+                with audit_path.open("w") as f:
                     json.dump(tool_call_log, f, indent=2)
 
                 return result
@@ -163,8 +199,12 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 tool_args = msg.get("args", {})
                 print(f"    Tool call: {tool_name}({json.dumps(tool_args)[:80]})")
 
-                # Validate arguments
+                # Validate arguments; refuse outright when this analysis has
+                # no Ghidra project (non-native paths) instead of shelling out
+                # a doomed `run-ghidra --tool "" ""`.
                 error = validate_tool_args(tool_name, tool_args)
+                if not error and not (project_dir and program_name):
+                    error = ghidra_unavailable_error(ghidra_result.get("analysis_type"))
                 if error:
                     print(f"    [!] Validation failed: {error}")
                     response = {"type": "tool_error", "tool": tool_name, "error": error}
