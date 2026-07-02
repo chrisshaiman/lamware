@@ -6,11 +6,10 @@ and handled by the maintainer directly.
 
 ## Reporting a vulnerability
 
-**Preferred:** [GitHub private vulnerability reporting](https://github.com/chrisshaiman/lamware/security/advisories/new)
+Use [GitHub private vulnerability reporting](https://github.com/chrisshaiman/lamware/security/advisories/new)
 (Security tab → "Report a vulnerability"). This keeps the report private
-while it is triaged and fixed.
-
-**Alternative:** email `chris@shaiman.net` with subject `[lamware security]`.
+while it is triaged and fixed, and threads all follow-up discussion in one
+place.
 
 Please include: affected component (API, pipeline, frontend, an Ansible
 role), reproduction steps or a proof of concept, and the impact you believe

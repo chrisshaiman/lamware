@@ -14,10 +14,12 @@ and will result in a ban.
 
 ## Enforcement
 
-Report conduct issues to `chris@shaiman.net`. Reports are handled
-confidentially by the maintainer. Consequences follow the Contributor
-Covenant enforcement ladder: correction → warning → temporary ban →
-permanent ban.
+Report conduct issues privately via
+[GitHub private reporting](https://github.com/chrisshaiman/lamware/security/advisories/new)
+(the same channel as security reports — mark it as a conduct report).
+Reports are handled confidentially by the maintainer. Consequences follow
+the Contributor Covenant enforcement ladder: correction → warning →
+temporary ban → permanent ban.
 
 ## Attribution
 
