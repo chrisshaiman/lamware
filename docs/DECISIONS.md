@@ -355,11 +355,11 @@ network configuration.
 - Guest traffic never reaches the real internet — no abuse risk, no C2 contact
 - Malware that performs a live connectivity check before detonating may go dormant;
   `report_processor.py` will detect this pattern and alert the operator (see planned
-  features in docs/STATUS.md)
+  features in ROADMAP.md)
 - INetSim serves generic responses — second-stage payload downloads receive dummy content;
   operator can choose selective passthrough for re-analysis if warranted
 - Requires new `ansible/roles/inetsim/` role and updates to `roles/networking/` and
-  `roles/cape/` — tracked in docs/STATUS.md next build section
+  `roles/cape/` — tracked in ROADMAP.md next build section
 
 ---
 
@@ -392,7 +392,7 @@ Implement the following in the Windows 10 guest Packer image and libvirt XML tem
 
 *Deferred:*
 - User activity simulation (mouse movement, file opens) — high effort, marginal payoff
-  for most samples; tracked in docs/STATUS.md future scope
+  for most samples; tracked in ROADMAP.md future scope
 - Network adapter MAC/OUI randomization — QEMU default OUI `52:54:00` is known; low
   priority, revisit if OUI-based detection is observed in practice
 - RDTSC timing attack mitigation — hard to fully defeat without hardware tricks; DSDT
