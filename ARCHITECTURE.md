@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — Malware Analysis Sandbox
 
 Reference document: system design, provider rationale, toolchain split, and decisions table.
-For build status see docs/STATUS.md. For security rules see docs/SECURITY_CONSTRAINTS.md.
+For the roadmap see ROADMAP.md (GitHub Issues/Milestones). For security rules see docs/SECURITY_CONSTRAINTS.md.
 
 ---
 
@@ -120,7 +120,7 @@ this is the primary reason bare metal is required.
 
 ## Ansible roles
 
-> **Implementation status:** All roles are complete. See **docs/STATUS.md** for current build state.
+> **Implementation status:** All roles are complete. See **ROADMAP.md** for the current backlog.
 
 | Role | Purpose |
 |---|---|

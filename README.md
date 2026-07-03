@@ -465,7 +465,8 @@ OVH Bare Metal
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, provider rationale, deployment topology |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Trust boundaries, adversary model, and residual risk |
 | [docs/SECURITY_CONSTRAINTS.md](docs/SECURITY_CONSTRAINTS.md) | Non-negotiable security rules with rationale |
-| [docs/STATUS.md](docs/STATUS.md) | Build status and roadmap |
+| [ROADMAP.md](ROADMAP.md) | Roadmap — themes + pointers to GitHub Issues/Milestones |
+| [docs/archive/STATUS.md](docs/archive/STATUS.md) | Historical build journal (through v0.1.0) |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records (ADR log) |
 | [docs/COST_ESTIMATE.md](docs/COST_ESTIMATE.md) | Monthly cost breakdown |
 
