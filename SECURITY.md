@@ -53,10 +53,12 @@ Out of scope (report upstream instead):
 ## Known, accepted residual risk
 
 lamware assumes a hostile input set. Some risks are explicitly accepted and
-documented rather than treated as vulnerabilities — for example, guest → 
+documented rather than treated as vulnerabilities — for example, guest →
 hypervisor escape in the detonation VMs is mitigated by network isolation,
-not eliminated, and LLM prompt-injection detection is best-effort. A report
-that one of these mitigations can be *bypassed* is absolutely in scope.
+not eliminated, and LLM prompt-injection detection is best-effort. The full
+trust-boundary analysis and the complete residual-risk list are in
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md). A report that one of these
+mitigations can be *bypassed* is absolutely in scope.
 
 ## Reporting misuse
 
