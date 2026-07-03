@@ -3,6 +3,7 @@
 
 [project]
 name = "lamware-api"
+# Keep in sync with the root VERSION file (enforced by tests/test_version_consistency.py).
 version = "0.1.0"
 description = "FastAPI backend for the lamware malware analysis platform"
 authors = [{ name = "Christopher Shaiman" }]
