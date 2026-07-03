@@ -245,6 +245,10 @@ ssh sandbox 'sudo machinectl shell pipeline@ /bin/bash -c "sample-feeder --famil
 
 ## Security Model
 
+For the full trust-boundary analysis, adversary model, and an explicit
+residual-risk / "what this does **not** protect against" section, see
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md). The essentials:
+
 Every analysis tool runs in a **rootless** Podman container with:
 
 - `--network=none` — no network access for **every** analysis container; the interpret (LLM-broker) container reaches LiteLLM only through a bind-mounted Unix socket, never the network
@@ -458,6 +462,7 @@ OVH Bare Metal
 | Doc | Description |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, provider rationale, deployment topology |
+| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Trust boundaries, adversary model, and residual risk |
 | [docs/SECURITY_CONSTRAINTS.md](docs/SECURITY_CONSTRAINTS.md) | Non-negotiable security rules with rationale |
 | [docs/STATUS.md](docs/STATUS.md) | Build status and roadmap |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records (ADR log) |
