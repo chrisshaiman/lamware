@@ -7,7 +7,6 @@ License: Apache 2.0
 
 import re
 
-
 # Known benign domains/IPs — Windows telemetry, update services, connectivity
 # checks. These appear in every sandbox run and are not actionable IOCs.
 BENIGN_DOMAINS = {
@@ -70,6 +69,8 @@ BENIGN_IP_PREFIXES = ("239.", "224.", "169.254.", "fe80:")
 
 def is_benign_domain(domain: str) -> bool:
     """Check if a domain is known benign (Windows noise)."""
+    if not isinstance(domain, str):
+        return False
     d = domain.lower().strip()
     if d in BENIGN_DOMAINS:
         return True
@@ -114,6 +115,8 @@ BENIGN_MUTEXES = {
 
 def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
     """Check if an indicator is known benign (Windows/sandbox noise)."""
+    if not isinstance(value, str):
+        return False
     v = value.lower().strip()
     if ioc_type in ("domain-name", "url"):
         domain = v
@@ -144,18 +147,54 @@ def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
     return False
 
 
+# Every value read below comes from an adversary-controlled report (CAPE +
+# Volatility + Ghidra output derived from a malicious sample). A stage that
+# failed, or a hostile sample that shaped its own output, can put None / a
+# string / a list where a dict is expected — and dict.get(k, {}) returns the
+# default ONLY when k is absent, not when it is present-but-not-a-dict. These
+# helpers make the parser total: wrong shapes degrade to "no IOCs here", never
+# an uncaught exception that aborts DB ingestion for the whole analysis.
+
+
+def _as_dict(value) -> dict:
+    """Return value if it is a dict, else an empty dict."""
+    return value if isinstance(value, dict) else {}
+
+
+def _dicts(value):
+    """Yield only the dict elements of value (nothing if it is not a list)."""
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                yield item
+
+
+def _strs(value):
+    """Yield only the str elements of value (nothing if it is not a list)."""
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                yield item
+
+
 def extract_iocs(report: dict) -> list[dict]:
     """Extract all actionable IOCs from every pipeline stage.
 
     Returns structured IOC list with type, value, source stage, and context.
     Types follow STIX 2.1 Observable vocabulary where applicable.
+
+    Total by construction: any report shape (including hostile/malformed) yields
+    a well-formed list and never raises — see the _as_dict/_dicts helpers above.
     """
+    report = _as_dict(report)
     iocs = []
     seen = set()  # dedup by (type, value)
 
     def add_ioc(ioc_type: str, value: str, source: str, context: str = ""):
         """Add an IOC if not already seen or known benign."""
-        if not value or len(value) < 3:
+        # value is read from adversary-controlled report data — a field the
+        # report claims is a string may be an int/list/None. Only strings are IOCs.
+        if not isinstance(value, str) or len(value) < 3:
             return
         if is_benign_indicator(ioc_type, value, context):
             return
@@ -171,17 +210,17 @@ def extract_iocs(report: dict) -> list[dict]:
         })
 
     # --- Triage IOCs ---
-    triage = report.get("triage", {})
+    triage = _as_dict(report.get("triage"))
 
     # YARA rule names
-    for m in triage.get("yara_matches", []):
+    for m in _dicts(triage.get("yara_matches")):
         rule = m.get("rule", "")
         if rule:
             add_ioc("yara-rule", rule, "Triage", "YARA signature match")
 
     # Sample hash
     sha256 = ""
-    ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
+    ghidra_files = list(_dicts(_as_dict(report.get("ghidra")).get("analyzed_files")))
     if ghidra_files:
         sha256 = ghidra_files[0].get("sha256", "")
     if sha256:
@@ -193,11 +232,11 @@ def extract_iocs(report: dict) -> list[dict]:
         add_ioc("file:hashes.ssdeep", ssdeep, "Triage", "Fuzzy hash for similarity matching")
 
     # --- Cape Network IOCs ---
-    cape = report.get("cape", {})
-    network = cape.get("network", {})
+    cape = _as_dict(report.get("cape"))
+    network = _as_dict(cape.get("network"))
 
     # DNS queries (domains)
-    for d in network.get("dns_queries", []):
+    for d in _dicts(network.get("dns_queries")):
         domain = d.get("domain", "")
         if domain:
             answers = d.get("answers", [])
@@ -205,7 +244,7 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("domain-name", domain, "Cape", ctx)
 
     # Resolved domains with IPs
-    for d in network.get("domains", []):
+    for d in _dicts(network.get("domains")):
         domain = d.get("domain", "")
         ip = d.get("ip", "")
         if domain:
@@ -214,7 +253,7 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("ipv4-addr", ip, "Cape", f"Resolved from {domain}")
 
     # Host IPs
-    for h in network.get("hosts", []):
+    for h in network.get("hosts", []) if isinstance(network.get("hosts"), list) else []:
         if isinstance(h, str) and h:
             add_ioc("ipv4-addr", h, "Cape", "Contacted host")
         elif isinstance(h, dict):
@@ -223,7 +262,7 @@ def extract_iocs(report: dict) -> list[dict]:
                 add_ioc("ipv4-addr", ip, "Cape", "Contacted host")
 
     # HTTP requests
-    for h in network.get("http_requests", []):
+    for h in _dicts(network.get("http_requests")):
         url = h.get("url", "")
         host = h.get("host", "")
         if url:
@@ -232,15 +271,15 @@ def extract_iocs(report: dict) -> list[dict]:
             add_ioc("domain-name", host, "Cape", "HTTP request host")
 
     # TCP connections
-    for c in network.get("tcp_connections", []):
+    for c in _dicts(network.get("tcp_connections")):
         dst = c.get("dst", "")
-        if ":" in dst:
+        if isinstance(dst, str) and ":" in dst:
             ip, port = dst.rsplit(":", 1)
             if ip:
                 add_ioc("ipv4-addr", ip, "Cape", f"TCP connection to port {port}")
 
     # --- Cape extracted configs (C2 addresses, etc.) ---
-    for cfg in cape.get("extracted_configs", []):
+    for cfg in _dicts(cape.get("extracted_configs")):
         if isinstance(cfg, dict):
             # Common config fields that contain IOCs
             for key in ("c2", "c2_address", "cnc", "server", "url", "domains", "ips"):
@@ -261,19 +300,18 @@ def extract_iocs(report: dict) -> list[dict]:
                                 add_ioc("domain-name", item, "Cape", f"Extracted config: {key}")
 
     # --- Volatility network IOCs ---
-    vol = report.get("volatility", {})
-    netscan = vol.get("plugins", {}).get("netscan", [])
-    if isinstance(netscan, list):
-        for conn in netscan:
-            foreign = conn.get("ForeignAddr", "")
-            if foreign and foreign not in ("0.0.0.0", "::", "*"):
-                port = conn.get("ForeignPort", "")
-                add_ioc("ipv4-addr", foreign, "Volatility",
-                         f"Network connection (port {port})" if port else "Network connection")
+    vol = _as_dict(report.get("volatility"))
+    netscan = _as_dict(vol.get("plugins")).get("netscan", [])
+    for conn in _dicts(netscan):
+        foreign = conn.get("ForeignAddr", "")
+        if foreign and foreign not in ("0.0.0.0", "::", "*"):
+            port = conn.get("ForeignPort", "")
+            add_ioc("ipv4-addr", foreign, "Volatility",
+                     f"Network connection (port {port})" if port else "Network connection")
 
     # --- Ghidra strings IOCs ---
-    for af in report.get("ghidra", {}).get("analyzed_files", []):
-        for s in af.get("strings_of_interest", []):
+    for af in _dicts(_as_dict(report.get("ghidra")).get("analyzed_files")):
+        for s in af.get("strings_of_interest", []) if isinstance(af.get("strings_of_interest"), list) else []:
             s_str = str(s)
             # Extract URLs
             urls = re.findall(r'https?://[^\s\'"<>]+', s_str)
@@ -287,42 +325,38 @@ def extract_iocs(report: dict) -> list[dict]:
                     add_ioc("ipv4-addr", ip, "Ghidra", "IP found in binary strings")
 
     # --- Shellcode artifact IOCs (from malfind dump analysis) ---
-    for af in report.get("ghidra", {}).get("analyzed_files", []):
+    for af in _dicts(_as_dict(report.get("ghidra")).get("analyzed_files")):
         if af.get("source") != "malfind_injection":
             continue
-        artifacts = af.get("shellcode_artifacts", {})
+        artifacts = _as_dict(af.get("shellcode_artifacts"))
         pid = af.get("pid", "?")
         process = af.get("process", "?")
         ctx_prefix = f"Injected into {process} (pid {pid})"
 
-        for path in artifacts.get("file_paths", []):
+        for path in _strs(artifacts.get("file_paths")):
             add_ioc("file:name", path, "Volatility", f"{ctx_prefix} — dropped file path")
-        for url in artifacts.get("urls", []):
+        for url in _strs(artifacts.get("urls")):
             add_ioc("url", url, "Volatility", f"{ctx_prefix} — URL in injected memory")
-        for ip in artifacts.get("ip_addresses", []):
+        for ip in _strs(artifacts.get("ip_addresses")):
             add_ioc("ipv4-addr", ip, "Volatility", f"{ctx_prefix} — IP in injected memory")
-        for dll in artifacts.get("dll_names", []):
+        for dll in _strs(artifacts.get("dll_names")):
             if dll.lower() not in ("ntdll.dll", "kernel32.dll", "kernelbase.dll",
                                     "user32.dll", "advapi32.dll", "msvcrt.dll"):
                 add_ioc("file:name", dll, "Volatility", f"{ctx_prefix} — DLL loaded by injected code")
-        for api in artifacts.get("resolved_apis", []):
-            # APIs themselves aren't IOCs, but certain ones indicate specific capabilities
-            # We add them as context but don't create IOC entries for every API
-            pass
 
     # --- Volatility insights IOCs ---
-    vol_insights = vol.get("insights", {})
+    vol_insights = _as_dict(vol.get("insights"))
 
     # Mutex IOCs — strong family identifiers
-    for m in vol_insights.get("mutexes", []):
+    for m in _dicts(vol_insights.get("mutexes")):
         mutex_name = m.get("mutex", "")
         if mutex_name:
             add_ioc("mutex", mutex_name, "Volatility",
                      f"Mutex held by {m.get('process', '?')} (pid {m.get('pid', '?')})")
 
     # Mutex IOCs from Cape API traces — process-attributed with create/check distinction
-    cape = report.get("cape", {})
-    for m in cape.get("mutex_iocs", []):
+    cape = _as_dict(report.get("cape"))
+    for m in _dicts(cape.get("mutex_iocs")):
         mutex_name = m.get("name", "")
         if mutex_name and not is_benign_indicator("mutex", mutex_name):
             action = m.get("action", "?")
@@ -331,7 +365,7 @@ def extract_iocs(report: dict) -> list[dict]:
                      f"{action} by {process} (pid {m.get('pid', '?')}) via {m.get('api', '?')}")
 
     # Active connections from memory
-    for conn in vol_insights.get("active_connections", []):
+    for conn in _dicts(vol_insights.get("active_connections")):
         ip = conn.get("foreign_addr", "")
         port = conn.get("foreign_port", 0)
         if ip:
@@ -339,32 +373,32 @@ def extract_iocs(report: dict) -> list[dict]:
                      f"Active connection from {conn.get('process', '?')} to port {port}")
 
     # Suspicious DLLs loaded from unusual paths
-    for dll in vol_insights.get("suspicious_dlls", []):
+    for dll in _dicts(vol_insights.get("suspicious_dlls")):
         path = dll.get("dll_path", "")
         if path:
             add_ioc("file:name", path, "Volatility",
                      f"DLL loaded from unusual path by {dll.get('process', '?')}")
 
     # Suspicious command lines
-    for cmd in vol_insights.get("suspicious_cmdlines", []):
+    for cmd in _dicts(vol_insights.get("suspicious_cmdlines")):
         cmdline = cmd.get("cmdline", "")
         if cmdline:
-            add_ioc("process:command_line", cmdline[:200], "Volatility",
+            add_ioc("process:command_line", str(cmdline)[:200], "Volatility",
                      f"Suspicious command from {cmd.get('process', '?')} (pattern: {cmd.get('pattern', '?')})")
 
     # Suspicious file handles
-    for fh in vol_insights.get("suspicious_files", []):
+    for fh in _dicts(vol_insights.get("suspicious_files")):
         path = fh.get("path", "")
         if path:
             add_ioc("file:name", path, "Volatility",
                      f"Open file handle by {fh.get('process', '?')}")
 
     # --- PCAP analysis IOCs (Zeek + Suricata) ---
-    pcap = report.get("pcap_analysis", {})
-    zeek = pcap.get("zeek", {})
+    pcap = _as_dict(report.get("pcap_analysis"))
+    zeek = _as_dict(pcap.get("zeek"))
 
     # JA3 fingerprints — unique TLS client identification
-    for ioc in zeek.get("iocs", []):
+    for ioc in _dicts(zeek.get("iocs")):
         ioc_type = ioc.get("type", "")
         value = ioc.get("value", "")
         if ioc_type == "ja3" and value:
@@ -378,7 +412,7 @@ def extract_iocs(report: dict) -> list[dict]:
                     f"HTTP {ioc.get('method', '')} request")
 
     # Suricata IDS alerts — signature-based detections
-    for alert in pcap.get("suricata", {}).get("alerts", []):
+    for alert in _dicts(_as_dict(pcap.get("suricata")).get("alerts")):
         sig = alert.get("signature", "")
         if sig:
             dst_ip = alert.get("dst_ip", "")
@@ -388,9 +422,9 @@ def extract_iocs(report: dict) -> list[dict]:
                     f"{', dst: ' + dst_ip if dst_ip else ''}")
 
     # --- AI RE IOCs (from structured analysis output) ---
-    interp = report.get("llm_interpretation", {})
-    analysis = interp.get("analysis", {})
-    for cap in analysis.get("capabilities", []):
+    interp = _as_dict(report.get("llm_interpretation"))
+    analysis = _as_dict(interp.get("analysis"))
+    for cap in _strs(analysis.get("capabilities")):
         ips = re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', cap)
         for ip in ips:
             add_ioc("ipv4-addr", ip, "AI Reverse Engineering", f"Mentioned in capability: {cap[:80]}")
@@ -464,11 +498,13 @@ def map_iocs_to_techniques(report: dict, iocs: list[dict]) -> list[dict]:
     mappings = []
     seen = set()  # dedup by (ioc_value, technique_id)
 
-    for ioc in iocs:
+    for ioc in _dicts(iocs):
         ioc_type = ioc.get("type", "")
         ioc_value = ioc.get("value", "")
         ioc_source = ioc.get("source", "")
-        ioc_context = ioc.get("context", "").lower()
+        ioc_context = str(ioc.get("context", "")).lower()
+        if not isinstance(ioc_value, str):
+            continue
 
         for rule in IOC_TECHNIQUE_RULES:
             # Match IOC type
