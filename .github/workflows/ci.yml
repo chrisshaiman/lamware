@@ -82,7 +82,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install packages
-        run: pip install ./shared ./pipeline pytest
+        run: pip install ./shared ./pipeline pytest hypothesis
 
       - name: Test
         run: |
