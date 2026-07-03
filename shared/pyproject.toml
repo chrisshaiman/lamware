@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [project]
 name = "lamware-shared"
+# Keep in sync with the root VERSION file (enforced by tests/test_version_consistency.py).
 version = "0.1.0"
 description = "Shared code for the lamware platform (api + pipeline)"
 authors = [{ name = "Christopher Shaiman" }]

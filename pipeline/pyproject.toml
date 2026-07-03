@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [project]
 name = "lamware-pipeline"
+# Keep in sync with the root VERSION file (enforced by tests/test_version_consistency.py).
 version = "0.1.0"
 description = "lamware analysis pipeline (de-templated package)"
 authors = [{ name = "Christopher Shaiman" }]

@@ -2,6 +2,7 @@
 
 > **Drop a sample. Get a kill chain.**
 
+[![Release](https://img.shields.io/github/v/release/chrisshaiman/lamware?sort=semver)](https://github.com/chrisshaiman/lamware/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-bare%20metal%20%7C%20KVM-lightgrey)]()
