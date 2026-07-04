@@ -1,0 +1,28 @@
+# /etc/systemd/system/ollama.service — managed by Ansible
+# Ollama local LLM serving for the pipeline summary stages.
+# Runs as a root Podman container on an --internal network (no egress at serve
+# time), published to host loopback so the host-networked LiteLLM proxy reaches
+# it. The ~23GB model unloads after {{ ollama_keep_alive }} idle.
+
+[Unit]
+Description=Ollama local LLM (egress-confined)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/podman rm -f ollama
+ExecStart=/usr/bin/podman run --rm --name ollama \
+    --network={{ ollama_network }} \
+    -p 127.0.0.1:{{ ollama_port }}:11434 \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    -e OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }} \
+    -v {{ ollama_models_dir }}:/root/.ollama:Z \
+    {{ ollama_image }}
+ExecStop=/usr/bin/podman stop ollama
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

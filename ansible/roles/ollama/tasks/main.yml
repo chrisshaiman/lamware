@@ -1,0 +1,72 @@
+---
+# =============================================================================
+# roles/ollama/tasks/main.yml
+# Deploys Ollama as a root Podman container managed by systemd, serving a local
+# LLM for the pipeline's summary stages. The serve container runs on an
+# --internal Podman network (no egress) but is published to host loopback so the
+# host-networked LiteLLM proxy can reach it. The model is pulled once at
+# provision time (with egress) into a persistent volume.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create ollama dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ ollama_install_dir }}"
+    - "{{ ollama_models_dir }}"
+
+- name: Create internal (no-egress) podman network for ollama
+  ansible.builtin.command: podman network create --internal {{ ollama_network }}
+  register: _ollama_net
+  changed_when: "'already exists' not in (_ollama_net.stderr | default(''))"
+  failed_when: >
+    _ollama_net.rc != 0 and 'already exists' not in (_ollama_net.stderr | default(''))
+
+# One-shot pull WITH egress (default network) into the persistent models volume.
+- name: Pull the model into the volume (needs egress; one-shot)
+  ansible.builtin.command: >
+    podman run --rm -v {{ ollama_models_dir }}:/root/.ollama:Z
+    {{ ollama_image }} sh -lc 'ollama serve & sleep 4 && ollama pull {{ ollama_model }}'
+  args:
+    creates: "{{ ollama_models_dir }}/models/manifests"
+
+- name: Install ollama serve unit
+  ansible.builtin.template:
+    src: ollama.service.j2
+    dest: /etc/systemd/system/ollama.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart ollama
+
+- name: Enable + start ollama
+  ansible.builtin.systemd:
+    name: ollama
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for ollama API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_port }}/api/version"
+    status_code: 200
+  register: _ollama_up
+  retries: 30
+  delay: 2
+  until: _ollama_up.status == 200
+
+# Egress-confinement assertion: from inside the serve container (internal net),
+# the public internet must be UNREACHABLE. Fail the deploy if it is reachable.
+- name: Assert ollama serve container cannot egress
+  ansible.builtin.command: >
+    podman exec ollama sh -lc 'curl -s --max-time 5 https://api.anthropic.com >/dev/null 2>&1; echo $?'
+  register: _egress
+  changed_when: false
+  failed_when: _egress.stdout | trim == "0"
