@@ -4,7 +4,7 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
-- name: restart ollama
+- name: Restart ollama
   ansible.builtin.systemd:
     name: ollama
     state: restarted

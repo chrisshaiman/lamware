@@ -44,7 +44,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart ollama
+  notify: Restart ollama
 
 - name: Enable + start ollama
   ansible.builtin.systemd:
@@ -72,6 +72,6 @@
     podman exec ollama sh -lc '
       command -v curl >/dev/null 2>&1 || { echo NO_PROBE; exit 0; };
       curl -s --max-time 5 -o /dev/null https://1.1.1.1 && echo REACHED || echo BLOCKED'
-  register: _egress
+  register: _ollama_egress
   changed_when: false
-  failed_when: "'REACHED' in _egress.stdout or 'NO_PROBE' in _egress.stdout"
+  failed_when: "'REACHED' in _ollama_egress.stdout or 'NO_PROBE' in _ollama_egress.stdout"
