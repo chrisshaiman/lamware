@@ -29,10 +29,11 @@ def build_ab_payloads(report: dict, models: list[str]) -> list[dict]:
 def run_ab(report: dict, interpret_cmd: str, models: list[str]) -> dict[str, dict]:
     """Summarize the report once per model; return {model: {summary, seconds}}."""
     results: dict[str, dict] = {}
-    for m in models:
+    for payload in build_ab_payloads(report, models):
+        model = payload["config"]["summary_model"]
         t0 = time.time()
-        summary = run_summarize(report, interpret_cmd, True, {"summary_model": m})
-        results[m] = {"seconds": round(time.time() - t0, 1), "summary": summary}
+        summary = run_summarize(payload["report"], interpret_cmd, True, payload["config"])
+        results[model] = {"seconds": round(time.time() - t0, 1), "summary": summary}
     return results
 
 

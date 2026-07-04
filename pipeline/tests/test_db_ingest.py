@@ -37,3 +37,16 @@ def test_local_qwen_summary_priced_at_zero():
         }
     }
     assert db_ingest._calculate_llm_cost(report) == 0.0
+
+
+def test_plain_english_priced_by_its_model():
+    # Plain-English cost uses the recorded model, not a hardcoded Haiku rate — so a
+    # local plain-English summary is $0, while an older report (no model) falls back
+    # to Haiku pricing.
+    local = {"plain_english_usage": {"input_tokens": 1_000, "output_tokens": 1_000},
+             "plain_english_model": "local-qwen"}
+    assert db_ingest._calculate_llm_cost(local) == 0.0
+    # Haiku fallback for a report missing plain_english_model: 1e6*0.80/1e6 + ... but
+    # here tokens are 1000 each -> 1000*0.80/1e6 + 1000*4.00/1e6 = 0.0008 + 0.004.
+    legacy = {"plain_english_usage": {"input_tokens": 1_000, "output_tokens": 1_000}}
+    assert round(db_ingest._calculate_llm_cost(legacy), 6) == round(0.0008 + 0.004, 6)

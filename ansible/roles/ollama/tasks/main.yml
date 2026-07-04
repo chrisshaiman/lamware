@@ -63,10 +63,15 @@
   until: _ollama_up.status == 200
 
 # Egress-confinement assertion: from inside the serve container (internal net),
-# the public internet must be UNREACHABLE. Fail the deploy if it is reachable.
+# the public internet must be UNREACHABLE. Probe a raw IP (bypass DNS, which the
+# internal network also blocks) and fail the deploy if it is reachable. Fail LOUD
+# if the probe itself can't run (no curl) rather than silently passing a security
+# check. The real guarantee is the --internal network; this is defense in depth.
 - name: Assert ollama serve container cannot egress
   ansible.builtin.command: >
-    podman exec ollama sh -lc 'curl -s --max-time 5 https://api.anthropic.com >/dev/null 2>&1; echo $?'
+    podman exec ollama sh -lc '
+      command -v curl >/dev/null 2>&1 || { echo NO_PROBE; exit 0; };
+      curl -s --max-time 5 -o /dev/null https://1.1.1.1 && echo REACHED || echo BLOCKED'
   register: _egress
   changed_when: false
-  failed_when: _egress.stdout | trim == "0"
+  failed_when: "'REACHED' in _egress.stdout or 'NO_PROBE' in _egress.stdout"
