@@ -1831,6 +1831,18 @@ def main() -> None:
         client_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
     client = anthropic.Anthropic(**client_kwargs)
 
+    # Summary/plain-english calls route through LiteLLM's /v1/messages ROUTER
+    # (model_list) so a local model name (e.g. local-qwen) reaches Ollama. The
+    # agentic RE path keeps using `client` (the /anthropic passthrough) to
+    # preserve prompt caching + tool_use fidelity. Verified 2026-07-04 spike.
+    router_base = os.environ.get("LITELLM_ROUTER_BASE_URL", "")
+    summary_kwargs: dict[str, Any] = {"api_key": api_key}
+    if router_base:
+        summary_kwargs["base_url"] = router_base
+    if uds:
+        summary_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
+    summary_client = anthropic.Anthropic(**summary_kwargs) if router_base else client
+
     # ---- Wait for init or summarize message ----
     init_msg = read_message()
     if init_msg is None:
@@ -1841,7 +1853,7 @@ def main() -> None:
     if init_msg.get("type") == "summarize":
         report = init_msg.get("report", {})
         config = init_msg.get("config", {})
-        run_summarize(client, report, {**DEFAULT_CONFIG, **config})
+        run_summarize(summary_client, report, {**DEFAULT_CONFIG, **config})
         sys.exit(0)
 
     # ---- Plain English summary — non-technical explanation ----
@@ -1859,7 +1871,7 @@ Severity: {severity}
 Technical summary: {executive}"""
 
         try:
-            response = client.messages.create(
+            response = summary_client.messages.create(
                 model=init_msg.get("model", DEFAULT_CONFIG["model"]),
                 max_tokens=200,
                 messages=[{"role": "user", "content": prompt}],
