@@ -1,0 +1,11 @@
+---
+# =============================================================================
+# roles/ollama/handlers/main.yml
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+- name: Restart ollama
+  ansible.builtin.systemd:
+    name: ollama
+    state: restarted
+    daemon_reload: true

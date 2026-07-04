@@ -56,7 +56,8 @@ _VALID = {
         "max_imports": 200,
         "max_strings": 100,
         "max_string_length": 500,
-        "summary_model": "claude-haiku-4-5",
+        "summary_model": "local-qwen",
+        "plain_english_model": "local-qwen",
     },
     "volatility_triggers": [
         "injection_createremotethread",
@@ -140,7 +141,18 @@ def test_interpret_submodel(tmp_path):
     dumped = cfg.interpret.model_dump()
     assert dumped == _VALID["interpret"]
     assert dumped["model"] == "claude-sonnet-4-6"
-    assert dumped["summary_model"] == "claude-haiku-4-5"
+    assert dumped["summary_model"] == "local-qwen"
+
+
+def test_summary_models_default_to_local(tmp_path):
+    """Both summary stages default to the local model; the field flows through
+    the interpret submodel (INTERPRET_CONFIG) to the container."""
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(_VALID))
+    cfg = PipelineConfig.load(str(p))
+    assert cfg.interpret.summary_model == "local-qwen"
+    assert cfg.interpret.plain_english_model == "local-qwen"
+    assert cfg.interpret.model_dump()["plain_english_model"] == "local-qwen"
 
 
 def test_interpret_max_output_tokens_landmine(tmp_path):

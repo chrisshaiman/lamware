@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# roles/ollama/defaults/main.yml
+# Local LLM serving (Ollama) for the pipeline's summary stages.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+ollama_image: "docker.io/ollama/ollama:latest"
+ollama_model: "qwen3.6:35b-a3b-q4_K_M"   # official Ollama library tag (verified 2026-07-04)
+ollama_port: 11434
+ollama_install_dir: /opt/ollama
+ollama_models_dir: /opt/ollama/models
+ollama_keep_alive: "5m"                   # idle-unload so the ~23GB model isn't resident 24/7

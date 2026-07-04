@@ -1289,6 +1289,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if plain_text:
             report["plain_english_summary"] = plain_text
             report["plain_english_usage"] = plain_result.get("usage", {}) if isinstance(plain_result, dict) else {}
+            # Store the model so cost tracking prices it correctly (it may be local = $0).
+            report["plain_english_model"] = plain_result.get("model", "") if isinstance(plain_result, dict) else ""
             log.info(f"  {plain_text[:100]}...")
         else:
             report["plain_english_summary"] = ""

@@ -1,0 +1,82 @@
+---
+# =============================================================================
+# roles/ollama/tasks/main.yml
+# Deploys Ollama as a root Podman container managed by systemd, serving a local
+# LLM for the pipeline's summary stages. The serve container runs on the host
+# network bound to loopback only (OLLAMA_HOST=127.0.0.1), so the host-networked
+# LiteLLM proxy reaches it at 127.0.0.1 while it stays unreachable from wg0/eth0.
+# The model is pulled once at provision time (with egress) into a persistent
+# volume. Network-level egress blocking is a follow-up (iptables owner-match).
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create ollama dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ ollama_install_dir }}"
+    - "{{ ollama_models_dir }}"
+
+# One-shot pull WITH egress (default network) into the persistent models volume.
+# The image entrypoint is `ollama`, so override it with `sh` to run a small
+# script: start the server, wait until it answers, then pull. --rm reaps the
+# transient server when the pull returns.
+- name: Pull the model into the volume (needs egress; one-shot)
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --entrypoint
+      - sh
+      - -v
+      - "{{ ollama_models_dir }}:/root/.ollama:Z"
+      - "{{ ollama_image }}"
+      - -lc
+      - "ollama serve & for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done; ollama pull {{ ollama_model }}"
+    creates: "{{ ollama_models_dir }}/models/manifests"
+
+- name: Install ollama serve unit
+  ansible.builtin.template:
+    src: ollama.service.j2
+    dest: /etc/systemd/system/ollama.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ollama
+
+- name: Enable + start ollama
+  ansible.builtin.systemd:
+    name: ollama
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for ollama API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_port }}/api/version"
+    status_code: 200
+  register: _ollama_up
+  retries: 30
+  delay: 2
+  until: _ollama_up.status == 200
+
+# Exposure assertion: ollama must listen on host loopback only, so it is reachable
+# by the host-networked LiteLLM proxy but NOT from wg0/eth0. ss lists listeners;
+# fail if 127.0.0.1:<port> is absent or a wildcard bind (0.0.0.0 / [::] / *) is
+# present. (This checks INBOUND exposure; network-level EGRESS blocking is a
+# tracked follow-up — iptables owner-match on the ollama uid.)
+- name: Assert ollama listens on host loopback only (not externally exposed)
+  ansible.builtin.command: ss -tlnH
+  register: _ollama_listeners
+  changed_when: false
+  failed_when: >
+    ('127.0.0.1:' ~ (ollama_port | string)) not in _ollama_listeners.stdout
+    or ('0.0.0.0:' ~ (ollama_port | string)) in _ollama_listeners.stdout
+    or ('*:' ~ (ollama_port | string)) in _ollama_listeners.stdout

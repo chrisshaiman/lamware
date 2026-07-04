@@ -14,9 +14,34 @@ model_list:
       model: "anthropic/{{ interpret_escalation_model | default('claude-opus-4-6') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
+  # Local LLM (Ollama) for the summary stages. Reached over host loopback; the
+  # /v1/messages router translates Anthropic<->Ollama (verified 2026-07-04 spike).
+  # think:false is REQUIRED — Qwen3.6 is a thinking model and otherwise burns the
+  # token budget on hidden reasoning and returns an EMPTY summary (proven
+  # 2026-07-04: think=true -> empty, think=false -> full summary). Confirm LiteLLM
+  # forwards `think` to ollama_chat during deploy; if not, fall back to an Ollama
+  # Modelfile PARAMETER or a `/no_think` directive in the summary system prompt.
+  - model_name: "local-qwen"
+    litellm_params:
+      model: "{{ litellm_local_model_backend }}"
+      api_base: "{{ litellm_ollama_api_base }}"
+      think: false
+  - model_name: "local-qwen-strict"
+    litellm_params:
+      model: "{{ litellm_local_model_backend }}"
+      api_base: "{{ litellm_ollama_api_base }}"
+      think: false
+  - model_name: "haiku-fallback"
+    litellm_params:
+      model: "anthropic/{{ litellm_fallback_backend }}"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
 litellm_settings:
   drop_params: true
   set_verbose: false
+  # local-qwen -> Haiku on any local failure. local-qwen-strict has NO fallback
+  # (strict = offline). See PipelineConfig.summary_model for the per-stage knob.
+  fallbacks: [{"local-qwen": ["haiku-fallback"]}]
 
 general_settings:
   master_key: "{{ litellm_master_key }}"

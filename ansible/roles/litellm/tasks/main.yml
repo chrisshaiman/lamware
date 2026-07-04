@@ -105,6 +105,22 @@
   # CURRENT socket config rather than a restart still queued until end-of-play.
   ansible.builtin.meta: flush_handlers
 
+- name: Wait for LiteLLM to be ready after any restart
+  # The earlier readiness check ran BEFORE the flush above, so it validated the
+  # OLD process. A config change (e.g. a new model_list entry) restarts LiteLLM
+  # here, and it takes ~40s to re-initialize — re-wait so the interpret role's
+  # socket probe doesn't race the restart ("Server disconnected without response").
+  ansible.builtin.uri:
+    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ litellm_master_key }}"
+    status_code: 200
+  register: litellm_health_postflush
+  retries: 20
+  delay: 5
+  until: litellm_health_postflush.status == 200
+
 - name: Stat the LiteLLM socket directory
   ansible.builtin.stat:
     path: /run/litellm

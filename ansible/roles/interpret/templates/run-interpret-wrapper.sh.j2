@@ -37,5 +37,6 @@ podman run --rm -i \
     -v "$SOCK":/run/litellm.sock:ro \
     -e LITELLM_API_KEY="{{ litellm_master_key | default('sk-lamware') }}" \
     -e LITELLM_BASE_URL="http://litellm.invalid/anthropic" \
+    -e LITELLM_ROUTER_BASE_URL="http://litellm.invalid" \
     -e LITELLM_UDS=/run/litellm.sock \
     localhost/interpret:latest

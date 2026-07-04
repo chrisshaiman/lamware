@@ -385,7 +385,8 @@ def run_plain_english(report: dict, interpret_cmd: str, interpret_enabled: bool,
         "family": report.get("family", "unknown"),
         "severity": report.get("severity", "unknown"),
         "filename": report.get("sample_name", "unknown"),
-        "model": interpret_config.get("summary_model", "claude-haiku-4-5-20251001"),
+        "model": interpret_config.get("plain_english_model",
+                                      interpret_config.get("summary_model", "claude-haiku-4-5-20251001")),
         "config": interpret_config,
     }, default=str)
 

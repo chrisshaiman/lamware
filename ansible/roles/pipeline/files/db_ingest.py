@@ -127,6 +127,9 @@ _LLM_PRICING = {
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 15.00, "output": 75.00},
     "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
+    # Local Ollama inference has no per-token API cost.
+    "local-qwen": {"input": 0.00, "output": 0.00},
+    "local-qwen-strict": {"input": 0.00, "output": 0.00},
     "default": {"input": 3.00, "output": 15.00},
 }
 
@@ -176,8 +179,10 @@ def _calculate_llm_cost(report: dict) -> float:
         output_tokens = pe_usage.get("output_tokens", 0)
         if input_tokens or output_tokens:
             has_usage = True
-            # Plain English uses Haiku
-            pricing = _LLM_PRICING.get("claude-haiku-4-5", _LLM_PRICING["default"])
+            # Price by the actual plain-English model (may be local = $0), falling
+            # back to Haiku for older reports that didn't record the model.
+            pe_model = report.get("plain_english_model") or "claude-haiku-4-5"
+            pricing = _LLM_PRICING.get(pe_model, _LLM_PRICING["default"])
             cost = (input_tokens * pricing["input"] / 1_000_000) + \
                    (output_tokens * pricing["output"] / 1_000_000)
             total_cost += cost

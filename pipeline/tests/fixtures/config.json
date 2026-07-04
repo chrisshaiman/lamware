@@ -43,7 +43,8 @@
     "max_imports": 200,
     "max_strings": 100,
     "max_string_length": 500,
-    "summary_model": "claude-haiku-4-5"
+    "summary_model": "local-qwen",
+    "plain_english_model": "local-qwen"
   },
   "volatility_triggers": [
     "injection_createremotethread",
