@@ -2,10 +2,11 @@
 # =============================================================================
 # roles/ollama/tasks/main.yml
 # Deploys Ollama as a root Podman container managed by systemd, serving a local
-# LLM for the pipeline's summary stages. The serve container runs on an
-# --internal Podman network (no egress) but is published to host loopback so the
-# host-networked LiteLLM proxy can reach it. The model is pulled once at
-# provision time (with egress) into a persistent volume.
+# LLM for the pipeline's summary stages. The serve container runs on the host
+# network bound to loopback only (OLLAMA_HOST=127.0.0.1), so the host-networked
+# LiteLLM proxy reaches it at 127.0.0.1 while it stays unreachable from wg0/eth0.
+# The model is pulled once at provision time (with egress) into a persistent
+# volume. Network-level egress blocking is a follow-up (iptables owner-match).
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -21,13 +22,6 @@
   loop:
     - "{{ ollama_install_dir }}"
     - "{{ ollama_models_dir }}"
-
-- name: Create internal (no-egress) podman network for ollama
-  ansible.builtin.command: podman network create --internal {{ ollama_network }}
-  register: _ollama_net
-  changed_when: "'already exists' not in (_ollama_net.stderr | default(''))"
-  failed_when: >
-    _ollama_net.rc != 0 and 'already exists' not in (_ollama_net.stderr | default(''))
 
 # One-shot pull WITH egress (default network) into the persistent models volume.
 # The image entrypoint is `ollama`, so override it with `sh` to run a small
@@ -73,24 +67,16 @@
   delay: 2
   until: _ollama_up.status == 200
 
-# Egress-confinement assertion. The ollama image ships no curl/wget/python, so we
-# verify the guarantee from the host side instead of probing from inside: (1) the
-# network is podman --internal (no gateway/NAT -> containers on it cannot reach
-# outside), and (2) the running container is attached to exactly that network.
-# Together these mean no egress at serve time; port publishing to loopback is
-# inbound-only and does not grant egress.
-- name: Assert the ollama network is egress-confined (internal)
-  ansible.builtin.command: >-
-    podman network inspect {{ ollama_network }}
-    --format '{% raw %}{{ .Internal }}{% endraw %}'
-  register: _ollama_net_internal
+# Exposure assertion: ollama must listen on host loopback only, so it is reachable
+# by the host-networked LiteLLM proxy but NOT from wg0/eth0. ss lists listeners;
+# fail if 127.0.0.1:<port> is absent or a wildcard bind (0.0.0.0 / [::] / *) is
+# present. (This checks INBOUND exposure; network-level EGRESS blocking is a
+# tracked follow-up — iptables owner-match on the ollama uid.)
+- name: Assert ollama listens on host loopback only (not externally exposed)
+  ansible.builtin.command: ss -tlnH
+  register: _ollama_listeners
   changed_when: false
-  failed_when: (_ollama_net_internal.stdout | trim) != "true"
-
-- name: Assert the ollama container is attached to the internal network only
-  ansible.builtin.command: >-
-    podman inspect ollama
-    --format '{% raw %}{{ range $k, $v := .NetworkSettings.Networks }}{{ $k }} {{ end }}{% endraw %}'
-  register: _ollama_container_net
-  changed_when: false
-  failed_when: (_ollama_container_net.stdout | trim) != ollama_network
+  failed_when: >
+    ('127.0.0.1:' ~ (ollama_port | string)) not in _ollama_listeners.stdout
+    or ('0.0.0.0:' ~ (ollama_port | string)) in _ollama_listeners.stdout
+    or ('*:' ~ (ollama_port | string)) in _ollama_listeners.stdout

@@ -11,5 +11,4 @@ ollama_model: "qwen3.6:35b-a3b-q4_K_M"   # official Ollama library tag (verified
 ollama_port: 11434
 ollama_install_dir: /opt/ollama
 ollama_models_dir: /opt/ollama/models
-ollama_network: ollama-net               # --internal: no egress at serve time
 ollama_keep_alive: "5m"                   # idle-unload so the ~23GB model isn't resident 24/7

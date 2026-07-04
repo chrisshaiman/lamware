@@ -1,11 +1,15 @@
 # /etc/systemd/system/ollama.service — managed by Ansible
 # Ollama local LLM serving for the pipeline summary stages.
-# Runs as a root Podman container on an --internal network (no egress at serve
-# time), published to host loopback so the host-networked LiteLLM proxy reaches
-# it. The ~23GB model unloads after {{ ollama_keep_alive }} idle.
+# Runs as a root Podman container on the HOST network, bound to host loopback
+# only (OLLAMA_HOST=127.0.0.1) so the host-networked LiteLLM proxy reaches it at
+# 127.0.0.1:{{ ollama_port }} while it stays unreachable from wg0/eth0.
+# (An --internal / --network=none container gives zero egress but is unreachable
+# from the host — incompatible with serving LiteLLM. Network-level egress blocking
+# for this loopback listener is a follow-up: iptables owner-match on the ollama
+# uid, mirroring the pipeline-user lockdown.) The ~23GB model unloads after idle.
 
 [Unit]
-Description=Ollama local LLM (egress-confined)
+Description=Ollama local LLM (loopback-bound)
 After=network-online.target
 Wants=network-online.target
 
@@ -13,10 +17,10 @@ Wants=network-online.target
 Type=simple
 ExecStartPre=-/usr/bin/podman rm -f ollama
 ExecStart=/usr/bin/podman run --rm --name ollama \
-    --network={{ ollama_network }} \
-    -p 127.0.0.1:{{ ollama_port }}:11434 \
+    --network=host \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
+    -e OLLAMA_HOST=127.0.0.1:{{ ollama_port }} \
     -e OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }} \
     -v {{ ollama_models_dir }}:/root/.ollama:Z \
     {{ ollama_image }}
