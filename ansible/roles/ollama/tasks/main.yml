@@ -30,11 +30,22 @@
     _ollama_net.rc != 0 and 'already exists' not in (_ollama_net.stderr | default(''))
 
 # One-shot pull WITH egress (default network) into the persistent models volume.
+# The image entrypoint is `ollama`, so override it with `sh` to run a small
+# script: start the server, wait until it answers, then pull. --rm reaps the
+# transient server when the pull returns.
 - name: Pull the model into the volume (needs egress; one-shot)
-  ansible.builtin.command: >
-    podman run --rm -v {{ ollama_models_dir }}:/root/.ollama:Z
-    {{ ollama_image }} sh -lc 'ollama serve & sleep 4 && ollama pull {{ ollama_model }}'
-  args:
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --entrypoint
+      - sh
+      - -v
+      - "{{ ollama_models_dir }}:/root/.ollama:Z"
+      - "{{ ollama_image }}"
+      - -lc
+      - "ollama serve & for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done; ollama pull {{ ollama_model }}"
     creates: "{{ ollama_models_dir }}/models/manifests"
 
 - name: Install ollama serve unit
