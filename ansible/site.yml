@@ -74,6 +74,10 @@
     - role: podman
       tags: [podman]
 
+    # 10a. Ollama — local LLM serving for the summary stages (LiteLLM routes to it)
+    - role: ollama
+      tags: [ollama]
+
     # 10b. LiteLLM proxy — routes all Claude API calls through local proxy
     - role: litellm
       tags: [litellm]
