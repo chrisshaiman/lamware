@@ -12,6 +12,13 @@ pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
 # Report retention (days) — cron job purges older reports
 pipeline_report_retention_days: 7
 
+# LLM model the pipeline REQUESTS for the summary stages (routed via LiteLLM).
+# Default local-first (Ollama Qwen3.6); set to a Haiku model to revert to cloud,
+# or local-qwen-strict for offline (no Haiku fallback). Distinct from the litellm
+# role's interpret_summary_model, which names an Anthropic model_list entry.
+pipeline_summary_model: "local-qwen"
+pipeline_plain_english_model: "local-qwen"
+
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 pipeline_volatility_triggers:
   - injection_createremotethread

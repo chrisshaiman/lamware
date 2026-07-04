@@ -27,7 +27,8 @@ class InterpretConfig(BaseModel):
     max_imports: int
     max_strings: int
     max_string_length: int
-    summary_model: str
+    summary_model: str          # model for the executive/kill-chain summary
+    plain_english_model: str    # model for the plain-English summary
 
 
 class PipelineConfig(BaseModel):

@@ -43,7 +43,8 @@
     "max_imports": {{ interpret_max_imports | default(200) }},
     "max_strings": {{ interpret_max_strings | default(100) }},
     "max_string_length": {{ interpret_max_string_length | default(500) }},
-    "summary_model": {{ interpret_summary_model | default('claude-haiku-4-5') | to_json }}
+    "summary_model": {{ pipeline_summary_model | default('local-qwen') | to_json }},
+    "plain_english_model": {{ pipeline_plain_english_model | default('local-qwen') | to_json }}
   },
   "volatility_triggers": {{ pipeline_volatility_triggers | to_json }},
   "volatility_extra_plugins": {{ pipeline_volatility_extra_plugins | default({}) | to_json }},
