@@ -127,6 +127,9 @@ _LLM_PRICING = {
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 15.00, "output": 75.00},
     "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
+    # Local Ollama inference has no per-token API cost.
+    "local-qwen": {"input": 0.00, "output": 0.00},
+    "local-qwen-strict": {"input": 0.00, "output": 0.00},
     "default": {"input": 3.00, "output": 15.00},
 }
 

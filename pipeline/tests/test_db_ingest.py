@@ -24,3 +24,16 @@ def test_calculate_llm_cost_computes_from_usage():
     cost = db_ingest._calculate_llm_cost(report)
     assert cost > 0
     assert cost == 10.50
+
+
+def test_local_qwen_summary_priced_at_zero():
+    # A summary produced by the local model must cost $0 (local inference has no
+    # per-token API cost), not the $0.50 unknown-model fallback. has_usage is True
+    # (real tokens), so the return is the computed 0.0, not the fallback.
+    report = {
+        "executive_summary": {
+            "model": "local-qwen",
+            "usage": {"input_tokens": 5_000, "output_tokens": 2_000},
+        }
+    }
+    assert db_ingest._calculate_llm_cost(report) == 0.0
