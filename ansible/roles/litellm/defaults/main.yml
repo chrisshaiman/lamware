@@ -11,3 +11,8 @@ litellm_master_key: "sk-lamware"
 litellm_image: "ghcr.io/berriai/litellm:main-latest"
 litellm_db_user: "litellm"
 litellm_db_name: "litellm"
+
+# Local LLM (Ollama) routing for the summary stages.
+litellm_local_model_backend: "ollama_chat/qwen3.6:35b-a3b-q4_K_M"
+litellm_ollama_api_base: "http://127.0.0.1:11434"
+litellm_fallback_backend: "claude-haiku-4-5"
