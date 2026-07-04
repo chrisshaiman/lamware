@@ -73,16 +73,24 @@
   delay: 2
   until: _ollama_up.status == 200
 
-# Egress-confinement assertion: from inside the serve container (internal net),
-# the public internet must be UNREACHABLE. Probe a raw IP (bypass DNS, which the
-# internal network also blocks) and fail the deploy if it is reachable. Fail LOUD
-# if the probe itself can't run (no curl) rather than silently passing a security
-# check. The real guarantee is the --internal network; this is defense in depth.
-- name: Assert ollama serve container cannot egress
-  ansible.builtin.command: >
-    podman exec ollama sh -lc '
-      command -v curl >/dev/null 2>&1 || { echo NO_PROBE; exit 0; };
-      curl -s --max-time 5 -o /dev/null https://1.1.1.1 && echo REACHED || echo BLOCKED'
-  register: _ollama_egress
+# Egress-confinement assertion. The ollama image ships no curl/wget/python, so we
+# verify the guarantee from the host side instead of probing from inside: (1) the
+# network is podman --internal (no gateway/NAT -> containers on it cannot reach
+# outside), and (2) the running container is attached to exactly that network.
+# Together these mean no egress at serve time; port publishing to loopback is
+# inbound-only and does not grant egress.
+- name: Assert the ollama network is egress-confined (internal)
+  ansible.builtin.command: >-
+    podman network inspect {{ ollama_network }}
+    --format '{% raw %}{{ .Internal }}{% endraw %}'
+  register: _ollama_net_internal
   changed_when: false
-  failed_when: "'REACHED' in _ollama_egress.stdout or 'NO_PROBE' in _ollama_egress.stdout"
+  failed_when: (_ollama_net_internal.stdout | trim) != "true"
+
+- name: Assert the ollama container is attached to the internal network only
+  ansible.builtin.command: >-
+    podman inspect ollama
+    --format '{% raw %}{{ range $k, $v := .NetworkSettings.Networks }}{{ $k }} {{ end }}{% endraw %}'
+  register: _ollama_container_net
+  changed_when: false
+  failed_when: (_ollama_container_net.stdout | trim) != ollama_network
