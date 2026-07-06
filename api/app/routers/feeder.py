@@ -19,6 +19,7 @@
 import json
 import logging
 import os
+import stat
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -186,11 +187,23 @@ def _update_state(updates: dict) -> bool:
         except Exception:
             state = {}
 
+        # Preserve the existing file's mode across the atomic swap. state.json is
+        # owned by the feeder with group `lamware` at 0664; the API only shares
+        # access via that group bit. os.replace swaps in the tmp file, created
+        # with the API process umask (often 0644, group read-only) — which would
+        # silently lock the feeder out of its own state. Default to 0664 when the
+        # file doesn't exist yet (feeder not yet started).
+        try:
+            orig_mode = stat.S_IMODE(os.stat(state_path).st_mode)
+        except OSError:
+            orig_mode = 0o664
+
         state.update(updates)
 
         with open(tmp_path, "w") as f:
             json.dump(state, f, indent=2, default=str)
 
+        os.chmod(tmp_path, orig_mode)
         os.replace(tmp_path, state_path)
         return True
     except Exception as exc:

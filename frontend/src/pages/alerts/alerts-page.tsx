@@ -9,7 +9,7 @@ import { RequireRole } from "#components/require-role";
 
 export function AlertsPage() {
   const { data: alerts, isLoading: alertsLoading } = useAlerts();
-  const { data: feeder } = useFeederStatus();
+  const { data: feeder, isFetching: feederFetching } = useFeederStatus();
   const pauseMutation = useFeederPause();
   const resumeMutation = useFeederResume();
   const resetMutation = useFeederReset();
@@ -27,7 +27,12 @@ export function AlertsPage() {
   const handlePause = () => {
     if (confirm("Pause the auto-feeder?")) pauseMutation.mutate();
   };
-  const handleResume = () => resumeMutation.mutate();
+  // Resume is confirmed too (symmetric with Pause/Reset). Without it, a stray
+  // click landing on the in-place Pause->Resume toggle — right as the status
+  // refetch swaps the button — could silently undo a deliberate pause.
+  const handleResume = () => {
+    if (confirm("Resume the auto-feeder?")) resumeMutation.mutate();
+  };
   const handleReset = () => {
     if (confirm("Reset the failure counter?")) resetMutation.mutate();
   };
@@ -120,7 +125,7 @@ export function AlertsPage() {
                 {feeder?.paused ? (
                   <button
                     onClick={handleResume}
-                    disabled={resumeMutation.isPending}
+                    disabled={resumeMutation.isPending || feederFetching}
                     className="flex items-center gap-1 rounded border border-green-800 bg-green-900/20 px-3 py-1.5 text-xs text-green-400 hover:bg-green-900/40 disabled:opacity-50"
                   >
                     <Play className="h-3 w-3" /> Resume
@@ -128,7 +133,7 @@ export function AlertsPage() {
                 ) : (
                   <button
                     onClick={handlePause}
-                    disabled={pauseMutation.isPending}
+                    disabled={pauseMutation.isPending || feederFetching}
                     className="flex items-center gap-1 rounded border border-yellow-800 bg-yellow-900/20 px-3 py-1.5 text-xs text-yellow-400 hover:bg-yellow-900/40 disabled:opacity-50"
                   >
                     <Pause className="h-3 w-3" /> Pause
@@ -136,7 +141,7 @@ export function AlertsPage() {
                 )}
                 <button
                   onClick={handleReset}
-                  disabled={resetMutation.isPending}
+                  disabled={resetMutation.isPending || feederFetching}
                   className="flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-50"
                 >
                   <RotateCcw className="h-3 w-3" /> Reset Failures

@@ -30,8 +30,15 @@ RestartSec=5
 # AF_NETLINK in RestrictAddressFamilies: rootless Podman uses netlink
 # during user-namespace and network-namespace setup even with --network=none.
 # Without AF_NETLINK the namespace syscalls fail before the container starts.
+#
+# /opt/auto-feeder in ReadWritePaths: the feeder-control endpoints reset the
+# consecutive-failures counter in /opt/auto-feeder/state.json (on resume and via
+# the Reset-Failures action). ProtectSystem=strict otherwise makes that path
+# read-only, so the writes fail with EROFS — resume can't clear backoff and the
+# Reset action returns HTTP 500. The PAUSE file lives under /opt/pipeline/control
+# (already listed), so pause/resume of the flag itself was unaffected.
 ProtectSystem=strict
-ReadWritePaths={{ api_install_dir }} /opt/pipeline/spool /opt/pipeline/control /home/pipeline
+ReadWritePaths={{ api_install_dir }} /opt/pipeline/spool /opt/pipeline/control /opt/auto-feeder /home/pipeline
 ProtectHome=false
 PrivateTmp=true
 ProtectKernelModules=true
