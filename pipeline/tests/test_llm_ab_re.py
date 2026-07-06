@@ -1,7 +1,9 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the local-vs-cloud agentic-RE A/B harness (pure functions)."""
-from llm_ab_re import build_re_configs
+import json
+
+from llm_ab_re import build_re_configs, extract_metrics
 
 
 def test_cloud_arm_leaves_backend_unset():
@@ -24,3 +26,28 @@ def test_local_arm_routes_local_and_disables_escalation():
 def test_one_config_per_model_preserving_order():
     cfgs = build_re_configs({"model": "x"}, ["claude-sonnet-4-6", "local-qwen-re"])
     assert [c["model"] for c in cfgs] == ["claude-sonnet-4-6", "local-qwen-re"]
+
+
+def test_metrics_completed_run_with_tool_errors(tmp_path):
+    audit = tmp_path / "tc.json"
+    audit.write_text(json.dumps([
+        {"tool": "list_functions", "result": {"ok": 1}},
+        {"tool": "decompile_function", "error": "bad tool_use translation"},
+    ]))
+    res = {"enabled": True, "tool_calls_used": 2, "model_final": "local-qwen-re",
+           "duration_seconds": 812.0, "analysis": {"family": "wannacry"},
+           "audit": {"tool_call_log": str(audit)}}
+    m = extract_metrics(res)
+    assert m["completed"] is True
+    assert m["tool_calls_logged"] == 2
+    assert m["tool_call_errors"] == 1
+    assert m["tool_call_error_rate"] == 0.5
+    assert m["family"] == "wannacry"
+
+
+def test_metrics_errored_run_not_completed():
+    res = {"enabled": True, "error": "Interpret loop error: boom"}
+    m = extract_metrics(res)
+    assert m["completed"] is False
+    assert m["error"] == "Interpret loop error: boom"
+    assert m["tool_call_error_rate"] == 0.0

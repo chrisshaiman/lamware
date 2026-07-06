@@ -8,9 +8,9 @@ Increment-2 measurement tooling — see
 docs/superpowers/specs/2026-07-06-local-re-ab-design.md. Sibling of llm_ab_summary.py.
 """
 import argparse  # noqa: F401
-import json  # noqa: F401
+import json
 import time  # noqa: F401
-from pathlib import Path  # noqa: F401
+from pathlib import Path
 
 from stages.interpret import run_interpret  # noqa: F401
 
@@ -27,3 +27,30 @@ def build_re_configs(base_config: dict, models: list[str]) -> list[dict]:
             cfg["escalation_model"] = m
         configs.append(cfg)
     return configs
+
+
+def extract_metrics(arm_result: dict) -> dict:
+    """Mechanical reliability metrics for one arm. Tool-call errors (the
+    router translation-fidelity signal) come from the audit tool_call_log file."""
+    analysis = arm_result.get("analysis", {}) or {}
+    err = arm_result.get("error") or analysis.get("error")
+    completed = arm_result.get("enabled") is True and not err and bool(analysis)
+
+    logged = errors = 0
+    audit_path = (arm_result.get("audit") or {}).get("tool_call_log")
+    if audit_path and Path(audit_path).exists():
+        log = json.loads(Path(audit_path).read_text())
+        logged = len(log)
+        errors = sum(1 for e in log if "error" in e)
+
+    return {
+        "completed": completed,
+        "tool_calls_used": arm_result.get("tool_calls_used", 0),
+        "tool_calls_logged": logged,
+        "tool_call_errors": errors,
+        "tool_call_error_rate": round(errors / logged, 3) if logged else 0.0,
+        "duration_seconds": arm_result.get("duration_seconds"),
+        "model_final": arm_result.get("model_final", ""),
+        "family": analysis.get("family") or analysis.get("family_guess", ""),
+        "error": err,
+    }
