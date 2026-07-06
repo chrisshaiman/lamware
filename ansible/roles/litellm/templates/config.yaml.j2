@@ -31,6 +31,13 @@ model_list:
       model: "{{ litellm_local_model_backend }}"
       api_base: "{{ litellm_ollama_api_base }}"
       think: false
+  # Agentic RE loop variant — identical to local-qwen but with think:true so the
+  # model reasons through disassembly before committing to tool calls.
+  - model_name: "local-qwen-re"
+    litellm_params:
+      model: "{{ litellm_local_model_backend }}"
+      api_base: "{{ litellm_ollama_api_base }}"
+      think: true
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"

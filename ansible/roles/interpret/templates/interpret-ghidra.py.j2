@@ -2169,6 +2169,16 @@ Technical summary: {executive}"""
             })
         sys.exit(0)
 
+    # A/B knob: route the agentic RE loop through the LiteLLM router to a local
+    # model (e.g. local-qwen-re, think-on) instead of the /anthropic passthrough.
+    # summary_client is already the router client. Pure-local: disable escalation
+    # so the loop never falls back to Claude. Absent re_backend => unchanged
+    # production behaviour (cloud, sonnet->opus).
+    if config.get("re_backend") == "local" and router_base:
+        client = summary_client
+        escalation_model = model
+        emit_status(f"RE routed to local backend via router: {model}", 0)
+
     # Build initial conversation
     initial_text = _bazaar_context(init_msg) + build_initial_message(ghidra_data, config)
     messages: list[dict[str, Any]] = [
