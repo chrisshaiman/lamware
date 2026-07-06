@@ -7,7 +7,7 @@ once per model and writes the analyses + reliability metrics side-by-side.
 Increment-2 measurement tooling — see
 docs/superpowers/specs/2026-07-06-local-re-ab-design.md. Sibling of llm_ab_summary.py.
 """
-import argparse  # noqa: F401
+import argparse
 import json
 import time
 from pathlib import Path
@@ -75,3 +75,74 @@ def run_re_ab(ghidra_result: dict, output_dir: Path, base_config: dict,
         res["wall_seconds"] = round(time.time() - t0, 1)
         results[model] = res
     return results
+
+
+def _load_labels(path: str) -> dict:
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return {}
+
+
+def _render_compare(sample: str, metrics: dict, results: dict, labels: dict) -> str:
+    lines = [f"# RE A/B — {sample}\n"]
+    lbl = labels.get(sample, {})
+    if lbl:
+        lines.append(f"**Expected (ground truth):** family=`{lbl.get('family', '?')}` "
+                     f"techniques={lbl.get('techniques', [])}\n")
+    models = list(metrics.keys())
+    lines.append("| metric | " + " | ".join(models) + " |")
+    lines.append("|" + "---|" * (len(models) + 1))
+    for k in ["model_final", "completed", "tool_calls_used", "tool_calls_logged",
+              "tool_call_errors", "tool_call_error_rate", "duration_seconds", "family", "error"]:
+        row = [str(metrics[m].get(k)) for m in models]
+        lines.append(f"| {k} | " + " | ".join(row) + " |")
+    for model in models:
+        lines.append(f"\n## {model} — analysis\n")
+        lines.append("```json")
+        lines.append(json.dumps(results[model].get("analysis", {}), indent=2, default=str))
+        lines.append("```")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="A/B the agentic Ghidra RE stage across models.")
+    ap.add_argument("analysis_dirs", nargs="+",
+                    help="pipeline analysis dirs (each has report.json + project/)")
+    ap.add_argument("--cloud", default="claude-sonnet-4-6", help="cloud model (production RE baseline)")
+    ap.add_argument("--local", default="local-qwen-re", help="local model (routes via re_backend=local)")
+    ap.add_argument("--config", default="/opt/pipeline/config.json",
+                    help="pipeline config.json (its 'interpret' block is the base config)")
+    ap.add_argument("--interpret-cmd", default="/opt/interpret/run-interpret")
+    ap.add_argument("--ghidra-cmd", default="/opt/ghidra/run-ghidra")
+    ap.add_argument("--out-dir", default=None, help="default: <analysis_dir>/re_ab")
+    ap.add_argument("--labels", default=str(Path(__file__).parent / "re_ab_labels.json"))
+    args = ap.parse_args()
+
+    base = json.loads(Path(args.config).read_text())["interpret"]
+    labels = _load_labels(args.labels)
+    models = [args.cloud, args.local]
+
+    for d in args.analysis_dirs:
+        dpath = Path(d)
+        sample = dpath.name
+        report = json.loads((dpath / "report.json").read_text())
+        gr = report["ghidra"]
+        out = Path(args.out_dir) if args.out_dir else dpath / "re_ab"
+        out.mkdir(parents=True, exist_ok=True)
+        results = run_re_ab(gr, out, base, models, args.interpret_cmd, args.ghidra_cmd)
+        metrics = {}
+        for model, res in results.items():
+            safe = model.replace("/", "_").replace(":", "_")
+            (out / f"ab_re_{safe}.json").write_text(json.dumps(res, indent=2, default=str))
+            metrics[model] = extract_metrics(res)
+        (out / "ab_re_compare.md").write_text(_render_compare(sample, metrics, results, labels))
+        print(f"[{sample}] -> {out / 'ab_re_compare.md'}")
+        for model, m in metrics.items():
+            print(f"   {model}: completed={m['completed']} "
+                  f"tool_err_rate={m['tool_call_error_rate']} family={m['family']} "
+                  f"{m['duration_seconds']}s")
+
+
+if __name__ == "__main__":
+    main()
