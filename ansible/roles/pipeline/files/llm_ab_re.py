@@ -9,10 +9,10 @@ docs/superpowers/specs/2026-07-06-local-re-ab-design.md. Sibling of llm_ab_summa
 """
 import argparse  # noqa: F401
 import json
-import time  # noqa: F401
+import time
 from pathlib import Path
 
-from stages.interpret import run_interpret  # noqa: F401
+from stages.interpret import run_interpret
 
 
 def build_re_configs(base_config: dict, models: list[str]) -> list[dict]:
@@ -54,3 +54,24 @@ def extract_metrics(arm_result: dict) -> dict:
         "family": analysis.get("family") or analysis.get("family_guess", ""),
         "error": err,
     }
+
+
+def run_re_ab(ghidra_result: dict, output_dir: Path, base_config: dict,
+              models: list[str], interpret_cmd: str, ghidra_cmd: str,
+              interpret_timeout: int = 1200) -> dict[str, dict]:
+    """Replay the agentic RE loop once per model against the same Ghidra project.
+
+    Each arm writes into its own output subdir so the audit tool_call_log files
+    don't clobber between arms. Returns {model: run_interpret_result + wall_seconds}.
+    """
+    results: dict[str, dict] = {}
+    for cfg in build_re_configs(base_config, models):
+        model = cfg["model"]
+        arm_dir = output_dir / ("arm_" + model.replace("/", "_").replace(":", "_"))
+        arm_dir.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        res = run_interpret(ghidra_result, arm_dir, interpret_cmd, True,
+                            interpret_timeout, cfg, ghidra_cmd)
+        res["wall_seconds"] = round(time.time() - t0, 1)
+        results[model] = res
+    return results
