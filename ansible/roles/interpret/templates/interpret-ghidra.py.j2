@@ -2317,11 +2317,14 @@ Technical summary: {executive}"""
                             f"based on what you have so far. Reason: {result_msg.get('reason', 'forced')}"
                         ),
                     })
-                    # Make one final call without tools
+                    # Make one final call without tools. On the local backend use the
+                    # think:false model + generous budget so hidden reasoning doesn't
+                    # starve the structured JSON output (mirrors the summary stages).
+                    final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
                     try:
                         final_response = client.messages.create(
-                            model=current_model,
-                            max_tokens=max_output_tokens,
+                            model=final_model,
+                            max_tokens=max(max_output_tokens, 8192),
                             system=CACHED_SYSTEM,
                             messages=messages,
                         )
@@ -2385,11 +2388,13 @@ Technical summary: {executive}"""
                         "JSON analysis NOW based on what you have gathered so far."
                     ),
                 })
-                # Final call without tools
+                # Final call without tools. Local backend: think:false model + bigger
+                # budget so reasoning doesn't starve the structured JSON output.
+                final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
                 try:
                     final_response = client.messages.create(
-                        model=current_model,
-                        max_tokens=max_output_tokens,
+                        model=final_model,
+                        max_tokens=max(max_output_tokens, 8192),
                         system=CACHED_SYSTEM,
                         messages=messages,
                     )
@@ -2425,6 +2430,26 @@ Technical summary: {executive}"""
             final_text = "".join(
                 b.text for b in response.content if b.type == "text"
             )
+            # A local thinking model can end its turn having spent the whole budget on
+            # hidden reasoning, leaving an empty answer. Re-synthesize with think:false.
+            if config.get("re_backend") == "local" and not final_text.strip():
+                messages.append({
+                    "role": "user",
+                    "content": "Produce your final JSON analysis NOW based on your investigation.",
+                })
+                try:
+                    retry = client.messages.create(
+                        model="local-qwen",
+                        max_tokens=max(max_output_tokens, 8192),
+                        system=CACHED_SYSTEM,
+                        messages=messages,
+                    )
+                    final_text = "".join(b.text for b in retry.content if b.type == "text")
+                    retry_usage = usage_from_response(retry)
+                    total_input_tokens += retry_usage["input_tokens"]
+                    total_output_tokens += retry_usage["output_tokens"]
+                except anthropic.APIError:
+                    pass
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
