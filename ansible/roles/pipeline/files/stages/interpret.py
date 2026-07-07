@@ -88,8 +88,13 @@ def audit_filename(analysis_type: str | None) -> str:
 
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
-                    ghidra_cmd: str) -> dict:
-    """Execute a single Ghidra tool call in a container."""
+                    ghidra_cmd: str, list_functions_cap: int | None = None) -> dict:
+    """Execute a single Ghidra tool call in a container.
+
+    list_functions_cap: when set, trims list_functions output to the top-N by
+    xref. Used ONLY for the local backend (small models derail on the full
+    ~200-function list); cloud Claude gets the untrimmed list (cap=None).
+    """
     if not project_dir or not program_name:
         return {"error": ghidra_unavailable_error(None)}
     try:
@@ -103,8 +108,8 @@ def run_ghidra_tool(project_dir: str, program_name: str,
         if result.returncode != 0:
             return {"error": result.stderr[:200]}
         parsed = json.loads(result.stdout)
-        if tool_name == "list_functions":
-            parsed = cap_list_functions(parsed)
+        if tool_name == "list_functions" and list_functions_cap:
+            parsed = cap_list_functions(parsed, list_functions_cap)
         return parsed
     except subprocess.TimeoutExpired:
         return {"error": "Ghidra tool timeout (120s)"}
@@ -237,9 +242,13 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     response = {"type": "tool_error", "tool": tool_name, "error": error}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "error": error})
                 else:
-                    # Execute Ghidra tool in container
+                    # Execute Ghidra tool in container. Cap list_functions output
+                    # ONLY for the local backend (small models derail on the full
+                    # ~200-function list); cloud Claude keeps the full list.
+                    _lf_cap = (LIST_FUNCTIONS_CAP
+                               if interpret_config.get("re_backend") == "local" else None)
                     tool_result = run_ghidra_tool(project_dir, program_name,
-                                                  tool_name, tool_args, ghidra_cmd)
+                                                  tool_name, tool_args, ghidra_cmd, _lf_cap)
                     response = {"type": "tool_result", "tool": tool_name, "result": tool_result}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "result": tool_result})
 
