@@ -2234,6 +2234,17 @@ Technical summary: {executive}"""
             for block in response.content:
                 if block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "thinking":
+                    # Preserve thinking blocks so a thinking model (local Qwen, think-on)
+                    # keeps its reasoning context across tool-use turns. Claude RE runs
+                    # without extended thinking, so this branch is a no-op there.
+                    tb: dict[str, Any] = {"type": "thinking", "thinking": block.thinking}
+                    if getattr(block, "signature", None):
+                        tb["signature"] = block.signature
+                    assistant_content.append(tb)
+                elif block.type == "redacted_thinking":
+                    assistant_content.append({"type": "redacted_thinking",
+                                              "data": block.data})
                 elif block.type == "tool_use":
                     assistant_content.append({
                         "type": "tool_use",

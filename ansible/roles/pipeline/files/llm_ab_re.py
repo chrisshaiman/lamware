@@ -25,6 +25,9 @@ def build_re_configs(base_config: dict, models: list[str]) -> list[dict]:
         if m.startswith("local"):
             cfg["re_backend"] = "local"
             cfg["escalation_model"] = m
+            # Thinking-on models share the token budget between hidden reasoning and
+            # the answer; the production 4096 starves the answer. Give the local arm room.
+            cfg["max_output_tokens"] = max(cfg.get("max_output_tokens", 0), 8192)
         configs.append(cfg)
     return configs
 

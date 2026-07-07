@@ -51,3 +51,10 @@ def test_metrics_errored_run_not_completed():
     assert m["completed"] is False
     assert m["error"] == "Interpret loop error: boom"
     assert m["tool_call_error_rate"] == 0.0
+
+
+def test_local_arm_gets_bigger_token_budget():
+    cfgs = build_re_configs({"model": "x", "max_output_tokens": 4096}, ["claude-sonnet-4-6", "local-qwen-re"])
+    cloud, local = cfgs
+    assert cloud["max_output_tokens"] == 4096          # cloud unchanged
+    assert local["max_output_tokens"] == 8192          # local bumped for thinking headroom
