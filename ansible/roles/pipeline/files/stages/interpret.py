@@ -22,6 +22,30 @@ from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidr
 
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
+# Local models (small active-param MoE) derail on the full ~200-function list —
+# they describe the JSON instead of analyzing. Returning only the top-N functions
+# by xref_count keeps the model investigating (probe-validated: 15 works, 200
+# derails). Also trims noise + token cost for the cloud model. Applies to both.
+LIST_FUNCTIONS_CAP = 15
+
+
+def cap_list_functions(result: dict, cap: int = LIST_FUNCTIONS_CAP) -> dict:
+    """Trim a list_functions result to the top-`cap` functions by xref_count.
+
+    No-op unless the result is the expected {'count', 'functions': [...]} shape
+    with more than `cap` entries. Adds a note so the model knows more exist.
+    """
+    if not isinstance(result, dict):
+        return result
+    funcs = result.get("functions")
+    if not isinstance(funcs, list) or len(funcs) <= cap:
+        return result
+    total = len(funcs)
+    top = sorted(funcs, key=lambda f: f.get("xref_count", 0) if isinstance(f, dict) else 0,
+                 reverse=True)[:cap]
+    return {**result, "functions": top, "count": len(top),
+            "note": f"showing top {len(top)} of {total} functions by xref_count"}
+
 
 def validate_tool_args(tool_name: str, args: dict) -> str | None:
     """Validate a pipeline tool call. Preserves the prior Unknown-tool behavior."""
@@ -78,7 +102,10 @@ def run_ghidra_tool(project_dir: str, program_name: str,
         )
         if result.returncode != 0:
             return {"error": result.stderr[:200]}
-        return json.loads(result.stdout)
+        parsed = json.loads(result.stdout)
+        if tool_name == "list_functions":
+            parsed = cap_list_functions(parsed)
+        return parsed
     except subprocess.TimeoutExpired:
         return {"error": "Ghidra tool timeout (120s)"}
     except json.JSONDecodeError:
