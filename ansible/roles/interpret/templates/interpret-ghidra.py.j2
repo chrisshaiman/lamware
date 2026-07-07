@@ -2430,12 +2430,15 @@ Technical summary: {executive}"""
             final_text = "".join(
                 b.text for b in response.content if b.type == "text"
             )
-            # A local thinking model can end its turn having spent the whole budget on
-            # hidden reasoning, leaving an empty answer. Re-synthesize with think:false.
-            if config.get("re_backend") == "local" and not final_text.strip():
+            analysis = parse_final_response(final_text)
+            # A local thinking model can starve OR truncate the final JSON (hidden
+            # reasoning eats the budget), leaving it empty or unparseable. Re-synthesize
+            # with think:false so the whole budget goes to a clean, complete structured
+            # output. Only re-run when the think-on output actually failed.
+            if config.get("re_backend") == "local" and (not final_text.strip() or analysis.get("parse_note")):
                 messages.append({
                     "role": "user",
-                    "content": "Produce your final JSON analysis NOW based on your investigation.",
+                    "content": "Produce your final JSON analysis NOW based on your investigation. Output ONLY the JSON object.",
                 })
                 try:
                     retry = client.messages.create(
@@ -2444,13 +2447,15 @@ Technical summary: {executive}"""
                         system=CACHED_SYSTEM,
                         messages=messages,
                     )
-                    final_text = "".join(b.text for b in retry.content if b.type == "text")
+                    rtext = "".join(b.text for b in retry.content if b.type == "text")
                     retry_usage = usage_from_response(retry)
                     total_input_tokens += retry_usage["input_tokens"]
                     total_output_tokens += retry_usage["output_tokens"]
+                    if rtext.strip():
+                        final_text = rtext
+                        analysis = parse_final_response(final_text)
                 except anthropic.APIError:
                     pass
-            analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
