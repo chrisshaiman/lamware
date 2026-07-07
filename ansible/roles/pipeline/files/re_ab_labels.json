@@ -1,0 +1,9 @@
+{
+  "_comment": "hash-dir -> expected ground truth for the RE A/B. Families provisional; techniques TBD during curation.",
+  "e098c1ecdd92": {"family": "stealc", "techniques": []},
+  "d5ef738fafbc": {"family": "cobaltstrike", "techniques": []},
+  "7903287de9c5": {"family": "innoloader", "techniques": []},
+  "dca525c13a15": {"family": "nsis_dropper", "techniques": []},
+  "77d954c75cca": {"family": "silentnet", "techniques": []},
+  "7460b7113e3c": {"family": "dropper", "techniques": []}
+}

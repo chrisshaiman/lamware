@@ -2169,6 +2169,16 @@ Technical summary: {executive}"""
             })
         sys.exit(0)
 
+    # A/B knob: route the agentic RE loop through the LiteLLM router to a local
+    # model (e.g. local-qwen-re, think-on) instead of the /anthropic passthrough.
+    # summary_client is already the router client. Pure-local: disable escalation
+    # so the loop never falls back to Claude. Absent re_backend => unchanged
+    # production behaviour (cloud, sonnet->opus).
+    if config.get("re_backend") == "local" and router_base:
+        client = summary_client
+        escalation_model = model
+        emit_status(f"RE routed to local backend via router: {model}", 0)
+
     # Build initial conversation
     initial_text = _bazaar_context(init_msg) + build_initial_message(ghidra_data, config)
     messages: list[dict[str, Any]] = [
@@ -2224,6 +2234,17 @@ Technical summary: {executive}"""
             for block in response.content:
                 if block.type == "text":
                     assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "thinking":
+                    # Preserve thinking blocks so a thinking model (local Qwen, think-on)
+                    # keeps its reasoning context across tool-use turns. Claude RE runs
+                    # without extended thinking, so this branch is a no-op there.
+                    tb: dict[str, Any] = {"type": "thinking", "thinking": block.thinking}
+                    if getattr(block, "signature", None):
+                        tb["signature"] = block.signature
+                    assistant_content.append(tb)
+                elif block.type == "redacted_thinking":
+                    assistant_content.append({"type": "redacted_thinking",
+                                              "data": block.data})
                 elif block.type == "tool_use":
                     assistant_content.append({
                         "type": "tool_use",
@@ -2296,11 +2317,14 @@ Technical summary: {executive}"""
                             f"based on what you have so far. Reason: {result_msg.get('reason', 'forced')}"
                         ),
                     })
-                    # Make one final call without tools
+                    # Make one final call without tools. On the local backend use the
+                    # think:false model + generous budget so hidden reasoning doesn't
+                    # starve the structured JSON output (mirrors the summary stages).
+                    final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
                     try:
                         final_response = client.messages.create(
-                            model=current_model,
-                            max_tokens=max_output_tokens,
+                            model=final_model,
+                            max_tokens=max(max_output_tokens, 8192),
                             system=CACHED_SYSTEM,
                             messages=messages,
                         )
@@ -2364,11 +2388,13 @@ Technical summary: {executive}"""
                         "JSON analysis NOW based on what you have gathered so far."
                     ),
                 })
-                # Final call without tools
+                # Final call without tools. Local backend: think:false model + bigger
+                # budget so reasoning doesn't starve the structured JSON output.
+                final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
                 try:
                     final_response = client.messages.create(
-                        model=current_model,
-                        max_tokens=max_output_tokens,
+                        model=final_model,
+                        max_tokens=max(max_output_tokens, 8192),
                         system=CACHED_SYSTEM,
                         messages=messages,
                     )
@@ -2405,6 +2431,31 @@ Technical summary: {executive}"""
                 b.text for b in response.content if b.type == "text"
             )
             analysis = parse_final_response(final_text)
+            # A local thinking model can starve OR truncate the final JSON (hidden
+            # reasoning eats the budget), leaving it empty or unparseable. Re-synthesize
+            # with think:false so the whole budget goes to a clean, complete structured
+            # output. Only re-run when the think-on output actually failed.
+            if config.get("re_backend") == "local" and (not final_text.strip() or analysis.get("parse_note")):
+                messages.append({
+                    "role": "user",
+                    "content": "Produce your final JSON analysis NOW based on your investigation. Output ONLY the JSON object.",
+                })
+                try:
+                    retry = client.messages.create(
+                        model="local-qwen",
+                        max_tokens=max(max_output_tokens, 8192),
+                        system=CACHED_SYSTEM,
+                        messages=messages,
+                    )
+                    rtext = "".join(b.text for b in retry.content if b.type == "text")
+                    retry_usage = usage_from_response(retry)
+                    total_input_tokens += retry_usage["input_tokens"]
+                    total_output_tokens += retry_usage["output_tokens"]
+                    if rtext.strip():
+                        final_text = rtext
+                        analysis = parse_final_response(final_text)
+                except anthropic.APIError:
+                    pass
             emit({
                 "type": "final",
                 "analysis": analysis,
