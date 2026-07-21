@@ -38,6 +38,20 @@ model_list:
       model: "{{ litellm_local_model_backend }}"
       api_base: "{{ litellm_ollama_api_base }}"
       think: true
+  # Pilot (2026-07-20 single-shot local eval). think:true = reasoning-on. The
+  # Ollama tags must match `ollama list` on the host; update if the pulled tag
+  # differs. gpt-oss uses `think` for reasoning via ollama_chat; if reasoning
+  # does not engage, fall back to a "Reasoning: medium" system-prompt directive.
+  - model_name: "local-qwen32-re"
+    litellm_params:
+      model: "ollama_chat/qwen3:32b"
+      api_base: "{{ litellm_ollama_api_base }}"
+      think: true
+  - model_name: "local-gptoss-re"
+    litellm_params:
+      model: "ollama_chat/gpt-oss:20b"
+      api_base: "{{ litellm_ollama_api_base }}"
+      think: true
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"
