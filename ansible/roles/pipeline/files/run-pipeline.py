@@ -47,6 +47,7 @@ from stages.powershell import is_powershell_script, extract_powershell_from_cape
 from stages.script_analysis import is_text_script, read_script_source
 from stages.ghidra import should_run_ghidra, run_ghidra
 from stages.interpret import run_interpret, run_summarize, run_plain_english
+from stages.single_shot_init import build_dotnet_init, build_go_init, build_ps_init
 from ioc_extract import extract_iocs, map_iocs_to_techniques
 from db_ingest import ingest_to_db, mark_pdf_generated
 from pipeline_status import create_analysis_row, update_stage, complete_pipeline
@@ -783,29 +784,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     if dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
         # .NET path — send C# source directly to LLM (no Ghidra tools needed)
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
-        dotnet_source = dotnet_data.get("decompilation", {}).get("source", "")
-        dotnet_classes = dotnet_data.get("classes", [])
-        dotnet_strings = dotnet_data.get("strings_of_interest", [])
-
-        # Build init message with C# source instead of Ghidra data
-        extraction_source = dotnet_data.get("extraction_source")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
-        dotnet_init = {
-            **_llm_context,
-            "analysis_type": "dotnet",
-            "source_language": "csharp",
-            "decompiled_source": dotnet_source[:50000],  # cap for LLM context
-            "class_count": len(dotnet_classes),
-            "classes": dotnet_classes[:50],
-            "strings_of_interest": dotnet_strings,
-            "analysis_success": True,
-            "origin": "extraction" if extraction_source else "original",
-            "extraction_context": {
-                "source_dir": extraction_source["source_dir"],
-                "sha256": extraction_source["sha256"],
-                "cape_signatures": cape_sigs[:10],
-            } if extraction_source else None,
-        }
+        dotnet_init = build_dotnet_init(dotnet_data, _llm_context, cape_sigs)
         report["llm_interpretation"] = run_interpret(
             dotnet_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -895,23 +875,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         # PowerShell path — send decoded script to LLM
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing PowerShell script...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
-        ps_init = {
-            **_llm_context,
-            "analysis_type": "powershell",
-            "source_language": "powershell",
-            "original_script": ps_data.get("original_script", "")[:30000],
-            "decoded_layers": ps_data.get("decoded_layers", []),
-            "final_decoded": ps_data.get("final_decoded", "")[:50000],
-            "layer_count": ps_data.get("layer_count", 0),
-            "obfuscation_techniques": ps_data.get("obfuscation_techniques", []),
-            "iocs_extracted": ps_data.get("iocs_extracted", {}),
-            "strings_of_interest": ps_data.get("strings_of_interest", []),
-            "psdecode_success": ps_data.get("psdecode_success", False),
-            "cape_extracted": ps_data.get("cape_extracted", False),
-            "cape_signatures": cape_sigs[:20],
-            "input_mode": ps_data.get("input_mode", "file"),
-            "analysis_success": True,
-        }
+        ps_init = build_ps_init(ps_data, _llm_context, cape_sigs)
         report["llm_interpretation"] = run_interpret(
             ps_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -997,16 +961,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     elif go_data.get("analysis_success") and INTERPRET_ENABLED:
         # Go path — send GoReSym metadata directly to LLM (no tools needed)
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Go binary metadata...")
-        go_init = {
-            **_llm_context,
-            "analysis_type": "go_goresym",
-            "build_info": go_data.get("build_info", {}),
-            "packages": go_data.get("packages", []),
-            "functions": go_data.get("functions", {}),
-            "types": go_data.get("types", []),
-            "strings_of_interest": go_data.get("strings_of_interest", []),
-            "analysis_success": True,
-        }
+        go_init = build_go_init(go_data, _llm_context)
         report["llm_interpretation"] = run_interpret(
             go_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
