@@ -423,6 +423,7 @@
     - script_analysis.py
     - ghidra.py
     - interpret.py
+    - single_shot_init.py
     - cape.py
 
 - name: Deploy pipeline helper modules (no secrets, plain .py)
@@ -433,6 +434,19 @@
     owner: pipeline
     group: pipeline
     mode: "0640"
+
+- name: Deploy single-shot local-eval helpers (plain .py, no secrets)
+  # grounding_check (fabrication scorer) + llm_ab_singleshot (local-vs-cloud A/B
+  # harness). Plain importable Python; run by the pipeline user over the LiteLLM UDS.
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ pipeline_install_dir }}/{{ item }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+  loop:
+    - grounding_check.py
+    - llm_ab_singleshot.py
 
 - name: Deploy pipeline DB helper modules (config-driven, no secret)
   # Plain Python now — DB conn from config.json, password from pipeline.env at runtime.
