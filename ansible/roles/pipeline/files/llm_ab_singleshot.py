@@ -23,8 +23,11 @@ from stages.single_shot_init import build_dotnet_init, build_go_init, build_ps_i
 
 # The single-shot call is one longer request; give a wide ceiling so a slow dense
 # model (qwen3:32b) is not cut off. A timeout is still a valid negative result.
+# Budget must sit well ABOVE the reasoning budget: with think:true, thinking tokens
+# count against max_tokens, so a tight ceiling truncates or starves the final JSON
+# (universal reasoning-model behavior; observed here as stop_reason=max_tokens).
 EVAL_TIMEOUT = 3600
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 16384
 
 
 def build_singleshot_configs(models: list[str]) -> list[dict]:

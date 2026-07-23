@@ -39,7 +39,8 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     Returns {total, grounded, fabricated (list of un-found values), grounded_ratio}.
     An empty/missing IOC list scores a clean 1.0 (nothing claimed = nothing to fake).
     """
-    iocs = analysis.get("code_level_ioc") or []
+    # Accept both the singular schema key and the plural the models often emit.
+    iocs = analysis.get("code_level_ioc") or analysis.get("code_level_iocs") or []
     norm_source = normalize(source_text)
     fabricated: list[str] = []
     grounded = 0

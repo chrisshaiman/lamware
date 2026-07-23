@@ -48,3 +48,12 @@ def test_missing_key_is_clean():
     sc = grounding_scorecard({}, "anything")
     assert sc["total"] == 0
     assert sc["grounded_ratio"] == 1.0
+
+
+def test_plural_code_level_iocs_key_is_scored():
+    # Models frequently emit the plural key; it must still be grounded.
+    analysis = {"code_level_iocs": [{"type": "domain", "value": "evil.example.com"}]}
+    sc = grounding_scorecard(analysis, "beacon to evil.example.com")
+    assert sc["total"] == 1
+    assert sc["grounded"] == 1
+    assert sc["fabricated"] == []
