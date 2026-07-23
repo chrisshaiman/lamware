@@ -1901,12 +1901,18 @@ Technical summary: {executive}"""
     max_output_tokens = config["max_output_tokens"]
     max_tool_calls = config["max_tool_calls"]
 
+    # Single-shot backend selection: route .NET/Go/PowerShell through the LiteLLM
+    # /v1/messages router (-> local Ollama) when asked; default stays the /anthropic
+    # passthrough (Claude). Only ever set by the eval harness — production never sets
+    # it, so this is a no-op in normal runs. Mirrors the re_backend knob (agentic path).
+    ss_client = summary_client if config.get("single_shot_backend") == "local" else client
+
     # ---- .NET path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "dotnet":
         emit_status(f"Starting .NET analysis with {model}", 0)
         dotnet_text = _ctx + build_dotnet_message(ghidra_data, config)
         try:
-            response = client.messages.create(
+            response = ss_client.messages.create(
                 model=model,
                 max_tokens=max_output_tokens,
                 system=CACHED_DOTNET_SYSTEM,
@@ -1999,7 +2005,7 @@ Technical summary: {executive}"""
         emit_status(f"Starting PowerShell analysis with {model}", 0)
         ps_text = _ctx + build_powershell_message(ghidra_data, config)
         try:
-            response = client.messages.create(
+            response = ss_client.messages.create(
                 model=model,
                 max_tokens=max_output_tokens,
                 system=CACHED_POWERSHELL_SYSTEM,
@@ -2059,7 +2065,7 @@ Technical summary: {executive}"""
         emit_status(f"Starting Go analysis with {model}", 0)
         go_text = _ctx + build_go_message(ghidra_data, config)
         try:
-            response = client.messages.create(
+            response = ss_client.messages.create(
                 model=model,
                 max_tokens=max_output_tokens,
                 system=CACHED_GO_SYSTEM,

@@ -14,13 +14,16 @@ import httpx
 
 fails = []
 
-# (1) MUST reach LiteLLM over the Unix socket.
+# (1) MUST reach LiteLLM over the Unix socket. Probe /health/liveliness, NOT
+# /health: the latter health-checks every model_list entry with a real backend
+# call, which cold-loads large local models (tens of seconds each) and times the
+# probe out. This probe only needs to prove socket reachability.
 try:
     key = os.environ.get("LITELLM_API_KEY", "")
     client = httpx.Client(transport=httpx.HTTPTransport(uds="/run/litellm.sock"), timeout=10)
-    resp = client.get("http://litellm/health", headers={"Authorization": f"Bearer {key}"})
+    resp = client.get("http://litellm/health/liveliness", headers={"Authorization": f"Bearer {key}"})
     if resp.status_code != 200:
-        fails.append(f"LiteLLM /health via socket returned {resp.status_code}, expected 200")
+        fails.append(f"LiteLLM /health/liveliness via socket returned {resp.status_code}, expected 200")
 except Exception as exc:  # noqa: BLE001 - probe reports any failure to reach LiteLLM
     fails.append(f"could not reach LiteLLM over the socket: {exc!r}")
 
