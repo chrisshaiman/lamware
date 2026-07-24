@@ -1478,6 +1478,23 @@ def build_evasion_message(evasion_data: dict[str, Any], config: dict[str, Any]) 
 # ---------------------------------------------------------------------------
 
 
+# Forced-tool schema for the local RE final synthesis. Grammar-constrained by
+# llama.cpp so the tool-call arguments are always complete, valid, un-nested JSON.
+SUBMIT_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "malware_family_guess": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "attack_techniques": {"type": "array", "items": {"type": "object",
+            "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
+        "code_level_iocs": {"type": "array", "items": {"type": "string"}},
+        "risk_assessment": {"type": "string"},
+        "narrative": {"type": "string"},
+    },
+    "required": ["malware_family_guess", "capabilities", "narrative"],
+}
+
+
 def parse_final_response(text: str) -> dict[str, Any]:
     """Try to parse the final analysis JSON from Claude's text response.
 
@@ -1842,6 +1859,13 @@ def main() -> None:
     if uds:
         summary_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
     summary_client = anthropic.Anthropic(**summary_kwargs) if router_base else client
+
+    # Local RE final synthesis uses LiteLLM's OpenAI /chat/completions endpoint
+    # (grammar-constrained forced submit_analysis tool + chat_template_kwargs
+    # enable_thinking:false) so the whole budget produces complete, un-nested
+    # structured JSON. httpx routes over the same UDS; base host is cosmetic.
+    synth_openai_base = os.environ.get("LITELLM_OPENAI_BASE_URL", "")
+    synth_http = httpx.Client(transport=httpx.HTTPTransport(uds=uds)) if uds else httpx.Client()
 
     # ---- Wait for init or summarize message ----
     init_msg = read_message()
