@@ -23,3 +23,19 @@ def test_submit_analysis_schema_defined():
 def test_synth_openai_base_read_from_env():
     t = _t()
     assert 'os.environ.get("LITELLM_OPENAI_BASE_URL"' in t
+
+
+def test_synthesize_analysis_defined_forced_tool_thinkfalse():
+    t = _t()
+    assert "def synthesize_analysis(" in t
+    body = t.split("def synthesize_analysis(", 1)[1][:2000]
+    assert '"submit_analysis"' in body
+    assert '"tool_choice"' in body and '"function"' in body
+    assert '"enable_thinking": False' in body
+    assert "/chat/completions" in body
+
+
+def test_synthesize_returns_none_on_no_toolcall():
+    # The helper must return None on failure so callers fall back to parse_final_response.
+    body = _t().split("def synthesize_analysis(", 1)[1][:2000]
+    assert "return None" in body

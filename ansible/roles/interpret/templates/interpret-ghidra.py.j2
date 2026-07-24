@@ -1495,6 +1495,48 @@ SUBMIT_ANALYSIS_SCHEMA = {
 }
 
 
+def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
+                        model: str, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Grammar-constrained, reasoning-off final synthesis via LiteLLM /chat/completions.
+
+    Forces a submit_analysis tool call with enable_thinking:false so the whole
+    budget produces complete, valid, un-nested structured JSON (llama.cpp
+    grammar-constrains the tool arguments). Returns the analysis dict, or None
+    if the call/extraction fails so the caller falls back to the free-text parse.
+    """
+    payload = {
+        "model": model,
+        "max_tokens": 3000,
+        "messages": messages,
+        "tools": [{"type": "function", "function": {
+            "name": "submit_analysis",
+            "description": "Submit the final structured malware analysis. Call exactly once.",
+            "parameters": SUBMIT_ANALYSIS_SCHEMA,
+        }}],
+        "tool_choice": {"type": "function", "function": {"name": "submit_analysis"}},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    try:
+        resp = http_client.post(
+            base_url.rstrip("/") + "/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=600.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        tool_calls = (data["choices"][0]["message"] or {}).get("tool_calls") or []
+        if not tool_calls:
+            return None
+        args = json.loads(tool_calls[0]["function"]["arguments"])
+        if not isinstance(args, dict) or not args.get("malware_family_guess"):
+            return None
+        args.setdefault("narrative", "")
+        return args
+    except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError):
+        return None
+
+
 def parse_final_response(text: str) -> dict[str, Any]:
     """Try to parse the final analysis JSON from Claude's text response.
 
