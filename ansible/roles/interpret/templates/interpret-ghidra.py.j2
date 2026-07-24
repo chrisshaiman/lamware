@@ -2264,6 +2264,49 @@ Technical summary: {executive}"""
 
     emit_status(f"Starting analysis with {current_model}", tool_calls_used)
 
+    def local_synthesize(msgs: list[dict[str, Any]]) -> dict[str, Any]:
+        """Two-phase local final synthesis (spec: reasoning-preservation guard).
+
+        Phase 2a — a think:true PROSE conclusion via the router `client`: the model
+        reasons over the investigation and states findings in visible text (prose,
+        not JSON, so no formatting pressure and no nesting/truncation). Phase 2b — a
+        think:false forced submit_analysis call serializes that reasoned conclusion
+        into valid structured JSON. Falls back to parsing the prose, then to the
+        legacy free-text path — never worse than before. (local backend => $0, so
+        the extra call's tokens are not separately accounted.)
+        """
+        concl_msgs = msgs + [{"role": "user", "content": (
+            "Based on your investigation, summarize your findings and state your "
+            "conclusion in prose: malware family, capabilities, MITRE techniques, and "
+            "notable code-level IOCs. Do not output JSON."
+        )}]
+        concl_text = ""
+        try:
+            concl = client.messages.create(
+                model=current_model, max_tokens=max(max_output_tokens, 8192),
+                system=CACHED_SYSTEM, messages=concl_msgs)
+            concl_text = "".join(b.text for b in concl.content if b.type == "text")
+        except anthropic.APIError:
+            pass
+        serialize_msgs = concl_msgs + (
+            [{"role": "assistant", "content": concl_text}] if concl_text.strip() else [])
+        if synth_openai_base:
+            got = synthesize_analysis(synth_http, synth_openai_base, api_key,
+                                      current_model, serialize_msgs)
+            if got is not None:
+                return got
+        if concl_text.strip():
+            return parse_final_response(concl_text)
+        try:
+            resp = client.messages.create(
+                model="local-qwen", max_tokens=max(max_output_tokens, 8192),
+                system=CACHED_SYSTEM, messages=msgs)
+            return parse_final_response(
+                "".join(b.text for b in resp.content if b.type == "text"))
+        except anthropic.APIError:
+            return {"malware_family_guess": "unknown", "capabilities": [],
+                    "narrative": "", "parse_note": "local synthesis failed"}
+
     # ---- Agentic loop ----
     while True:
         # Check model escalation
@@ -2389,13 +2432,20 @@ Technical summary: {executive}"""
                             f"based on what you have so far. Reason: {result_msg.get('reason', 'forced')}"
                         ),
                     })
-                    # Make one final call without tools. On the local backend use the
-                    # think:false model + generous budget so hidden reasoning doesn't
-                    # starve the structured JSON output (mirrors the summary stages).
-                    final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
+                    # Local backend: two-phase reasoning-preserving synthesis.
+                    # Cloud: one final call without tools.
+                    if config.get("re_backend") == "local":
+                        emit({
+                            "type": "final",
+                            "analysis": local_synthesize(messages),
+                            "model_used": current_model,
+                            "tool_calls_used": tool_calls_used,
+                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                        })
+                        sys.exit(0)
                     try:
                         final_response = client.messages.create(
-                            model=final_model,
+                            model=current_model,
                             max_tokens=max(max_output_tokens, 8192),
                             system=CACHED_SYSTEM,
                             messages=messages,
@@ -2460,12 +2510,20 @@ Technical summary: {executive}"""
                         "JSON analysis NOW based on what you have gathered so far."
                     ),
                 })
-                # Final call without tools. Local backend: think:false model + bigger
-                # budget so reasoning doesn't starve the structured JSON output.
-                final_model = "local-qwen" if config.get("re_backend") == "local" else current_model
+                # Local backend: two-phase reasoning-preserving synthesis.
+                # Cloud: one final call without tools.
+                if config.get("re_backend") == "local":
+                    emit({
+                        "type": "final",
+                        "analysis": local_synthesize(messages),
+                        "model_used": current_model,
+                        "tool_calls_used": tool_calls_used,
+                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                    })
+                    sys.exit(0)
                 try:
                     final_response = client.messages.create(
-                        model=final_model,
+                        model=current_model,
                         max_tokens=max(max_output_tokens, 8192),
                         system=CACHED_SYSTEM,
                         messages=messages,
@@ -2508,26 +2566,12 @@ Technical summary: {executive}"""
             # with think:false so the whole budget goes to a clean, complete structured
             # output. Only re-run when the think-on output actually failed.
             if config.get("re_backend") == "local" and (not final_text.strip() or analysis.get("parse_note")):
-                messages.append({
-                    "role": "user",
-                    "content": "Produce your final JSON analysis NOW based on your investigation. Output ONLY the JSON object.",
-                })
-                try:
-                    retry = client.messages.create(
-                        model="local-qwen",
-                        max_tokens=max(max_output_tokens, 8192),
-                        system=CACHED_SYSTEM,
-                        messages=messages,
-                    )
-                    rtext = "".join(b.text for b in retry.content if b.type == "text")
-                    retry_usage = usage_from_response(retry)
-                    total_input_tokens += retry_usage["input_tokens"]
-                    total_output_tokens += retry_usage["output_tokens"]
-                    if rtext.strip():
-                        final_text = rtext
-                        analysis = parse_final_response(final_text)
-                except anthropic.APIError:
-                    pass
+                # The think:true end-turn output was empty or nested/truncated. Re-run
+                # the two-phase reasoning-preserving synthesis (prose conclusion + forced
+                # think:false serialize), preserving the end-turn text as context.
+                ctx = messages + ([{"role": "assistant", "content": final_text}]
+                                  if final_text.strip() else [])
+                analysis = local_synthesize(ctx)
             emit({
                 "type": "final",
                 "analysis": analysis,

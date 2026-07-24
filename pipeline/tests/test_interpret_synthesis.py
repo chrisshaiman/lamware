@@ -39,3 +39,22 @@ def test_synthesize_returns_none_on_no_toolcall():
     # The helper must return None on failure so callers fall back to parse_final_response.
     body = _t().split("def synthesize_analysis(", 1)[1][:2000]
     assert "return None" in body
+
+
+def test_all_three_synthesis_sites_use_local_synthesizer():
+    t = _t()
+    # DRY: one closure (local_synthesize) wraps the two-phase synthesis; it must be
+    # defined once and invoked at all three local-backend synthesis sites (def + 3 calls).
+    assert "def local_synthesize(" in t
+    assert t.count("local_synthesize(") >= 4
+    assert "synthesize_analysis(" in t  # the closure calls the helper
+
+
+def test_local_synthesis_falls_back_to_parse_final():
+    t = _t()
+    assert "parse_final_response(" in t  # safety net preserved
+
+
+def test_reasoning_preservation_guard_turn_present():
+    t = _t()
+    assert "summarize your findings" in t.lower()
