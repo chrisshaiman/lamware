@@ -342,6 +342,8 @@
   loop:
     - "{{ pipeline_install_dir }}"
     - "{{ pipeline_install_dir }}/stages"
+    - "{{ pipeline_install_dir }}/lamware_eval"
+    - "{{ pipeline_install_dir }}/eval"
     - "{{ pipeline_reports_dir }}"
 
 - name: Create ramdisk mount point for Volatility
@@ -447,6 +449,34 @@
   loop:
     - grounding_check.py
     - llm_ab_singleshot.py
+    - llm_ab_re.py
+
+- name: Deploy lamware_eval package (LLM eval harness)
+  # Reusable on-demand benchmark harness (RE first). Plain importable Python;
+  # run by the pipeline user via `python -m lamware_eval run`.
+  ansible.builtin.copy:
+    src: "lamware_eval/{{ item }}"
+    dest: "{{ pipeline_install_dir }}/lamware_eval/{{ item }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+  loop:
+    - __init__.py
+    - corpus.py
+    - arms.py
+    - metrics.py
+    - scorecard.py
+    - runner.py
+    - __main__.py
+
+- name: Seed the eval corpus manifest (force:false so operator-grown corpus is not clobbered)
+  ansible.builtin.copy:
+    src: eval/corpus.json
+    dest: "{{ pipeline_install_dir }}/eval/corpus.json"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+    force: false
 
 - name: Deploy pipeline DB helper modules (config-driven, no secret)
   # Plain Python now — DB conn from config.json, password from pipeline.env at runtime.
