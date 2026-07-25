@@ -51,20 +51,19 @@ model_list:
       model: "{{ litellm_local_model_backend }}"
       api_base: "{{ litellm_ollama_api_base }}"
       think: true
-  # Pilot (2026-07-20 single-shot local eval). think:true = reasoning-on. The
-  # Ollama tags must match `ollama list` on the host; update if the pulled tag
-  # differs. gpt-oss uses `think` for reasoning via ollama_chat; if reasoning
-  # does not engage, fall back to a "Reasoning: medium" system-prompt directive.
-  - model_name: "local-qwen32-re"
+  # Agentic RE on llama.cpp (llama-server), the eval harness's local arms.
+  # llama.cpp beat Ollama for reasoning-on work in the 2026-07-23 spike: it splits
+  # reasoning into `reasoning_content` so `content` stays clean, and it
+  # grammar-constrains forced-tool args, which is what makes structured RE output
+  # reliable (PR #180). Thinking is on by DEFAULT here (llama-server --jinja);
+  # it is disabled per-request via chat_template_kwargs.enable_thinking, NOT by a
+  # `think` param, so none is set.
+  # NOTE: an OpenAI-provider entry — llama.cpp ignores the api_key.
+  - model_name: "local-qwen-llamacpp-re"
     litellm_params:
-      model: "ollama_chat/qwen3:32b"
-      api_base: "{{ litellm_ollama_api_base }}"
-      think: true
-  - model_name: "local-gptoss-re"
-    litellm_params:
-      model: "ollama_chat/gpt-oss:20b"
-      api_base: "{{ litellm_ollama_api_base }}"
-      think: true
+      model: "openai/qwen3.6"
+      api_base: "{{ litellm_llamacpp_api_base | default('http://127.0.0.1:11435/v1') }}"
+      api_key: "sk-none"
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"
