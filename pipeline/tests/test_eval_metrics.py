@@ -1,7 +1,7 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 from lamware_eval.corpus import CorpusSample
-from lamware_eval.metrics import compose_cell, aggregate
+from lamware_eval.metrics import aggregate, compose_cell
 
 SAMPLE = CorpusSample("a" * 64, "amadey", "/d")
 

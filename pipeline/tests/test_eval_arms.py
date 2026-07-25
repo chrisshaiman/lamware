@@ -1,8 +1,7 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 import pytest
-
-from lamware_eval.arms import resolve_arm, parse_arms, Arm
+from lamware_eval.arms import Arm, parse_arms, resolve_arm
 
 
 def test_local_arms_carry_backend_and_cycles():

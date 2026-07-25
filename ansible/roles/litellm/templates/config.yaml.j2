@@ -14,6 +14,13 @@ model_list:
       model: "anthropic/{{ interpret_escalation_model | default('claude-opus-4-6') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
+  # Current-gen Claude baseline for the eval harness (A/B vs local qwen). Pinned
+  # to the versioned id for reproducible benchmark runs.
+  - model_name: "claude-sonnet-5"
+    litellm_params:
+      model: "anthropic/claude-sonnet-5-20260630"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
   # Local LLM (Ollama) for the summary stages. Reached over host loopback; the
   # /v1/messages router translates Anthropic<->Ollama (verified 2026-07-04 spike).
   # think:false is REQUIRED — Qwen3.6 is a thinking model and otherwise burns the

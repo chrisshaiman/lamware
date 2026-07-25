@@ -1,0 +1,9 @@
+{
+  "samples": [
+    {
+      "sha256": "5258a241f8c67e1666060e2c033d127dee8c2c50c7a8dfe0676264e9cb6762c1",
+      "mb_family": "amadey",
+      "corpus_dir": "/opt/pipeline/eval-corpus/amadey_5258a241"
+    }
+  ]
+}

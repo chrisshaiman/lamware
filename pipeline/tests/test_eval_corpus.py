@@ -3,8 +3,7 @@
 import json
 
 import pytest
-
-from lamware_eval.corpus import load_corpus, CorpusSample
+from lamware_eval.corpus import CorpusSample, load_corpus
 
 
 def _write(tmp_path, obj):

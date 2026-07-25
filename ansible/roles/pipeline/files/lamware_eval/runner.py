@@ -5,8 +5,9 @@ import json
 import time
 from pathlib import Path
 
-from stages.interpret import run_interpret
 from llm_ab_re import extract_metrics
+from stages.interpret import run_interpret
+
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
 from lamware_eval.metrics import compose_cell
