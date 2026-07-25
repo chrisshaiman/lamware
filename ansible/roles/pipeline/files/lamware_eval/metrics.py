@@ -29,15 +29,31 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
 
 
 def aggregate(cells: list[dict]) -> dict:
+    """Summarise cells per arm.
+
+    Grounding is reported as a PAIR: the ratio, plus how many claims it was
+    computed over. A cell that claims no IOCs scores a vacuous grounded_ratio of
+    1.0 ("nothing claimed = nothing to fake"), so averaging every cell would
+    rank a silent model above one making checkable claims — observed live on
+    2026-07-25, where qwen@10 emitted 0 IOCs on IcedID and scored a 'perfect'
+    1.0 against an Opus 4.6 baseline that made 15 real claims. mean_grounded_ratio
+    therefore covers only cells with claims, and is None when there are none.
+    """
     by_arm: dict[str, list[dict]] = defaultdict(list)
     for c in cells:
         by_arm[c["arm"]].append(c)
     out = {}
     for arm, cs in by_arm.items():
         n = len(cs)
+        scored = [c for c in cs if (c.get("total") or 0) > 0]
         out[arm] = {
             "n": n,
-            "mean_grounded_ratio": round(sum(c["grounded_ratio"] for c in cs) / n, 3),
+            "n_with_claims": len(scored),
+            "total_claims": sum(c.get("total") or 0 for c in cs),
+            "mean_grounded_ratio": (
+                round(sum(c["grounded_ratio"] for c in scored) / len(scored), 3)
+                if scored else None
+            ),
             "total_fabricated": sum(len(c["fabricated"]) for c in cs),
             "completed_rate": round(sum(1 for c in cs if c["completed"]) / n, 3),
             "mean_wall_seconds": round(sum(c["wall_seconds"] for c in cs) / n, 1),
