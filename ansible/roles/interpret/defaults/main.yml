@@ -41,9 +41,20 @@ interpret_container_cpus: "1"
 #   - PR #180's two-phase synthesis adds a reasoning turn: ~9-10min/sample
 #   - a 25-cycle arm at ~33s/turn is ~825s
 # It also killed the qwen3:32b and gpt-oss spikes ("exited without final result").
-# 2400s covers the slowest local arm with margin and still reaps a genuinely
-# hung container; the eval harness's own ceiling is 4800s.
-interpret_container_timeout: "2400"
+#
+# 2400s was still too tight for a 25-cycle local arm: in benchmark pass 1
+# (2026-07-25) qwen@25 timed out on 3 of 4 samples, and the ONE that completed
+# used 2355s of the 2400s budget - i.e. it finished with 45s to spare, so the
+# three failures were cut off at an unknown true requirement. Measured rate was
+# ~90s per tool call, so 25 cycles plus PR #180's two-phase synthesis needs
+# roughly 2500-3400s before any variance.
+#
+# 5400s (90min) gives real headroom for deep local runs. Accuracy is worth more
+# than reap latency here. TRADE-OFF: a genuinely hung container now holds a
+# pipeline slot for 90min instead of 40 - production RE is cloud Claude at
+# ~150-220s, so this only bites on a hang, but the sequential auto-feeder would
+# stall that long. Lower it again if that ever bites.
+interpret_container_timeout: "5400"
 
 # Install directory
 interpret_install_dir: /opt/interpret

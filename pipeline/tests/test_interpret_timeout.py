@@ -22,8 +22,12 @@ DEFAULTS = ROOT / "ansible" / "roles" / "interpret" / "defaults" / "main.yml"
 WRAPPER = (ROOT / "ansible" / "roles" / "interpret" / "templates"
            / "run-interpret-wrapper.sh.j2")
 
-# Slowest expected local arm (~825s) plus margin for cold-load and synthesis.
-MIN_TIMEOUT_SECONDS = 1200
+# Measured, not estimated. Benchmark pass 1 (2026-07-25): the one qwen@25 run
+# that completed used 2355s of a 2400s budget (~90s/tool call over 26 calls) and
+# 3 of 4 samples timed out outright. A 25-cycle arm plus two-phase synthesis
+# needs ~2500-3400s before variance, so the floor sits above the observed
+# completion rather than at it.
+MIN_TIMEOUT_SECONDS = 3600
 
 
 def _configured_timeout() -> int:

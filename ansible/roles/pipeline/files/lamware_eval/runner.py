@@ -12,7 +12,10 @@ from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
 from lamware_eval.metrics import compose_cell
 
-_EVAL_TIMEOUT = 4800
+# Harness backstop. MUST stay ABOVE the interpret container's own --timeout
+# (5400s) so the container is the thing that reaps a stuck run and we get a
+# clean "exited without final result" cell instead of an opaque subprocess kill.
+_EVAL_TIMEOUT = 7200
 
 # $/1M tokens (input, output). Local arms cost $0. Extend as models are added.
 # Hand-maintained rates drift silently (see the opus-4-6 3x overcount fixed in
