@@ -1525,15 +1525,24 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
         )
         resp.raise_for_status()
         data = resp.json()
-        tool_calls = (data["choices"][0]["message"] or {}).get("tool_calls") or []
+        choice = data["choices"][0]
+        tool_calls = (choice["message"] or {}).get("tool_calls") or []
         if not tool_calls:
+            # Do NOT fail silently. This exact case — a forced tool_choice
+            # returning finish_reason=stop with prose — cost an entire benchmark
+            # pass to diagnose because nothing was logged.
+            print(f"    [synth] no tool_call returned "
+                  f"(finish_reason={choice.get('finish_reason')}); falling back",
+                  flush=True)
             return None
         args = json.loads(tool_calls[0]["function"]["arguments"])
         if not isinstance(args, dict) or not args.get("malware_family_guess"):
+            print("    [synth] tool_call args unusable; falling back", flush=True)
             return None
         args.setdefault("narrative", "")
         return args
-    except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError):
+    except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError) as e:
+        print(f"    [synth] failed: {type(e).__name__}: {str(e)[:200]}", flush=True)
         return None
 
 
@@ -2288,9 +2297,25 @@ Technical summary: {executive}"""
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
         except anthropic.APIError:
             pass
-        serialize_msgs = concl_msgs + (
-            [{"role": "assistant", "content": concl_text}] if concl_text.strip() else [])
-        if synth_openai_base:
+        # Phase 2b gets ONLY the prose conclusion — never the investigation
+        # history. A forced tool_choice is silently ignored at RE-scale context:
+        # measured 2026-07-25 against this exact llama.cpp/LiteLLM path, a forced
+        # submit_analysis returned finish_reason=tool_calls with valid JSON at a
+        # short context, but finish_reason=stop with prose and NO tool call once
+        # the context reached ~25k chars. Passing concl_msgs (the whole tool-call
+        # transcript plus every decompiled function) put every real run in the
+        # failing regime, so local RE always fell through to the prose parse and
+        # emitted family=unknown with no capabilities or IOCs.
+        #
+        # The conclusion already contains everything the schema needs — that is
+        # what phase 2a exists to produce — so serializing it alone is both the
+        # documented intent and small enough for the constraint to hold.
+        if synth_openai_base and concl_text.strip():
+            serialize_msgs = [{"role": "user", "content": (
+                "Convert the following malware analysis into a submit_analysis "
+                "tool call. Use only what the analysis states; do not invent "
+                "values.\n\n" + concl_text
+            )}]
             got = synthesize_analysis(synth_http, synth_openai_base, api_key,
                                       current_model, serialize_msgs)
             if got is not None:

@@ -11,6 +11,35 @@ def _t() -> str:
     return TEMPLATE.read_text(encoding="utf-8")
 
 
+def test_phase2b_serializes_only_the_conclusion_not_the_transcript():
+    """A forced tool_choice is silently ignored at RE-scale context.
+
+    Measured 2026-07-25 on the live llama.cpp/LiteLLM path: a forced
+    submit_analysis returned finish_reason=tool_calls with valid JSON at short
+    context, but finish_reason=stop with prose and NO tool call at ~25k chars.
+    Passing the full investigation transcript (concl_msgs) put every real run in
+    the failing regime, so local RE always emitted family=unknown with no
+    capabilities and no IOCs.
+    """
+    block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
+    assert "serialize_msgs = [{" in block, (
+        "phase 2b must build a fresh, minimal message list from the conclusion"
+    )
+    after = block.split("serialize_msgs", 1)[1][:400]
+    assert "concl_msgs" not in after, (
+        "phase 2b must NOT reuse concl_msgs - that sends the whole transcript"
+    )
+
+
+def test_synthesis_failure_is_logged_not_silent():
+    """Returning None with no output cost a full benchmark pass to diagnose."""
+    block = _t().split("def synthesize_analysis", 1)[1].split("def parse_final_response", 1)[0]
+    assert "[synth]" in block, "synthesis fallbacks must log why"
+    assert "finish_reason" in block, (
+        "log finish_reason - it is what identifies the ignored-forced-tool case"
+    )
+
+
 def test_submit_analysis_schema_defined():
     t = _t()
     assert "SUBMIT_ANALYSIS_SCHEMA = {" in t
