@@ -59,11 +59,16 @@
     daemon_reload: true
 
 - name: Wait for LiteLLM to be ready
+  # MUST be /health/readiness, never /health. LiteLLM's /health makes a LIVE
+  # inference call to every model_list entry; the local Ollama entries
+  # (qwen3:32b ~20GB, gpt-oss:20b ~13GB) then cold-load tens of GB and the probe
+  # blocks past any sane timeout (measured >120s, 2026-07-24), so the deploy
+  # retry-loops forever against a container that is perfectly healthy.
+  # /health/readiness checks the process + DB/cache only — no backend fan-out.
+  # Same root cause as the netcheck.py fix in 799ec17.
   ansible.builtin.uri:
-    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health"
+    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health/readiness"
     method: GET
-    headers:
-      Authorization: "Bearer {{ litellm_master_key }}"
     status_code: 200
   register: litellm_health
   retries: 10
@@ -110,11 +115,10 @@
   # OLD process. A config change (e.g. a new model_list entry) restarts LiteLLM
   # here, and it takes ~40s to re-initialize — re-wait so the interpret role's
   # socket probe doesn't race the restart ("Server disconnected without response").
+  # /health/readiness, not /health — see the note on the pre-flush check above.
   ansible.builtin.uri:
-    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health"
+    url: "http://{{ litellm_listen_address }}:{{ litellm_port }}/health/readiness"
     method: GET
-    headers:
-      Authorization: "Bearer {{ litellm_master_key }}"
     status_code: 200
   register: litellm_health_postflush
   retries: 20
