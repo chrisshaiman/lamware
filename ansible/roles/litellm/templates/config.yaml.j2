@@ -14,11 +14,17 @@ model_list:
       model: "anthropic/{{ interpret_escalation_model | default('claude-opus-4-6') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  # Current-gen Claude baseline for the eval harness (A/B vs local qwen). Pinned
-  # to the versioned id for reproducible benchmark runs.
+  # Current-gen Claude arms for the eval harness (A/B vs local qwen).
+  # Use the UNDATED aliases: these models have no dated snapshot id, and a dated
+  # pin 404s (verified live 2026-07-24 against GET /v1/models).
   - model_name: "claude-sonnet-5"
     litellm_params:
-      model: "anthropic/claude-sonnet-5-20260630"
+      model: "anthropic/claude-sonnet-5"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  - model_name: "claude-opus-5"
+    litellm_params:
+      model: "anthropic/claude-opus-5"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
   # Local LLM (Ollama) for the summary stages. Reached over host loopback; the

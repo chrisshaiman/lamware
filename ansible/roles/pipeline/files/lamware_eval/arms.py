@@ -18,6 +18,7 @@ _REGISTRY: dict[str, Arm] = {
     "qwen@10": Arm("qwen@10", _LOCAL_MODEL, "local", 10),
     "qwen@25": Arm("qwen@25", _LOCAL_MODEL, "local", 25),
     "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
+    "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
 }
 
 

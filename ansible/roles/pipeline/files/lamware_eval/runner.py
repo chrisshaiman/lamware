@@ -15,6 +15,10 @@ from lamware_eval.metrics import compose_cell
 _EVAL_TIMEOUT = 4800
 
 # $/1M tokens (input, output). Local arms cost $0. Extend as models are added.
+# Hand-maintained rates drift silently (see the opus-4-6 3x overcount fixed in
+# db_ingest, PR #182). LiteLLM's spend log is authoritative; treat these as an
+# estimate for the scorecard only.
+# NOTE: sonnet-5 is at INTRODUCTORY pricing through 2026-08-31, then $3/$15.
 _RATES = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-5": (5.0, 25.0),

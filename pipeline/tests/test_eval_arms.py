@@ -15,6 +15,11 @@ def test_cloud_arm_has_no_local_backend():
     assert a.model == "claude-sonnet-5" and a.re_backend is None
 
 
+def test_opus5_arm_is_cloud():
+    a = resolve_arm("claude-opus-5")
+    assert a == Arm("claude-opus-5", "claude-opus-5", None, 10)
+
+
 def test_parse_arms_csv():
     arms = parse_arms("qwen@10,claude-sonnet-5")
     assert [x.name for x in arms] == ["qwen@10", "claude-sonnet-5"]
