@@ -51,5 +51,12 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     usage = res.get("usage", {}) or {}
     cost = 0.0 if arm.re_backend == "local" else _rough_cost(arm.model, usage)
     source = json.dumps(gr)  # grounding corpus = the ghidra data the model saw
+
+    # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
+    # is impossible after the fact if only the scorecard's one-word guess
+    # survives — the narrative, capabilities and IOC list are what an analyst
+    # actually reads to decide "right family / right class / wrong".
+    (out / "result.json").write_text(json.dumps(res, indent=2, default=str))
+
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
                         extract_metrics(res), res.get("error") or analysis.get("error"))

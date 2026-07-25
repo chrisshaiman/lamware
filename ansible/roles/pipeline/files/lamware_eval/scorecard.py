@@ -5,8 +5,11 @@
 
 def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     lines = [f"# RE Eval — {label}\n", "## Summary (per arm)\n"]
-    cols = ["n", "mean_grounded_ratio", "total_fabricated", "completed_rate",
-            "mean_wall_seconds", "total_cost_usd"]
+    # n_with_claims/total_claims sit next to the ratio on purpose: a ratio over
+    # zero claims is not a good score, it is an absent one.
+    cols = ["n", "n_with_claims", "total_claims", "mean_grounded_ratio",
+            "total_fabricated", "completed_rate", "mean_wall_seconds",
+            "total_cost_usd"]
     lines.append("| arm | " + " | ".join(cols) + " |")
     lines.append("|" + "---|" * (len(cols) + 1))
     for arm, s in summary.items():

@@ -23,8 +23,8 @@ def test_compose_cell_scores_grounding_and_carries_refs():
 
 def test_aggregate_summarizes_per_arm():
     cells = [
-        {"arm": "qwen@25", "grounded_ratio": 1.0, "fabricated": [], "completed": True, "wall_seconds": 100.0, "cost_usd": 0.0},
-        {"arm": "qwen@25", "grounded_ratio": 0.5, "fabricated": ["x"], "completed": False, "wall_seconds": 200.0, "cost_usd": 0.0},
+        {"arm": "qwen@25", "grounded_ratio": 1.0, "total": 3, "fabricated": [], "completed": True, "wall_seconds": 100.0, "cost_usd": 0.0},
+        {"arm": "qwen@25", "grounded_ratio": 0.5, "total": 2, "fabricated": ["x"], "completed": False, "wall_seconds": 200.0, "cost_usd": 0.0},
     ]
     summ = aggregate(cells)["qwen@25"]
     assert summ["mean_grounded_ratio"] == 0.75
@@ -32,3 +32,36 @@ def test_aggregate_summarizes_per_arm():
     assert summ["completed_rate"] == 0.5
     assert summ["mean_wall_seconds"] == 150.0
     assert summ["total_cost_usd"] == 0.0
+
+
+def test_silent_arm_does_not_score_a_vacuous_perfect_grounding():
+    """A cell claiming NO IOCs scores grounded_ratio 1.0 (nothing claimed =
+    nothing to fake). Averaging those in would rank a model that says nothing
+    above one that makes checkable claims.
+
+    Observed live 2026-07-25: qwen@10 on IcedID emitted 0 code_level_iocs and
+    scored a 'perfect' 1.0, while the Opus 4.6 baseline made 15 real claims on
+    the same sample.
+    """
+    cells = [
+        {"arm": "silent", "grounded_ratio": 1.0, "total": 0, "fabricated": [], "completed": True, "wall_seconds": 700.0, "cost_usd": 0.0},
+        {"arm": "silent", "grounded_ratio": 1.0, "total": 0, "fabricated": [], "completed": True, "wall_seconds": 700.0, "cost_usd": 0.0},
+    ]
+    s = aggregate(cells)["silent"]
+    assert s["n"] == 2
+    assert s["n_with_claims"] == 0
+    assert s["total_claims"] == 0
+    # No scored cells -> the ratio is undefined, NOT a perfect 1.0.
+    assert s["mean_grounded_ratio"] is None
+
+
+def test_grounding_ratio_averages_only_cells_that_made_claims():
+    cells = [
+        {"arm": "mixed", "grounded_ratio": 0.5, "total": 4, "fabricated": ["a", "b"], "completed": True, "wall_seconds": 10.0, "cost_usd": 0.0},
+        {"arm": "mixed", "grounded_ratio": 1.0, "total": 0, "fabricated": [], "completed": True, "wall_seconds": 10.0, "cost_usd": 0.0},
+    ]
+    s = aggregate(cells)["mixed"]
+    assert s["n"] == 2 and s["n_with_claims"] == 1
+    assert s["total_claims"] == 4
+    # The silent cell must not drag the ratio up to 0.75.
+    assert s["mean_grounded_ratio"] == 0.5
