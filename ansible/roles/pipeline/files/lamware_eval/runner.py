@@ -12,7 +12,10 @@ from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
 from lamware_eval.metrics import compose_cell
 
-_EVAL_TIMEOUT = 4800
+# Harness backstop. MUST stay ABOVE the interpret container's own --timeout
+# (5400s) so the container is the thing that reaps a stuck run and we get a
+# clean "exited without final result" cell instead of an opaque subprocess kill.
+_EVAL_TIMEOUT = 7200
 
 # $/1M tokens (input, output). Local arms cost $0. Extend as models are added.
 # Hand-maintained rates drift silently (see the opus-4-6 3x overcount fixed in
@@ -32,16 +35,46 @@ def _rough_cost(model: str, usage: dict) -> float:
                  + usage.get("output_tokens", 0) / 1e6 * co, 4)
 
 
+def tool_output_text(out_dir: Path) -> str:
+    """Everything the tools returned during the agentic loop.
+
+    Grounding must score against everything the model actually SAW. In an
+    AGENTIC run that is not just the initial Ghidra dump — the model pulls more
+    via decompile_function/get_strings_at, and IOCs it legitimately read out of
+    decompiled code do not appear in that dump.
+
+    Scoring against the dump alone reported 85% "fabrication" for the cloud arm
+    on 2026-07-25, when its flagged values (`-id=`, `~%u.tmp`) were independently
+    confirmed by a separate baseline run — i.e. almost all of that was artifact.
+    """
+    audit = out_dir / "llm_audit" / "tool_calls.json"
+    if not audit.exists():
+        return ""
+    try:
+        records = json.loads(audit.read_text())
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return ""  # a malformed audit must not sink the cell
+    if not isinstance(records, list):
+        return ""
+    return " ".join(json.dumps(r.get("result", ""))
+                    for r in records if isinstance(r, dict))
+
+
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
             interpret_cmd: str, ghidra_cmd: str) -> dict:
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
     gr = report["ghidra"]
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
+    # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
+    # Otherwise the interpret stage escalates into base_cfg's escalation_model
+    # and the arm silently measures a different model: on 2026-07-25 all 7
+    # claude-sonnet-5 cells finished on claude-opus-4-6 (escalated=True), so the
+    # run produced no clean sonnet-5 data at all.
     cfg = {**base_cfg, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
+           "escalation_model": arm.model,
            "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384)}
     if arm.re_backend == "local":
         cfg["re_backend"] = "local"
-        cfg["escalation_model"] = arm.model
     out = Path(sample.corpus_dir) / "eval" / arm.name.replace("/", "_").replace("@", "_")
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -50,7 +83,9 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     analysis = res.get("analysis", {}) or {}
     usage = res.get("usage", {}) or {}
     cost = 0.0 if arm.re_backend == "local" else _rough_cost(arm.model, usage)
-    source = json.dumps(gr)  # grounding corpus = the ghidra data the model saw
+    # Grounding corpus = the initial Ghidra dump PLUS everything the tools
+    # returned, i.e. the full set of bytes the model actually saw.
+    source = json.dumps(gr) + " " + tool_output_text(out)
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess
