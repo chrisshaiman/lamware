@@ -122,11 +122,14 @@ DB_USER = _CFG.db_user
 DB_PASSWORD = os.environ.get("PIPELINE_DB_PASSWORD", "")
 
 
-# LLM pricing per million tokens (update when model pricing changes)
+# LLM pricing per million tokens (update when model pricing changes).
+# These must match Anthropic's published rates — a drifted entry silently
+# mis-states llm_cost_usd on every analysis, and there is no runtime signal that
+# it is wrong. test_pricing_table_matches_published_rates guards them.
 _LLM_PRICING = {
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
-    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
-    "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
+    "claude-opus-4-6": {"input": 5.00, "output": 25.00},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
     # Local Ollama inference has no per-token API cost.
     "local-qwen": {"input": 0.00, "output": 0.00},
     "local-qwen-strict": {"input": 0.00, "output": 0.00},
