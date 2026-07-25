@@ -46,7 +46,36 @@ def test_plain_english_priced_by_its_model():
     local = {"plain_english_usage": {"input_tokens": 1_000, "output_tokens": 1_000},
              "plain_english_model": "local-qwen"}
     assert db_ingest._calculate_llm_cost(local) == 0.0
-    # Haiku fallback for a report missing plain_english_model: 1e6*0.80/1e6 + ... but
-    # here tokens are 1000 each -> 1000*0.80/1e6 + 1000*4.00/1e6 = 0.0008 + 0.004.
+    # Haiku fallback for a report missing plain_english_model, at Haiku 4.5's real
+    # rate ($1.00 / $5.00 per Mtok): 1000*1.00/1e6 + 1000*5.00/1e6.
     legacy = {"plain_english_usage": {"input_tokens": 1_000, "output_tokens": 1_000}}
-    assert round(db_ingest._calculate_llm_cost(legacy), 6) == round(0.0008 + 0.004, 6)
+    assert round(db_ingest._calculate_llm_cost(legacy), 6) == round(0.001 + 0.005, 6)
+
+
+def test_pricing_table_matches_published_rates():
+    """Guard against per-Mtok rate drift in _LLM_PRICING.
+
+    These rates are what Anthropic actually bills and what LiteLLM's own cost map
+    uses. A drifted entry here silently mis-states every analysis's llm_cost_usd:
+    the opus-4-6 row was $15/$75 (3x the real rate) and inflated 30-day reported
+    spend to ~2.2x what LiteLLM recorded for the same traffic.
+    """
+    expected = {
+        "claude-opus-4-6": {"input": 5.00, "output": 25.00},
+        "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
+        "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+    }
+    for model, rates in expected.items():
+        assert db_ingest._LLM_PRICING[model] == rates, f"{model} pricing drifted"
+
+
+def test_opus_priced_at_real_rate():
+    # Behavioral check on the drifted row: 1M in + 500K out on opus-4-6 is
+    # 1e6*5/1e6 + 5e5*25/1e6 = 5.00 + 12.50 = 17.50 (was 52.50 at the wrong rate).
+    report = {
+        "llm_interpretation": {
+            "model_used": "claude-opus-4-6",
+            "usage": {"input_tokens": 1_000_000, "output_tokens": 500_000},
+        }
+    }
+    assert db_ingest._calculate_llm_cost(report) == 17.50
