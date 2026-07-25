@@ -33,7 +33,17 @@ interpret_max_string_length: 500
 # Container resources
 interpret_container_memory: "512m"
 interpret_container_cpus: "1"
-interpret_container_timeout: "360"
+# Podman --timeout for the interpret container. 360s was sized for cloud Claude
+# RE (~150s/sample) and is far too short for reasoning-on LOCAL models, which it
+# silently SIGKILLs mid-run:
+#   - qwen3.6 agentic RE, 10 tool calls: 333s measured (2026-07-23) - already
+#     within seconds of 360
+#   - PR #180's two-phase synthesis adds a reasoning turn: ~9-10min/sample
+#   - a 25-cycle arm at ~33s/turn is ~825s
+# It also killed the qwen3:32b and gpt-oss spikes ("exited without final result").
+# 2400s covers the slowest local arm with margin and still reaps a genuinely
+# hung container; the eval harness's own ceiling is 4800s.
+interpret_container_timeout: "2400"
 
 # Install directory
 interpret_install_dir: /opt/interpret
