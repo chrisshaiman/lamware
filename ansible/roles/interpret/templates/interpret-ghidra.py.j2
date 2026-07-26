@@ -2284,10 +2284,16 @@ Technical summary: {executive}"""
         legacy free-text path — never worse than before. (local backend => $0, so
         the extra call's tokens are not separately accounted.)
         """
+        # /no_think is a Qwen3 soft switch that disables reasoning for this turn.
+        # It works on the Anthropic router path, where LiteLLM does NOT forward
+        # chat_template_kwargs, so it is the only lever available here. The model
+        # has already reasoned across the whole tool-call investigation; measured
+        # 2026-07-25, /no_think cut this call from 154s to 115s and produced a
+        # tighter conclusion with no loss of substance.
         concl_msgs = msgs + [{"role": "user", "content": (
             "Based on your investigation, summarize your findings and state your "
             "conclusion in prose: malware family, capabilities, MITRE techniques, and "
-            "notable code-level IOCs. Do not output JSON."
+            "notable code-level IOCs. Do not output JSON. /no_think"
         )}]
         concl_text = ""
         try:
@@ -2295,8 +2301,20 @@ Technical summary: {executive}"""
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
                 system=CACHED_SYSTEM, messages=concl_msgs)
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
-        except anthropic.APIError:
-            pass
+            if not concl_text.strip():
+                # Non-empty response but no visible text: everything came back as
+                # reasoning. Phase 2b is skipped when this is empty, so say so.
+                print(f"    [synth] phase 2a returned no visible text "
+                      f"(stop_reason={getattr(concl, 'stop_reason', None)}, "
+                      f"out_tokens={getattr(getattr(concl, 'usage', None), 'output_tokens', None)})",
+                      flush=True)
+        except anthropic.APIError as e:
+            # This was a bare `pass`. A silent swallow here empties concl_text,
+            # which silently SKIPS phase 2b and drops the run to the legacy
+            # free-text path — the exact shape that made a plumbing failure look
+            # like "the model won't commit to a family" for two benchmark passes.
+            print(f"    [synth] phase 2a failed: {type(e).__name__}: {str(e)[:200]}",
+                  flush=True)
         # Phase 2b gets ONLY the prose conclusion — never the investigation
         # history. A forced tool_choice is silently ignored at RE-scale context:
         # measured 2026-07-25 against this exact llama.cpp/LiteLLM path, a forced
