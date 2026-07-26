@@ -833,6 +833,27 @@ def emit_status(message: str, tool_calls_used: int) -> None:
     emit({"type": "status", "message": message, "tool_calls_used": tool_calls_used})
 
 
+def create_message(cli, **kwargs):
+    """Create a message over a STREAMING connection, returning the final Message.
+
+    Non-streaming requests die on the SDK's 600s default once the transcript grows.
+    Measured in the 2026-07-27 depth probe (local qwen, 64k ctx): a single turn spent
+    503s in prompt eval alone for 14,512 tokens (~29 tok/s), the whole request took
+    550s, and the next one crossed 600s — llama-server logged `cancel task` and the
+    run died at 22 tool calls with "Request timed out". Context was NOT the limit
+    there; the server reached 47,596 tokens with truncated = 0.
+
+    Streaming keeps the connection alive across a long generation instead of waiting
+    on one response. get_final_message() returns the same Message shape (content
+    blocks, stop_reason, usage), so callers are unchanged.
+
+    Applies to CPU-local inference above all — the cloud model never approaches these
+    latencies, but the same call path serves both.
+    """
+    with cli.messages.stream(**kwargs) as stream:
+        return stream.get_final_message()
+
+
 def usage_from_response(response) -> dict:
     """Extract token usage from a Claude API response."""
     usage = getattr(response, "usage", None)
@@ -1890,7 +1911,11 @@ def main() -> None:
 
     base_url = os.environ.get("LITELLM_BASE_URL", "")
     uds = os.environ.get("LITELLM_UDS", "")
-    client_kwargs: dict[str, Any] = {"api_key": api_key}
+    # Explicit timeout. The SDK default is 600s, which streaming alone does not raise —
+    # it only stops one long generation from blocking on a single response. CPU-local
+    # prompt eval ran at ~29 tok/s in the 2026-07-27 probe, so a large transcript can
+    # legitimately need more than 10 minutes of wall time end to end.
+    client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": 1800.0}
     if base_url:
         client_kwargs["base_url"] = base_url
     if uds:
@@ -2297,7 +2322,8 @@ Technical summary: {executive}"""
         )}]
         concl_text = ""
         try:
-            concl = client.messages.create(
+            concl = create_message(
+                client,
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
                 system=CACHED_SYSTEM, messages=concl_msgs)
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
@@ -2357,9 +2383,11 @@ Technical summary: {executive}"""
             current_model = escalation_model
             emit_status(f"Escalating to {current_model} after {tool_calls_used} tool calls", tool_calls_used)
 
-        # Call Claude
+        # Call Claude. STREAMED — see create_message(): this is the call that died on
+        # the 600s request timeout at 22 tool calls once the transcript grew large.
         try:
-            response = client.messages.create(
+            response = create_message(
+                client,
                 model=current_model,
                 max_tokens=max_output_tokens,
                 system=CACHED_SYSTEM,
@@ -2487,7 +2515,8 @@ Technical summary: {executive}"""
                         })
                         sys.exit(0)
                     try:
-                        final_response = client.messages.create(
+                        final_response = create_message(
+                            client,
                             model=current_model,
                             max_tokens=max(max_output_tokens, 8192),
                             system=CACHED_SYSTEM,
@@ -2565,7 +2594,8 @@ Technical summary: {executive}"""
                     })
                     sys.exit(0)
                 try:
-                    final_response = client.messages.create(
+                    final_response = create_message(
+                        client,
                         model=current_model,
                         max_tokens=max(max_output_tokens, 8192),
                         system=CACHED_SYSTEM,
