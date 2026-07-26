@@ -28,3 +28,18 @@ def test_parse_arms_csv():
 def test_unknown_arm_raises():
     with pytest.raises(KeyError):
         resolve_arm("gpt-9")
+
+
+def test_depth_probe_arm_is_local_and_deep():
+    """qwen@75 exists to find where findings flatten, not to fit a budget."""
+    a = resolve_arm("qwen@75")
+    assert a == Arm("qwen@75", "local-qwen-llamacpp-re", "local", 75)
+
+
+def test_every_local_arm_uses_the_same_model():
+    """Cycle count is the only variable across the qwen arms — otherwise a depth
+    comparison silently conflates 'deeper' with 'different model'."""
+    local = [a for a in (resolve_arm(n) for n in ("qwen@10", "qwen@25", "qwen@75"))]
+    assert len({a.model for a in local}) == 1
+    assert {a.re_backend for a in local} == {"local"}
+    assert [a.max_tool_calls for a in local] == [10, 25, 75]
