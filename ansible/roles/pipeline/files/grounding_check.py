@@ -33,6 +33,22 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", out).strip()
 
 
+def _ioc_value(ioc: object) -> str:
+    """Pull the claim string out of an IOC entry, whatever shape the model used.
+
+    Models do not agree on the schema: claude-sonnet-5 emits dicts
+    ({"type","value","context"}), qwen3.6 emits bare strings. Assuming dicts
+    raised AttributeError: 'str' object has no attribute 'get' and killed 5 of 7
+    local cells mid-scoring on 2026-07-25 — after their results were written, so
+    the run looked like "0 claims, 28% completion" rather than a crash.
+    """
+    if isinstance(ioc, dict):
+        return str(ioc.get("value", "")).strip()
+    if isinstance(ioc, str):
+        return ioc.strip()
+    return str(ioc).strip()
+
+
 def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     """Score how many claimed code_level_ioc values appear in the source.
 
@@ -45,7 +61,7 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     fabricated: list[str] = []
     grounded = 0
     for ioc in iocs:
-        value = str(ioc.get("value", "")).strip()
+        value = _ioc_value(ioc)
         if not value:
             continue
         if normalize(value) in norm_source:
