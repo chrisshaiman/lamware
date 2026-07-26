@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from lamware_eval.arms import parse_arms
-from lamware_eval.corpus import load_corpus
+from lamware_eval.corpus import filter_samples, load_corpus
 from lamware_eval.metrics import aggregate
 from lamware_eval.runner import run_arm
 from lamware_eval.scorecard import render_scorecard
@@ -27,6 +27,9 @@ def main() -> None:
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--arms", required=True)
     ap.add_argument("--label", default="eval")
+    ap.add_argument("--samples", default="",
+                    help="comma-separated sha256 prefixes or family names; "
+                         "default is the whole corpus")
     ap.add_argument("--config", default="/opt/pipeline/config.json")
     ap.add_argument("--interpret-cmd", default="/opt/interpret/run-interpret")
     ap.add_argument("--ghidra-cmd", default="/opt/ghidra/run-ghidra")
@@ -34,8 +37,9 @@ def main() -> None:
     args = ap.parse_args()
 
     base_cfg = json.loads(Path(args.config).read_text())["interpret"]
-    samples = load_corpus(args.corpus)
+    samples = filter_samples(load_corpus(args.corpus), args.samples)
     arms = parse_arms(args.arms)
+    print(f"[eval] {len(samples)} sample(s) x {len(arms)} arm(s) = {len(samples) * len(arms)} cells")
     cells = []
     for s in samples:
         for a in arms:

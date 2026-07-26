@@ -17,6 +17,12 @@ class Arm:
 _REGISTRY: dict[str, Arm] = {
     "qwen@10": Arm("qwen@10", _LOCAL_MODEL, "local", 10),
     "qwen@25": Arm("qwen@25", _LOCAL_MODEL, "local", 25),
+    # Depth probe: let the local model run to its natural stopping point rather than
+    # to a budget. Local inference is $0, so the question "how deep does it go before
+    # findings flatten?" is answerable here in a way it never was on a metered model.
+    # NB: the cap is approximate — parallel tool calls are counted per-block after
+    # increment, so a run can overshoot it.
+    "qwen@75": Arm("qwen@75", _LOCAL_MODEL, "local", 75),
     "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
     "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
 }
