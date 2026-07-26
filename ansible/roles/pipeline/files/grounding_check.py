@@ -49,6 +49,42 @@ def _ioc_value(ioc: object) -> str:
     return str(ioc).strip()
 
 
+# Literal artifacts embedded inside a descriptive claim: `backticked` spans,
+# "quoted" spans, hex constants, and Ghidra-style symbols.
+_LITERAL_PATTERNS = (
+    re.compile(r"`([^`]{2,})`"),
+    re.compile(r'"([^"]{2,})"'),
+    re.compile(r"\b(0x[0-9a-fA-F]{2,})\b"),
+    re.compile(r"\b((?:FUN|DAT|LAB|SUB)_[0-9a-fA-F]{4,})\b"),
+)
+
+
+def _extract_literals(value: str, limit: int = 6) -> list[str]:
+    """Pull checkable literals out of a prose IOC claim.
+
+    Models format IOCs very differently: claude-sonnet-5 emits bare artifacts
+    ("~%u.tmp", "0x811c9dc5"), qwen3.6 emits descriptive signatures such as
+    "XOR pattern `data[i] ^ key[i % len]` in a do..while loop in `FUN_0040b477`".
+    A whole sentence never appears verbatim in decompilation, so substring
+    matching scored EVERY descriptive claim as fabricated — on 2026-07-25 that
+    put the local arm at 0/20 grounded, including `FUN_0040b477`, an address
+    four independent runs had corroborated. The metric was measuring IOC STYLE,
+    not truthfulness.
+
+    Grounding the literals inside the description scores both styles fairly.
+    """
+    out: list[str] = []
+    for pat in _LITERAL_PATTERNS:
+        for m in pat.findall(value):
+            tok = m.strip()
+            # Skip fragments too short or too generic to be evidence.
+            if len(tok) >= 4 and tok not in out:
+                out.append(tok)
+            if len(out) >= limit:
+                return out
+    return out
+
+
 def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     """Score how many claimed code_level_ioc values appear in the source.
 
@@ -65,6 +101,11 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         if not value:
             continue
         if normalize(value) in norm_source:
+            grounded += 1
+            continue
+        # Descriptive IOCs never match verbatim — score their literals instead.
+        literals = _extract_literals(value)
+        if literals and all(normalize(t) in norm_source for t in literals):
             grounded += 1
         else:
             fabricated.append(value)
