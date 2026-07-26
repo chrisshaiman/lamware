@@ -47,6 +47,54 @@ def cap_list_functions(result: dict, cap: int = LIST_FUNCTIONS_CAP) -> dict:
             "note": f"showing top {len(top)} of {total} functions by xref_count"}
 
 
+# Tool results are appended to the transcript verbatim and never fall out of it, so
+# every oversized body is re-paid on every subsequent turn. The 2026-07-27 depth probe
+# died at 20 tool calls with 46,216 tokens against a 32k window.
+#
+# Measured from that run's tool_calls.json (20 calls, raccoonstealer): 83,259 chars of
+# tool output ~= 20,814 tokens, i.e. 45% of the context. 8 results exceeded 6000 chars
+# and EVERY one was decompile_function, clustered tightly at ~9,000 chars.
+#
+# That clustering is why the cap is 12000 and not lower: ~9 KB is the TYPICAL decompiled
+# body for this corpus, not an outlier, and trimming every function by a third to save
+# ~12% of context is a bad trade against analysis quality. This targets genuine outliers
+# only. Raising --ctx-size is the dominant lever; this is the secondary one.
+#
+# Starting value — tune with the cycle sweep once depth is no longer context-bound.
+TOOL_RESULT_CHAR_CAP = 12000
+
+
+def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
+    """Bound the long string values in a tool result before it enters the transcript.
+
+    The truncation marker is deliberately explicit and states the tool to call next.
+    A model that silently receives half a function assumes it saw all of it and then
+    makes claims about code it was never shown — which the grounding metric would score
+    as fabrication when the harness, not the model, dropped the evidence.
+
+    No-op on short values, so cloud-model behaviour is unchanged in practice.
+    """
+    if not isinstance(result, dict):
+        return result
+    out = {}
+    truncated_keys = []
+    for key, value in result.items():
+        if isinstance(value, str) and len(value) > cap:
+            omitted = len(value) - cap
+            out[key] = (value[:cap] +
+                        f"\n...[TRUNCATED: {omitted} more characters omitted. "
+                        f"Use get_strings_at or decompile a narrower target if you "
+                        f"need the rest — do not assume the remainder is empty.]")
+            truncated_keys.append(key)
+        else:
+            out[key] = value
+    if truncated_keys:
+        out["note"] = "; ".join(filter(None, [
+            result.get("note"),
+            f"truncated oversized field(s): {', '.join(truncated_keys)}"]))
+    return out
+
+
 def validate_tool_args(tool_name: str, args: dict) -> str | None:
     """Validate a pipeline tool call. Preserves the prior Unknown-tool behavior."""
     if tool_name not in GHIDRA_ARG_VALIDATORS:
@@ -88,12 +136,17 @@ def audit_filename(analysis_type: str | None) -> str:
 
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
-                    ghidra_cmd: str, list_functions_cap: int | None = None) -> dict:
+                    ghidra_cmd: str, list_functions_cap: int | None = None,
+                    result_char_cap: int | None = None) -> dict:
     """Execute a single Ghidra tool call in a container.
 
     list_functions_cap: when set, trims list_functions output to the top-N by
     xref. Used ONLY for the local backend (small models derail on the full
     ~200-function list); cloud Claude gets the untrimmed list (cap=None).
+
+    result_char_cap: when set, bounds long string fields (decompiled bodies) so a
+    single result cannot consume a large share of the context window. Also local-only:
+    the cloud model has room the local one does not.
     """
     if not project_dir or not program_name:
         return {"error": ghidra_unavailable_error(None)}
@@ -110,6 +163,8 @@ def run_ghidra_tool(project_dir: str, program_name: str,
         parsed = json.loads(result.stdout)
         if tool_name == "list_functions" and list_functions_cap:
             parsed = cap_list_functions(parsed, list_functions_cap)
+        if result_char_cap:
+            parsed = cap_tool_result(parsed, result_char_cap)
         return parsed
     except subprocess.TimeoutExpired:
         return {"error": "Ghidra tool timeout (120s)"}
@@ -242,13 +297,16 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     response = {"type": "tool_error", "tool": tool_name, "error": error}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "error": error})
                 else:
-                    # Execute Ghidra tool in container. Cap list_functions output
-                    # ONLY for the local backend (small models derail on the full
-                    # ~200-function list); cloud Claude keeps the full list.
-                    _lf_cap = (LIST_FUNCTIONS_CAP
-                               if interpret_config.get("re_backend") == "local" else None)
+                    # Execute Ghidra tool in container. Both caps are local-backend
+                    # ONLY — small models derail on the full ~200-function list, and
+                    # the local context window is ~30x smaller than the cloud one.
+                    # Cloud Claude keeps full, untruncated results.
+                    _is_local = interpret_config.get("re_backend") == "local"
+                    _lf_cap = LIST_FUNCTIONS_CAP if _is_local else None
+                    _rc_cap = TOOL_RESULT_CHAR_CAP if _is_local else None
                     tool_result = run_ghidra_tool(project_dir, program_name,
-                                                  tool_name, tool_args, ghidra_cmd, _lf_cap)
+                                                  tool_name, tool_args, ghidra_cmd,
+                                                  _lf_cap, _rc_cap)
                     response = {"type": "tool_result", "tool": tool_name, "result": tool_result}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "result": tool_result})
 
