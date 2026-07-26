@@ -31,6 +31,30 @@ def test_phase2b_serializes_only_the_conclusion_not_the_transcript():
     )
 
 
+def test_phase2a_failure_is_logged_not_silent():
+    """Phase 2a swallowed anthropic.APIError with a bare `pass`.
+
+    An empty concl_text silently SKIPS phase 2b and drops the run to the legacy
+    free-text path, which is the shape that made a plumbing failure read as
+    "the model won't commit to a family" across two benchmark passes.
+    """
+    block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
+    assert "except anthropic.APIError:\n            pass" not in block, (
+        "phase 2a must not swallow APIError silently"
+    )
+    assert "phase 2a failed" in block, "log the phase 2a exception"
+    assert "no visible text" in block, "log the empty-but-successful case too"
+
+
+def test_phase2a_disables_thinking_via_no_think():
+    """The router path cannot forward chat_template_kwargs, so /no_think is the
+    only lever. The model already reasoned across the tool-call investigation;
+    measured 2026-07-25 this cut the call 154s -> 115s with no loss of substance.
+    """
+    block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
+    assert "/no_think" in block, "phase 2a prompt must carry the /no_think switch"
+
+
 def test_synthesis_failure_is_logged_not_silent():
     """Returning None with no output cost a full benchmark pass to diagnose."""
     block = _t().split("def synthesize_analysis", 1)[1].split("def parse_final_response", 1)[0]
