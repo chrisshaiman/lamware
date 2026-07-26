@@ -134,6 +134,34 @@ def audit_filename(analysis_type: str | None) -> str:
     return f"tool_calls_{safe}.json"
 
 
+_STDERR_TAIL_CHARS = 4000
+
+
+def _drain_stderr(proc) -> str:
+    """Read whatever the interpret container wrote to stderr, for the error path.
+
+    stderr is a pipe that nothing read, so when the container died its traceback was
+    captured and then thrown away: the 2026-07-27 qwen@30 probe reported only
+    "exited without final result" after 18 successful tool calls, with no way to tell
+    a crash from an OOM from a clean exit. A failure that cannot be diagnosed costs
+    another full run to reproduce — 26 minutes, in that case.
+
+    Returns the tail, since a traceback's last lines are the informative ones. Never
+    raises: this runs on the error path, and losing the diagnostic is better than
+    replacing the real error with one from the diagnostic itself.
+    """
+    try:
+        if proc.stderr is None or proc.stderr.closed:
+            return ""
+        text = proc.stderr.read() or ""
+    except Exception as e:  # noqa: BLE001 - diagnostics must not mask the real failure
+        return f"<could not read container stderr: {type(e).__name__}: {e}>"
+    text = text.strip()
+    if len(text) > _STDERR_TAIL_CHARS:
+        return "...[truncated]\n" + text[-_STDERR_TAIL_CHARS:]
+    return text
+
+
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
                     ghidra_cmd: str, list_functions_cap: int | None = None,
@@ -317,7 +345,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 print(f"    LLM: {msg.get('message', '')}")
 
     except Exception as e:
-        return {"enabled": True, "error": f"Interpret loop error: {e}"}
+        return {"enabled": True,
+                "error": f"Interpret loop error: {e}",
+                "container_stderr": _drain_stderr(proc)}
     finally:
         try:
             proc.terminate()
@@ -325,7 +355,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         except Exception:
             proc.kill()
 
-    return {"enabled": True, "error": "Interpret container exited without final result"}
+    return {"enabled": True,
+            "error": "Interpret container exited without final result",
+            "container_stderr": _drain_stderr(proc)}
 
 
 def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,

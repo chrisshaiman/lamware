@@ -53,6 +53,20 @@ def test_no_blocking_create_on_the_long_generation_paths():
         assert pattern not in TMPL, f"long-generation path still blocking: {pattern[:60]}"
 
 
+def test_agentic_loop_reports_unhandled_exceptions_instead_of_dying():
+    """The protocol is the container's only channel; a silent death tells us nothing.
+
+    The 2026-07-27 qwen@30 probe made 18 good tool calls, then the process exited with
+    no final message. The host saw EOF on stdout and could only report "exited without
+    final result", with tool_calls_used = 0 because that count rides on that message.
+    anthropic.APIError alone does not cover transport errors raised during streaming.
+    """
+    assert "except Exception as e:  # noqa: BLE001" in TMPL
+    assert "Unhandled {type(e).__name__} in agentic loop" in TMPL
+    assert "import traceback" in TMPL
+    assert 'traceback.format_exc()' in TMPL
+
+
 def test_client_carries_an_explicit_timeout():
     """Streaming keeps the connection alive but does not raise the 600s SDK default."""
     assert '"timeout": 1800.0' in TMPL, (
