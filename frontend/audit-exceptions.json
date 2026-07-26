@@ -1,0 +1,31 @@
+{
+  "$comment": [
+    "Advisories consciously accepted, with the reason they do not apply to this app.",
+    "The audit gate (scripts/audit-gate.mjs) fails on every high/critical finding that",
+    "is NOT listed here, and fails on any entry past its reviewBy date — so an",
+    "exception rots into a build failure instead of quietly becoming permanent.",
+    "An entry is a claim that the code path is unreachable here, never that the",
+    "vulnerability is unimportant."
+  ],
+  "exceptions": [
+    {
+      "id": "GHSA-qwww-vcr4-c8h2",
+      "package": "react-router",
+      "severity": "high",
+      "title": "RSC Mode CSRF Bypass Allows Action Execution Before 400 Response",
+      "reason": [
+        "Affects React Router's RSC (React Server Components) mode. This app is a",
+        "client-only SPA: it mounts <BrowserRouter> in src/main.tsx, builds with",
+        "'tsc -b && vite build', and has no SSR/RSC entry point (no renderToString,",
+        "renderToPipeableStream, hydrateRoot, StaticRouter, or createStaticHandler",
+        "anywhere in src/). The vulnerable server-action path is never constructed.",
+        "npm's suggested remediation is a DOWNGRADE to react-router-dom@7.11.0, which",
+        "would reintroduce the open-redirect, XSS, constructor-injection and DoS",
+        "advisories that 7.18.1 fixes. Accepting this one is strictly safer."
+      ],
+      "acceptedOn": "2026-07-26",
+      "reviewBy": "2026-10-26",
+      "revisitIf": "the app ever adopts SSR, RSC, or a framework mode (Remix/react-router 'framework' mode)"
+    }
+  ]
+}
