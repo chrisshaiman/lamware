@@ -93,5 +93,13 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # actually reads to decide "right family / right class / wrong".
     (out / "result.json").write_text(json.dumps(res, indent=2, default=str))
 
+    # Append the container's own stderr to the cell error. Without it a crashed
+    # container reports only "exited without final result", which is a symptom, not a
+    # cause — and costs a full re-run (26 min on 2026-07-27) to learn anything.
+    err = res.get("error") or analysis.get("error")
+    stderr_tail = (res.get("container_stderr") or "").strip()
+    if err and stderr_tail:
+        err = f"{err} | container stderr: {stderr_tail[-1500:]}"
+
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
-                        extract_metrics(res), res.get("error") or analysis.get("error"))
+                        extract_metrics(res), err)

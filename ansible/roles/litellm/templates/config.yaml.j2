@@ -72,8 +72,18 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
-  # local-qwen -> Haiku on any local failure. local-qwen-strict has NO fallback
-  # (strict = offline). See PipelineConfig.summary_model for the per-stage knob.
+  # local-qwen -> Haiku on any local failure. See PipelineConfig.summary_model for
+  # the per-stage knob.
+  #
+  # DELIBERATELY ABSENT, do not "fix" by adding one:
+  #   local-qwen-strict     — strict = offline.
+  #   local-qwen-llamacpp-re — the AGENTIC RE model. Its context holds decompiled
+  #     malware bodies, extracted strings and C2 indicators. A cloud fallback would
+  #     silently ship all of that to a third party at the exact moment the local
+  #     model failed — turning an availability feature into a data-egress incident,
+  #     and defeating the air-gap that is the whole reason RE runs locally.
+  #     RE must fail loudly and stay offline. Guarded by
+  #     pipeline/tests/test_litellm_fallbacks.py.
   fallbacks: [{"local-qwen": ["haiku-fallback"]}]
 
 general_settings:
