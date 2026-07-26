@@ -173,7 +173,13 @@ jobs:
           semgrep scan --config p/python src/ api/ shared/ pipeline/ --error
 
       - name: Audit frontend dependencies (npm audit)
+        # Gate rather than raw `npm audit --audit-level=high`: that form is
+        # all-or-nothing, so one advisory that cannot apply here (RSC-mode, in a
+        # client-only SPA) turns the job permanently red and the only lever npm offers
+        # is lowering the threshold for everything. The gate holds the threshold at
+        # high/critical and requires each exception to carry a reason and an expiry —
+        # see frontend/audit-exceptions.json.
         run: |
           cd frontend
           npm ci --ignore-scripts
-          npm audit --audit-level=high
+          node scripts/audit-gate.mjs
