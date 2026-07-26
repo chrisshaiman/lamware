@@ -35,7 +35,7 @@ podman run --rm -i \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
     -v "$SOCK":/run/litellm.sock:ro \
-    -e LITELLM_API_KEY="{{ litellm_master_key | default('sk-lamware') }}" \
+    -e LITELLM_API_KEY="{{ litellm_master_key | mandatory }}" \
     -e LITELLM_BASE_URL="http://litellm.invalid/anthropic" \
     -e LITELLM_ROUTER_BASE_URL="http://litellm.invalid" \
     -e LITELLM_OPENAI_BASE_URL="http://litellm.invalid/v1" \

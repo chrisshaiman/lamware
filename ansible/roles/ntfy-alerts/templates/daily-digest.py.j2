@@ -45,7 +45,7 @@ DB_CONFIG = {
     "password": "{{ pipeline_db_password | default('') }}",
 }
 
-LITELLM_API_KEY = "{{ litellm_master_key | default('sk-lamware') }}"
+LITELLM_API_KEY = "{{ litellm_master_key | mandatory }}"
 LITELLM_BASE_URL = "http://127.0.0.1:{{ litellm_port | default(4000) }}"
 HAIKU_MODEL = "{{ interpret_summary_model | default('claude-haiku-4-5-20251001') }}"
 

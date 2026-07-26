@@ -8,7 +8,7 @@
 # efficiency metrics. Supplements the basic cost_today/cost_week/cost_total
 # from the stats endpoint with richer operational data.
 
-import os
+import logging
 from collections import defaultdict
 from datetime import UTC, datetime
 
@@ -16,11 +16,11 @@ import httpx
 from fastapi import APIRouter, Depends, Query
 
 from ..auth import AuthContext, require_auth
+from ..config import settings
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/spend", tags=["spend"])
-
-LITELLM_URL = os.environ.get("LITELLM_URL", "http://127.0.0.1:4000")
-LITELLM_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-lamware")
 
 
 @router.get("")
@@ -37,14 +37,20 @@ async def get_spend_summary(
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{LITELLM_URL}/spend/logs",
-                headers={"Authorization": f"Bearer {LITELLM_KEY}"},
+                f"{settings.litellm_url}/spend/logs",
+                headers={"Authorization": f"Bearer {settings.litellm_key}"},
             )
             resp.raise_for_status()
             logs = resp.json()
-    except Exception:
+    except Exception as e:
+        # Log it. Swallowing this bare is how the endpoint reported $0 rather than
+        # "broken" for as long as it read the wrong env vars — a zero here is
+        # indistinguishable from genuinely free local inference, so the failure has to
+        # say so somewhere.
+        log.warning("LiteLLM spend API unreachable at %s: %s: %s",
+                    settings.litellm_url, type(e).__name__, e)
         return {
-            "error": "Could not reach LiteLLM spend API",
+            "error": f"Could not reach LiteLLM spend API: {type(e).__name__}",
             "by_model": [],
             "by_day": [],
             "totals": {
