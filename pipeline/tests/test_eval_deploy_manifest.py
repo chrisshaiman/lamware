@@ -63,3 +63,23 @@ def test_pipeline_manifest_deploys_lamware_eval_and_ab_re():
     tasks = (ROOT / "ansible" / "roles" / "pipeline" / "tasks" / "main.yml").read_text()
     assert "lamware_eval" in tasks
     assert "llm_ab_re.py" in tasks  # runner imports it; must deploy
+
+
+def test_every_lamware_eval_module_is_in_the_deploy_loop():
+    """Cross-copy drift guard: the package directory and the Ansible copy loop are
+    two copies of the same file list on opposite sides of the deploy boundary.
+
+    The loop is enumerated, not a glob, so a new module is silently left behind on
+    the host — the code merges, CI stays green, and the gap only surfaces as an
+    ImportError mid-benchmark. `rebuild.py` shipped in #189 and was missed exactly
+    this way; the previous assertion only checked that the string "lamware_eval"
+    appeared somewhere in the tasks file, which no missing module can falsify.
+    """
+    pkg = ROOT / "ansible" / "roles" / "pipeline" / "files" / "lamware_eval"
+    tasks = (ROOT / "ansible" / "roles" / "pipeline" / "tasks" / "main.yml").read_text()
+
+    missing = [p.name for p in sorted(pkg.glob("*.py"))
+               if f"- {p.name}" not in tasks]
+    assert not missing, (
+        f"lamware_eval modules exist but are never deployed: {missing}. "
+        f"Add them to the copy loop in roles/pipeline/tasks/main.yml.")
