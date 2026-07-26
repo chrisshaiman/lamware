@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from typing import Any
 
 import anthropic
@@ -2398,6 +2399,28 @@ Technical summary: {executive}"""
             emit({
                 "type": "final",
                 "analysis": {"error": f"Claude API error: {e}"},
+                "model_used": current_model,
+                "tool_calls_used": tool_calls_used,
+                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+            })
+            sys.exit(1)
+        except Exception as e:  # noqa: BLE001 - see below; must not die silently
+            # The protocol is this process's ONLY channel to the host. An exception
+            # that escapes here kills the container, the host sees EOF on stdout and
+            # can report nothing beyond "exited without final result" — which is what
+            # happened to the 2026-07-27 qwen@30 probe after 18 good tool calls, with
+            # tool_calls_used reported as 0 because that count rides on this message.
+            #
+            # anthropic.APIError alone is not enough: streaming can surface transport
+            # errors (httpx protocol/read failures) that the SDK does not wrap, and
+            # those are exactly the ones a long generation provokes.
+            #
+            # Report, THEN exit. A named failure with the work done so far is worth
+            # far more than a silent death, especially at ~26 minutes per run.
+            emit({
+                "type": "final",
+                "analysis": {"error": f"Unhandled {type(e).__name__} in agentic loop: {e}",
+                             "traceback": traceback.format_exc()[-2000:]},
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
                 "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
