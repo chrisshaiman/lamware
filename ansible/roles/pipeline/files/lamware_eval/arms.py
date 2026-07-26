@@ -22,6 +22,13 @@ _REGISTRY: dict[str, Arm] = {
     # findings flatten?" is answerable here in a way it never was on a metered model.
     # NB: the cap is approximate — parallel tool calls are counted per-block after
     # increment, so a run can overshoot it.
+    # 30 is the depth-probe target after the two ceilings found on 2026-07-27:
+    # context (fixed by --ctx-size 65536) and then request latency (fixed by
+    # streaming). Both probes died around 20-22 calls WITHOUT producing an analysis,
+    # so no run has yet shown whether cycles beyond ~15 add anything. 30 is chosen to
+    # clear that unknown while still being likely to COMPLETE — an incomplete run
+    # answers nothing, which is the lesson of qwen@75.
+    "qwen@30": Arm("qwen@30", _LOCAL_MODEL, "local", 30),
     "qwen@75": Arm("qwen@75", _LOCAL_MODEL, "local", 75),
     "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
     "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
