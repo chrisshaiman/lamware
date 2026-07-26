@@ -460,6 +460,9 @@
     owner: pipeline
     group: pipeline
     mode: "0640"
+  # NOTE: this list is enumerated, not a glob — a new module added to
+  # files/lamware_eval/ ships only once it appears here. test_eval_deploy_manifest
+  # enforces the two copies stay in sync.
   loop:
     - __init__.py
     - corpus.py
@@ -467,6 +470,7 @@
     - metrics.py
     - scorecard.py
     - runner.py
+    - rebuild.py
     - __main__.py
 
 - name: Seed the eval corpus manifest (force:false so operator-grown corpus is not clobbered)
