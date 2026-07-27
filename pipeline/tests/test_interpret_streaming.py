@@ -72,7 +72,48 @@ def test_client_carries_an_explicit_timeout():
     assert '"timeout": LLM_TIMEOUT_S' in TMPL, (
         "the Anthropic client must set an explicit timeout; the 600s default is what "
         "killed the depth probe")
-    assert "LLM_TIMEOUT_S = 1800.0" in TMPL
+
+
+def _llm_timeout() -> float:
+    m = re.search(r"^LLM_TIMEOUT_S\s*=\s*([0-9.]+)", TMPL, re.MULTILINE)
+    assert m, "LLM_TIMEOUT_S not found"
+    return float(m.group(1))
+
+
+def _container_timeout() -> int:
+    txt = (ROOT / "ansible" / "roles" / "interpret" / "defaults" / "main.yml").read_text()
+    m = re.search(r'^interpret_container_timeout:\s*"?(\d+)"?', txt, re.MULTILINE)
+    assert m, "interpret_container_timeout not found"
+    return int(m.group(1))
+
+
+def test_llm_timeout_exceeds_the_measured_silent_gap():
+    """It must outlast the longest SILENT gap, not the longest request.
+
+    llama-server emits nothing while evaluating a prompt, so the client sees a dead
+    socket for the whole prompt-processing phase — and that phase grows with the
+    transcript. Measured on probe6 (qwen@30, ~50k-token synthesis prompt): still
+    processing at t=1741s with progress 0.73 and ZERO tokens generated, needing ~2500s
+    total. The 1800s from #220 cancelled it at 73%.
+    """
+    assert _llm_timeout() >= 3000, (
+        f"LLM_TIMEOUT_S={_llm_timeout()}s is below the measured ~2500s silent gap for a "
+        f"50k-token prompt; synthesis will be cancelled mid-pass")
+
+
+def test_llm_timeout_stays_under_the_container_reaper():
+    """The container timeout is the designed reaper (test_eval_timeout_ordering).
+
+    Keeping the client timeout below it means a genuine hang surfaces as a Python error
+    with a traceback (#219) instead of an opaque SIGKILL — but it must not be so far
+    below that it fires during legitimate work.
+    """
+    llm, container = _llm_timeout(), _container_timeout()
+    assert llm < container, (
+        f"LLM_TIMEOUT_S={llm}s must stay under interpret_container_timeout={container}s")
+    assert container - llm >= 300, (
+        f"only {container - llm}s between client timeout and container reap; leave "
+        f"enough margin for the error to be emitted and read")
 
 
 def test_no_bare_httpx_client_survives():
