@@ -49,12 +49,22 @@ interpret_container_cpus: "1"
 # ~90s per tool call, so 25 cycles plus PR #180's two-phase synthesis needs
 # roughly 2500-3400s before any variance.
 #
-# 5400s (90min) gives real headroom for deep local runs. Accuracy is worth more
-# than reap latency here. TRADE-OFF: a genuinely hung container now holds a
-# pipeline slot for 90min instead of 40 - production RE is cloud Claude at
-# ~150-220s, so this only bites on a hang, but the sequential auto-feeder would
-# stall that long. Lower it again if that ever bites.
-interpret_container_timeout: "5400"
+# 5400s (90min) was still not enough for a 30-cycle local run, and the reason is
+# that this budget covers the tool loop AND synthesis together. On 2026-07-27 the
+# SAME arm on the SAME sample varied enormously with the strategy the model chose:
+#   - qwen@30 run A: 30 tool calls in 25min (10 decompiles, many cheap reads)
+#   - qwen@30 run B: 30 tool calls in 86min (15 decompiles)
+# Run B then entered synthesis with ~4min of budget left and was SIGKILLed at
+# exactly 5400.5s. Decompiled bodies are ~9KB each and stay in the transcript, so
+# every extra decompile inflates the cost of every later turn - the spread is a
+# property of the workload, not noise to average away.
+#
+# 10800s (3h) sizes for the slow tail plus a real 15-30min synthesis window.
+# TRADE-OFF, unchanged in kind but larger: a genuinely hung container now holds a
+# pipeline slot for 3h. Production RE is cloud Claude at ~150-220s so this only
+# bites the local path, and #219's stderr capture means a hang is now diagnosable
+# rather than silent. Lower it if the sequential auto-feeder ever stalls on it.
+interpret_container_timeout: "10800"
 
 # Install directory
 interpret_install_dir: /opt/interpret
