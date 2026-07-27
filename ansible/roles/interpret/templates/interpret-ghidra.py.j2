@@ -834,6 +834,39 @@ def emit_status(message: str, tool_calls_used: int) -> None:
     emit({"type": "status", "message": message, "tool_calls_used": tool_calls_used})
 
 
+# One budget for every leg of an LLM call. CPU-local inference is slow enough that the
+# defaults of BOTH libraries are too small, and they fail in different places.
+LLM_TIMEOUT_S = 1800.0
+
+
+def _uds_client(uds: str) -> httpx.Client:
+    """httpx client over the LiteLLM Unix socket, with a timeout that fits CPU inference.
+
+    A bare httpx.Client() carries httpx's OWN default timeout, and when the Anthropic SDK
+    is handed a custom http_client THAT client governs the stream read — so setting
+    `timeout=` on the SDK does not reach the part that matters. The 2026-07-27 qwen@30
+    probe died exactly there:
+
+        httpx.ReadTimeout: timed out
+          anthropic/_streaming.py in _iter_events
+          httpx/_models.py in iter_raw
+
+    after 30 successful tool calls, at the synthesis call — the one with the largest
+    prompt of the run. The mechanism is specific to local inference: llama-server sends
+    ZERO bytes for the 300-500s it spends evaluating a 6-14k-token prompt, which to httpx
+    is an idle socket. The tool calls survived only because their prompt-eval gaps were
+    shorter.
+
+    read is the leg that has to be generous — it is the silent gap before the first SSE
+    chunk. connect stays short: a Unix socket either exists or it does not, and a slow
+    connect means the socket is wrong, which should fail fast rather than hang.
+    """
+    return httpx.Client(
+        transport=httpx.HTTPTransport(uds=uds),
+        timeout=httpx.Timeout(LLM_TIMEOUT_S, connect=30.0),
+    )
+
+
 def create_message(cli, **kwargs):
     """Create a message over a STREAMING connection, returning the final Message.
 
@@ -1543,7 +1576,7 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
             base_url.rstrip("/") + "/chat/completions",
             json=payload,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=600.0,
+            timeout=LLM_TIMEOUT_S,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1916,13 +1949,13 @@ def main() -> None:
     # it only stops one long generation from blocking on a single response. CPU-local
     # prompt eval ran at ~29 tok/s in the 2026-07-27 probe, so a large transcript can
     # legitimately need more than 10 minutes of wall time end to end.
-    client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": 1800.0}
+    client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": LLM_TIMEOUT_S}
     if base_url:
         client_kwargs["base_url"] = base_url
     if uds:
         # Reach LiteLLM over a bind-mounted Unix socket so the container can run with
         # --network=none. httpx routes over the socket regardless of base_url's host.
-        client_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
+        client_kwargs["http_client"] = _uds_client(uds)
     client = anthropic.Anthropic(**client_kwargs)
 
     # Summary/plain-english calls route through LiteLLM's /v1/messages ROUTER
@@ -1934,7 +1967,7 @@ def main() -> None:
     if router_base:
         summary_kwargs["base_url"] = router_base
     if uds:
-        summary_kwargs["http_client"] = httpx.Client(transport=httpx.HTTPTransport(uds=uds))
+        summary_kwargs["http_client"] = _uds_client(uds)
     summary_client = anthropic.Anthropic(**summary_kwargs) if router_base else client
 
     # Local RE final synthesis uses LiteLLM's OpenAI /chat/completions endpoint
@@ -1942,7 +1975,10 @@ def main() -> None:
     # enable_thinking:false) so the whole budget produces complete, un-nested
     # structured JSON. httpx routes over the same UDS; base host is cosmetic.
     synth_openai_base = os.environ.get("LITELLM_OPENAI_BASE_URL", "")
-    synth_http = httpx.Client(transport=httpx.HTTPTransport(uds=uds)) if uds else httpx.Client()
+    # Same generous read budget as the agentic client — phase 2b runs on the largest
+    # transcript of the run, so a bare client here fails for the same reason.
+    synth_http = (_uds_client(uds) if uds
+                  else httpx.Client(timeout=httpx.Timeout(LLM_TIMEOUT_S, connect=30.0)))
 
     # ---- Wait for init or summarize message ----
     init_msg = read_message()

@@ -69,9 +69,42 @@ def test_agentic_loop_reports_unhandled_exceptions_instead_of_dying():
 
 def test_client_carries_an_explicit_timeout():
     """Streaming keeps the connection alive but does not raise the 600s SDK default."""
-    assert '"timeout": 1800.0' in TMPL, (
+    assert '"timeout": LLM_TIMEOUT_S' in TMPL, (
         "the Anthropic client must set an explicit timeout; the 600s default is what "
         "killed the depth probe")
+    assert "LLM_TIMEOUT_S = 1800.0" in TMPL
+
+
+def test_no_bare_httpx_client_survives():
+    """A bare httpx.Client() carries httpx's own default timeout, and when the SDK is
+    given a custom http_client THAT client governs the stream read — so `timeout=` on the
+    SDK never reaches it.
+
+    This is what killed the qwen@30 probe after 30 successful tool calls:
+
+        httpx.ReadTimeout: timed out   (anthropic/_streaming.py -> httpx iter_raw)
+
+    llama-server sends zero bytes while evaluating a large prompt, which reads as an idle
+    socket. Every client must therefore carry an explicit timeout.
+    """
+    assert "httpx.Client(transport=httpx.HTTPTransport(uds=uds))" not in TMPL, \
+        "bare UDS client — must go through _uds_client() for the read timeout"
+    # The only bare-looking construction left must carry an explicit Timeout.
+    for match in re.finditer(r"httpx\.Client\(", TMPL):
+        tail = TMPL[match.start():match.start() + 260]
+        assert "timeout" in tail or "transport=httpx.HTTPTransport(uds=uds),\n" in tail, \
+            f"httpx.Client without an explicit timeout: {tail[:120]!r}"
+
+
+def test_read_timeout_is_generous_and_connect_is_not():
+    """read covers the silent prompt-eval gap; connect should fail fast on a bad socket."""
+    assert "httpx.Timeout(LLM_TIMEOUT_S, connect=30.0)" in TMPL
+
+
+def test_synthesis_paths_share_the_same_budget():
+    """Phase 2b runs on the largest transcript, so it cannot keep the old 600s."""
+    assert "timeout=600.0" not in TMPL
+    assert "timeout=LLM_TIMEOUT_S" in TMPL
 
 
 def test_single_shot_paths_are_left_alone():
