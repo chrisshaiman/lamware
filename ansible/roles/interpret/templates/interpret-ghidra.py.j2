@@ -836,7 +836,25 @@ def emit_status(message: str, tool_calls_used: int) -> None:
 
 # One budget for every leg of an LLM call. CPU-local inference is slow enough that the
 # defaults of BOTH libraries are too small, and they fail in different places.
-LLM_TIMEOUT_S = 1800.0
+#
+# This value must exceed the longest SILENT gap, not the longest request. llama-server
+# emits nothing at all while evaluating a prompt, so the client sees a dead socket for
+# the entire prompt-processing phase — and that phase grows with the transcript.
+#
+# Measured 2026-07-27 (probe6, qwen@30, ~50,000-token synthesis prompt):
+#   progress 0.73 at t = 1741s, still processing, ZERO tokens generated
+#   -> full pass needed ~2500s (42 min)
+#   -> the 1800s set in #220 cancelled it at 73% complete
+# Rate decays with position: ~90 tok/s at the head of the pass, ~21 tok/s by 36k tokens.
+#
+# 10200s (170 min) sits just under interpret_container_timeout (10800s), so the CONTAINER
+# stays the reaper — as designed — while a genuine hang still surfaces as a clean Python
+# error with a traceback (#219) roughly 10 minutes before the hard SIGKILL.
+#
+# The real fix is to stop sending the whole transcript to synthesis (phase 2a still gets
+# every message; #187 already did this for phase 2b). That would cut the silent gap from
+# ~42 min to single digits. Until then, this must simply be larger than the gap.
+LLM_TIMEOUT_S = 10200.0
 
 
 def _uds_client(uds: str) -> httpx.Client:
