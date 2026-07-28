@@ -18,6 +18,12 @@ dependencies = [
     "PyJWT[crypto]>=2.9",
     "httpx>=0.27",
     "alembic>=1.13",
+    # Required by routers/samples.py — `@router.post("/submit")` takes Form data, and
+    # FastAPI raises at IMPORT time ("Form data requires python-multipart") without it.
+    # It was undeclared here and absent from CI's install list; nothing noticed because
+    # every api test stubs its imports except test_ws_endpoint.py, which imports the
+    # real app.main — and that file was excluded from CI. Found by un-excluding it (#208).
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

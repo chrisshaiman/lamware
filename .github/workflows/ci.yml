@@ -49,23 +49,35 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Read the dependency list FROM api/pyproject.toml rather than repeating it here.
+      # It used to be hand-typed, and drifted: python-multipart was missing from both
+      # copies, so `import app.main` raised at import time on a clean install. Nothing
+      # caught it because the only test importing the real app.main was excluded from
+      # CI (#208). Installing exactly what the manifest declares makes every run a check
+      # that the manifest is complete.
+      #
+      # The package itself is not `pip install ./api` — its build-backend is
+      # non-standard and a flat layout breaks auto-discovery. ./shared installs
+      # lamware-shared so api tests can import it without a venv.
       - name: Install api dependencies
-        # api/ declares deps in pyproject.toml; install them explicitly (its build-backend is
-        # non-standard and a flat layout breaks `pip install -e .` auto-discovery).
-        # ./shared installs lamware-shared so api tests can import it without a venv.
-        run: >
-          pip install
-          "fastapi>=0.115" "uvicorn[standard]>=0.34" "sqlmodel>=0.0.22"
-          "psycopg2-binary>=2.9" "pydantic-settings>=2.0" "asyncpg>=0.30"
-          "PyJWT[crypto]>=2.9" "httpx>=0.27" "alembic>=1.13" pytest pytest-asyncio
-          ./shared
+        run: |
+          python - <<'PY' > /tmp/api-deps.txt
+          import tomllib
+          with open("api/pyproject.toml", "rb") as fh:
+              print("\n".join(tomllib.load(fh)["project"]["dependencies"]))
+          PY
+          pip install -r /tmp/api-deps.txt pytest pytest-asyncio ./shared
 
       - name: Test (api pytest)
-        # Integration tests skip without LAMWARE_TEST_URL. test_ws_* are excluded: the
-        # exec-with-stubs unit tests leak sys.modules at import time and break their real
-        # imports (tracked in STATUS as a separate rework).
+        # Integration tests skip without LAMWARE_TEST_URL.
+        #
+        # test_ws_* used to be excluded here because the exec-with-stubs unit tests
+        # leaked sys.modules at import time and broke their real imports. The leak is
+        # fixed (tests/_module_stubs.py) rather than worked around, so the WebSocket
+        # endpoint — the weakest auth path in the codebase — now has CI coverage.
+        # test_no_module_stub_leaks.py fails if either the leak or the exclusion returns.
         working-directory: api
-        run: python -m pytest -q --ignore=tests/test_ws_endpoint.py --ignore=tests/test_ws_manager.py
+        run: python -m pytest -q
 
   # ---------------------------------------------------------------------------
   # Packages: shared + pipeline unit tests
