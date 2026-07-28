@@ -1,6 +1,6 @@
 ---
 # local-test.yml — Run testable roles against a local QEMU VM
-# Skips: hardening (done by Packer), wireguard (needs AWS), sqs-agent (needs AWS)
+# Skips: hardening (done by Packer), wireguard (needs real host networking)
 # Cape role runs in local-test mode (skips DSDT/Secrets Manager)
 
 - name: Local test — configure sandbox host

@@ -23,7 +23,6 @@
 #   3. Set ssh_password = "YOUR_CHOSEN_PASSWORD" in packer/packer.auto.pkrvars.hcl
 #
 # Build:
-#   make lambda   # ensure src/*.zip exist (not needed for packer, but good habit)
 #   make image
 #
 # Post-build — upload to S3 for OVH BYOI:
@@ -211,18 +210,11 @@ build {
     ]
   }
 
-  # 5. AWS CLI v2
-  # Used by the sqs-agent systemd service to sync reports to S3
-  provisioner "shell" {
-    inline = [
-      "echo '==> Installing AWS CLI v2...'",
-      "curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip",
-      "unzip -q /tmp/awscliv2.zip -d /tmp",
-      "sudo /tmp/aws/install",
-      "rm -rf /tmp/awscliv2.zip /tmp/aws",
-      "aws --version",
-    ]
-  }
+  # (The AWS CLI v2 install lived here. It existed solely for the sqs-agent service,
+  # which was decommissioned by ADR-016 and deleted in #211 — nothing in the image
+  # calls `aws` any more. Removing it drops an unused ~100MB dependency, and one more
+  # credential-bearing tool, from every guest. Takes effect on the next image build;
+  # already-provisioned hosts still have it until rebuilt.)
 
   # 6. Apply konstruktoid hardening (CIS-aligned baseline)
   # Runs last so all packages are in place before the system is locked down.

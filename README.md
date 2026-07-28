@@ -414,7 +414,7 @@ OVH Bare Metal
 +-- 20 Ansible roles for fully automated deployment
 ```
 
-> **Deployment target:** OVH bare metal is the supported, deployed architecture. The repo also contains a dormant AWS Terraform stack (`aws/`) and Lambda handlers (`src/`) from an earlier design — retained for reference per ADR-016 and slated for removal; they are **not** deployed or maintained.
+> **Deployment target:** OVH bare metal is the supported, deployed architecture. An earlier design used an AWS data plane (API Gateway → S3 → SQS → Lambda); it never worked and was decommissioned by ADR-016, with the code removed in #211. Nothing in this repo deploys to AWS.
 
 <details>
 <summary>Cost estimate</summary>

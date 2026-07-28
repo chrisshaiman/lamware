@@ -8,15 +8,19 @@ Follow in order — each phase depends on the one before it.
 ## Table of Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [AWS Bootstrap](#2-aws-bootstrap)
-3. [AWS Infrastructure](#3-aws-infrastructure)
-4. [Secrets Setup](#4-secrets-setup)
-5. [OVH Bare Metal Provisioning](#5-ovh-bare-metal-provisioning)
-6. [DSDT Capture](#6-dsdt-capture)
-7. [Ansible Configuration](#7-ansible-configuration)
-8. [Packer Guest Image Builds](#8-packer-guest-image-builds)
-9. [Libvirt Snapshots](#9-libvirt-snapshots)
-10. [Smoke Test](#10-smoke-test)
+2. [Secrets Setup](#2-secrets-setup)
+3. [OVH Bare Metal Provisioning](#3-ovh-bare-metal-provisioning)
+4. [DSDT Capture](#4-dsdt-capture)
+5. [Ansible Configuration](#5-ansible-configuration)
+6. [Packer Guest Image Builds](#6-packer-guest-image-builds)
+7. [Libvirt Snapshots](#7-libvirt-snapshots)
+8. [Smoke Test](#8-smoke-test)
+
+> **AWS is not part of this deployment.** An earlier design submitted samples through
+> API Gateway → S3 → SQS to an agent on the bare metal host. That data plane never
+> worked (the Cape API is unreachable without WireGuard) and was decommissioned by
+> ADR-016; the code was removed in #211. If you are following an older copy of this
+> guide, skip anything mentioning Lambda, SQS, or `make lambda`.
 
 ---
 
@@ -26,9 +30,6 @@ Everything that must be in place on your local machine before running any comman
 
 ### Accounts
 
-- **AWS account** — dedicated to this project; do not share with other infrastructure.
-  You need AdministratorAccess (or a policy covering IAM, EC2, S3, RDS, Lambda, SQS,
-  API Gateway, KMS, Secrets Manager, CloudTrail, Budgets, VPC).
 - **OVHcloud US account** — bare metal server already ordered and in your account.
   The Terraform OVH module configures an existing server; it does not purchase one.
 
@@ -52,20 +53,14 @@ ansible --version
 # Packer >= 1.10
 packer --version
 
-# AWS CLI v2
-aws --version
-
 # WireGuard tools (wg genkey, wg pubkey)
 wg --version
 
-# Python 3.11+ (local — for Lambda zip build via `make lambda`)
+# Python 3.12+
 python3 --version
 
 # make
 make --version
-
-# zip (used by `make lambda`)
-zip --version
 
 # OpenSSL (used by `make packer-setup` to hash the build password)
 openssl version
@@ -77,24 +72,6 @@ qemu-system-x86_64 --version
 
 > **Note:** Packer Windows guest builds require QEMU and must run on Linux. Use the bare
 > metal host itself (after Phase 7) or any Linux machine with 8 GB+ RAM and 100 GB+ disk.
-
-### AWS credentials
-
-Configure the AWS CLI with credentials for the sandbox account:
-
-```bash
-aws configure
-# AWS Access Key ID:     <your key>
-# AWS Secret Access Key: <your secret>
-# Default region name:   us-east-1
-# Default output format: json
-
-# Verify:
-aws sts get-caller-identity
-```
-
-If you use named profiles, export `AWS_PROFILE=sandbox` before running any `terraform`
-or `make` command.
 
 ### OVH API credentials
 
@@ -140,126 +117,31 @@ sha256sum /path/to/Win10_22H2_EnterpriseEval.iso
 
 ---
 
-## 2. AWS Bootstrap
+## 2. Secrets Setup
 
-Creates the S3 bucket and DynamoDB table that store Terraform remote state for all
-subsequent AWS deployments. Uses local state for its own state (intended — bootstrap
-is run once and rarely touched again).
-
-```bash
-cd aws/bootstrap
-terraform init
-terraform apply
-```
-
-Terraform will show a plan with two resources: an S3 bucket and a DynamoDB table.
-Review and confirm with `yes`.
-
-After apply, record the outputs:
+Secrets live in `ansible/vars/secrets.yml`, encrypted with Ansible Vault. Non-secret
+tuneables live in `ansible/vars/main.yml`. Both are gitignored and both have a
+committed `.example` to copy from.
 
 ```bash
-terraform output
-# tfstate_bucket_name = "malware-sandbox-tfstate-<account-id>"
-# tfstate_lock_table  = "malware-sandbox-tfstate-lock"
-# aws_region          = "us-east-1"
+cp ansible/vars/main.yml.example    ansible/vars/main.yml
+cp ansible/vars/secrets.yml.example ansible/vars/secrets.yml
+# fill in secrets.yml, then encrypt it:
+ansible-vault encrypt ansible/vars/secrets.yml
 ```
 
-Populate `shared/backend-aws.hcl` automatically:
+`secrets.yml.example` documents each value and how to generate it. At minimum you
+need `cape_api_key`, `anthropic_api_key`, `pipeline_db_password`, `lamware_api_key`,
+and `keycloak_smoke_test_password`; `bazaar_auth_key` is needed only for the
+MalwareBazaar sample feeder.
+
+Every playbook run then takes `--ask-vault-pass` (or `--vault-password-file`):
 
 ```bash
-cd ../..   # back to repo root
-cp shared/backend-aws.hcl.example shared/backend-aws.hcl   # gitignored — copy once
-make configure-backend
+ansible-playbook site.yml -i inventory/hosts --ask-vault-pass
 ```
 
-Verify `shared/backend-aws.hcl` now contains the real bucket name (no placeholder):
-
-```bash
-cat shared/backend-aws.hcl
-```
-
----
-
-## 3. AWS Infrastructure
-
-Provisions VPC, S3, RDS, SQS, Lambda, API Gateway, KMS, Secrets Manager, CloudTrail,
-and budget alerts. All AWS resources are created in a single `terraform apply`.
-
-### 3a. Build Lambda ZIPs
-
-The Terraform Lambda module references ZIP files that must exist before `plan` or `apply`.
-Build them first:
-
-```bash
-make lambda
-# Produces: src/report_processor.zip  src/sample_submitter.zip
-```
-
-### 3b. Configure prod tfvars
-
-```bash
-cd aws/envs/prod
-cp terraform.tfvars.example terraform.tfvars
-```
-
-Edit `terraform.tfvars`. Required fields:
-
-```hcl
-aws_region  = "us-east-1"
-name_prefix = "malware-sandbox"
-
-# S3 bucket names must be globally unique. Include your AWS account ID.
-samples_bucket_name = "malware-sandbox-samples-<your-account-id>"
-reports_bucket_name = "malware-sandbox-reports-<your-account-id>"
-
-# Budget alert — at least one email address
-budget_alert_emails = ["you@example.com"]
-
-# Lambda ZIP paths (relative to aws/envs/prod/ — built by make lambda)
-report_processor_zip = "../../src/report_processor.zip"
-sample_submitter_zip = "../../src/sample_submitter.zip"
-```
-
-Get your AWS account ID if you don't know it:
-
-```bash
-aws sts get-caller-identity --query Account --output text
-```
-
-### 3c. Init, plan, apply
-
-```bash
-terraform init -backend-config=../../shared/backend-aws.hcl
-terraform plan -out=tfplan
-# Review the plan — expect ~50-60 resources
-terraform apply tfplan
-```
-
-### 3d. Record outputs
-
-After apply, capture the ARNs you'll need for later phases:
-
-```bash
-terraform output
-```
-
-Record these values — you'll need them in Phase 4 and Phase 7:
-
-| Output | Where used |
-|--------|-----------|
-| `baremetal_agent_secret_arn` | `ansible/vars/main.yml` → `secret_arn_baremetal` |
-| `cape_api_secret_arn` | `ansible/vars/main.yml` → `secret_arn_cape` |
-| `dsdt_secret_arn` | Reference only — updated in Phase 6 |
-| `api_endpoint` | Note for sample submission clients |
-
----
-
-## 4. Secrets Setup
-
-Three Secrets Manager secrets are created by Terraform with placeholder values.
-You must populate them with real values before Ansible can run.
-
-### 4a. WireGuard keys
+### 2a. WireGuard keys
 
 Generate your laptop's WireGuard keypair:
 
@@ -276,60 +158,45 @@ is printed as a debug message — copy it into your laptop's WireGuard config.
 
 Back up `~/wg-private.key` to your password manager (e.g., LastPass Secure Note).
 
-### 4b. Cape API key
+### 2b. Cape API key
 
-Generate a random API key and update the Cape secret. The DSDT string is added later
-(Phase 6) because it requires the physical hardware to be running.
-
-```bash
-CAPE_API_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-echo "Cape API key: $CAPE_API_KEY"   # save this somewhere safe
-
-aws secretsmanager put-secret-value \
-  --secret-id "<cape_api_secret_arn>" \
-  --secret-string "{
-    \"api_key\":     \"$CAPE_API_KEY\",
-    \"dsdt_string\": \"PLACEHOLDER — update after Phase 6\"
-  }"
-```
-
-### 4c. Update ansible/vars/main.yml
-
-`ansible/vars/main.yml` is gitignored — copy the example first:
+Generate the Cape API key into the vault file:
 
 ```bash
-cp ansible/vars/main.yml.example ansible/vars/main.yml
+python3 -c "import secrets; print(secrets.token_hex(32))"
+# paste into cape_api_key in ansible/vars/secrets.yml
 ```
 
-Fill in the three ARNs you recorded in Phase 3:
+> The DSDT string used to be a manual step here. It is now captured automatically
+> from host firmware by the Cape Ansible role — see Phase 4.
+
+### 2c. Update ansible/vars/main.yml
+
+Fill in the host-specific values:
 
 ```yaml
 # ansible/vars/main.yml
-secret_arn_baremetal:  "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
-secret_arn_cape:      "arn:aws:secretsmanager:us-east-1:<account-id>:secret:..."
+public_ip:             "<the OVH server's public IP>"
+lamware_domain:        "lamware.example.com"
 wireguard_peer_pubkey: "<contents of ~/wg-public.key>"
 ```
 
-Also fill in the S3 bucket names:
-
-```yaml
-s3_bucket_samples: "malware-sandbox-samples-<account-id>"
-s3_bucket_reports: "malware-sandbox-reports-<account-id>"
-```
+`site.yml` asserts the required variables are populated before doing any work, so a
+missing value fails the run immediately rather than midway through.
 
 ---
 
-## 5. OVH Bare Metal Provisioning
+## 3. OVH Bare Metal Provisioning
 
 Registers your SSH key with OVH, applies the robot firewall (before OS install),
 and installs Ubuntu 24.04.
 
-### 5a. Find your server name
+### 3a. Find your server name
 
 In the OVH Manager: Bare Metal Cloud → Dedicated Servers → your server →
 General Information. The service name looks like `ns123456.ip-1-2-3.eu`.
 
-### 5b. Configure OVH tfvars
+### 3b. Configure OVH tfvars
 
 ```bash
 cd ovh
@@ -353,7 +220,7 @@ ssh_public_key = "ssh-ed25519 AAAA..."    # contents of ~/.ssh/sandbox_ed25519.p
 > allowed only from these CIDRs. Set it to your actual static IP before applying.
 > If you get locked out, you can recover via the OVH KVM console in the Manager.
 
-### 5c. Apply
+### 3c. Apply
 
 ```bash
 cd ovh
@@ -383,7 +250,7 @@ ansible_python_interpreter=/usr/bin/python3
 
 ---
 
-## 6. DSDT Capture
+## 4. DSDT Capture
 
 The DSDT string is a hardware-specific ACPI table hex dump used by CAPEv2 to patch
 QEMU and defeat VM fingerprinting by malware. It can only be captured from the physical
@@ -409,44 +276,27 @@ The `dsdt_string` value used by CAPEv2's `kvm-qemu.sh` is the full hex string fr
 xxd -p dsdt.dat | tr -d '\n'
 ```
 
-Update the Cape secret with the real DSDT string (replace the placeholder from Phase 4):
-
-```bash
-# From your local machine
-DSDT_STRING="<output of xxd -p dsdt.dat | tr -d '\n'>"
-CAPE_API_KEY="<the key you generated in Phase 4>"
-
-aws secretsmanager put-secret-value \
-  --secret-id "<cape_api_secret_arn>" \
-  --secret-string "{
-    \"api_key\":     \"$CAPE_API_KEY\",
-    \"dsdt_string\": \"$DSDT_STRING\"
-  }"
-```
-
-Similarly update the DSDT secret (used as a reference; the Cape secret is what Ansible reads):
-
-```bash
-aws secretsmanager put-secret-value \
-  --secret-id "<dsdt_secret_arn>" \
-  --secret-string "{\"dsdt_string\": \"$DSDT_STRING\"}"
-```
+> **This phase is informational.** The Cape Ansible role captures the DSDT string
+> directly from host firmware at run time, so there is no manual step and nothing to
+> paste into a secret. The commands above are kept because reading the DSDT by hand is
+> useful when debugging a guest that detects virtualisation — not because the
+> deployment needs them.
 
 ---
 
-## 7. Ansible Configuration
+## 5. Ansible Configuration
 
-Configures the bare metal host: KVM/libvirt, CAPEv2, INetSim, WireGuard, and the
-SQS polling agent. Ansible reads secrets from Secrets Manager at run time — no secrets
-are stored in the repo.
+Configures the bare metal host: KVM/libvirt, CAPEv2, INetSim, WireGuard, Postgres,
+the analysis pipeline, the API, and the dashboard. Secrets come from the Ansible Vault
+file created in Phase 2 — no plaintext secrets are stored in the repo.
 
-### 7a. Install Galaxy requirements
+### 5a. Install Galaxy requirements
 
 ```bash
 ansible-galaxy install -r ansible/requirements.yml --force-with-deps
 ```
 
-### 7b. Run the playbook
+### 5b. Run the playbook
 
 ```bash
 make configure
@@ -459,7 +309,7 @@ Expected runtime: **45–90 minutes**. The `kvm-qemu.sh` step (building a DSDT-p
 QEMU binary from source) takes 30–60 minutes and is guarded by a stamp file —
 it only runs once and is skipped on re-runs.
 
-### 7c. Verify services
+### 5c. Verify services
 
 SSH into the host and confirm all services are running:
 
@@ -471,12 +321,18 @@ systemctl status cape-web
 systemctl status cape-processor
 systemctl status inetsim
 systemctl status wg-quick@wg0
-systemctl status sqs-agent
+systemctl status lamware-api
+systemctl status nginx
+systemctl status keycloak
+
+# The pipeline is triggered by a path unit watching the spool directory, so
+# pipeline-spool.service resting at inactive/dead is CORRECT — check the .path:
+systemctl status pipeline-spool.path
 ```
 
 All should show `active (running)`.
 
-### 7d. Configure WireGuard on your laptop
+### 5d. Configure WireGuard on your laptop
 
 Create your local WireGuard config using the keys from Phase 4a:
 
@@ -502,7 +358,7 @@ The Cape web UI is accessible at `http://10.200.0.1:8000` once the tunnel is up.
 
 ---
 
-## 8. Packer Guest Image Builds
+## 6. Packer Guest Image Builds
 
 Builds two Windows 10 guest images:
 - `windows10-guest.qcow2` — base image with Python and cape-agent (the `clean` snapshot)
@@ -515,7 +371,7 @@ Builds two Windows 10 guest images:
   disk available in the WSL2 volume. Install QEMU first:
   `sudo apt-get install -y qemu-system-x86 qemu-utils`
 
-### 8a. One-time Packer setup
+### 6a. One-time Packer setup
 
 Run this once to generate the build password hash and install the Ansible hardening role
 used during the Ubuntu base image build:
@@ -531,7 +387,7 @@ make packer-setup
 
 Follow the printed instructions exactly.
 
-### 8b. Populate packer.auto.pkrvars.hcl
+### 6b. Populate packer.auto.pkrvars.hcl
 
 Create `packer/packer.auto.pkrvars.hcl` (gitignored):
 
@@ -558,7 +414,7 @@ libreoffice_version  = "24.8.4"    # or current stable
 libreoffice_checksum = "<sha256>"
 ```
 
-### 8c. Build the base (Ubuntu) image
+### 6c. Build the base (Ubuntu) image
 
 The Ubuntu sandbox image is built separately and is used as the host base image for OVH
 BYOI (Bring Your Own Image) if needed. Skip if you used the OVH standard Ubuntu 24.04
@@ -568,7 +424,7 @@ template in Phase 5.
 make image
 ```
 
-### 8d. Build Windows guest images
+### 6d. Build Windows guest images
 
 Build both Windows images. These are large builds — expect 2–3 hours total.
 
@@ -584,7 +440,7 @@ packer build -var-file=packer.auto.pkrvars.hcl windows10-office.pkr.hcl
 
 Output files: `packer/output/windows10-guest.qcow2` and `packer/output/windows10-office.qcow2`.
 
-### 8e. Copy images to the bare metal host
+### 6e. Copy images to the bare metal host
 
 ```bash
 scp -i ~/.ssh/sandbox_ed25519 \
@@ -596,7 +452,7 @@ scp -i ~/.ssh/sandbox_ed25519 \
   root@<server-ip>:/var/lib/libvirt/images/
 ```
 
-### 8f. Re-run Ansible to define libvirt domains
+### 6f. Re-run Ansible to define libvirt domains
 
 Now that the images are on the host, re-run Ansible to define the libvirt domains
 (Ansible skips already-completed steps via stamp files):
@@ -607,7 +463,7 @@ make configure
 
 ---
 
-## 9. Libvirt Snapshots
+## 7. Libvirt Snapshots
 
 Cape restores from a known-good snapshot before each analysis run. You must take these
 snapshots manually after verifying the guest images are working.
@@ -663,55 +519,54 @@ virsh snapshot-list office
 
 ---
 
-## 10. Smoke Test
+## 8. Smoke Test
 
 Verify the full pipeline before treating the system as operational.
 
-### 10a. Get the API endpoint
+Samples are submitted **on the host**, not through a cloud API. Connect WireGuard first —
+nothing below is reachable without the tunnel.
+
+### 8a. Post-deploy smoke gate
+
+The Playwright gate exercises the live site end to end (auth, navigation, token
+audience). It needs `keycloak_smoke_test_password` set in the vault.
 
 ```bash
-cd aws/envs/prod
-terraform output api_endpoint
-# e.g. https://abc123.execute-api.us-east-1.amazonaws.com
+make smoke
 ```
 
-### 10b. Submit a test sample
+### 8b. Submit a test sample
 
-Use the EICAR test file — universally recognised by AV engines, completely harmless:
-
-```bash
-# Create the EICAR test file
-echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.com
-
-# Submit via the API (requires an AWS credentials with the submitter IAM policy attached)
-# The API returns a pre-signed S3 upload URL + job ID
-curl -X POST "<api_endpoint>/submit" \
-  -H "Content-Type: application/json" \
-  -d '{"filename": "eicar.com", "tags": []}' \
-  --aws-sigv4 "aws:amz:us-east-1:execute-api" \
-  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
-```
-
-### 10c. Monitor the job
+EICAR is universally recognised by AV engines and completely harmless:
 
 ```bash
-# Watch sqs-agent pick up the job (on the bare metal host via WireGuard)
 ssh -i ~/.ssh/sandbox_ed25519 root@<server-ip>
-journalctl -u sqs-agent -f
+
+printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
+  > /tmp/eicar.com
+
+set -a; . /opt/pipeline/pipeline.env; set +a
+/opt/pipeline/venv/bin/python -u /opt/pipeline/run-pipeline.py \
+  /tmp/eicar.com --task-id smoke-eicar --filename eicar.com
 ```
 
-### 10d. Verify report in S3
+### 8c. Watch it run
+
+The command above runs the pipeline in the foreground, so it logs to your terminal.
+For samples dropped into the spool directory instead, follow the unit:
 
 ```bash
-aws s3 ls s3://<reports_bucket_name>/reports/ --recursive
+journalctl -u pipeline-spool -f
 ```
 
-### 10e. Check Cape web UI
+### 8d. Verify the results landed
 
-With WireGuard connected, open `http://10.200.0.1:8000` in a browser.
-The analysis should appear in the Recent Analyses list.
+With WireGuard connected:
 
-If all five checks pass, the sandbox is operational.
+- Cape web UI — `http://10.200.0.1:8000`, analysis appears under Recent Analyses
+- lamware dashboard — `https://<lamware_domain>`, the sample appears with its report
+
+If the gate passes and the sample completes end to end, the sandbox is operational.
 
 ---
 
@@ -742,12 +597,13 @@ journalctl -u cape-web -n 50
 # Check stamp file: ls -la /opt/.cape-kvm-qemu-installed
 ```
 
-### SQS agent not picking up jobs
+### Pipeline not picking up spooled samples
 
 ```bash
-journalctl -u sqs-agent -n 50
-# Check AWS credentials: the agent assumes a role via sts:AssumeRole
-# Verify secret_arn_baremetal in ansible/vars/main.yml is correct
+systemctl status pipeline-spool.path    # the .path unit is what watches the spool
+journalctl -u pipeline-spool -n 50
+# pipeline-spool.service sitting at inactive/dead is normal — it is path-triggered.
+# CAPE_API_KEY comes from /opt/pipeline/pipeline.env, not the ambient environment.
 ```
 
 ### Packer build fails on WinRM timeout
@@ -761,12 +617,10 @@ increase `communicator_timeout` in the pkr.hcl file. Default is 45m.
 
 | Change | What to re-run |
 |--------|---------------|
-| Ansible role change | `make configure` |
-| Terraform AWS change | `make infra-aws` |
+| Ansible role change | `make configure`, or `make deploy TAGS=<role>` for one role |
 | Terraform OVH change | `make infra-ovh` |
 | Windows guest image change | Packer build + SCP + `make configure` + re-snapshot |
-| Lambda code change | `make lambda && make infra-aws` |
-| Secret rotation | `aws secretsmanager put-secret-value ...` + `make configure` |
+| Secret rotation | `ansible-vault edit ansible/vars/secrets.yml` + `make configure` |
 
 ---
 

@@ -60,7 +60,9 @@ NVMe storage provides fast VM snapshot creation and restore.
 
 ### S3 storage classes (if S3 archival is deployed)
 Reports older than 90 days can transition to S3 Glacier Instant Retrieval (~$0.004/GB)
-vs Standard (~$0.023/GB). Lifecycle rules are already scaffolded in `aws/modules/s3/`.
+vs Standard (~$0.023/GB). The `aws/modules/s3/` scaffolding that used to hold these
+lifecycle rules was deleted with the rest of the decommissioned stack (#211); recover it
+from git history at `6ce668c` if S3 archival is ever revived.
 
 ### OVH KS-5 alternative
 KS-5 (Xeon E3-1270 v6, 4c/8t, 32GB, 2x450GB NVMe) at ~$20/month in Vint Hill VA
