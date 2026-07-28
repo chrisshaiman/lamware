@@ -45,6 +45,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "escalation_model": "{{ interpret_escalation_model }}",
     "max_output_tokens": {{ interpret_max_output_tokens }},
     "max_tool_calls": {{ interpret_max_tool_calls }},
+    # Bounds how many tool calls are EXECUTED per model turn. `max_tool_calls` caps the
+    # run total but never the per-turn batch, so the model could emit ~6 parallel
+    # decompiles in one response and add ~59,000 chars (~14,800 tokens) to the context in
+    # a single turn. Because prompt-eval cost also rises with context (66 -> 8.6 tok/s
+    # from 0-10k to 50-60k), unbounded batching makes deep runs quadratic: one turn was
+    # measured at 55 minutes. Deferring the surplus keeps every decompile the model asked
+    # for — it just arrives across more turns instead of all at once. See #234.
+    "max_tool_calls_per_turn": {{ interpret_max_tool_calls_per_turn }},
     "max_imports": {{ interpret_max_imports }},
     "max_strings": {{ interpret_max_strings }},
     "max_string_length": {{ interpret_max_string_length }},
@@ -2055,6 +2063,12 @@ Technical summary: {executive}"""
     escalation_model = config["escalation_model"]
     max_output_tokens = config["max_output_tokens"]
     max_tool_calls = config["max_tool_calls"]
+    # .get() with a default so a config.json written before #234 still loads — the eval
+    # harness passes whole config dicts through and an older one would KeyError here.
+    max_tool_calls_per_turn = int(
+        config.get("max_tool_calls_per_turn")
+        or DEFAULT_CONFIG["max_tool_calls_per_turn"]
+    )
 
     # Single-shot backend selection: route .NET/Go/PowerShell through the LiteLLM
     # /v1/messages router (-> local Ollama) when asked; default stays the /anthropic
@@ -2347,6 +2361,7 @@ Technical summary: {executive}"""
     ]
 
     tool_calls_used = 0
+    deferred = 0          # tool calls postponed by the per-turn batch limit (#234)
     current_model = model
     total_input_tokens = 0
     total_output_tokens = 0
@@ -2521,8 +2536,37 @@ Technical summary: {executive}"""
 
             # Process each tool call — request from orchestrator and collect results
             tool_results_content: list[dict[str, Any]] = []
+            calls_this_turn = 0
 
             for block in tool_use_blocks:
+                # ---- Per-turn batch limit (#234) ----
+                # EVERY tool_use block must receive a tool_result or the next request is
+                # malformed, so surplus calls are DEFERRED rather than dropped: the model
+                # is told to ask again next turn. Deliberately not counted against
+                # tool_calls_used — nothing was executed, and charging for a deferral
+                # would silently shrink the run's real depth.
+                if calls_this_turn >= max_tool_calls_per_turn:
+                    deferred += 1
+                    emit_status(
+                        f"Deferred {block.name} — {max_tool_calls_per_turn}/turn limit "
+                        f"({deferred} deferred so far)",
+                        tool_calls_used,
+                    )
+                    tool_results_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps({
+                            "deferred": True,
+                            "reason": (
+                                f"Only {max_tool_calls_per_turn} tool calls run per turn. "
+                                f"This call was NOT executed and nothing was lost — "
+                                f"request it again in your next message and it will run."
+                            ),
+                        }),
+                    })
+                    continue
+
+                calls_this_turn += 1
                 tool_calls_used += 1
 
                 # Check if we've hit the limit

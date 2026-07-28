@@ -161,6 +161,7 @@ _SUBS = {
     "interpret_escalation_model": "claude-opus-5",
     "interpret_max_output_tokens": "16384",
     "interpret_max_tool_calls": "10",
+    "interpret_max_tool_calls_per_turn": "3",
     "interpret_max_imports": "100",
     "interpret_max_strings": "150",
     "interpret_max_string_length": "200",
