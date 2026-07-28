@@ -262,6 +262,17 @@ validate:
 	@echo "==> Validating OVH Terraform..."
 	@cd $(OVH_DIR) && terraform init -backend=false && terraform validate
 	@echo "==> Validating Ansible..."
+	@# Without a password file, VAULT_ARGS is --ask-vault-pass, which BLOCKS FOREVER
+	@# when nothing can answer the prompt (CI, cron, a script, a piped shell). A target
+	@# that hangs is worse than one that fails: the caller gets no output and no exit
+	@# code, and eventually kills it without learning why. Fail fast with the fix instead.
+	@if [ ! -f "$(VAULT_PASS_FILE)" ] && [ ! -t 0 ]; then \
+		echo "ERROR: no vault password available and stdin is not a TTY."; \
+		echo "       ansible-playbook would block on --ask-vault-pass indefinitely."; \
+		echo "       Fix: create $(VAULT_PASS_FILE), or run"; \
+		echo "         make validate VAULT_ARGS=\"--vault-password-file /path/to/pass\""; \
+		exit 1; \
+	fi
 	@cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check $(VAULT_ARGS) -i inventory/hosts site.yml
 	@echo "==> All validation passed."
 
