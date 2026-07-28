@@ -24,9 +24,19 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests._module_stubs import restore, snapshot
+
 # ---------------------------------------------------------------------------
 # Stub external dependencies before loading orchestrator.py
 # ---------------------------------------------------------------------------
+
+# Restored once orchestrator.py has been exec'd — a leaked stub is visible to every
+# test module pytest collects afterwards. See _module_stubs.py.
+_STUBBED_NAMES = (
+    "sqlalchemy", "sqlmodel", "httpx", "app", "app.config", "app.database",
+    "app.investigate", "app.investigate.tools",
+)
+_SAVED_MODULES = snapshot(_STUBBED_NAMES)
 
 # sqlalchemy stub — force-assigned so this file's exec always sees the right
 # stub regardless of collection order.
@@ -142,6 +152,10 @@ ToolCallAccumulator = _ns["ToolCallAccumulator"]
 MODEL_COSTS = _ns["MODEL_COSTS"]
 _build_openai_tools = _ns["_build_openai_tools"]
 run_conversation_turn = _ns["run_conversation_turn"]
+
+# The tests below reach the stubs through `_ns` (e.g. `_ns["httpx"].AsyncClient`),
+# not through sys.modules, so restoring here does not disturb them.
+restore(_SAVED_MODULES)
 
 
 # ---------------------------------------------------------------------------

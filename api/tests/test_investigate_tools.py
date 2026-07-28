@@ -20,9 +20,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._module_stubs import restore, snapshot
+
 # ---------------------------------------------------------------------------
 # Stub external dependencies before loading tools.py
 # ---------------------------------------------------------------------------
+
+# Restored once tools.py has been exec'd — a leaked stub is visible to every test
+# module pytest collects afterwards. See _module_stubs.py.
+_STUBBED_NAMES = ("sqlalchemy", "sqlmodel", "app", "app.config")
+_SAVED_MODULES = snapshot(_STUBBED_NAMES)
 
 # sqlalchemy stub — force-assigned so this file's exec always sees it,
 # regardless of collection order.
@@ -108,6 +115,8 @@ execute_tool = _ns["execute_tool"]
 _GHIDRA_TOOLS = _ns["_GHIDRA_TOOLS"]
 GHIDRA_ARG_VALIDATORS = _tv_ns["GHIDRA_ARG_VALIDATORS"]
 _ns_ghidra_tool_orig = _ns["_ghidra_tool"]
+
+restore(_SAVED_MODULES)
 
 
 # ---------------------------------------------------------------------------

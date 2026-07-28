@@ -61,11 +61,15 @@ jobs:
           ./shared
 
       - name: Test (api pytest)
-        # Integration tests skip without LAMWARE_TEST_URL. test_ws_* are excluded: the
-        # exec-with-stubs unit tests leak sys.modules at import time and break their real
-        # imports (tracked in STATUS as a separate rework).
+        # Integration tests skip without LAMWARE_TEST_URL.
+        #
+        # test_ws_* used to be excluded here because the exec-with-stubs unit tests
+        # leaked sys.modules at import time and broke their real imports. The leak is
+        # fixed (tests/_module_stubs.py) rather than worked around, so the WebSocket
+        # endpoint — the weakest auth path in the codebase — now has CI coverage.
+        # test_no_module_stub_leaks.py fails if either the leak or the exclusion returns.
         working-directory: api
-        run: python -m pytest -q --ignore=tests/test_ws_endpoint.py --ignore=tests/test_ws_manager.py
+        run: python -m pytest -q
 
   # ---------------------------------------------------------------------------
   # Packages: shared + pipeline unit tests

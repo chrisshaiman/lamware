@@ -52,9 +52,24 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._module_stubs import restore, snapshot
+
 # ---------------------------------------------------------------------------
 # Stub every external dependency the router imports before loading it
 # ---------------------------------------------------------------------------
+
+# Everything this file force-assigns into sys.modules. Snapshotted here and
+# restored once the router has been exec'd — without that, these stubs stay
+# visible to every test module pytest collects afterwards, which is what got
+# test_ws_endpoint/test_ws_manager excluded from CI. See _module_stubs.py.
+_STUBBED_NAMES = (
+    "sqlalchemy", "sqlmodel", "fastapi", "fastapi.responses",
+    "app", "app.config", "app.auth", "app.audit", "app.database",
+    "app.investigate", "app.investigate.orchestrator",
+    "app.investigate.system_prompt",
+    "app.models", "app.models.investigation", "app.routers",
+)
+_SAVED_MODULES = snapshot(_STUBBED_NAMES)
 
 # sqlalchemy — force-assigned so router.py's exec always sees this stub
 # regardless of which file collected first.
@@ -192,6 +207,10 @@ VALID_MODELS = _ns["VALID_MODELS"]
 _validate_pin_body = _ns["_validate_pin_body"]
 _build_report_markdown = _ns["_build_report_markdown"]
 _get_owned_session = _ns["_get_owned_session"]
+
+# The exec'd namespace holds its own references to the stubs, so the tests below
+# keep working. Everything collected AFTER this file now sees the real packages.
+restore(_SAVED_MODULES)
 
 
 # ---------------------------------------------------------------------------

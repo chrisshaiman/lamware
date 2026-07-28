@@ -13,9 +13,16 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests._module_stubs import restore, snapshot
+
 # ---------------------------------------------------------------------------
 # Stub external dependencies before loading system_prompt.py
 # ---------------------------------------------------------------------------
+
+# Restored once system_prompt.py has been exec'd — a leaked stub is visible to
+# every test module pytest collects afterwards. See _module_stubs.py.
+_STUBBED_NAMES = ("sqlalchemy", "sqlmodel", "app", "app.config")
+_SAVED_MODULES = snapshot(_STUBBED_NAMES)
 
 _sa = types.ModuleType("sqlalchemy")
 _sa.text = lambda sql: _FakeTextClause(sql)  # type: ignore[attr-defined]
@@ -85,6 +92,8 @@ _BASE_PROMPT = _ns["_BASE_PROMPT"]
 build_system_prompt = _ns["build_system_prompt"]
 _build_context_block = _ns["_build_context_block"]
 _sanitize_untrusted = _ns["_sanitize_untrusted"]
+
+restore(_SAVED_MODULES)
 
 
 # ---------------------------------------------------------------------------
