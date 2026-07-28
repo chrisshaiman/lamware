@@ -15,7 +15,10 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     for arm, s in summary.items():
         lines.append(f"| {arm} | " + " | ".join(str(s[c]) for c in cols) + " |")
     lines.append("\n## Per sample × arm\n")
-    cell_cols = ["arm", "sample", "family_guess", "mb_family", "claude_family",
+    # `seed` sits next to `arm` because a local cell without one is not
+    # reproducible, and that has to be visible on the same row as its score
+    # rather than inferred from the arm name.
+    cell_cols = ["arm", "seed", "sample", "family_guess", "mb_family", "claude_family",
                  "grounded", "total", "fabricated", "completed", "tool_calls_used",
                  "tool_call_error_rate", "wall_seconds", "cost_usd", "error"]
     lines.append("| " + " | ".join(cell_cols) + " |")

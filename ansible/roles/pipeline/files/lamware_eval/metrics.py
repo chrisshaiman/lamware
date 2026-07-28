@@ -10,10 +10,21 @@ from lamware_eval.corpus import CorpusSample
 
 def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_text: str,
                  claude_family: str | None, wall_seconds: float, cost_usd: float,
-                 tool_metrics: dict, error: str | None) -> dict:
+                 tool_metrics: dict, error: str | None,
+                 seed: int | None = None, sampling: dict | None = None) -> dict:
+    """Compose one scorecard cell.
+
+    `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
+    reproducible). `sampling` is what the inference server reported it actually
+    applied. Both are recorded per cell rather than once per sweep because the
+    server can be restarted mid-sweep, and a result whose sampling config is only
+    known by recollection is not a result anyone can reproduce.
+    """
     g = grounding_scorecard(analysis or {}, source_text)
     return {
         "arm": arm_name,
+        "seed": seed,
+        "sampling": sampling,
         "sample": sample.sha256[:12],
         "family_guess": (analysis or {}).get("malware_family_guess"),
         "mb_family": sample.mb_family,

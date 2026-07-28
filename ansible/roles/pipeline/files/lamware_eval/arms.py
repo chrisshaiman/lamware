@@ -5,6 +5,17 @@ from dataclasses import dataclass
 
 _LOCAL_MODEL = "local-qwen-llamacpp-re"
 
+# Seeds exposed as pinned LiteLLM model aliases (`local-qwen-llamacpp-re-s<seed>`).
+#
+# MUST match litellm_llamacpp_seeds in ansible/roles/litellm/defaults/main.yml —
+# an arm naming a seed with no alias behind it fails at request time with a model
+# -not-found, hours into a run. test_eval_seed_arms.py enforces the two stay in sync.
+#
+# These values are arbitrary and exist to be REPORTED, not tuned. Running N seeds
+# and keeping the best-scoring one is selection on noise: it inflates the metric and
+# is the single sentence that would discredit a published result. See issue #222.
+SEEDS: tuple[int, ...] = (42, 1337, 8675309)
+
 
 @dataclass
 class Arm:
@@ -12,6 +23,7 @@ class Arm:
     model: str
     re_backend: str | None  # "local" routes via the LiteLLM router; None = cloud passthrough
     max_tool_calls: int
+    seed: int | None = None  # None = server default; unpinned, so runs are not reproducible
 
 
 _REGISTRY: dict[str, Arm] = {
@@ -33,6 +45,28 @@ _REGISTRY: dict[str, Arm] = {
     "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
     "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
 }
+
+# Seed-pinned variants of every local arm: `qwen@30:s42` routes to the
+# `local-qwen-llamacpp-re-s42` LiteLLM alias. Registered for all local arms rather
+# than a chosen few so a seeded run is always available at whatever depth is under
+# test — the depth question and the variance question are independent.
+#
+# Two uses:
+#   PAIRED COMPARISON — same seeds across arms, so shared sampling variance cancels
+#     and a smaller effect is detectable at the same n. Worth roughly 3 paired runs
+#     to 6-8 unpaired ones. It does NOT reduce the number of runs needed: a fixed
+#     seed is one sample from a distribution, repeatable but not representative.
+#   CONSENSUS — run N seeds, keep claims appearing in >= k of them.
+def _register_seed_variants(registry: dict[str, Arm]) -> None:
+    for base in [a for a in list(registry.values()) if a.re_backend == "local"]:
+        for seed in SEEDS:
+            name = f"{base.name}:s{seed}"
+            registry[name] = Arm(
+                name, f"{_LOCAL_MODEL}-s{seed}", "local", base.max_tool_calls, seed=seed
+            )
+
+
+_register_seed_variants(_REGISTRY)
 
 
 def resolve_arm(name: str) -> Arm:

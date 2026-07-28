@@ -1,0 +1,137 @@
+---
+# =============================================================================
+# roles/llama-cpp/tasks/main.yml
+# Brings the llama.cpp inference server under configuration management. It ran
+# for months as an ad-hoc `podman run` out of /opt/llamacpp-spike with no unit
+# and no restart policy, which made the sampling config unchangeable-in-code and
+# the service unable to survive a reboot.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create llama.cpp dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"        # container reads the models dir as a non-root uid
+  loop:
+    - "{{ llamacpp_install_dir }}"
+    - "{{ llamacpp_models_dir }}"
+
+# One-time migration off the spike directory. Same filesystem, so this is a
+# rename of ~23GB, not a copy. Safe to re-run: `creates` makes it a no-op once
+# the file is in place.
+- name: Migrate GGUFs off the spike directory (one-time, same-fs rename)
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "{{ llamacpp_legacy_models_dir }}/{{ item }}"
+      - "{{ llamacpp_models_dir }}/{{ item }}"
+    creates: "{{ llamacpp_models_dir }}/{{ item }}"
+    removes: "{{ llamacpp_legacy_models_dir }}/{{ item }}"
+  loop:
+    - "{{ llamacpp_model_file }}"
+    - "{{ llamacpp_mmproj_file }}"
+
+# Fail here rather than starting a server that will never answer. The GGUFs are
+# fetched out of band (~23GB); this role does not download them.
+- name: Assert the model files are present
+  ansible.builtin.stat:
+    path: "{{ llamacpp_models_dir }}/{{ item }}"
+  register: _llamacpp_models
+  failed_when: not _llamacpp_models.stat.exists
+  loop:
+    - "{{ llamacpp_model_file }}"
+    - "{{ llamacpp_mmproj_file }}"
+
+- name: Install llama-cpp unit
+  ansible.builtin.template:
+    src: llama-cpp.service.j2
+    dest: /etc/systemd/system/llama-cpp.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart llama-cpp
+
+# Retire the predecessor. The hand-run container holds the port and the 23GB of
+# RAM; leaving it up would make the new unit fail to bind and mask the failure.
+- name: Remove the unmanaged spike container if it is still running
+  ansible.builtin.command:
+    argv: [podman, rm, -f, llamacpp]
+  register: _llamacpp_rm
+  changed_when: _llamacpp_rm.rc == 0
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Enable + start llama-cpp
+  ansible.builtin.systemd:
+    name: llama-cpp
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for the llama.cpp API (model mmap takes minutes on a cold page cache)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llamacpp_port }}/health"
+    status_code: 200
+  register: _llamacpp_up
+  retries: 60
+  delay: 10
+  until: _llamacpp_up.status == 200
+
+# --- Verification -------------------------------------------------------------
+# RUNTIME verification, deliberately. A previous timeout fix (#218) was guarded
+# only by a static test asserting the value appeared in the file — the value was
+# in the file and never reached the socket. Asking the running server what it
+# actually applied is the only check that can catch that class of bug.
+- name: Read the sampling params the server actually applied
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llamacpp_port }}/props"
+    return_content: true
+  register: _llamacpp_props
+
+- name: Assert the applied sampling profile matches the intended one
+  vars:
+    _applied: "{{ _llamacpp_props.json.default_generation_settings.params }}"
+    _intended:
+      seed: "{{ llamacpp_seed }}"
+      temperature: "{{ llamacpp_temp }}"
+      top_p: "{{ llamacpp_top_p }}"
+      top_k: "{{ llamacpp_top_k }}"
+      min_p: "{{ llamacpp_min_p }}"
+      presence_penalty: "{{ llamacpp_presence_penalty }}"
+  ansible.builtin.assert:
+    # Float tolerance: llama.cpp round-trips these through float32, so 0.95
+    # comes back as 0.949999988079071. An equality check would fail on a
+    # correctly-configured server.
+    that:
+      - (_applied[item.key] | float - item.value | float) | abs < 0.0001
+    fail_msg: >-
+      llama-server applied {{ item.key }}={{ _applied[item.key] }} but the role
+      intended {{ item.value }}. The flag did not reach the sampler — do not
+      trust any eval result produced against this server.
+    quiet: true
+  loop: "{{ _intended | dict2items }}"
+
+- name: Assert the context size the server actually applied
+  ansible.builtin.assert:
+    that:
+      - _llamacpp_props.json.default_generation_settings.n_ctx | int == llamacpp_ctx_size | int
+    fail_msg: >-
+      llama-server applied n_ctx={{ _llamacpp_props.json.default_generation_settings.n_ctx }},
+      not {{ llamacpp_ctx_size }}. --ctx-size is PER SLOT; check --parallel is 1.
+    quiet: true
+
+# Exposure assertion, mirroring the ollama role: the inference server must be
+# reachable by the host-networked LiteLLM proxy and by nothing on wg0/eth0.
+- name: Assert llama.cpp listens on host loopback only (not externally exposed)
+  ansible.builtin.command: ss -tlnH
+  register: _llamacpp_listeners
+  changed_when: false
+  failed_when: >
+    ('127.0.0.1:' ~ (llamacpp_port | string)) not in _llamacpp_listeners.stdout
+    or ('0.0.0.0:' ~ (llamacpp_port | string)) in _llamacpp_listeners.stdout
+    or ('*:' ~ (llamacpp_port | string)) in _llamacpp_listeners.stdout

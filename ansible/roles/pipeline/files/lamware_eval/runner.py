@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+import requests
+
 from llm_ab_re import extract_metrics
 from stages.interpret import run_interpret
 
@@ -28,6 +30,51 @@ _RATES = {
     "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
 }
+
+
+# The llama.cpp server's own view of its sampler. Recorded per cell so a result
+# carries the config it was produced under, rather than depending on someone
+# remembering what the server was running that week.
+_LLAMACPP_PROPS_URL = "http://127.0.0.1:11435/props"
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                  "repeat_penalty", "frequency_penalty")
+
+
+def _server_sampling() -> dict:
+    """Read the sampling profile llama-server ACTUALLY applied.
+
+    Deliberately not the values we intended: a flag that never reached the sampler
+    is exactly the bug this is here to catch (cf. the #218 timeout, which was
+    present in the file and absent from the socket).
+
+    NB: the server's `seed` is its startup default, NOT the seed a given request
+    used — per-request seeds arrive via the LiteLLM alias and never appear here.
+    The requested seed is recorded separately from the arm. Reporting /props'
+    seed would silently claim every run used 42.
+
+    Fails soft: provenance is worth recording, never worth killing a run over.
+    """
+    try:
+        resp = requests.get(_LLAMACPP_PROPS_URL, timeout=10)
+        resp.raise_for_status()
+        params = resp.json()["default_generation_settings"]["params"]
+    except (requests.RequestException, KeyError, ValueError) as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    # Round the float32 round-trip noise (0.95 -> 0.949999988079071) so the
+    # recorded profile is comparable to the profile as written down.
+    return {k: (round(v, 6) if isinstance(v, float) else v)
+            for k, v in params.items() if k in _SAMPLING_KEYS}
+
+
+def cell_out_dir(sample: CorpusSample, arm: Arm) -> Path:
+    """Where one (sample x arm) cell's artifacts live.
+
+    Shared with the consensus reader rather than re-derived there: a second copy
+    of this path expression would silently stop finding results the moment either
+    copy changed, and the symptom would be "no consensus data", not an error.
+    """
+    safe = arm.name.replace("/", "_").replace("@", "_").replace(":", "_")
+    return Path(sample.corpus_dir) / "eval" / safe
 
 
 def _rough_cost(model: str, usage: dict) -> float:
@@ -76,7 +123,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
            "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384)}
     if arm.re_backend == "local":
         cfg["re_backend"] = "local"
-    out = Path(sample.corpus_dir) / "eval" / arm.name.replace("/", "_").replace("@", "_")
+    out = cell_out_dir(sample, arm)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     res = run_interpret(gr, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd)
@@ -103,4 +150,6 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         err = f"{err} | container stderr: {stderr_tail[-1500:]}"
 
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
-                        extract_metrics(res), err)
+                        extract_metrics(res), err,
+                        seed=arm.seed,
+                        sampling=_server_sampling() if arm.re_backend == "local" else None)

@@ -1,5 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -8,6 +9,26 @@ ROOT = Path(__file__).resolve().parents[2]
 def _litellm_cfg() -> str:
     return (ROOT / "ansible" / "roles" / "litellm" / "templates"
             / "config.yaml.j2").read_text()
+
+
+def _rendered_litellm_cfg() -> str:
+    """The config with the seed-alias loop expanded against the role's real defaults.
+
+    Not a Jinja render — just the one loop this repo generates model names with.
+    Enough to make alias names searchable as literals, which is what the drift
+    guards below compare against.
+    """
+    cfg = _litellm_cfg()
+    defaults = (ROOT / "ansible" / "roles" / "litellm" / "defaults" / "main.yml").read_text()
+    match = re.search(r"^litellm_llamacpp_seeds:\s*\[([^\]]*)\]", defaults, re.MULTILINE)
+    assert match, "litellm_llamacpp_seeds not found in the litellm role defaults"
+    seeds = [v.strip() for v in match.group(1).split(",") if v.strip()]
+
+    body = re.search(r"\{% for seed in litellm_llamacpp_seeds %\}(.*?)\{% endfor %\}",
+                     cfg, re.DOTALL)
+    assert body, "the seed-alias for-loop is gone from the LiteLLM config template"
+    expanded = "".join(body.group(1).replace("{{ seed }}", s) for s in seeds)
+    return cfg + "\n" + expanded
 
 
 def test_litellm_has_cloud_eval_model_entries():
@@ -38,10 +59,15 @@ def test_every_arm_model_has_a_litellm_entry():
     Without this, an arm can name a model that was never registered and the gap
     only surfaces mid-benchmark as a routing failure - which is exactly how
     `local-qwen-llamacpp-re` went missing while both qwen arms depended on it.
+
+    Some aliases are Jinja-generated (one per entry in litellm_llamacpp_seeds), so
+    the seed loop is expanded before searching. Expanding rather than relaxing the
+    match matters: a substring check loose enough to accept `...-s{{ seed }}` would
+    also accept a seed alias that no longer exists, which is the drift this guards.
     """
     from lamware_eval.arms import _REGISTRY
 
-    cfg = _litellm_cfg()
+    cfg = _rendered_litellm_cfg()
     missing = [a.model for a in _REGISTRY.values()
                if f'model_name: "{a.model}"' not in cfg]
     assert not missing, f"arms reference unregistered litellm models: {missing}"

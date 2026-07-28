@@ -78,6 +78,13 @@
     - role: ollama
       tags: [ollama]
 
+    # 10a-2. llama.cpp — local LLM serving for the agentic RE and vision stages.
+    #        Separate from ollama: llama.cpp splits reasoning into
+    #        `reasoning_content` and grammar-constrains forced-tool args, which is
+    #        what makes structured RE output reliable (2026-07-23 spike, PR #180).
+    - role: llama-cpp
+      tags: [llama-cpp]
+
     # 10b. LiteLLM proxy — routes all Claude API calls through local proxy
     - role: litellm
       tags: [litellm]
