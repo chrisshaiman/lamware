@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { cn } from "#lib/utils";
-import { defang, isNavigableHref } from "#lib/defang";
+import { defang, isInAppHref } from "#lib/defang";
 
 interface MarkdownProseProps {
   children: string;
@@ -52,16 +52,19 @@ export function MarkdownProse({ children, className }: MarkdownProseProps) {
  *   DefangedAnchor    kills explicit markdown links — but leaves the visible text
  *                     copy-pasteable as a live URL if it was never defanged.
  *
- * Relative/anchor hrefs (in-app links) stay clickable; only navigable schemes are
- * neutralised. `rehype-sanitize`'s default schema already blocks `javascript:`, so
- * this is defence in depth rather than the only barrier.
+ * Only `#fragment` and root-relative `/path` stay clickable — an ALLOWLIST. The first
+ * version asked "is this a known-navigable scheme?" and rendered anything unmatched as a
+ * live anchor, so `//evil.com/x` (no scheme colon) fell straight through and the browser
+ * resolved it to `https://evil.com/x`. `rehype-sanitize` allows it for the same reason.
+ * On a security boundary the deny-list has to enumerate every way of writing "off-site";
+ * the allowlist enumerates the two ways of writing "in-app".
  */
 function DefangedAnchor({
   href,
   children,
   ...rest
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
-  if (!isNavigableHref(href)) {
+  if (isInAppHref(href)) {
     return (
       <a href={href} {...rest}>
         {children}

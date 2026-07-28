@@ -48,11 +48,43 @@ const URLISH = new RegExp(
   "gi",
 );
 
-/** Hosts that are noise rather than indicators — defanging these hurts readability. */
-const SAFE_HOSTS = new Set([
-  "e.g",
-  "i.e",
-  "etc.co", // guards against prose like "etc.company"
+/**
+ * A bare `label.label` is only treated as a hostname when the final label is a real TLD.
+ *
+ * Without this, the pattern matched ANY `word.word` with a 2+ letter tail — which is
+ * every filename in a malware report. Measured on the shipped version: `kernel32.dll`,
+ * `ntdll.dll`, `payload.exe`, `report.pdf`, `config.dat`, `driver.sys` and the version
+ * string `CAPE 2.4.1.3` were ALL mangled — 10 of 10 ordinary strings. That is the
+ * over-defanging this module's own docstring calls the failure mode that matters, and it
+ * would have made every rendered report unreadable.
+ *
+ * A TLD list is the fix because the collision is one-sided: `.dll`, `.exe`, `.bin`,
+ * `.sys`, `.dat`, `.pdf` are not TLDs. It is not exhaustive — new gTLDs appear — but a
+ * miss here only means an indicator renders un-defanged as TEXT. It is never a
+ * click-through risk: MarkdownProse neutralises any navigable href regardless.
+ *
+ * Anything with an explicit scheme is defanged whatever its tail (`http://evil.dll` is
+ * unambiguously a URL), and bare IPv4 is always defanged.
+ */
+const TLDS = new Set([
+  // generic
+  "com", "net", "org", "info", "biz", "name", "pro", "mobi", "app", "dev", "io",
+  "co", "me", "tv", "cc", "xyz", "top", "site", "online", "shop", "store", "club",
+  "live", "life", "world", "space", "website", "tech", "cloud", "digital", "link",
+  "click", "download", "stream", "gdn", "loan", "work", "party", "review", "date",
+  "faith", "science", "racing", "win", "bid", "trade", "accountant", "cricket",
+  "men", "webcam", "press", "host", "fun", "icu", "monster", "quest", "cyou",
+  "buzz", "rest", "wiki", "email", "network", "systems", "solutions", "services",
+  // sponsored / restricted
+  "edu", "gov", "mil", "int", "arpa",
+  // ccTLDs commonly seen in C2 infrastructure
+  "ru", "su", "cn", "br", "in", "ir", "kp", "ua", "by", "pl", "cz", "ro", "bg",
+  "rs", "tr", "kz", "uz", "vn", "th", "id", "my", "sg", "hk", "tw", "jp", "kr",
+  "de", "fr", "nl", "be", "ch", "at", "it", "es", "pt", "se", "no", "fi", "dk",
+  "uk", "ie", "gr", "hu", "sk", "si", "hr", "lt", "lv", "ee", "md", "ge", "am",
+  "az", "us", "ca", "mx", "ar", "cl", "pe", "ve", "za", "ng", "ke", "eg", "ma",
+  "au", "nz", "il", "ae", "sa", "pk", "bd", "lk", "np", "ph", "eu", "tk", "ml",
+  "ga", "cf", "gq", "pw", "ws", "to", "nu", "cx", "ai", "sh", "st", "im", "gg",
 ]);
 
 function defangScheme(scheme: string | undefined): string {
@@ -72,15 +104,65 @@ export function defang(text: string): string {
   // One pass handles hostnames and IPv4 alike. Already-defanged input contains `[.]`,
   // which the pattern cannot match, so this is naturally idempotent.
   return text.replace(URLISH, (match, scheme, host, port, rest) => {
-    if (SAFE_HOSTS.has(host.toLowerCase())) return match;
+    // A dotted quad is only an IP if every octet is in range. This rejects
+    // "1.2.3.400" and "999.0.0.1" — but note it CANNOT separate a 4-part version
+    // string from an address, because "2.4.1.3" is a valid IP. That ambiguity is
+    // resolved toward defanging: the cost of leaving a real C2 address live is
+    // higher than the cost of a cosmetically-defanged version number, and the
+    // defanged form is still readable and copy-pasteable.
+    const isIpv4 =
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(host) &&
+      host.split(".").every((octet: string) => Number(octet) <= 255);
+    if (!scheme && !isIpv4) {
+      // Bare `something.something` — only a hostname if the tail is a real TLD.
+      // Otherwise it is a filename (kernel32.dll) or a version (2.4.1.3): leave it.
+      const tld = host.slice(host.lastIndexOf(".") + 1).toLowerCase();
+      if (!TLDS.has(tld)) return match;
+    }
     const defangedHost = host.replace(/\./g, "[.]");
     const defangedPort = port ? port.replace(":", "[:]") : "";
     return `${defangScheme(scheme)}${defangedHost}${defangedPort}${rest ?? ""}`;
   });
 }
 
-/** True if the href points somewhere a click could actually reach. */
+/**
+ * True if the href is safe to leave as a working in-app link.
+ *
+ * ALLOWLIST, deliberately. The first version was a deny-list of known-navigable schemes
+ * (`https?|ftp|file|data|javascript|vbscript:`) and anything unmatched was rendered as a
+ * live anchor. **`//evil.com/x` has no scheme colon, so it fell through and rendered
+ * clickable** — the browser resolves a protocol-relative URL against the page protocol,
+ * giving `https://evil.com/x`. `rehype-sanitize` permits it for the same reason: its
+ * protocol check sees no scheme.
+ *
+ * A deny-list on a security boundary has to enumerate every way to express "off-site",
+ * and it will always be incomplete. This enumerates the two forms that are unambiguously
+ * in-app instead:
+ *
+ *   `#fragment`          same-document anchor
+ *   `/path` (not `//`)   root-relative path on this origin
+ *
+ * Everything else — schemes, protocol-relative `//host`, backslash variants some
+ * browsers normalise to `//`, and anything unrecognised — is treated as navigable and
+ * neutralised.
+ */
+export function isInAppHref(href: string | undefined): boolean {
+  if (!href) return false;
+  const h = href.trim();
+  if (h.startsWith("#")) return true;
+  // Root-relative, but NOT protocol-relative. Backslashes are excluded because
+  // several browsers normalise `\\host` and `/\host` to `//host`.
+  if (/^\/(?![/\\])/.test(h)) return true;
+  return false;
+}
+
+/**
+ * True if the href points somewhere a click could actually reach off this origin.
+ *
+ * Retained as the inverse of {@link isInAppHref} so callers can read either way round;
+ * the allowlist is the single source of truth.
+ */
 export function isNavigableHref(href: string | undefined): boolean {
   if (!href) return false;
-  return /^\s*(https?|ftp|file|data|javascript|vbscript):/i.test(href);
+  return !isInAppHref(href);
 }
