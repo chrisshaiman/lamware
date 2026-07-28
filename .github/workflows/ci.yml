@@ -172,6 +172,43 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
+  # Frontend: type-check, build, unit tests
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend build & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # --ignore-scripts: nothing in this tree needs postinstall, and skipping it
+      # removes an arbitrary-code-execution step from dependency install.
+      - name: Install
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+
+      # `npm run build` is `tsc -b && vite build`, so this IS the type-check. Until
+      # now a type error merged green — there was no frontend job at all (#172).
+      - name: Build (type-checks via tsc -b)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
+
+      # NOT run here yet: `npm run lint` reports 5 pre-existing errors in components
+      # unrelated to this change (setState-in-effect, impure-during-render,
+      # fast-refresh export). Adding it now would land CI red. Tracked separately —
+      # see the follow-up issue rather than a silently-omitted acceptance criterion.
+
+  # ---------------------------------------------------------------------------
   # Security: gitleaks, bandit, ruff via pre-commit + pip-audit + semgrep
   # ---------------------------------------------------------------------------
   security:

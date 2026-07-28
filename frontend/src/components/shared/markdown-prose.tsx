@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { cn } from "#lib/utils";
+import { defang, isNavigableHref } from "#lib/defang";
 
 interface MarkdownProseProps {
   children: string;
@@ -29,7 +30,51 @@ export function MarkdownProse({ children, className }: MarkdownProseProps) {
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+        components={{ a: DefangedAnchor }}
+      >
+        {defang(children)}
+      </ReactMarkdown>
     </div>
+  );
+}
+
+/**
+ * Render links from model prose as inert text.
+ *
+ * Both defences are needed, and neither is sufficient alone:
+ *
+ *   defang(children)  kills bare URLs, which remark-gfm would otherwise autolink —
+ *                     but an explicit `[click here](http://evil.com)` hides the
+ *                     indicator in the href where the text pass never sees it.
+ *   DefangedAnchor    kills explicit markdown links — but leaves the visible text
+ *                     copy-pasteable as a live URL if it was never defanged.
+ *
+ * Relative/anchor hrefs (in-app links) stay clickable; only navigable schemes are
+ * neutralised. `rehype-sanitize`'s default schema already blocks `javascript:`, so
+ * this is defence in depth rather than the only barrier.
+ */
+function DefangedAnchor({
+  href,
+  children,
+  ...rest
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  if (!isNavigableHref(href)) {
+    return (
+      <a href={href} {...rest}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <span
+      data-defanged-link="true"
+      title={`Link neutralised: ${defang(href ?? "")}`}
+      className="break-all text-[var(--color-text-secondary)] underline decoration-dotted"
+    >
+      {children}
+    </span>
   );
 }
