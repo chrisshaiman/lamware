@@ -511,11 +511,23 @@ and Cape stores analysis results locally.
 > `aws/modules/s3/`, which holds the Object Lock and lifecycle scaffolding if the
 > evidence-archival option above is ever taken up.
 >
-> Two AWS couplings deliberately survive and are NOT resolved by that change:
-> `ovh/` still stores its Terraform state in the S3 backend created by the deleted
-> bootstrap module (whose state is at serial 17 with zero resources, i.e. destroyed),
-> so `make infra-ovh` needs the backend repointed before it will init. Where state
-> lives is an infrastructure decision, not a code cleanup.
+> **OVH Terraform state is local, and stays local.** `ovh/main.tf` declares
+> `backend "local" {}`; the S3 backend was dropped when this ADR was accepted. The
+> Makefile was still passing a stale `-backend-config=../shared/backend-aws.hcl` flag
+> at a local backend, pointing at a file that no longer exists — removed.
+>
+> Local is the right choice here: remote state buys locking, team sharing and
+> durability, and with a single operator running this a few times a year only
+> durability applies. A backup answers that more cheaply than a new SaaS dependency
+> or re-creating the S3 bucket we just deleted. If remote state is ever wanted, OVH
+> Object Storage is S3-compatible and keeps it with the same provider.
+>
+> ⚠️ **The state file is a single point of failure, and not a mild one.** It contains
+> `ovh_dedicated_server_reinstall_task`. If the state is lost, `terraform apply` sees
+> no resources and plans to CREATE them — **reinstalling the OS on the live sandbox**.
+> Back it up encrypted (it is gitignored and must stay that way). Removing the
+> reinstall task from the config now the host is provisioned would downgrade state
+> loss from destructive to merely inconvenient — worth doing.
 
 **Consequences:**
 - No AWS credentials required to run Ansible — eliminates SSO session expiry problem

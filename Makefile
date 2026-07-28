@@ -190,18 +190,12 @@ image:
 # Terraform — OVH bare metal
 # -----------------------------------------------------------------------------
 
-# NOTE (#211): this still stores OVH state in the AWS S3 backend created by the
-# now-deleted aws/bootstrap module. That bucket's state is at serial 17 with zero
-# resources, i.e. it was destroyed — so `terraform init` here will fail until the
-# backend is repointed. Left as-is deliberately: where state lives is an
-# infrastructure decision, not part of a code cleanup. Tracked separately.
 infra-ovh:
 	@echo "==> Provisioning OVH infrastructure..."
 	@[ -f $(OVH_DIR)/terraform.tfvars ] || \
 		(echo "ERROR: $(OVH_DIR)/terraform.tfvars not found. Copy terraform.tfvars.example and fill in values." && exit 1)
 	@cd $(OVH_DIR) && \
-		terraform init \
-			-backend-config="../shared/backend-aws.hcl" && \
+		terraform init && \
 		terraform plan \
 			-out=tfplan && \
 		terraform apply tfplan
