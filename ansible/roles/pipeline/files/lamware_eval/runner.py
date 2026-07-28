@@ -3,9 +3,9 @@
 """Run one (sample x arm) through the agentic RE loop; return a scorecard cell."""
 import json
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+import requests
 
 from llm_ab_re import extract_metrics
 from stages.interpret import run_interpret
@@ -55,9 +55,10 @@ def _server_sampling() -> dict:
     Fails soft: provenance is worth recording, never worth killing a run over.
     """
     try:
-        with urllib.request.urlopen(_LLAMACPP_PROPS_URL, timeout=10) as resp:
-            params = json.loads(resp.read())["default_generation_settings"]["params"]
-    except (urllib.error.URLError, OSError, KeyError, ValueError, TimeoutError) as e:
+        resp = requests.get(_LLAMACPP_PROPS_URL, timeout=10)
+        resp.raise_for_status()
+        params = resp.json()["default_generation_settings"]["params"]
+    except (requests.RequestException, KeyError, ValueError) as e:
         return {"error": f"{type(e).__name__}: {e}"}
     # Round the float32 round-trip noise (0.95 -> 0.949999988079071) so the
     # recorded profile is comparable to the profile as written down.
