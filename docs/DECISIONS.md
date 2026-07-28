@@ -504,6 +504,19 @@ and Cape stores analysis results locally.
 - S3 with Object Lock remains an option for evidence archival if needed later —
   it can be deployed as a standalone bucket with no other AWS infra.
 
+> **Executed 2026-07-27 (#211).** The retained code is now deleted: `aws/`, `src/`,
+> their tests, the root `requirements.txt`, the AWS Terraform CI jobs, and the AWS CLI
+> install baked into the Packer image. The deployment guide no longer teaches the AWS
+> path. Recover any of it from git history at `6ce668c` — in particular
+> `aws/modules/s3/`, which holds the Object Lock and lifecycle scaffolding if the
+> evidence-archival option above is ever taken up.
+>
+> Two AWS couplings deliberately survive and are NOT resolved by that change:
+> `ovh/` still stores its Terraform state in the S3 backend created by the deleted
+> bootstrap module (whose state is at serial 17 with zero resources, i.e. destroyed),
+> so `make infra-ovh` needs the backend repointed before it will init. Where state
+> lives is an infrastructure decision, not a code cleanup.
+
 **Consequences:**
 - No AWS credentials required to run Ansible — eliminates SSO session expiry problem
 - Secrets are in `vars/secrets.yml` (gitignored), encrypted at rest via `ansible-vault`

@@ -11,7 +11,7 @@
 # becoming active — see docs/SECURITY_CONSTRAINTS.md.
 #
 # After apply, run: make configure
-# Ansible handles all runtime configuration (KVM, Cape, WireGuard, sqs-agent).
+# Ansible handles all runtime configuration (KVM, Cape, WireGuard, pipeline, API).
 # =============================================================================
 
 terraform {

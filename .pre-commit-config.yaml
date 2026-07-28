@@ -12,7 +12,11 @@ repos:
     rev: v0.15.13
     hooks:
       - id: ruff
-        files: ^src/
+        # Was `^src/`, which pointed at the decommissioned Lambda handlers. Deleting
+        # src/ (#211) would have left this hook silently matching ZERO files while
+        # still reporting green — a scope narrower than it looks was already the
+        # complaint in #206. These are the live Python trees.
+        files: ^(api|shared|pipeline)/
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4

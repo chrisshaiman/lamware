@@ -68,7 +68,9 @@ https_fakemode         yes
 # INetSim generates a self-signed certificate on first start.
 # Malware that pins certificates or validates the CA chain will fail the TLS
 # handshake — this is observable in Cape's network capture as repeated
-# TLS failures (see report_processor.py planned heuristics in STATUS.md).
+# TLS failures. (Detecting that pattern was a planned heuristic for the
+# decommissioned report_processor.py; it is unimplemented, not lost — see #160
+# for the TLS-interception approach that replaces it.)
 
 # =============================================================================
 # SMTP service — captures email exfiltration and spam relay attempts

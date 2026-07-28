@@ -28,7 +28,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
-        run: ruff check src/ api/ shared/ pipeline/
+        run: ruff check api/ shared/ pipeline/
 
       - name: Test (pytest)
         # tests/smoke is the live post-deploy Playwright gate (needs a browser + the live
@@ -122,8 +122,8 @@ jobs:
     strategy:
       matrix:
         dir:
-          - aws/bootstrap
-          - aws/envs/prod
+          # OVH is the only deployed target. The AWS root modules were removed with
+          # the rest of the decommissioned stack (ADR-016, #211).
           - ovh
 
     steps:
@@ -162,15 +162,38 @@ jobs:
       - name: Run pre-commit (all files)
         run: pre-commit run --all-files
 
+      # Audit the tree we actually ship. Until #211 this audited a root
+      # requirements.txt that named only decommissioned files (anthropic/boto3/Pillow
+      # for the deleted src/ Lambda handlers), while the live API's dependencies were
+      # hand-typed inline in the api job and audited nowhere — the control reported
+      # green against the wrong dependency tree.
+      #
+      # api/ is installed by resolving its declared dependencies rather than the
+      # package itself: its build-backend is non-standard and a flat layout breaks
+      # `pip install ./api`. Reading pyproject keeps this from becoming a third
+      # hand-maintained copy of the dependency list.
       - name: Audit dependencies (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt -r requirements-dev.txt
+          pip install ./shared ./pipeline
+          python - <<'PY' > /tmp/api-deps.txt
+          import tomllib
+          with open("api/pyproject.toml", "rb") as fh:
+              print("\n".join(tomllib.load(fh)["project"]["dependencies"]))
+          PY
+          pip install -r /tmp/api-deps.txt -r requirements-dev.txt
+          pip-audit
+          # The interpret container ships its own anthropic pin, which is the one
+          # actually deployed. The deleted root requirements.txt pinned a DIFFERENT
+          # version (0.102.0 vs the container's 0.52.0), so the audit was reporting on
+          # a version running nowhere while the deployed one went unchecked.
+          # Guarded by tests/test_audit_covers_container_deps.py.
+          pip-audit -r ansible/roles/interpret/templates/requirements.txt.j2
 
       - name: Semgrep SAST (Python patterns)
         run: |
           pip install semgrep
-          semgrep scan --config p/python src/ api/ shared/ pipeline/ --error
+          semgrep scan --config p/python api/ shared/ pipeline/ --error
 
       - name: Audit frontend dependencies (npm audit)
         # Gate rather than raw `npm audit --audit-level=high`: that form is

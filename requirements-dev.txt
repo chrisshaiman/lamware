@@ -1,7 +1,13 @@
 # Development and CI dependencies
 # Install with: pip install -r requirements-dev.txt
-
--r requirements.txt
+#
+# There is deliberately no root requirements.txt. Runtime dependencies are declared
+# per package (api/, pipeline/, shared/ pyproject.toml) and per container image
+# (ansible/roles/*/templates/requirements.txt.j2 and Containerfile.j2). The old root
+# file listed dependencies for the decommissioned src/ Lambda handlers, and pinned
+# anthropic==0.102.0 while the interpret container actually ships 0.52.0 — so
+# pip-audit reported on a version deployed nowhere while the deployed one went
+# unaudited. Removed in #211; see the audit step in .github/workflows/ci.yml.
 
 pytest==9.0.3
 hypothesis==6.155.7
