@@ -143,6 +143,35 @@ jobs:
         run: terraform validate
 
   # ---------------------------------------------------------------------------
+  # Packer syntax — every template, individually
+  # ---------------------------------------------------------------------------
+  packer:
+    name: Packer syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
+        with:
+          version: "~1.11"
+
+      # Per file, because `packer validate .` merges the directory into one config
+      # and the windows11-* templates each declare `variable "ovmf_vars"`. That
+      # duplicate-variable error is what made `make validate` abort at step one and
+      # silently validate nothing for months (#228) — with no CI job to notice.
+      #
+      # -syntax-only because a full validate needs the gitignored pkrvars, installed
+      # plugins, and artifacts from earlier build stages. Asserting "the HCL parses"
+      # is honest; asserting more here would be a check that cannot pass.
+      - name: packer validate -syntax-only (per template)
+        run: |
+          for f in packer/*.pkr.hcl; do
+            echo "==> $f"
+            packer validate -syntax-only "$f"
+          done
+
+  # ---------------------------------------------------------------------------
   # Security: gitleaks, bandit, ruff via pre-commit + pip-audit + semgrep
   # ---------------------------------------------------------------------------
   security:

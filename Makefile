@@ -20,6 +20,14 @@
 
 ANSIBLE_USER    ?= root
 PACKER_DIR      := packer
+
+# `--syntax-check` still loads vars_files, and vars/secrets.yml is vault-encrypted, so
+# the check needs a vault password or it fails with "Attempting to decrypt but no vault
+# secrets found" — which reads like a broken playbook rather than a missing argument.
+# Uses ~/.vault_pass when it exists, otherwise prompts. Override explicitly:
+#   make validate VAULT_ARGS="--vault-password-file /path/to/pass"
+VAULT_PASS_FILE ?= $(HOME)/.vault_pass
+VAULT_ARGS      ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
 ANSIBLE_DIR     := ansible
 SMOKE_DIR       := tests/smoke
 OVH_DIR         := ovh
@@ -227,13 +235,34 @@ configure:
 # Validation — run before committing
 # -----------------------------------------------------------------------------
 
+# Packer is checked PER FILE and with -syntax-only. Both parts are deliberate:
+#
+#   per file    — `packer validate .` treats the directory as ONE config and merges
+#                 every template, so the three windows11-*.pkr.hcl files that each
+#                 declare `variable "ovmf_vars"` collide with "Duplicate variable".
+#                 That aborted this target at its first step, so nothing below ever
+#                 ran and `make validate` silently validated NOTHING (#228). Each
+#                 template is built individually, where a per-file declaration is
+#                 correct.
+#
+#   syntax-only — a full `packer validate` needs the gitignored pkrvars (secrets),
+#                 installed plugins, and artifacts from earlier build stages
+#                 (windows10-office consumes base_image_path, produced by the base
+#                 build). None of that exists at commit time, so full validation
+#                 cannot be a pre-commit gate. -syntax-only asserts what is honestly
+#                 checkable here: the HCL parses.
+#
+# Full validation happens when you actually build.
 validate:
-	@echo "==> Validating Packer..."
-	@cd $(PACKER_DIR) && packer init . && packer validate .
+	@echo "==> Validating Packer (syntax)..."
+	@for f in $(PACKER_DIR)/*.pkr.hcl; do \
+		echo "    $$f"; \
+		packer validate -syntax-only "$$f" || exit 1; \
+	done
 	@echo "==> Validating OVH Terraform..."
 	@cd $(OVH_DIR) && terraform init -backend=false && terraform validate
 	@echo "==> Validating Ansible..."
-	@cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check -i inventory/hosts site.yml
+	@cd $(ANSIBLE_DIR) && ansible-playbook --syntax-check $(VAULT_ARGS) -i inventory/hosts site.yml
 	@echo "==> All validation passed."
 
 # -----------------------------------------------------------------------------
