@@ -64,6 +64,30 @@ model_list:
       model: "openai/qwen3.6"
       api_base: "{{ litellm_llamacpp_api_base | default('http://127.0.0.1:11435/v1') }}"
       api_key: "sk-none"
+{% for seed in litellm_llamacpp_seeds %}
+{% if loop.first %}
+  # Seed-pinned variants of the RE model, one alias per seed. The interpret client
+  # speaks the Anthropic Messages shape, which has no `seed` field — so the seed
+  # cannot be a per-request argument and has to be bound to a model alias here.
+  #
+  # These exist for MULTI-SEED CONSENSUS: run the same sample across several seeds
+  # and keep the claims that appear in >= k of them. Independent sampling agreeing
+  # is evidence a claim is real; a claim appearing once is more likely confabulation.
+  # Affordable only because local inference is $0 (see issue #222).
+  #
+  # Everything ELSE about sampling (temperature, top_p, top_k, min_p) is set
+  # server-side by the llama-cpp role, NOT here: top_k and min_p are not OpenAI
+  # parameters and `drop_params: true` above would silently discard them.
+  #
+  # Do NOT pick the best-scoring seed. Selection on noise invalidates the result.
+{% endif %}
+  - model_name: "local-qwen-llamacpp-re-s{{ seed }}"
+    litellm_params:
+      model: "openai/qwen3.6"
+      api_base: "{{ litellm_llamacpp_api_base | default('http://127.0.0.1:11435/v1') }}"
+      api_key: "sk-none"
+      seed: {{ seed }}
+{% endfor %}
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"

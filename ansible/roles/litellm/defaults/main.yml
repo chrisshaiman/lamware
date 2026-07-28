@@ -16,3 +16,11 @@ litellm_db_name: "litellm"
 litellm_local_model_backend: "ollama_chat/qwen3.6:35b-a3b-q4_K_M"
 litellm_ollama_api_base: "http://127.0.0.1:11434"
 litellm_fallback_backend: "claude-haiku-4-5"
+
+# llama.cpp (agentic RE) routing.
+litellm_llamacpp_api_base: "http://127.0.0.1:11435/v1"
+
+# Seeds to expose as pinned model aliases, for multi-seed consensus scoring.
+# These values are arbitrary and exist to be REPORTED, not tuned — see the
+# comment in templates/config.yaml.j2 and issue #222.
+litellm_llamacpp_seeds: [42, 1337, 8675309]

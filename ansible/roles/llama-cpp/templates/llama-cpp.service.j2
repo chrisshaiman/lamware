@@ -1,0 +1,52 @@
+# /etc/systemd/system/llama-cpp.service — managed by Ansible
+# llama.cpp (llama-server) serving Qwen3.6-35B-A3B for the agentic RE stage.
+#
+# Bound to host loopback via the port publish (127.0.0.1:{{ llamacpp_port }}), so the
+# host-networked LiteLLM proxy reaches it while it stays unreachable from wg0/eth0.
+# --host 0.0.0.0 is the CONTAINER-side bind; the publish is what constrains exposure.
+#
+# Restart=always is the point of this unit. The predecessor was a bare `podman run`
+# with no restart policy, so a host reboot silently took the local LLM offline.
+#
+# Every sampling parameter is passed explicitly — see defaults/main.yml for why an
+# unset flag is not a neutral flag.
+
+[Unit]
+Description=llama.cpp local LLM (Qwen3.6-35B-A3B, loopback-bound)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/podman rm -f llamacpp
+ExecStart=/usr/bin/podman run --rm --name llamacpp \
+    -p 127.0.0.1:{{ llamacpp_port }}:{{ llamacpp_port }} \
+    --memory={{ llamacpp_memory }} \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    -v {{ llamacpp_models_dir }}:/models:ro,Z \
+    {{ llamacpp_image }} \
+    -m /models/{{ llamacpp_model_file }} \
+    --mmproj /models/{{ llamacpp_mmproj_file }} \
+    --host 0.0.0.0 \
+    --port {{ llamacpp_port }} \
+    --threads {{ llamacpp_threads }} \
+    --ctx-size {{ llamacpp_ctx_size }} \
+    --parallel {{ llamacpp_parallel }} \
+    --cache-type-k {{ llamacpp_cache_type_k }} \
+    --cache-type-v {{ llamacpp_cache_type_v }} \
+    --jinja \
+    --seed {{ llamacpp_seed }} \
+    --temp {{ llamacpp_temp }} \
+    --top-p {{ llamacpp_top_p }} \
+    --top-k {{ llamacpp_top_k }} \
+    --min-p {{ llamacpp_min_p }} \
+    --presence-penalty {{ llamacpp_presence_penalty }}
+ExecStop=/usr/bin/podman stop -t 30 llamacpp
+Restart=always
+RestartSec=10
+# The ~23GB model is memory-mapped on start; give it room before systemd gives up.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

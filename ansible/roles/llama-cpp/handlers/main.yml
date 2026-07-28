@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/llama-cpp/handlers/main.yml
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Restart llama-cpp
+  ansible.builtin.systemd:
+    name: llama-cpp
+    state: restarted
+    daemon_reload: true
