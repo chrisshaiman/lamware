@@ -132,18 +132,48 @@
     quiet: true
   loop: "{{ _intended | dict2items }}"
 
-# Separate from the sampling assertion because it is a string, not a float, and because
-# it is the flag whose absence silently emptied the forensic trail's reasoning records.
-- name: Assert the server is surfacing reasoning as configured
+# Reasoning is verified by ACTUALLY ASKING THE MODEL, not by reading /props.
+#
+# DO NOT "simplify" this back to a /props check. `default_generation_settings.params.
+# reasoning_format` reports `none` even when reasoning demonstrably works: on 2026-07-29 a
+# server running `--reasoning-format deepseek` reported `none` there while real requests
+# returned a fully populated `reasoning_content`. That block describes the DEFAULT
+# PER-REQUEST generation settings — note `chat_format: Content-only` sitting next to it —
+# not the chat-time parser that --jinja + /v1/chat/completions actually use. A /props
+# assertion here failed two consecutive correct deploys before the mistake was found.
+#
+# One small completion costs a few seconds and is the only check that distinguishes
+# "configured" from "working", which is the entire point of verifying this flag: its
+# failure mode is an empty reasoning field in the #197 trail and no other symptom.
+- name: Ask the model a question that requires thinking
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llamacpp_port }}/v1/chat/completions"
+    method: POST
+    body_format: json
+    body:
+      # llama-server serves a single model and ignores this field; it is required by the
+      # OpenAI schema only. Kept as a literal so the probe cannot fail on a filter change.
+      model: "local-qwen"
+      max_tokens: 200
+      messages:
+        - role: user
+          content: "What is 17*23? Think it through."
+    timeout: 180
+  register: _llamacpp_reasoning_probe
+
+- name: Assert the server actually surfaces chain-of-thought
+  vars:
+    _msg: "{{ (_llamacpp_reasoning_probe.json.choices | first).message }}"
   ansible.builtin.assert:
     that:
-      - _llamacpp_props.json.default_generation_settings.params.reasoning_format
-        == llamacpp_reasoning_format
+      - _msg.reasoning_content is defined
+      - (_msg.reasoning_content | default('') | trim) | length > 0
     fail_msg: >-
-      llama-server applied reasoning_format=
-      {{ _llamacpp_props.json.default_generation_settings.params.reasoning_format }},
-      not {{ llamacpp_reasoning_format }}. Chain-of-thought will not reach the client,
-      so the #197 trail will record thinking=0 on every turn with no other symptom.
+      llama-server returned no reasoning_content for a prompt that requires thinking, so
+      reasoning_format={{ llamacpp_reasoning_format }} is not in effect. Chain-of-thought
+      will not reach the client and the #197 trail will record thinking=0 on every turn
+      with no other symptom. Valid values for this build:
+      {{ llamacpp_reasoning_format_choices | join(', ') }}.
     quiet: true
 
 - name: Assert the context size the server actually applied

@@ -75,17 +75,33 @@ def test_the_accepted_set_is_declared_for_the_fail_fast_assertion():
         "the choices are declared but never asserted against in tasks/main.yml")
 
 
-def test_deploy_asserts_the_server_actually_applied_it():
+def test_deploy_verifies_reasoning_by_asking_the_model():
     """Runtime assertion, not a static one — #218's lesson: a value can be in the file
-    and never reach the process."""
-    assert "reasoning_format" in TASKS
-    assert "_llamacpp_props.json.default_generation_settings.params.reasoning_format" in TASKS
+    and never reach the process. But it must probe the RIGHT thing (see below)."""
+    assert "/v1/chat/completions" in TASKS, (
+        "reasoning must be verified by a real request; nothing else distinguishes "
+        "'configured' from 'working'")
+    assert "reasoning_content" in TASKS
+
+
+def test_props_is_not_used_as_the_reasoning_oracle():
+    """The regression this file exists to prevent, round three.
+
+    `default_generation_settings.params.reasoning_format` reports `none` even on a server
+    where reasoning demonstrably works — it describes default PER-REQUEST settings, not
+    the chat-time parser used by --jinja + /v1/chat/completions. An assertion reading it
+    failed two consecutive CORRECT deploys on 2026-07-29. The obvious "simplification" is
+    to put it back, so pin it shut.
+    """
+    assert "params.reasoning_format" not in TASKS, (
+        "/props reasoning_format is not a valid oracle — it reads `none` on a working "
+        "server. Verify reasoning with a real completion instead.")
 
 
 def test_the_failure_message_explains_the_silent_symptom():
     """A mismatch has no visible symptom except empty reasoning records, so the message
     has to say that outright or the next person will not connect the two."""
-    block = TASKS[TASKS.find("Assert the server is surfacing reasoning"):][:800]
+    block = TASKS[TASKS.find("Assert the server actually surfaces chain-of-thought"):][:900]
     assert "thinking=0" in block or "thinking = 0" in block, (
         "the fail_msg should name the symptom (empty reasoning) so it is diagnosable")
 
