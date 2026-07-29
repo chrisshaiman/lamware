@@ -47,6 +47,22 @@
     - "{{ llamacpp_model_file }}"
     - "{{ llamacpp_mmproj_file }}"
 
+# Fail fast, BEFORE the ~10-minute model mmap. llama-server does not reject an unknown
+# --reasoning-format; it silently falls back to `none` (observed 2026-07-29 with `auto`,
+# which is the help text's default-when-unspecified, not an accepted value). Without this
+# the only thing standing between a typo and a silently-unreasoning server is the /props
+# assertion at the end of a full restart cycle.
+- name: Assert the configured reasoning_format is one this build accepts
+  ansible.builtin.assert:
+    that:
+      - llamacpp_reasoning_format in llamacpp_reasoning_format_choices
+    fail_msg: >-
+      llamacpp_reasoning_format={{ llamacpp_reasoning_format }} is not accepted by this
+      build; valid values are {{ llamacpp_reasoning_format_choices | join(', ') }}.
+      llama-server would NOT error on this — it would silently apply `none` and the #197
+      trail would record thinking=0 on every turn.
+    quiet: true
+
 - name: Install llama-cpp unit
   ansible.builtin.template:
     src: llama-cpp.service.j2

@@ -68,8 +68,30 @@ llamacpp_seed: 42
 # llama.cpp's 0.05 over Qwen's recommended 0.0. The comment written then applies again:
 # an unset flag is not a neutral flag.
 #
-# `auto` lets llama.cpp pick the parser matching the model's template and populate
-# `reasoning_content`. Verify END TO END after deploy, not just via /props: reasoning has
-# to survive LiteLLM's OpenAI->Anthropic translation as a `thinking` block, and that path
-# is already known to drop `enable_thinking`.
-llamacpp_reasoning_format: "auto"
+# THIS PINNED BUILD ACCEPTS EXACTLY THREE VALUES: none | deepseek | deepseek-legacy.
+#
+# `auto` is NOT one of them. The `--help` text ends with "(default: auto)", which describes
+# what the server does when the flag is UNSPECIFIED — it is not a passable enum member. The
+# first version of this file passed `auto` and the deploy-time assertion caught it applying
+# `none` instead (2026-07-29).
+#
+# The trap worth remembering: THE PARSER DOES NOT REJECT AN INVALID VALUE. The unit file,
+# `podman inspect`, and `ps` all showed `--reasoning-format auto` while /props reported
+# `none`. Every static check passed and the setting was silently off. That is the same shape
+# as the min_p and #218 timeout bugs — which is exactly why the runtime /props assertion in
+# tasks/main.yml exists, and why it is the only check here that could have caught this.
+#
+# `deepseek` is the generic <think>-tag extractor despite the name; it puts the model's
+# chain-of-thought in `message.reasoning_content`, which is what the #197 trail reads.
+# `deepseek-legacy` ALSO leaves the raw <think> tags in message.content — that would feed the
+# tags back into our own parsing, so it is deliberately not used.
+#
+# Verify END TO END after deploy, not just via /props: reasoning has to survive LiteLLM's
+# OpenAI->Anthropic translation as a `thinking` block, and that path is already known to drop
+# `enable_thinking`. /props proves only that the SERVER is emitting it.
+llamacpp_reasoning_format: "deepseek"
+
+# The values this build's arg parser understands. Used by the fail-fast assertion in
+# tasks/main.yml so a typo dies in seconds instead of surviving a ~10-minute model mmap and
+# then being caught (or, before the /props assert existed, not caught at all).
+llamacpp_reasoning_format_choices: [none, deepseek, deepseek-legacy]

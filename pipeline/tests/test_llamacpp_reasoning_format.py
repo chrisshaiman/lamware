@@ -28,11 +28,51 @@ def test_the_flag_is_passed_explicitly():
         "chain-of-thought capture")
 
 
-def test_a_default_is_defined():
+# The three values `llama-server --help` enumerates for this pinned image digest. `auto`
+# is NOT among them: it is the help text's "(default: ...)" — what the server does when the
+# flag is omitted — and passing it applies `none`.
+ACCEPTED = {"none", "deepseek", "deepseek-legacy"}
+
+
+def _configured_default() -> str:
     match = re.search(r"^llamacpp_reasoning_format:\s*\"?([a-z-]+)\"?", DEFAULTS, re.MULTILINE)
     assert match, "llamacpp_reasoning_format missing from the role defaults"
-    assert match.group(1) != "none", (
+    return match.group(1)
+
+
+def test_a_default_is_defined():
+    assert _configured_default() != "none", (
         "'none' is the value that produced thinking=0c on every turn")
+
+
+def test_the_default_is_a_value_the_build_actually_accepts():
+    """The bug this file was written for, round two.
+
+    The first version of the default was `auto`, taken from the help text's
+    "(default: auto)". That is the unspecified-behaviour description, not an accepted
+    value. llama-server DOES NOT REJECT IT — the unit, `podman inspect` and `ps` all
+    showed `--reasoning-format auto` while /props reported `none`. Asserting merely
+    'not none' passed the whole way through and the setting was silently off.
+    """
+    configured = _configured_default()
+    assert configured in ACCEPTED, (
+        f"{configured!r} is not accepted by this build ({sorted(ACCEPTED)}). "
+        "llama-server will silently fall back to 'none' rather than failing.")
+
+
+def test_the_accepted_set_is_declared_for_the_fail_fast_assertion():
+    """The role must carry the choices itself, so a typo dies before the 10-minute mmap
+    instead of only at the /props check after a full restart."""
+    match = re.search(r"^llamacpp_reasoning_format_choices:\s*\[([^\]]+)\]",
+                      DEFAULTS, re.MULTILINE)
+    assert match, "llamacpp_reasoning_format_choices missing from the role defaults"
+    declared = {v.strip().strip("\"'") for v in match.group(1).split(",")}
+    assert declared == ACCEPTED, (
+        f"declared choices {sorted(declared)} do not match what the build accepts "
+        f"{sorted(ACCEPTED)} — the fail-fast guard would pass a value the server rejects, "
+        "or reject one it supports")
+    assert "llamacpp_reasoning_format_choices" in TASKS, (
+        "the choices are declared but never asserted against in tasks/main.yml")
 
 
 def test_deploy_asserts_the_server_actually_applied_it():
