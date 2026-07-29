@@ -53,6 +53,39 @@ def test_the_loop_emits_a_progress_heartbeat():
     assert "STREAM_HEARTBEAT_TOKENS" in TMPL
 
 
+def test_a_wall_clock_heartbeat_covers_prompt_evaluation():
+    """The token heartbeat covers only GENERATION — the wrong phase.
+
+    Measured: a 62k synthesis spent ~83 of 90 minutes in prompt eval before emitting a
+    token, and a qwen@10 cell left the trail silent for 20 of 33 minutes. A token-counted
+    heartbeat cannot fire during either, so it did not solve the problem it was added for.
+    """
+    assert "class _WaitHeartbeat" in TMPL
+    assert "WAIT_HEARTBEAT_SECONDS" in TMPL
+    assert '"waiting": True' in TMPL, "waiting ticks must be distinguishable from generation"
+    assert "with _WaitHeartbeat(turn_index)" in TMPL, \
+        "the wait heartbeat must wrap the streaming call"
+
+
+def test_the_wait_heartbeat_stops_once_tokens_arrive():
+    """Otherwise the trail shows 'waiting' while the model is visibly generating."""
+    assert "waiting.stop()" in TMPL
+
+
+def test_concurrent_emits_are_serialised():
+    """The heartbeat emits from a background thread while the main thread may also emit.
+
+    The protocol has no framing beyond the newline, so two interleaved writes produce a
+    corrupt line the orchestrator cannot parse.
+    """
+    assert "_EMIT_LOCK = threading.Lock()" in TMPL
+    assert "with _EMIT_LOCK:" in TMPL
+
+
+def test_the_heartbeat_thread_cannot_hold_the_process_open():
+    assert "daemon=True" in TMPL
+
+
 def test_the_loop_emits_the_models_reasoning():
     """#197: the orchestrator cannot see text or thinking — only the container can."""
     assert "def emit_turn(" in TMPL

@@ -56,3 +56,20 @@ llamacpp_presence_penalty: 0.0
 # be reported, never tuned: picking the best-scoring seed is selection on noise
 # and would invalidate any published result. See issue #222.
 llamacpp_seed: 42
+
+# How the server surfaces the model's chain-of-thought.
+#
+# Never passed until now, so the server ran at its default and `/props` reported
+# `reasoning_format: none`. Consequence: Qwen3.6's reasoning never reached the client as
+# a separate field, so the forensic trail (#197) recorded `thinking=0c` on every turn —
+# the capture mechanism was correct and there was simply nothing to capture.
+#
+# This is the SECOND flag on this unit to bite that way, after min_p silently taking
+# llama.cpp's 0.05 over Qwen's recommended 0.0. The comment written then applies again:
+# an unset flag is not a neutral flag.
+#
+# `auto` lets llama.cpp pick the parser matching the model's template and populate
+# `reasoning_content`. Verify END TO END after deploy, not just via /props: reasoning has
+# to survive LiteLLM's OpenAI->Anthropic translation as a `thinking` block, and that path
+# is already known to drop `enable_thinking`.
+llamacpp_reasoning_format: "auto"

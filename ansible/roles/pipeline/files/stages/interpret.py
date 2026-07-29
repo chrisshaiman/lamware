@@ -317,15 +317,20 @@ class TurnTrail:
                    thinking=thinking)
 
     def stream_progress(self, msg: dict) -> None:
-        """Periodic heartbeat while the model generates.
+        """Heartbeat while a request is outstanding.
 
-        llama-server emits nothing during prompt evaluation, so a long turn is
-        indistinguishable from a hang from the outside — the 90-minute synthesis looked
-        like a stall until the container log was parsed by hand.
+        Two kinds, and the distinction matters: `waiting` ticks mean the request is
+        still in prompt evaluation with nothing generated yet, which is where a 62k
+        synthesis spent ~83 of its 90 minutes. Token counts mean generation is underway.
+        Recording them identically would hide precisely the phase that looks like a hang.
         """
-        self.event("stream", turn_index=msg.get("turn_index"),
-                   output_tokens=msg.get("output_tokens"),
-                   thinking_tokens=msg.get("thinking_tokens"))
+        if msg.get("waiting"):
+            self.event("stream", turn_index=msg.get("turn_index"),
+                       waiting=True, elapsed_s=msg.get("elapsed_s"))
+        else:
+            self.event("stream", turn_index=msg.get("turn_index"),
+                       output_tokens=msg.get("output_tokens"),
+                       thinking_tokens=msg.get("thinking_tokens"))
 
     def status(self, message: str) -> None:
         if any(marker in message for marker in self._SYNTHESIS_MARKERS):

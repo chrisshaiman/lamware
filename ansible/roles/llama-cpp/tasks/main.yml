@@ -116,6 +116,20 @@
     quiet: true
   loop: "{{ _intended | dict2items }}"
 
+# Separate from the sampling assertion because it is a string, not a float, and because
+# it is the flag whose absence silently emptied the forensic trail's reasoning records.
+- name: Assert the server is surfacing reasoning as configured
+  ansible.builtin.assert:
+    that:
+      - _llamacpp_props.json.default_generation_settings.params.reasoning_format
+        == llamacpp_reasoning_format
+    fail_msg: >-
+      llama-server applied reasoning_format=
+      {{ _llamacpp_props.json.default_generation_settings.params.reasoning_format }},
+      not {{ llamacpp_reasoning_format }}. Chain-of-thought will not reach the client,
+      so the #197 trail will record thinking=0 on every turn with no other symptom.
+    quiet: true
+
 - name: Assert the context size the server actually applied
   ansible.builtin.assert:
     that:

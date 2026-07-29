@@ -80,8 +80,13 @@ def render(rows: list[dict]) -> str:
                       f"text={r.get('text_chars', 0)}c "
                       f"thinking={r.get('thinking_chars', 0)}c  calls: {calls}")
         elif r.get("event") == "stream":
-            detail = (f"generating… {r.get('output_tokens', 0)} out / "
-                      f"{r.get('thinking_tokens', 0)} thinking tokens")
+            if r.get("waiting"):
+                # Prompt evaluation: request outstanding, nothing generated yet. This
+                # is the phase that used to leave the trail silent for 20+ minutes.
+                detail = f"waiting on prompt eval… {r.get('elapsed_s', 0):.0f}s so far"
+            else:
+                detail = (f"generating… {r.get('output_tokens', 0)} out / "
+                          f"{r.get('thinking_tokens', 0)} thinking tokens")
         elif r.get("event") == "status":
             detail = r.get("message", "")[:70]
         elif r.get("event") == "final":
