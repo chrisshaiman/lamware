@@ -2493,13 +2493,29 @@ Technical summary: {executive}"""
     def local_synthesize(msgs: list[dict[str, Any]]) -> dict[str, Any]:
         """Two-phase local final synthesis (spec: reasoning-preservation guard).
 
-        Phase 2a — a think:true PROSE conclusion via the router `client`: the model
-        reasons over the investigation and states findings in visible text (prose,
-        not JSON, so no formatting pressure and no nesting/truncation). Phase 2b — a
-        think:false forced submit_analysis call serializes that reasoned conclusion
-        into valid structured JSON. Falls back to parsing the prose, then to the
-        legacy free-text path — never worse than before. (local backend => $0, so
-        the extra call's tokens are not separately accounted.)
+        What is "preserved" is the reasoning already done ACROSS THE INVESTIGATION
+        LOOP, by giving it a prose stage to land in before anything has to be valid
+        JSON. It does not mean either synthesis phase reasons — NEITHER DOES:
+
+        Phase 2a — a PROSE conclusion via the router `client`, with thinking OFF
+        (the prompt appends Qwen's `/no_think`; see the comment below for why).
+        Prose, not JSON, so there is no formatting pressure and no nesting or
+        truncation. Phase 2b — a think:false forced submit_analysis call that
+        serializes that conclusion into valid structured JSON.
+
+        Thinking is therefore ON only during the phase-1 tool-call loop. That is
+        also the only phase whose reasoning the #197 trail can capture: empty
+        reasoning records on the synthesis calls are expected, not a regression.
+
+        Whether 2a SHOULD think is an open question, not a settled one — the
+        154s->115s "no loss of substance" measurement behind `/no_think` was taken
+        2026-07-25, before the #222 sampling change, so it crosses a profile
+        boundary. Family identification is genuine cross-evidence inference, and it
+        happens here. Tracked as an A/B.
+
+        Falls back to parsing the prose, then to the legacy free-text path — never
+        worse than before. (local backend => $0, so the extra call's tokens are not
+        separately accounted.)
         """
         # /no_think is a Qwen3 soft switch that disables reasoning for this turn.
         # It works on the Anthropic router path, where LiteLLM does NOT forward
