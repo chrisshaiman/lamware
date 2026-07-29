@@ -45,7 +45,6 @@ def test_deploy_asserts_the_server_actually_applied_it():
 def test_the_failure_message_explains_the_silent_symptom():
     """A mismatch has no visible symptom except empty reasoning records, so the message
     has to say that outright or the next person will not connect the two."""
-    idx = TASKS.find("reasoning_format will not")
     block = TASKS[TASKS.find("Assert the server is surfacing reasoning"):][:800]
     assert "thinking=0" in block or "thinking = 0" in block, (
         "the fail_msg should name the symptom (empty reasoning) so it is diagnosable")
