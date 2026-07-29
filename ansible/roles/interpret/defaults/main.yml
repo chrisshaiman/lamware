@@ -23,6 +23,18 @@ interpret_context_compression_tokens: 30000
 
 # Agentic loop limits
 interpret_max_tool_calls: 10
+# How many tool calls are EXECUTED per model turn. interpret_max_tool_calls caps the run
+# total but never the per-turn batch, so the model could emit ~6 parallel decompiles in
+# one response. Measured 2026-07-28 on a qwen@30 cell: one turn added 14,848 tokens
+# (~59,000 chars) — roughly six 9KB decompiles at once — and took 55 minutes, because
+# prompt-eval also slows from 66 to 8.6 tok/s as context grows. Unbounded batching is
+# what made deep local runs quadratic (#234).
+#
+# 3 bounds the worst case at ~28,000 chars/turn (three results at the 9.4KB observed
+# maximum) while leaving room for the cheap reads the model interleaves. Nothing is
+# lost: surplus calls are DEFERRED with a message telling the model to re-request them,
+# so it still gets every decompile — just spread across turns.
+interpret_max_tool_calls_per_turn: 3
 interpret_timeout: 300
 
 # Input caps
