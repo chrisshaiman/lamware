@@ -14,12 +14,20 @@ from stages.interpret import TOOL_RESULT_CHAR_CAP, cap_tool_result
 
 
 def test_long_field_is_truncated_with_an_explicit_marker():
+    """`cap` is now the budget for the WHOLE result, not for each field.
+
+    Changed in #242. A note allowance is reserved from the budget, because the
+    bookkeeping used to be appended after budgeting and pushed the result over cap.
+    So the payload keeps slightly less than `cap` — the exact split is an
+    implementation detail, the bound on the total is the contract.
+    """
     body = "A" * 10_000
     out = cap_tool_result({"decompiled": body}, cap=6000)
     assert len(out["decompiled"]) < len(body)
-    assert out["decompiled"].startswith("A" * 6000)
+    assert out["decompiled"].startswith("A" * 5000)   # most of the budget is payload
     assert "TRUNCATED" in out["decompiled"]
-    assert "4000 more characters" in out["decompiled"]
+    assert "more characters" in out["decompiled"]
+    assert len(json.dumps(out)) <= 6000 * 1.05
 
 
 def test_marker_warns_against_assuming_the_remainder_is_empty():
@@ -34,9 +42,30 @@ def test_short_values_are_untouched():
     assert cap_tool_result(src, cap=6000) == src
 
 
-def test_non_string_values_are_left_alone():
+def test_list_values_are_now_bounded_too():
+    """DECISION REVERSED in #242 — this test previously asserted the opposite.
+
+    It read:
+
+        def test_non_string_values_are_left_alone():
+            src = {"functions": [{"name": "a"}] * 50, "count": 50, "ok": True}
+            assert cap_tool_result(src, cap=10) == src
+
+    That was deliberate, and it is what let a list-valued result escape the cap
+    entirely: `get_strings_at` was measured returning **49,613 bytes against a
+    12,000-char cap** on 2026-07-28, and the turn carrying it cost 33.4 minutes of a
+    180-minute run. Tool results never fall out of the transcript, so an oversized one
+    is re-paid on every later turn — the same argument this module's docstring already
+    makes for strings applies to lists.
+
+    Scalars (`count`, `ok`) are still preserved: they are metadata, they are tiny, and
+    they are what makes a truncated result interpretable.
+    """
     src = {"functions": [{"name": "a"}] * 50, "count": 50, "ok": True}
-    assert cap_tool_result(src, cap=10) == src
+    out = cap_tool_result(src, cap=200)
+    assert len(out["functions"]) < 50, "list must be bounded (#242)"
+    assert out["count"] == 50 and out["ok"] is True, "metadata must survive"
+    assert "TRUNCATED" in out["note"]
 
 
 def test_note_records_which_fields_were_truncated():
@@ -49,7 +78,7 @@ def test_existing_note_is_preserved():
     out = cap_tool_result({"note": "showing top 15 of 200 functions by xref_count",
                            "decompiled": "A" * 9000}, cap=100)
     assert "top 15 of 200" in out["note"]
-    assert "truncated oversized field" in out["note"]
+    assert "TRUNCATED" in out["note"]
 
 
 def test_noop_on_unexpected_shapes():

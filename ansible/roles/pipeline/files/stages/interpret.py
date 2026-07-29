@@ -65,34 +65,111 @@ def cap_list_functions(result: dict, cap: int = LIST_FUNCTIONS_CAP) -> dict:
 TOOL_RESULT_CHAR_CAP = 12000
 
 
+def _marker(omitted: str) -> str:
+    """Explicit truncation notice. Never truncate silently.
+
+    A model that receives half a function assumes it saw all of it and makes claims
+    about code it was never shown — which the grounding metric then scores as
+    fabrication when the HARNESS, not the model, dropped the evidence.
+    """
+    return (f"\n...[TRUNCATED: {omitted}. Use get_strings_at or decompile a narrower "
+            f"target if you need the rest — do not assume the remainder is empty.]")
+
+
 def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
-    """Bound the long string values in a tool result before it enters the transcript.
+    """Bound the TOTAL serialized size of a tool result before it enters the transcript.
 
-    The truncation marker is deliberately explicit and states the tool to call next.
-    A model that silently receives half a function assumes it saw all of it and then
-    makes claims about code it was never shown — which the grounding metric would score
-    as fabrication when the harness, not the model, dropped the evidence.
+    The previous version capped only `isinstance(value, str)` fields, so a LIST-valued
+    result passed through entirely uncapped — `get_strings_at` was measured returning
+    **49,613 bytes against a 12,000-char cap**, and the turn that carried it cost 33.4
+    minutes of a 180-minute run (#242). Many short string fields whose total was large
+    escaped equally.
 
-    No-op on short values, so cloud-model behaviour is unchanged in practice.
+    Budgeting is total, not per field, because the cost that matters is what the whole
+    result adds to the transcript — and it is paid on every later turn, since prompt-eval
+    rate falls from 66 to 8.6 tok/s as context grows.
+
+    Small scalar fields are reserved FIRST so a huge `code` or `strings` field cannot
+    starve the metadata (status, address, count) that tells the model what it is looking
+    at. Lists are trimmed by dropping whole elements — cutting mid-element would emit
+    malformed entries the model would try to interpret.
+
+    No-op on results already within budget, so cloud-model behaviour is unchanged.
     """
     if not isinstance(result, dict):
         return result
-    out = {}
-    truncated_keys = []
-    for key, value in result.items():
-        if isinstance(value, str) and len(value) > cap:
-            omitted = len(value) - cap
-            out[key] = (value[:cap] +
-                        f"\n...[TRUNCATED: {omitted} more characters omitted. "
-                        f"Use get_strings_at or decompile a narrower target if you "
-                        f"need the rest — do not assume the remainder is empty.]")
-            truncated_keys.append(key)
-        else:
-            out[key] = value
-    if truncated_keys:
-        out["note"] = "; ".join(filter(None, [
-            result.get("note"),
-            f"truncated oversized field(s): {', '.join(truncated_keys)}"]))
+
+    def size(value: object) -> int:
+        return len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
+
+    # The bookkeeping has to be budgeted too. Two bugs came from not doing that: the
+    # per-field truncation markers alone overshot a 2,000-char cap by 3,300 when many
+    # fields were trimmed, and the `note` was appended AFTER budgeting, so the result
+    # landed over cap and a second pass kept growing it.
+    NOTE_ALLOWANCE = 400
+    MIN_USEFUL_FIELD = 200  # below this, a fragment plus a marker is worse than nothing
+    METADATA_CHARS = 200    # a string this short is a label, not a payload
+
+    def is_payload(key: str, value: object) -> bool:
+        # `note` is bookkeeping — never re-truncate it as payload, or capping an
+        # already-capped result mangles its own explanation.
+        if key == "note":
+            return False
+        if isinstance(value, list):
+            return True
+        # Short strings are metadata too: "address": "0x0041b500", "status": "ok".
+        # Classifying them as payload meant a tight budget could truncate the very
+        # labels that make a truncated result interpretable.
+        return isinstance(value, str) and len(value) > METADATA_CHARS
+
+    big = {k: v for k, v in result.items() if is_payload(k, v)}
+    small = {k: v for k, v in result.items() if k not in big}
+
+    # Metadata first — it is tiny and it is what makes a truncated result interpretable.
+    remaining = cap - NOTE_ALLOWANCE - sum(size(v) for v in small.values())
+    out: dict = dict(small)
+    notes: list[str] = []
+    omitted_fields: list[str] = []
+
+    for key, value in big.items():
+        if remaining < MIN_USEFUL_FIELD:
+            # Budget gone. Emit nothing rather than a marker per field — the markers
+            # were themselves the overrun. One collective note covers them.
+            out[key] = [] if isinstance(value, list) else ""
+            omitted_fields.append(key)
+            continue
+        if isinstance(value, str):
+            if len(value) <= remaining:
+                out[key] = value
+                remaining -= len(value)
+            else:
+                budget = remaining
+                out[key] = value[:budget] + _marker(f"{len(value) - budget} more characters")
+                notes.append(f"{key}: truncated to {budget} chars")
+                remaining = 0
+        else:  # list — drop whole elements; a partial element is malformed input
+            kept: list = []
+            for item in value:
+                item_size = size(item)
+                if item_size <= remaining:
+                    kept.append(item)
+                    remaining -= item_size
+                else:
+                    break
+            dropped = len(value) - len(kept)
+            out[key] = kept
+            if dropped:
+                notes.append(f"{key}: kept {len(kept)} of {len(value)} items, "
+                             f"{dropped} dropped")
+
+    if omitted_fields:
+        notes.append(f"omitted entirely (budget exhausted): {', '.join(omitted_fields)}")
+    if notes:
+        combined = "; ".join(filter(None, [result.get("note"),
+                                           "TRUNCATED — " + "; ".join(notes)]))
+        out["note"] = combined[:NOTE_ALLOWANCE]
+    elif "note" in result:
+        out["note"] = result["note"]
     return out
 
 
