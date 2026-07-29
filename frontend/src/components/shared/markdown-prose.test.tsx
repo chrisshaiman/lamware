@@ -79,6 +79,26 @@ describe("MarkdownProse — no live links from model output", () => {
     expect(navigableAnchors(container)).toHaveLength(0);
   });
 
+  it("neutralises a PROTOCOL-RELATIVE href (//host) — the deny-list bypass", () => {
+    // No scheme colon, so the original deny-list rendered this as a live anchor and the
+    // browser resolved it against the page protocol -> https://evil.com/payload.
+    const { container } = render(
+      <MarkdownProse>{"See [the report](//evil.com/payload)"}</MarkdownProse>,
+    );
+    const anchors = Array.from(container.querySelectorAll("a"));
+    expect(anchors.filter((a) => (a.getAttribute("href") ?? "").startsWith("//")))
+      .toHaveLength(0);
+    expect(navigableAnchors(container)).toHaveLength(0);
+  });
+
+  it("does not mangle DLL and EXE names in narrative prose", () => {
+    const text = "It calls CreateFileW in kernel32.dll and drops payload.exe.";
+    const { container } = render(<MarkdownProse>{text}</MarkdownProse>);
+    expect(container.textContent).toContain("kernel32.dll");
+    expect(container.textContent).toContain("payload.exe");
+    expect(container.textContent).not.toContain("[.]dll");
+  });
+
   it("keeps in-app relative links clickable", () => {
     const { container } = render(
       <MarkdownProse>{"[analysis](/analyses/42)"}</MarkdownProse>,
