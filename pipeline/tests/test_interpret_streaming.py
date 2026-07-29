@@ -27,11 +27,45 @@ def test_streaming_helper_exists():
 
 
 def test_agentic_loop_streams():
-    """The loop call is the one that timed out; it must not go back to .create()."""
-    assert re.search(r"response = create_message\(\s*client,\s*\n\s*model=current_model,"
+    """The loop call is the one that timed out; it must not go back to .create().
+
+    Asserts the PROPERTY (it streams) rather than one spelling. #197 switched this call
+    to create_message_streaming(), which streams identically and additionally emits a
+    progress heartbeat — the original regex pinned the exact call text and failed on a
+    change that preserved everything it was protecting.
+    """
+    assert re.search(r"response = create_message(_streaming)?\(\s*\n?\s*client,"
+                     r"(\s*\n\s*turn_index=tool_calls_used,)?"
+                     r"\s*\n\s*model=current_model,"
                      r"\s*\n\s*max_tokens=max_output_tokens,\s*\n\s*system=CACHED_SYSTEM,"
                      r"\s*\n\s*tools=TOOLS,", TMPL), \
-        "the agentic loop must call create_message(), not client.messages.create()"
+        "the agentic loop must stream, not call client.messages.create()"
+
+
+def test_the_loop_emits_a_progress_heartbeat():
+    """llama-server emits nothing during prompt eval, so a long turn looks like a hang.
+
+    The 2026-07-28 synthesis ran 90 minutes and was indistinguishable from a stall until
+    the container log was parsed by hand.
+    """
+    assert "def create_message_streaming(" in TMPL
+    assert '"type": "stream"' in TMPL
+    assert "STREAM_HEARTBEAT_TOKENS" in TMPL
+
+
+def test_the_loop_emits_the_models_reasoning():
+    """#197: the orchestrator cannot see text or thinking — only the container can."""
+    assert "def emit_turn(" in TMPL
+    assert '"type": "turn"' in TMPL
+    assert "emit_turn(response, turn_index=tool_calls_used)" in TMPL
+    for field in ('"text"', '"thinking"', '"tool_calls"', '"stop_reason"'):
+        assert field in TMPL, f"turn record missing {field}"
+
+
+def test_redacted_thinking_is_recorded_as_having_existed():
+    """Encrypted reasoning cannot be shown, but omitting it silently would imply the
+    model reasoned less than it did — which is misleading in a chain-of-custody record."""
+    assert "[redacted_thinking block]" in TMPL
 
 
 def test_forced_final_and_conclusion_stream():

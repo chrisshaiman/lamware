@@ -230,6 +230,11 @@ class TurnTrail:
         self.phase = "loop"
         self.cumulative_result_bytes = 0
         self._broken = False
+        # Full tool output goes in sibling files rather than inline: a decompiled body
+        # is ~9KB and would make the JSONL unreadable, but a byte COUNT is not evidence.
+        # "What did the model actually see?" is the question chain-of-custody asks, and
+        # only the content answers it.
+        self.results_dir = path.parent / "results"
 
     def _write(self, row: dict) -> None:
         """Never let instrumentation break the run it is instrumenting."""
@@ -255,18 +260,72 @@ class TurnTrail:
         row.update(fields)
         self._write(row)
 
+    def _dump_result(self, result: object) -> str | None:
+        """Persist a tool result verbatim and return its path.
+
+        Verbatim and untruncated: this is the record of what the model was shown, so
+        trimming it here would defeat the purpose — and the cap that shapes what the
+        model sees has already been applied by the time this is called.
+        """
+        if self._broken or result is None:
+            return None
+        try:
+            self.results_dir.mkdir(parents=True, exist_ok=True)
+            path = self.results_dir / f"{self.seq + 1:04d}.json"
+            with path.open("w", encoding="utf-8") as fh:
+                json.dump(result, fh, indent=2, default=str)
+                fh.flush()
+                os.fsync(fh.fileno())
+            return str(path)
+        except Exception as e:  # noqa: BLE001
+            print(f"    [!] could not persist tool result ({type(e).__name__}: {e})")
+            return None
+
     def tool(self, name: str, args: dict, result: object = None,
              error: str | None = None) -> None:
-        # Result SIZE is the field that matters: the per-value char cap does not bound
-        # list-valued results, and a turn was measured adding 18,532 tokens. Bytes make
-        # that visible per call instead of inferring it from context deltas.
+        # Bytes stay because they make context growth visible at a glance — the
+        # list-cap bug (#242) showed as a 49,613B row. The full content is written
+        # alongside so the row is a pointer to evidence, not a substitute for it.
         size = 0 if result is None else len(json.dumps(result, default=str))
         self.cumulative_result_bytes += size
         self.event("tool", tool=name,
                    args=json.dumps(args, default=str)[:200],
                    result_bytes=size,
                    cumulative_result_bytes=self.cumulative_result_bytes,
+                   result_path=self._dump_result(result),
                    error=error)
+
+    def turn(self, msg: dict) -> None:
+        """Record what the MODEL produced for a turn — text, reasoning, stop reason.
+
+        Emitted by the container, because the orchestrator cannot see this: the JSON
+        protocol between them carries only tool_call/status/final, and the model's text
+        and thinking blocks live in the container's `messages` list. Instrumenting
+        orchestrator-side captured timing and shape but nothing about HOW the model
+        reached its verdict, which is what #197 actually asks for.
+        """
+        text = msg.get("text") or ""
+        thinking = msg.get("thinking") or ""
+        self.event("turn",
+                   turn_index=msg.get("turn_index"),
+                   stop_reason=msg.get("stop_reason"),
+                   text_chars=len(text),
+                   thinking_chars=len(thinking),
+                   tool_calls=msg.get("tool_calls") or [],
+                   usage=msg.get("usage") or {},
+                   text=text,
+                   thinking=thinking)
+
+    def stream_progress(self, msg: dict) -> None:
+        """Periodic heartbeat while the model generates.
+
+        llama-server emits nothing during prompt evaluation, so a long turn is
+        indistinguishable from a hang from the outside — the 90-minute synthesis looked
+        like a stall until the container log was parsed by hand.
+        """
+        self.event("stream", turn_index=msg.get("turn_index"),
+                   output_tokens=msg.get("output_tokens"),
+                   thinking_tokens=msg.get("thinking_tokens"))
 
     def status(self, message: str) -> None:
         if any(marker in message for marker in self._SYNTHESIS_MARKERS):
@@ -524,6 +583,15 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
             elif msg_type == "status":
                 print(f"    LLM: {msg.get('message', '')}")
                 trail.status(msg.get("message", ""))
+
+            elif msg_type == "turn":
+                # The model's own output for a turn. Emitted only by containers built
+                # after #197; older images simply never send it, and unknown message
+                # types were already ignored here, so this is backward-compatible.
+                trail.turn(msg)
+
+            elif msg_type == "stream":
+                trail.stream_progress(msg)
 
     except Exception as e:
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")

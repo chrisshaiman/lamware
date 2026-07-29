@@ -74,6 +74,14 @@ def render(rows: list[dict]) -> str:
                       f"(cum {r.get('cumulative_result_bytes', 0):,}B)")
             if r.get("error"):
                 detail += f"  ERROR: {r['error'][:60]}"
+        elif r.get("event") == "turn":
+            calls = ", ".join(c.get("name", "?") for c in r.get("tool_calls", [])) or "—"
+            detail = (f"stop={r.get('stop_reason')} "
+                      f"text={r.get('text_chars', 0)}c "
+                      f"thinking={r.get('thinking_chars', 0)}c  calls: {calls}")
+        elif r.get("event") == "stream":
+            detail = (f"generating… {r.get('output_tokens', 0)} out / "
+                      f"{r.get('thinking_tokens', 0)} thinking tokens")
         elif r.get("event") == "status":
             detail = r.get("message", "")[:70]
         elif r.get("event") == "final":
@@ -103,15 +111,49 @@ def render(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
+def render_reasoning(rows: list[dict]) -> str:
+    """Print what the model actually said and thought, turn by turn.
+
+    This is the chain-of-custody view: not "a tool was called and returned 9KB" but the
+    reasoning that led there. Full text, no truncation — a summarised reasoning record
+    cannot answer "how did the AI reach this verdict".
+    """
+    out = ["", "=== model reasoning, turn by turn ==="]
+    turns = [r for r in rows if r.get("event") == "turn"]
+    if not turns:
+        out.append("  (no turn records — container predates #197, or the run died first)")
+        return "\n".join(out)
+    for r in turns:
+        out.append(f"\n--- turn {r.get('turn_index')} "
+                   f"@ {r.get('t', 0)/60:.1f} min  stop={r.get('stop_reason')} ---")
+        if r.get("thinking"):
+            out.append("  [thinking]")
+            out += [f"    {line}" for line in r["thinking"].splitlines()]
+        if r.get("text"):
+            out.append("  [text]")
+            out += [f"    {line}" for line in r["text"].splitlines()]
+        for c in r.get("tool_calls", []):
+            out.append(f"  [calls] {c.get('name')}({c.get('input', '')[:120]})")
+    return "\n".join(out)
+
+
 def main() -> None:
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if len(args) != 1:
         print(__doc__)
         raise SystemExit(2)
-    rows = load(sys.argv[1])
+    rows = load(args[0])
     if not rows:
         print("  (empty trail — the run died before its first event)")
         raise SystemExit(1)
     print(render(rows))
+    if "--reasoning" in sys.argv or "-r" in sys.argv:
+        print(render_reasoning(rows))
+    else:
+        n = sum(1 for r in rows if r.get("event") == "turn")
+        if n:
+            print(f"\n  ({n} turn records with model text/reasoning — "
+                  f"re-run with --reasoning to read them)")
 
 
 if __name__ == "__main__":

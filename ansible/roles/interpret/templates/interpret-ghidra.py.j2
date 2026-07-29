@@ -914,6 +914,72 @@ def create_message(cli, **kwargs):
         return stream.get_final_message()
 
 
+# Heartbeat cadence while generating. llama-server emits NOTHING during prompt
+# evaluation, so from outside a long turn is indistinguishable from a hang — the
+# 90-minute synthesis on 2026-07-28 looked like a stall until the container log was
+# parsed by hand. Every 25 tokens is frequent enough to see progress and rare enough
+# not to flood the protocol (a 2,000-token generation emits ~80 lines).
+STREAM_HEARTBEAT_TOKENS = 25
+
+
+def create_message_streaming(cli, turn_index: int, **kwargs):
+    """Stream a message, emitting a periodic progress heartbeat to the orchestrator.
+
+    Same return shape as create_message(). Used on the long generation paths so a run
+    in progress is observable rather than opaque.
+    """
+    text_tokens = 0
+    thinking_tokens = 0
+    with cli.messages.stream(**kwargs) as stream:
+        for event in stream:
+            etype = getattr(event, "type", "")
+            if etype != "content_block_delta":
+                continue
+            delta = getattr(event, "delta", None)
+            if getattr(delta, "type", "") == "thinking_delta":
+                thinking_tokens += 1
+            else:
+                text_tokens += 1
+            total = text_tokens + thinking_tokens
+            if total % STREAM_HEARTBEAT_TOKENS == 0:
+                emit({"type": "stream", "turn_index": turn_index,
+                      "output_tokens": text_tokens,
+                      "thinking_tokens": thinking_tokens})
+        return stream.get_final_message()
+
+
+def emit_turn(response, turn_index: int) -> None:
+    """Emit the model's own output for one turn: text, reasoning, and what it called.
+
+    This is the half of #197 the orchestrator structurally cannot supply. Text and
+    thinking are sent in FULL — a truncated reasoning record cannot answer "how did the
+    AI reach its verdict", which is the question chain-of-custody asks.
+    """
+    text_parts, thinking_parts, calls = [], [], []
+    for block in getattr(response, "content", []) or []:
+        btype = getattr(block, "type", "")
+        if btype == "text":
+            text_parts.append(block.text)
+        elif btype == "thinking":
+            thinking_parts.append(getattr(block, "thinking", ""))
+        elif btype == "redacted_thinking":
+            # Content is encrypted and cannot be shown; record that it existed so the
+            # trail does not imply the model reasoned less than it did.
+            thinking_parts.append("[redacted_thinking block]")
+        elif btype == "tool_use":
+            calls.append({"name": block.name,
+                          "input": json.dumps(block.input, default=str)[:500]})
+    emit({
+        "type": "turn",
+        "turn_index": turn_index,
+        "stop_reason": getattr(response, "stop_reason", None),
+        "text": "\n".join(text_parts),
+        "thinking": "\n".join(thinking_parts),
+        "tool_calls": calls,
+        "usage": usage_from_response(response),
+    })
+
+
 def usage_from_response(response) -> dict:
     """Extract token usage from a Claude API response."""
     usage = getattr(response, "usage", None)
@@ -2456,8 +2522,12 @@ Technical summary: {executive}"""
         # Call Claude. STREAMED — see create_message(): this is the call that died on
         # the 600s request timeout at 22 tool calls once the transcript grew large.
         try:
-            response = create_message(
+            # Heartbeat variant: this is the call that can run for tens of minutes on a
+            # local model, and from outside it was previously indistinguishable from a
+            # hang. Same return shape as create_message().
+            response = create_message_streaming(
                 client,
+                turn_index=tool_calls_used,
                 model=current_model,
                 max_tokens=max_output_tokens,
                 system=CACHED_SYSTEM,
@@ -2500,6 +2570,14 @@ Technical summary: {executive}"""
         resp_usage = usage_from_response(response)
         total_input_tokens += resp_usage["input_tokens"]
         total_output_tokens += resp_usage["output_tokens"]
+
+        # ---- Forensic turn record (#197) ----
+        # The orchestrator cannot see any of this: the protocol between us carries only
+        # tool_call/status/final, and the model's text and thinking live here, in
+        # `messages`. Without this emit, a trail can show WHEN a turn happened and how
+        # many bytes came back, but nothing about HOW the model reached its verdict —
+        # which is what chain-of-custody and analyst review actually need.
+        emit_turn(response, turn_index=tool_calls_used)
 
         # ---- Process response ----
         if response.stop_reason == "tool_use":
