@@ -41,7 +41,14 @@ def test_defanged_claim_matches_plain_source():
 
 def test_no_iocs_is_clean():
     sc = grounding_scorecard({"code_level_ioc": []}, "anything")
-    assert sc == {"total": 0, "grounded": 0, "fabricated": [], "grounded_ratio": 1.0}
+    # Asserted key-by-key rather than by whole-dict equality: #243 added `partial`,
+    # `unscoreable`, `truncated_claims` and `details`, and an exact-match assertion
+    # fails on any future addition without saying anything about the behaviour it
+    # was written to protect.
+    assert sc["total"] == 0
+    assert sc["grounded"] == 0
+    assert sc["fabricated"] == []
+    assert sc["grounded_ratio"] == 1.0
 
 
 def test_missing_key_is_clean():

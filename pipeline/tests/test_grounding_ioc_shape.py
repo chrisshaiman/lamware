@@ -32,8 +32,15 @@ def test_string_shaped_iocs_score():
 def test_mixed_and_odd_shapes_do_not_raise():
     a = {"code_level_iocs": [{"value": "GetTempPathW"}, "~%u.tmp", 12345, None, ""]}
     s = grounding_scorecard(a, SOURCE)
-    assert s["grounded"] == 2          # both real ones found
-    assert "12345" in s["fabricated"]  # coerced, not crashed
+    assert s["grounded"] == 2            # both real ones found
+    # The point of this case is that a non-string entry is COERCED, not crashed on.
+    # Since #243 it lands in `unscoreable` rather than `fabricated`: "12345" carries no
+    # artifact shape to check, so it is uncheckable rather than a demonstrated lie. It
+    # still counts against the model in the denominator.
+    assert "12345" in s["unscoreable"]
+    # 4, not 3: `None` also coerces to the string "None" and is counted as a claim.
+    # Long-standing behaviour of _ioc_value, unchanged by #243 — only the bucket moved.
+    assert s["total"] == 4
 
 
 DECOMP = ("undefined4 FUN_0040b477(char *data,char *key){ "
@@ -63,10 +70,22 @@ def test_descriptive_ioc_with_a_bogus_literal_is_still_fabricated():
     assert s["grounded"] == 0 and len(s["fabricated"]) == 1
 
 
-def test_prose_with_no_literals_stays_fabricated():
+def test_prose_with_no_literals_is_unscoreable_but_still_counts_against():
+    """#243 split this verdict in two without weakening it.
+
+    Prose carrying no checkable artifact is no longer called `fabricated` -- "I cannot
+    check this" is not "the model invented this", and conflating them is what scored a
+    run 0.25 when every claim in it was true.
+
+    It is still counted in the denominator, so the SCORE is unchanged: an uncheckable
+    claim earns nothing. Only the label moved.
+    """
     a = {"code_level_iocs": ["The binary probably contacts a command and control server."]}
     s = grounding_scorecard(a, DECOMP)
-    assert s["grounded"] == 0 and len(s["fabricated"]) == 1
+    assert s["grounded"] == 0
+    assert len(s["unscoreable"]) == 1
+    assert s["fabricated"] == []
+    assert s["total"] == 1 and s["grounded_ratio"] == 0.0
 
 
 def test_empty_list_is_not_a_perfect_score_by_accident():
