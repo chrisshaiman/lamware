@@ -15,6 +15,7 @@ These tests exist because a scope regression is invisible. Nothing fails, nothin
 findings simply stop being reported, exactly as they silently were for a year.
 """
 import datetime as dt
+import importlib.util
 import re
 import subprocess
 import sys
@@ -75,11 +76,20 @@ def test_the_expiry_date_is_documented_where_the_ignore_lives():
 
 @pytest.mark.skipif(not (ROOT / "ansible").is_dir(), reason="ansible/ not present")
 def test_ansible_is_actually_clean_under_the_gate():
-    """The scope change is only meaningful if the directory passes.
+    """Local early warning: a finding under ansible/ fails here, not at push time.
 
-    Runs the real command CI runs, so a finding introduced under ansible/ fails here
-    rather than at push time.
+    SKIPPED where ruff is absent, which is the `packages` CI job -- it installs
+    `./shared ./pipeline[test] pytest hypothesis` and nothing else. Skipping is honest
+    here ONLY because this test is not the gate: `ruff check ... ansible/` runs in the
+    "Python lint & test" job and is authoritative. Duplicating it here would mean adding
+    a lint dependency to a test job to re-run a check CI already performs.
+
+    If that lint job ever stops covering ansible/, test_ruff_covers_ansible above fails —
+    which is the guard that actually matters.
     """
+    ruff = importlib.util.find_spec("ruff")
+    if ruff is None:
+        pytest.skip("ruff not installed in this job; the lint job is the real gate")
     r = subprocess.run([sys.executable, "-m", "ruff", "check", "ansible/"],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, f"ruff findings under ansible/:\n{r.stdout[-2000:]}"
