@@ -150,3 +150,56 @@ describe("isNavigableHref", () => {
     expect(isNavigableHref("  javascript:alert(1)")).toBe(true);
   });
 });
+
+describe("file extensions that are also TLDs", () => {
+  // Seven TLDS entries double as file extensions: sh, md, pl, rs, cc, app, com.
+  // Position disambiguates them: a host never follows a single path separator.
+  it.each([
+    "/tmp/install.sh",
+    "/usr/local/bin/build.sh",
+    "/opt/scripts/dropper.pl",
+    "/src/main.rs",
+    "/src/parser.cc",
+    "/docs/README.md",
+    "/Applications/Evil.app",
+  ])("leaves the path %s untouched", (path) => {
+    expect(defang(path)).toBe(path);
+  });
+
+  it("leaves Windows paths untouched, including the .com executable extension", () => {
+    expect(defang("C:\\Windows\\system32\\format.com")).toBe(
+      "C:\\Windows\\system32\\format.com",
+    );
+  });
+
+  it("STILL defangs a protocol-relative host, which also follows a slash", () => {
+    // The exception that makes the position rule safe. `//evil.com/x` has no scheme
+    // colon but the browser resolves it against the page protocol, so it is a live
+    // off-site URL and must not be mistaken for a path component.
+    expect(defang("//evil.com/x")).toBe("//evil[.]com/x");
+    expect(defang("/\\evil.com/x")).toBe("/\\evil[.]com/x");
+  });
+
+  it("still defangs a real domain that merely appears after a path", () => {
+    expect(defang("dropped to /tmp/x then beacons to evil.cc")).toBe(
+      "dropped to /tmp/x then beacons to evil[.]cc",
+    );
+  });
+
+  it("still defangs the path of a full URL, host included", () => {
+    expect(defang("http://evil.com/install.sh")).toBe("hxxp://evil[.]com/install.sh");
+  });
+
+  it("KNOWN over-defang: a bare filename in prose is still mangled", () => {
+    // Deliberate. Exempting bare `x.sh` would also exempt bare `evil.sh`, and while
+    // MarkdownProse makes either safe to click, only defanging protects against an
+    // analyst copy-pasting a live indicator into a browser. Asserted so the trade-off
+    // is visible rather than discovered.
+    expect(defang("the sample drops install.sh")).toBe("the sample drops install[.]sh");
+  });
+
+  it("bare evil.com is still defanged — the case the naive fix would have broken", () => {
+    expect(defang("evil.com")).toBe("evil[.]com");
+    expect(defang("beacons to evil.com every 60s")).toBe("beacons to evil[.]com every 60s");
+  });
+});
