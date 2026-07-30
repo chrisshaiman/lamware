@@ -70,3 +70,23 @@ def test_the_archive_is_not_stripped_into_the_wrong_layout():
 def test_ownership_is_still_applied():
     assert "owner: pipeline" in BLOCK and "group: lamware" in BLOCK, (
         "the api venv reads this tree as group lamware; unarchive must set ownership")
+
+
+def test_stale_staged_source_is_cleared_before_extracting():
+    """`unarchive` overwrites but never deletes.
+
+    Without an explicit clear, every file ever staged survives forever regardless of the
+    excludes. Observed on the live host before this was added: `.pyc` from 2026-07-01 and
+    `.hypothesis` state from 07-21 still present, oldest file 06-22. The tarball would
+    have made deploys fast while preserving exactly the caches the excludes exist to
+    remove — including bytecode that can shadow deployed source.
+    """
+    clear_idx = BLOCK.find("Clear previously staged package source")
+    extract_idx = BLOCK.find("Extract package source on server")
+    assert clear_idx != -1, (
+        "nothing clears the staging dir, so excluded files persist from earlier deploys")
+    assert clear_idx < extract_idx, "the clear must happen BEFORE the extract"
+    assert "state: absent" in BLOCK[clear_idx:extract_idx]
+    tail = BLOCK[clear_idx:extract_idx]
+    assert "shared" in tail and "pipeline" in tail, (
+        "both staged package roots must be cleared, or one keeps its stale tree")
