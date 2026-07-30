@@ -29,6 +29,21 @@ ignore = [
 # E402 (import-not-at-top) is expected and intentional there. Production code stays strict.
 "api/tests/*" = ["E402"]
 
+# TEMPORARY, EXPIRES 2026-10-31 — enforced by
+# pipeline/tests/test_lint_scope.py::test_the_g004_deferral_has_not_silently_become_permanent
+#
+# ansible/ joined the lint gate in #206 carrying 140 pre-existing G004 findings (f-string
+# passed to a logging call). Blocking on those would have meant either hand-editing 140
+# logging calls in one pass through code no test covers, or leaving the whole directory
+# unlinted for however long that took — which is how it stayed unlinted for a year.
+#
+# Deferring ONE rule lets the other ~100 start enforcing immediately. The expiry is the
+# point: an ignore with no deadline is just a permanently lower standard, and this repo
+# already uses a dated gate for exactly that reason (frontend/audit-exceptions.json).
+#
+# To retire it: fix the remaining G004s, delete this block, delete the guard test.
+"ansible/**" = ["G004"]
+
 [tool.bandit]
 exclude_dirs = [
     "tests",

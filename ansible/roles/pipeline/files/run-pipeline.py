@@ -1105,8 +1105,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if shots_dir.is_dir() and any(shots_dir.glob("*.png")):
             log.info("\n[Stage 5.5] Screenshot Analysis: dedup + QR detection...")
             try:
+                # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                # List form, no shell. The command is a module-level constant from
+                # deploy config and the arguments are pipeline-derived paths, not
+                # sample-controlled input. Mirrors the existing bandit B603 skip.
                 screenshot_result = subprocess.run(
-                    [SCREENSHOT_CMD, str(shots_dir), str(output_dir)],
+                    [SCREENSHOT_CMD, str(shots_dir), str(output_dir)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     capture_output=True, text=True, timeout=60,
                 )
                 if screenshot_result.returncode == 0:
@@ -1300,8 +1304,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     update_stage(analysis_id_early, "pdf", "started")
     pdf_path = report_path.parent / "report.pdf"
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        # List form, no shell; PDF_CMD is a deploy-config constant and the paths are
+        # pipeline-derived, not sample-controlled. See the screenshot call above.
         result = subprocess.run(
-            [PDF_CMD, str(report_path), str(pdf_path)],
+            [PDF_CMD, str(report_path), str(pdf_path)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             capture_output=True,
             text=True,
             timeout=120,
@@ -1419,8 +1426,11 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         log.info("\n[PDF Report] Generating...")
         pdf_path = new_report_path.parent / "report.pdf"
         try:
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            # List form, no shell; PDF_CMD is a deploy-config constant and the paths are
+            # pipeline-derived, not sample-controlled. See the screenshot call above.
             result = subprocess.run(
-                [PDF_CMD, str(new_report_path), str(pdf_path)],
+                [PDF_CMD, str(new_report_path), str(pdf_path)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                 capture_output=True,
                 text=True,
                 timeout=120,

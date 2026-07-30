@@ -26,8 +26,13 @@ import yara
 
 def file_hashes(path: Path) -> dict:
     """Compute MD5, SHA1, SHA256 of a file."""
-    md5 = hashlib.md5()
-    sha1 = hashlib.sha1()
+    # MD5/SHA1 here are NOT cryptographic signatures. They are the sample IDENTIFIERS the
+    # malware-analysis ecosystem keys on: VirusTotal, MalwareBazaar and effectively every
+    # public IOC feed index by them, and an analyst pivots on them daily. SHA256 is
+    # computed alongside and is what we trust for integrity. Taking semgrep's autofix
+    # would break interoperability without improving security.
+    md5 = hashlib.md5()  # nosemgrep: python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5
+    sha1 = hashlib.sha1()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
     sha256 = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(8192):
