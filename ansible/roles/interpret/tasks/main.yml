@@ -48,13 +48,24 @@
     group: pipeline
     mode: "0644"
 
+# COPY, not template. The script carried nine Jinja scalars and paid for them by being
+# un-importable: no test could reach 2,900 lines of logic, and a syntax error appeared at
+# container-build time rather than in CI (#205). The nine values now ship as JSON below.
 - name: Deploy interpret-ghidra.py into build context
-  ansible.builtin.template:
-    src: interpret-ghidra.py.j2
+  ansible.builtin.copy:
+    src: interpret-ghidra.py
     dest: "{{ interpret_install_dir }}/build/interpret-ghidra.py"
     owner: pipeline
     group: pipeline
     mode: "0755"
+
+- name: Deploy interpret-config.json into build context
+  ansible.builtin.template:
+    src: interpret-config.json.j2
+    dest: "{{ interpret_install_dir }}/build/interpret-config.json"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
 
 - name: Build interpret container image
   ansible.builtin.command:

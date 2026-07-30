@@ -56,3 +56,45 @@ llamacpp_presence_penalty: 0.0
 # be reported, never tuned: picking the best-scoring seed is selection on noise
 # and would invalidate any published result. See issue #222.
 llamacpp_seed: 42
+
+# How the server surfaces the model's chain-of-thought.
+#
+# Never passed until now, so the server ran at its default and `/props` reported
+# `reasoning_format: none`. Consequence: Qwen3.6's reasoning never reached the client as
+# a separate field, so the forensic trail (#197) recorded `thinking=0c` on every turn —
+# the capture mechanism was correct and there was simply nothing to capture.
+#
+# This is the SECOND flag on this unit to bite that way, after min_p silently taking
+# llama.cpp's 0.05 over Qwen's recommended 0.0. The comment written then applies again:
+# an unset flag is not a neutral flag.
+#
+# `--help` for this pinned build enumerates three values: none | deepseek | deepseek-legacy,
+# then closes with "(default: auto)" — which describes the behaviour when the flag is
+# OMITTED, not a fourth passable value.
+#
+# `deepseek` is the generic <think>-tag extractor despite the name; it puts the model's
+# chain-of-thought in `message.reasoning_content`, which is what the #197 trail reads.
+# VERIFIED WORKING 2026-07-29 by a real /v1/chat/completions request returning a populated
+# reasoning_content. `deepseek-legacy` ALSO leaves the raw <think> tags in message.content,
+# which would feed them back into our own parsing, so it is deliberately not used.
+#
+# ⚠️ /props IS NOT A VALID ORACLE FOR THIS FLAG. `default_generation_settings.params.
+# reasoning_format` reports `none` on a server where reasoning demonstrably works — that
+# block describes DEFAULT PER-REQUEST settings (note `chat_format: Content-only` beside it),
+# not the chat-time parser used by --jinja + /v1/chat/completions. A deploy assertion reading
+# it failed two consecutive CORRECT deploys on 2026-07-29 before the mistake was found. The
+# role now verifies reasoning by sending an actual prompt; see tasks/main.yml.
+#
+# Still unverified END TO END: reasoning must also survive LiteLLM's OpenAI->Anthropic
+# translation as a `thinking` block, and that path is already known to drop `enable_thinking`.
+# The server emitting it is necessary, not sufficient.
+#
+# Also note the RE synthesis path appends Qwen's `/no_think` soft switch to phase 2a, so
+# reasoning is intentionally absent there. Empty reasoning during synthesis is expected;
+# the investigation-loop turns are where the trail should show it.
+llamacpp_reasoning_format: "deepseek"
+
+# The values this build's arg parser understands. Used by the fail-fast assertion in
+# tasks/main.yml so a typo dies in seconds instead of surviving a ~10-minute model mmap and
+# then being caught (or, before the /props assert existed, not caught at all).
+llamacpp_reasoning_format_choices: [none, deepseek, deepseek-legacy]

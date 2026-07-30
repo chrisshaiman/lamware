@@ -19,15 +19,16 @@ are asserted here:
      charging for it would silently shrink the run's real depth — a 30-call run would
      quietly become a 12-call one.
 
-interpret-ghidra.py.j2 is a Jinja template, so nothing can import or execute it (#205).
-These are static assertions over its text plus a compile check of the rendered result.
+These are static assertions over the script's text plus a compile check. They predate
+#205, when the file was a Jinja template; it is now plain Python and importable, but
+the deferral behaviour lives inside the agentic loop and is still cheapest to pin here.
 """
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TMPL_PATH = (ROOT / "ansible" / "roles" / "interpret" / "templates"
-             / "interpret-ghidra.py.j2")
+TMPL_PATH = (ROOT / "ansible" / "roles" / "interpret" / "files"
+             / "interpret-ghidra.py")
 TMPL = TMPL_PATH.read_text()
 DEFAULTS = (ROOT / "ansible" / "roles" / "interpret" / "defaults" / "main.yml").read_text()
 
@@ -99,12 +100,24 @@ def test_ansible_default_is_present_and_small():
         f"9.4KB max decompile, 3 caps a turn at ~28KB — a large value re-creates #234.")
 
 
-def test_template_variable_is_wired_into_default_config():
-    assert '"max_tool_calls_per_turn": {{ interpret_max_tool_calls_per_turn }},' in TMPL
+def test_the_per_turn_cap_reaches_the_container():
+    """#205 moved the nine deploy-time scalars out of Jinja into a JSON config the role
+    renders, so the old assertion (a `{{ }}` inside the script) no longer has anything to
+    match. The PROPERTY it protected is unchanged and still worth pinning: the role's
+    value has to travel to the container, and the script's fallback has to be sane if it
+    does not.
+    """
+    config_tmpl = (ROOT / "ansible" / "roles" / "interpret" / "templates"
+                   / "interpret-config.json.j2").read_text(encoding="utf-8")
+    assert "interpret_max_tool_calls_per_turn" in config_tmpl, (
+        "the cap is no longer shipped to the container; it would silently revert to the "
+        "script's builtin fallback and the role default would stop meaning anything")
+    assert '"max_tool_calls_per_turn": 3,' in TMPL, (
+        "the builtin fallback must stay small — it is what applies if the config file is "
+        "missing or unreadable. A large value there re-creates #234 silently.")
 
 
-# NOTE: the "does the rendered template still compile" check lives in
-# test_interpret_streaming.py::test_rendered_template_is_valid_python, whose _SUBS map
-# gains the new variable. Deliberately NOT duplicated here — two render harnesses drift,
-# and that test already fails loudly when a new Jinja scalar is added (it did for this
-# change, which is how the omission was caught).
+# NOTE: the "does it still compile" gate now lives in
+# test_interpret_config_defaults.py::test_the_script_compiles_standalone. It used to
+# require rendering the Jinja first; the file is plain Python since #205, so the compile
+# check is direct and the render harness is gone.

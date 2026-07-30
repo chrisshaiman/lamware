@@ -27,8 +27,11 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
 import sys
+import threading
+import time
 import traceback
 from typing import Any
 
@@ -36,15 +39,30 @@ import anthropic
 import httpx
 
 # ---------------------------------------------------------------------------
-# Configuration — injected by Jinja2 at deploy time, with env overrides
+# Configuration
 # ---------------------------------------------------------------------------
+# This file used to be a Jinja template (interpret-ghidra.py.j2) whose only
+# variables were the nine scalars below. That cost far more than it bought: 2,500
+# lines of logic became un-importable, so NO test could reach any of it, and a
+# syntax error surfaced at container-build time rather than in CI (#205).
+#
+# The values now arrive as JSON written by the role at deploy time, so ansible
+# remains the single source of truth, and the module is ordinary Python.
+#
+# The builtins below are a FALLBACK, not a second source of truth. They exist so
+# the module imports with no config file present — which is what makes it testable
+# — and they intentionally mirror roles/interpret/defaults/main.yml. A drift guard
+# (tests/test_interpret_config_defaults.py) fails if the two disagree.
+#
+# These are only DEFAULTS in any case: the orchestrator merges its own config over
+# them at runtime (`{**DEFAULT_CONFIG, **runtime_config}`).
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "{{ interpret_model }}",
-    "escalation_threshold": {{ interpret_escalation_threshold }},
-    "escalation_model": "{{ interpret_escalation_model }}",
-    "max_output_tokens": {{ interpret_max_output_tokens }},
-    "max_tool_calls": {{ interpret_max_tool_calls }},
+_BUILTIN_DEFAULTS: dict[str, Any] = {
+    "model": "claude-sonnet-4-6",
+    "escalation_threshold": 5,
+    "escalation_model": "claude-opus-4-6",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 10,
     # Bounds how many tool calls are EXECUTED per model turn. `max_tool_calls` caps the
     # run total but never the per-turn batch, so the model could emit ~6 parallel
     # decompiles in one response and add ~59,000 chars (~14,800 tokens) to the context in
@@ -52,11 +70,45 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # from 0-10k to 50-60k), unbounded batching makes deep runs quadratic: one turn was
     # measured at 55 minutes. Deferring the surplus keeps every decompile the model asked
     # for — it just arrives across more turns instead of all at once. See #234.
-    "max_tool_calls_per_turn": {{ interpret_max_tool_calls_per_turn }},
-    "max_imports": {{ interpret_max_imports }},
-    "max_strings": {{ interpret_max_strings }},
-    "max_string_length": {{ interpret_max_string_length }},
+    "max_tool_calls_per_turn": 3,
+    "max_imports": 200,
+    "max_strings": 100,
+    "max_string_length": 500,
 }
+
+# Sits beside this file in the image; env var is for tests and ad-hoc runs.
+CONFIG_PATH = os.environ.get(
+    "INTERPRET_CONFIG",
+    str(pathlib.Path(__file__).with_name("interpret-config.json")),
+)
+
+
+def load_default_config(path: str = "") -> dict[str, Any]:
+    """Overlay the deploy-written config onto the builtin fallbacks.
+
+    A MISSING file is fine and silent — that is the import-without-deploy case that
+    makes this module testable. A file that exists but cannot be read or parsed is
+    NOT fine: it means the deploy wrote something broken, and silently running on
+    fallback values would hide a misconfigured model or tool budget behind a
+    perfectly healthy-looking run. That gets a loud warning on stderr.
+    """
+    config = dict(_BUILTIN_DEFAULTS)
+    target = path or CONFIG_PATH
+    try:
+        with open(target, encoding="utf-8") as fh:
+            config.update(json.load(fh))
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        print(
+            f"[interpret] WARNING: config at {target} is unreadable "
+            f"({type(e).__name__}: {e}); falling back to builtin defaults",
+            file=sys.stderr, flush=True,
+        )
+    return config
+
+
+DEFAULT_CONFIG: dict[str, Any] = load_default_config()
 
 # ---------------------------------------------------------------------------
 # Known-good network indicators — Windows guest VM telemetry, not IOCs
@@ -821,9 +873,16 @@ TOOLS: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
+# The wait-heartbeat below emits from a background thread while the main thread may
+# also be emitting. Two interleaved writes would produce a corrupt line and the
+# orchestrator would fail to parse it — the protocol has no framing beyond the newline.
+_EMIT_LOCK = threading.Lock()
+
+
 def emit(obj: dict[str, Any]) -> None:
     """Write a JSON line to stdout and flush immediately."""
-    print(json.dumps(obj, default=str), flush=True)
+    with _EMIT_LOCK:
+        print(json.dumps(obj, default=str), flush=True)
 
 
 def read_message() -> dict[str, Any] | None:
@@ -912,6 +971,119 @@ def create_message(cli, **kwargs):
     """
     with cli.messages.stream(**kwargs) as stream:
         return stream.get_final_message()
+
+
+# Heartbeat cadence while GENERATING — one line per 25 tokens.
+STREAM_HEARTBEAT_TOKENS = 25
+
+# Heartbeat cadence while WAITING for the first token, in seconds.
+#
+# The token-counted heartbeat above covers only generation, which turned out to be the
+# wrong phase. Measured on the 2026-07-28 runs: a synthesis at 62k context spent ~83 of
+# its 90 minutes in prompt evaluation before emitting a single token, and a qwen@10 cell
+# went 20 of 33 minutes with no trail event at all. llama-server sends nothing during
+# that phase, so a working run and a hung one look identical from here — which is
+# exactly what the heartbeat was supposed to prevent.
+#
+# A wall-clock tick is the only signal available: the client genuinely cannot know how
+# far prompt eval has progressed, but it can prove the request is still outstanding and
+# say for how long. 30s is frequent enough to be useful and adds ~2 lines/min.
+WAIT_HEARTBEAT_SECONDS = 30
+
+
+class _WaitHeartbeat:
+    """Emit a wall-clock tick while a request is outstanding but silent.
+
+    Stops as soon as the first token arrives — from then on the token heartbeat has
+    better information. Daemon thread so it can never hold the process open.
+    """
+
+    def __init__(self, turn_index: int, interval: float = WAIT_HEARTBEAT_SECONDS) -> None:
+        self.turn_index = turn_index
+        self.interval = interval
+        self._stop = threading.Event()
+        self._started = time.time()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            emit({"type": "stream", "turn_index": self.turn_index,
+                  "waiting": True,
+                  "elapsed_s": round(time.time() - self._started, 1)})
+
+    def __enter__(self) -> "_WaitHeartbeat":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def __exit__(self, *exc) -> None:
+        self.stop()
+
+
+def create_message_streaming(cli, turn_index: int, **kwargs):
+    """Stream a message, emitting progress heartbeats to the orchestrator.
+
+    Two heartbeats, because they cover different phases and only together make a long
+    request distinguishable from a hung one:
+      - wall-clock, while waiting for the first token (prompt evaluation)
+      - token-counted, once generation starts
+
+    Same return shape as create_message().
+    """
+    text_tokens = 0
+    thinking_tokens = 0
+    with _WaitHeartbeat(turn_index) as waiting:
+        with cli.messages.stream(**kwargs) as stream:
+            for event in stream:
+                etype = getattr(event, "type", "")
+                if etype != "content_block_delta":
+                    continue
+                waiting.stop()   # first token — prompt eval is over
+                delta = getattr(event, "delta", None)
+                if getattr(delta, "type", "") == "thinking_delta":
+                    thinking_tokens += 1
+                else:
+                    text_tokens += 1
+                total = text_tokens + thinking_tokens
+                if total % STREAM_HEARTBEAT_TOKENS == 0:
+                    emit({"type": "stream", "turn_index": turn_index,
+                          "output_tokens": text_tokens,
+                          "thinking_tokens": thinking_tokens})
+            return stream.get_final_message()
+
+
+def emit_turn(response, turn_index: int) -> None:
+    """Emit the model's own output for one turn: text, reasoning, and what it called.
+
+    This is the half of #197 the orchestrator structurally cannot supply. Text and
+    thinking are sent in FULL — a truncated reasoning record cannot answer "how did the
+    AI reach its verdict", which is the question chain-of-custody asks.
+    """
+    text_parts, thinking_parts, calls = [], [], []
+    for block in getattr(response, "content", []) or []:
+        btype = getattr(block, "type", "")
+        if btype == "text":
+            text_parts.append(block.text)
+        elif btype == "thinking":
+            thinking_parts.append(getattr(block, "thinking", ""))
+        elif btype == "redacted_thinking":
+            # Content is encrypted and cannot be shown; record that it existed so the
+            # trail does not imply the model reasoned less than it did.
+            thinking_parts.append("[redacted_thinking block]")
+        elif btype == "tool_use":
+            calls.append({"name": block.name,
+                          "input": json.dumps(block.input, default=str)[:500]})
+    emit({
+        "type": "turn",
+        "turn_index": turn_index,
+        "stop_reason": getattr(response, "stop_reason", None),
+        "text": "\n".join(text_parts),
+        "thinking": "\n".join(thinking_parts),
+        "tool_calls": calls,
+        "usage": usage_from_response(response),
+    })
 
 
 def usage_from_response(response) -> dict:
@@ -2371,13 +2543,29 @@ Technical summary: {executive}"""
     def local_synthesize(msgs: list[dict[str, Any]]) -> dict[str, Any]:
         """Two-phase local final synthesis (spec: reasoning-preservation guard).
 
-        Phase 2a — a think:true PROSE conclusion via the router `client`: the model
-        reasons over the investigation and states findings in visible text (prose,
-        not JSON, so no formatting pressure and no nesting/truncation). Phase 2b — a
-        think:false forced submit_analysis call serializes that reasoned conclusion
-        into valid structured JSON. Falls back to parsing the prose, then to the
-        legacy free-text path — never worse than before. (local backend => $0, so
-        the extra call's tokens are not separately accounted.)
+        What is "preserved" is the reasoning already done ACROSS THE INVESTIGATION
+        LOOP, by giving it a prose stage to land in before anything has to be valid
+        JSON. It does not mean either synthesis phase reasons — NEITHER DOES:
+
+        Phase 2a — a PROSE conclusion via the router `client`, with thinking OFF
+        (the prompt appends Qwen's `/no_think`; see the comment below for why).
+        Prose, not JSON, so there is no formatting pressure and no nesting or
+        truncation. Phase 2b — a think:false forced submit_analysis call that
+        serializes that conclusion into valid structured JSON.
+
+        Thinking is therefore ON only during the phase-1 tool-call loop. That is
+        also the only phase whose reasoning the #197 trail can capture: empty
+        reasoning records on the synthesis calls are expected, not a regression.
+
+        Whether 2a SHOULD think is an open question, not a settled one — the
+        154s->115s "no loss of substance" measurement behind `/no_think` was taken
+        2026-07-25, before the #222 sampling change, so it crosses a profile
+        boundary. Family identification is genuine cross-evidence inference, and it
+        happens here. Tracked as an A/B.
+
+        Falls back to parsing the prose, then to the legacy free-text path — never
+        worse than before. (local backend => $0, so the extra call's tokens are not
+        separately accounted.)
         """
         # /no_think is a Qwen3 soft switch that disables reasoning for this turn.
         # It works on the Anthropic router path, where LiteLLM does NOT forward
@@ -2456,8 +2644,12 @@ Technical summary: {executive}"""
         # Call Claude. STREAMED — see create_message(): this is the call that died on
         # the 600s request timeout at 22 tool calls once the transcript grew large.
         try:
-            response = create_message(
+            # Heartbeat variant: this is the call that can run for tens of minutes on a
+            # local model, and from outside it was previously indistinguishable from a
+            # hang. Same return shape as create_message().
+            response = create_message_streaming(
                 client,
+                turn_index=tool_calls_used,
                 model=current_model,
                 max_tokens=max_output_tokens,
                 system=CACHED_SYSTEM,
@@ -2500,6 +2692,14 @@ Technical summary: {executive}"""
         resp_usage = usage_from_response(response)
         total_input_tokens += resp_usage["input_tokens"]
         total_output_tokens += resp_usage["output_tokens"]
+
+        # ---- Forensic turn record (#197) ----
+        # The orchestrator cannot see any of this: the protocol between us carries only
+        # tool_call/status/final, and the model's text and thinking live here, in
+        # `messages`. Without this emit, a trail can show WHEN a turn happened and how
+        # many bytes came back, but nothing about HOW the model reached its verdict —
+        # which is what chain-of-custody and analyst review actually need.
+        emit_turn(response, turn_index=tool_calls_used)
 
         # ---- Process response ----
         if response.stop_reason == "tool_use":

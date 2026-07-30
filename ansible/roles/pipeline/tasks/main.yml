@@ -470,6 +470,7 @@
     - consensus.py
     - metrics.py
     - scorecard.py
+    - trail.py
     - runner.py
     - rebuild.py
     - __main__.py

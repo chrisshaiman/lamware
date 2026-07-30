@@ -36,6 +36,7 @@ ExecStart=/usr/bin/podman run --rm --name llamacpp \
     --cache-type-k {{ llamacpp_cache_type_k }} \
     --cache-type-v {{ llamacpp_cache_type_v }} \
     --jinja \
+    --reasoning-format {{ llamacpp_reasoning_format }} \
     --seed {{ llamacpp_seed }} \
     --temp {{ llamacpp_temp }} \
     --top-p {{ llamacpp_top_p }} \

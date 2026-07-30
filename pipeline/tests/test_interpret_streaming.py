@@ -8,16 +8,17 @@ latency: one turn spent 503s in prompt eval alone (14,512 tokens at ~29 tok/s), 
 request totalled 550s, and the next crossed the SDK's 600s default. llama-server logged
 `cancel task`.
 
-interpret-ghidra.py.j2 is a Jinja template, so nothing can import or execute it (#205).
-These are static assertions over its text — weaker than real tests, and the reason #205
-matters, but they do catch a silent revert to a blocking call.
+These are static assertions over the script's text. They predate #205, when the file
+was a Jinja template and could not be imported at all; it is now plain Python
+(roles/interpret/files/interpret-ghidra.py). Kept as source assertions because what
+they pin is the SHAPE of the call — that it streams — which importing would not check.
 """
 import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TMPL = (ROOT / "ansible" / "roles" / "interpret" / "templates"
-        / "interpret-ghidra.py.j2").read_text()
+TMPL = (ROOT / "ansible" / "roles" / "interpret" / "files"
+        / "interpret-ghidra.py").read_text()
 
 
 def test_streaming_helper_exists():
@@ -27,11 +28,78 @@ def test_streaming_helper_exists():
 
 
 def test_agentic_loop_streams():
-    """The loop call is the one that timed out; it must not go back to .create()."""
-    assert re.search(r"response = create_message\(\s*client,\s*\n\s*model=current_model,"
+    """The loop call is the one that timed out; it must not go back to .create().
+
+    Asserts the PROPERTY (it streams) rather than one spelling. #197 switched this call
+    to create_message_streaming(), which streams identically and additionally emits a
+    progress heartbeat — the original regex pinned the exact call text and failed on a
+    change that preserved everything it was protecting.
+    """
+    assert re.search(r"response = create_message(_streaming)?\(\s*\n?\s*client,"
+                     r"(\s*\n\s*turn_index=tool_calls_used,)?"
+                     r"\s*\n\s*model=current_model,"
                      r"\s*\n\s*max_tokens=max_output_tokens,\s*\n\s*system=CACHED_SYSTEM,"
                      r"\s*\n\s*tools=TOOLS,", TMPL), \
-        "the agentic loop must call create_message(), not client.messages.create()"
+        "the agentic loop must stream, not call client.messages.create()"
+
+
+def test_the_loop_emits_a_progress_heartbeat():
+    """llama-server emits nothing during prompt eval, so a long turn looks like a hang.
+
+    The 2026-07-28 synthesis ran 90 minutes and was indistinguishable from a stall until
+    the container log was parsed by hand.
+    """
+    assert "def create_message_streaming(" in TMPL
+    assert '"type": "stream"' in TMPL
+    assert "STREAM_HEARTBEAT_TOKENS" in TMPL
+
+
+def test_a_wall_clock_heartbeat_covers_prompt_evaluation():
+    """The token heartbeat covers only GENERATION — the wrong phase.
+
+    Measured: a 62k synthesis spent ~83 of 90 minutes in prompt eval before emitting a
+    token, and a qwen@10 cell left the trail silent for 20 of 33 minutes. A token-counted
+    heartbeat cannot fire during either, so it did not solve the problem it was added for.
+    """
+    assert "class _WaitHeartbeat" in TMPL
+    assert "WAIT_HEARTBEAT_SECONDS" in TMPL
+    assert '"waiting": True' in TMPL, "waiting ticks must be distinguishable from generation"
+    assert "with _WaitHeartbeat(turn_index)" in TMPL, \
+        "the wait heartbeat must wrap the streaming call"
+
+
+def test_the_wait_heartbeat_stops_once_tokens_arrive():
+    """Otherwise the trail shows 'waiting' while the model is visibly generating."""
+    assert "waiting.stop()" in TMPL
+
+
+def test_concurrent_emits_are_serialised():
+    """The heartbeat emits from a background thread while the main thread may also emit.
+
+    The protocol has no framing beyond the newline, so two interleaved writes produce a
+    corrupt line the orchestrator cannot parse.
+    """
+    assert "_EMIT_LOCK = threading.Lock()" in TMPL
+    assert "with _EMIT_LOCK:" in TMPL
+
+
+def test_the_heartbeat_thread_cannot_hold_the_process_open():
+    assert "daemon=True" in TMPL
+
+
+def test_the_loop_emits_the_models_reasoning():
+    """#197: the orchestrator cannot see text or thinking — only the container can."""
+    assert "def emit_turn(" in TMPL
+    assert '"type": "turn"' in TMPL
+    assert "emit_turn(response, turn_index=tool_calls_used)" in TMPL
+    for field in ('"text"', '"thinking"', '"tool_calls"', '"stop_reason"'):
+        assert field in TMPL, f"turn record missing {field}"
+
+
+def test_redacted_thinking_is_recorded_as_having_existed():
+    """Encrypted reasoning cannot be shown, but omitting it silently would imply the
+    model reasoned less than it did — which is misleading in a chain-of-custody record."""
+    assert "[redacted_thinking block]" in TMPL
 
 
 def test_forced_final_and_conclusion_stream():
@@ -154,42 +222,15 @@ def test_single_shot_paths_are_left_alone():
     assert "response = ss_client.messages.create(" in TMPL
 
 
-# The 8 config scalars the template interpolates, all in one dict literal at lines 42-49.
-_SUBS = {
-    "interpret_model": "claude-sonnet-5",
-    "interpret_escalation_threshold": "8",
-    "interpret_escalation_model": "claude-opus-5",
-    "interpret_max_output_tokens": "16384",
-    "interpret_max_tool_calls": "10",
-    "interpret_max_tool_calls_per_turn": "3",
-    "interpret_max_imports": "100",
-    "interpret_max_strings": "150",
-    "interpret_max_string_length": "200",
-}
-
-
-def test_rendered_template_is_valid_python():
-    """Syntax gate for a 2,600-line file no test can import.
-
-    Nothing else in CI would catch a syntax error here — it would surface as a failed
-    detonation, minutes into a container run. Rendering the 8 scalars and compiling is
-    the only executable check available until the file becomes plain Python (#205).
-    """
-    import py_compile
-    import tempfile
-
-    rendered = TMPL
-    for key, value in _SUBS.items():
-        rendered = rendered.replace(f"{{{{ {key} }}}}", value)
-
-    leftover = re.findall(r"\{\{.*?\}\}|\{%.*?%\}", rendered)
-    assert not leftover, f"unsubstituted Jinja — update _SUBS: {leftover[:5]}"
-
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
-                                     encoding="utf-8") as fh:
-        fh.write(rendered)
-        path = fh.name
-    try:
-        py_compile.compile(path, doraise=True)
-    finally:
-        Path(path).unlink(missing_ok=True)
+# The render-and-compile harness that used to live here has been REMOVED, not relocated
+# wholesale.
+#
+# It substituted nine Jinja scalars into the template, asserted no `{{ }}` survived, and
+# compiled the result — the only executable check possible on a file nothing could import.
+# #205 made the file plain Python, at which point the substitution loop matched nothing,
+# the leftover-Jinja assertion trivially held, and the test passed while checking nothing.
+# A vacuous test is worse than a missing one: it reports green.
+#
+# The surviving obligation — "this file must compile" — is now a direct py_compile in
+# test_interpret_config_defaults.py::test_the_script_compiles_standalone, which also pins
+# that no Jinja marker has crept back in.

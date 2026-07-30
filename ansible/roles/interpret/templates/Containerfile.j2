@@ -10,6 +10,10 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 COPY interpret-ghidra.py /opt/interpret-ghidra.py
 RUN chmod +x /opt/interpret-ghidra.py
 
+# The nine deploy-time scalars the script used to carry as Jinja (#205). It looks for
+# this beside itself, so the two must stay in the same directory.
+COPY interpret-config.json /opt/interpret-config.json
+
 # nobody user — matches other pipeline containers
 RUN mkdir -p /nonexistent && chmod 777 /nonexistent
 ENV HOME=/nonexistent
