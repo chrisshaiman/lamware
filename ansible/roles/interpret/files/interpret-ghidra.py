@@ -1011,7 +1011,7 @@ class _WaitHeartbeat:
                   "waiting": True,
                   "elapsed_s": round(time.time() - self._started, 1)})
 
-    def __enter__(self) -> "_WaitHeartbeat":
+    def __enter__(self) -> _WaitHeartbeat:
         self._thread.start()
         return self
 
@@ -1137,7 +1137,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
     function_count = ghidra_data.get("functions_count", "unknown")
     entry_point = ghidra_data.get("entry_point", "unknown")
 
-    parts.append(f"## Binary Under Analysis")
+    parts.append("## Binary Under Analysis")
     parts.append(f"- SHA256: `{sha256}`")
     parts.append(f"- Function count: {function_count}")
     parts.append(f"- Entry point: `{entry_point}`")
@@ -1213,7 +1213,7 @@ def build_dotnet_message(dotnet_data: dict[str, Any], config: dict[str, Any]) ->
     parts: list[str] = []
 
     parts.append("## .NET Assembly Under Analysis")
-    parts.append(f"- Analysis type: ILSpy decompilation")
+    parts.append("- Analysis type: ILSpy decompilation")
     parts.append(f"- Class count: {dotnet_data.get('class_count', 'unknown')}")
 
     # Origin context — helps LLM understand if this is the original sample
@@ -1221,13 +1221,13 @@ def build_dotnet_message(dotnet_data: dict[str, Any], config: dict[str, Any]) ->
     origin = dotnet_data.get("origin", "original")
     ext_ctx = dotnet_data.get("extraction_context")
     if origin == "extraction" and ext_ctx:
-        parts.append(f"- Origin: .NET payload extracted from native PE dropper during Cape sandbox detonation")
+        parts.append("- Origin: .NET payload extracted from native PE dropper during Cape sandbox detonation")
         parts.append(f"- Extraction source: {ext_ctx.get('source_dir', '?')} directory")
         sigs = ext_ctx.get("cape_signatures", [])
         if sigs:
             parts.append(f"- Parent sample Cape signatures: {', '.join(sigs)}")
     else:
-        parts.append(f"- Origin: Original submitted sample")
+        parts.append("- Origin: Original submitted sample")
     parts.append("")
 
     # --- Classes ---
@@ -1288,7 +1288,7 @@ def build_go_message(go_data: dict[str, Any], config: dict[str, Any]) -> str:
 
     build = go_data.get("build_info", {})
     parts.append("## Go Binary Under Analysis")
-    parts.append(f"- Analysis type: GoReSym metadata extraction")
+    parts.append("- Analysis type: GoReSym metadata extraction")
     parts.append(f"- Go version: {build.get('go_version', '?')}")
     parts.append(f"- Module path: {build.get('module_path', '?')}")
     parts.append(f"- Build ID: {build.get('build_id', '?')}")
@@ -1376,10 +1376,10 @@ def build_pyinstaller_message(py_data: dict[str, Any], config: dict[str, Any]) -
     parts: list[str] = []
 
     parts.append("## PyInstaller Executable Under Analysis")
-    parts.append(f"- Analysis type: pyinstxtractor + decompyle3 decompilation")
+    parts.append("- Analysis type: pyinstxtractor + decompyle3 decompilation")
     parts.append(f"- Python version: {py_data.get('python_version', '?')}")
     parts.append(f"- Bundled files: {py_data.get('bundled_count', '?')}")
-    parts.append(f"- Origin: Original submitted sample")
+    parts.append("- Origin: Original submitted sample")
     parts.append("")
 
     # Imports
@@ -1441,7 +1441,7 @@ def build_java_message(java_data: dict[str, Any], config: dict[str, Any]) -> str
     parts: list[str] = []
 
     parts.append("## Java Archive Under Analysis")
-    parts.append(f"- Analysis type: CFR decompilation")
+    parts.append("- Analysis type: CFR decompilation")
     parts.append(f"- Main-Class: {java_data.get('main_class', '?')}")
     parts.append(f"- Classes: {java_data.get('class_summary_count', '?')}")
     parts.append(f"- Files in JAR: {java_data.get('file_count', '?')}")
@@ -1503,7 +1503,7 @@ def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) ->
     parts: list[str] = []
 
     parts.append("## Office Document Under Analysis")
-    parts.append(f"- Analysis type: olevba macro extraction")
+    parts.append("- Analysis type: olevba macro extraction")
     parts.append(f"- File format: {office_data.get('file_format', '?')}")
     parts.append(f"- Macro type: {office_data.get('macro_type', '?')}")
     parts.append(f"- Modules: {len(office_data.get('vba_modules', []))}")
@@ -1511,14 +1511,14 @@ def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) ->
     # Auto-exec triggers
     auto_exec = office_data.get("auto_exec_triggers", [])
     if auto_exec:
-        parts.append(f"\n### Auto-Execution Triggers")
+        parts.append("\n### Auto-Execution Triggers")
         for trigger in auto_exec:
             parts.append(f"- {trigger}")
 
     # mraptor classification
     mraptor = office_data.get("mraptor_flags", {})
     if any(mraptor.values()):
-        parts.append(f"\n### mraptor Classification")
+        parts.append("\n### mraptor Classification")
         parts.append(f"- Auto-exec: {'YES' if mraptor.get('auto_exec') else 'no'}")
         parts.append(f"- Write file: {'YES' if mraptor.get('write') else 'no'}")
         parts.append(f"- Execute: {'YES' if mraptor.get('execute') else 'no'}")
@@ -1527,14 +1527,14 @@ def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) ->
     # Obfuscation indicators
     obfuscation = office_data.get("obfuscation_indicators", [])
     if obfuscation:
-        parts.append(f"\n### Obfuscation Detected")
+        parts.append("\n### Obfuscation Detected")
         for indicator in obfuscation:
             parts.append(f"- {indicator}")
 
     # Suspicious keywords from olevba
     suspicious = office_data.get("suspicious_keywords", [])
     if suspicious:
-        parts.append(f"\n### Suspicious Keywords (flagged by olevba)")
+        parts.append("\n### Suspicious Keywords (flagged by olevba)")
         for kw in suspicious[:30]:
             parts.append(f"- **{kw.get('keyword', '?')}**: {kw.get('description', '')}")
 
@@ -1545,27 +1545,27 @@ def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) ->
         for v in values:
             ioc_items.append(f"- [{ioc_type}] {v}")
     if ioc_items:
-        parts.append(f"\n### IOCs Extracted by olevba")
+        parts.append("\n### IOCs Extracted by olevba")
         parts.extend(ioc_items[:50])
 
     # Document metadata
     metadata = office_data.get("metadata", {})
     meta_items = {k: v for k, v in metadata.items() if v}
     if meta_items:
-        parts.append(f"\n### Document Metadata")
+        parts.append("\n### Document Metadata")
         for k, v in meta_items.items():
             parts.append(f"- {k}: {v}")
 
     # XLM macro note
     if office_data.get("xlm_detected"):
-        parts.append(f"\n### XLM/Excel 4.0 Macros")
+        parts.append("\n### XLM/Excel 4.0 Macros")
         parts.append("XLM macros were detected but could not be deobfuscated. "
                       "Note their presence in your analysis.")
 
     # CAPE behavioral context (if available)
     cape_sigs = office_data.get("cape_signatures", [])
     if cape_sigs:
-        parts.append(f"\n### CAPE Behavioral Signatures")
+        parts.append("\n### CAPE Behavioral Signatures")
         for sig in cape_sigs:
             parts.append(f"- {sig}")
 
@@ -1585,7 +1585,7 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
     parts: list[str] = []
 
     parts.append("## PowerShell Script Under Analysis")
-    parts.append(f"- Analysis type: PSDecode deobfuscation")
+    parts.append("- Analysis type: PSDecode deobfuscation")
     parts.append(f"- Input mode: {ps_data.get('input_mode', '?')}")
     parts.append(f"- PSDecode: {'success' if ps_data.get('psdecode_success') else 'failed (fallback decode)'}")
     parts.append(f"- Deobfuscation layers: {ps_data.get('layer_count', 0)}")
@@ -1596,14 +1596,14 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
     # Obfuscation techniques
     obfuscation = ps_data.get("obfuscation_techniques", [])
     if obfuscation:
-        parts.append(f"\n### Obfuscation Techniques Detected")
+        parts.append("\n### Obfuscation Techniques Detected")
         for technique in obfuscation:
             parts.append(f"- {technique}")
 
     # Strings of interest (behavioral indicators)
     strings = ps_data.get("strings_of_interest", [])
     if strings:
-        parts.append(f"\n### Behavioral Indicators")
+        parts.append("\n### Behavioral Indicators")
         for s in strings:
             if isinstance(s, dict):
                 parts.append(f"- [{s.get('type', '?')}] {s.get('value', '?')}: {s.get('context', '')}")
@@ -1615,13 +1615,13 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
         for v in values:
             ioc_items.append(f"- [{ioc_type}] {v}")
     if ioc_items:
-        parts.append(f"\n### IOCs Extracted (automated)")
+        parts.append("\n### IOCs Extracted (automated)")
         parts.extend(ioc_items[:50])
 
     # CAPE behavioral context
     cape_sigs = ps_data.get("cape_signatures", [])
     if cape_sigs:
-        parts.append(f"\n### CAPE Behavioral Signatures")
+        parts.append("\n### CAPE Behavioral Signatures")
         for sig in cape_sigs:
             parts.append(f"- {sig}")
 
@@ -1994,7 +1994,7 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
                 answers = d.get("answers", [])
                 parts.append(f"  - {d.get('domain', '?')} ({d.get('type', '?')}) {'→ ' + str(answers) if answers else '(no resolution)'}")
         if active_conns:
-            parts.append(f"\nVolatility netscan — active connections at dump time:")
+            parts.append("\nVolatility netscan — active connections at dump time:")
             for c in active_conns[:10]:
                 parts.append(f"  - {c.get('process', '?')} (pid {c.get('pid', '?')}) → {c.get('foreign_addr', '?')}:{c.get('foreign_port', '?')} [{c.get('state', '?')}]")
         # Check shellcode for networking APIs

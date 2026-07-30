@@ -35,7 +35,7 @@ def is_powershell_script(report: dict) -> bool:
         sample_path = report.get("_sample_path", "")
         if sample_path and os.path.isfile(sample_path):
             try:
-                with open(sample_path, "r", encoding="utf-8", errors="replace") as f:
+                with open(sample_path, encoding="utf-8", errors="replace") as f:
                     head = f.read(2048).lower()
                 ps_keywords = [
                     "param(", "function ", "[system.", "$env:",

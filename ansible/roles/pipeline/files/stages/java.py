@@ -12,7 +12,6 @@ import json
 import subprocess
 from pathlib import Path
 
-
 JAVA_YARA_INDICATORS = [
     "java", "jar_file", "jrat", "adwind", "strrat",
 ]

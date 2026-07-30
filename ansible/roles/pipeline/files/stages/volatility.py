@@ -15,7 +15,6 @@ import math
 import os
 import shutil
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -584,10 +583,10 @@ def run_volatility(cape_data: dict, output_dir: Path,
 
         if malfind_enabled:
             if cape_has_injection_buffers:
-                print(f"    Cape captured injection buffers — skipping malfind dump")
+                print("    Cape captured injection buffers — skipping malfind dump")
                 print(f"    (malfind JSON metadata retained for report: {len(malfind_output)} regions)")
             else:
-                print(f"    No Cape injection buffers — running malfind heuristic filter...")
+                print("    No Cape injection buffers — running malfind heuristic filter...")
                 selected_regions, target_pids = filter_malfind_json(
                     malfind_output,
                     malfind_min_size=malfind_min_size,
@@ -629,13 +628,13 @@ def run_volatility(cape_data: dict, output_dir: Path,
             for f in sorted(new_files):
                 print(f"      {f.name} ({f.stat().st_size} bytes)")
         else:
-            print(f"    No process images dumped")
+            print("    No process images dumped")
         result["_vol_procdump_dir"] = str(procdump_dir)
 
     # Clean up ramdisk copy first (free RAM)
     if ramdisk_dump and ramdisk_dump.exists():
         ramdisk_dump.unlink(missing_ok=True)
-        print(f"    Cleaned ramdisk copy")
+        print("    Cleaned ramdisk copy")
 
     # Memory dump cleanup is handled by CAPE's hourly cron (cape user owns the file).
     # Pipeline user intentionally does NOT have delete permission on CAPE storage.

@@ -13,7 +13,6 @@ import json
 import subprocess
 from pathlib import Path
 
-
 PYINSTALLER_YARA_INDICATORS = [
     "pyinstaller", "py_installer", "python_compiled",
 ]

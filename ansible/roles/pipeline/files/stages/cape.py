@@ -13,9 +13,7 @@ import time
 from pathlib import Path
 
 import requests
-
 from lamware_pipeline.config import PipelineConfig
-
 
 # -------------------------------------------------------------------------
 # Configuration (loaded from config.json; secret from the environment)

@@ -6,12 +6,10 @@ License: Apache 2.0
 """
 
 import os
-import sys
 
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.db import build_insert, build_update
 from lamware_pipeline.relationships import write_relationships_safe
-
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
 # Covers common techniques seen in malware analysis. Techniques not in this

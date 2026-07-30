@@ -6,9 +6,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "helpers"))
 
-from crypto import xor_decrypt, rc4_decrypt, single_byte_xor_scan
-from encoding import b64_decode, b64_variants, hex_to_bytes, bytes_to_hex, rot13
-from parsing import read_dword_le, read_dword_be, read_qword_le, extract_strings, pe_overlay_offset, struct_unpack_at
+from crypto import rc4_decrypt, single_byte_xor_scan, xor_decrypt
+from encoding import b64_decode, b64_variants, bytes_to_hex, hex_to_bytes, rot13
+from parsing import (
+    extract_strings,
+    pe_overlay_offset,
+    read_dword_be,
+    read_dword_le,
+    read_qword_le,
+    struct_unpack_at,
+)
 
 
 def test_xor_decrypt_single_byte():
