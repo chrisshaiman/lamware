@@ -21,6 +21,8 @@
  *   - IPv6 literals      `http://[2001:db8::1]:8080/x`
  *   - single-label hosts `http://internal-c2:8080/x`, `http://localhost:8080/x`
  *   - userinfo           `http://user:pass@evil.com/x` (host is defanged, scheme is not)
+ *   - bare filenames whose extension is also a TLD (`install.sh` in prose) are still
+ *     DEFANGED — over-defanging, kept deliberately; see isPathComponent
  *
  * They are safe in the UI regardless: MarkdownProse's anchor override renders any
  * navigable href as inert text, so these display as non-clickable. The gap is
@@ -98,12 +100,47 @@ function defangScheme(scheme: string | undefined): string {
  * `http://evil.com:8080/x` -> `hxxp://evil[.]com[:]8080/x`
  * `192.168.1.1`            -> `192[.]168[.]1[.]1`
  */
+/**
+ * True when the match sits inside a filesystem path, so its tail is an extension.
+ *
+ * Seven entries in TLDS double as file extensions: `sh`, `md`, `pl`, `rs`, `cc`, `app`,
+ * `com`. `/tmp/install.sh` and `C:\Windows\system32\format.com` were being rendered as
+ * `/tmp/install[.]sh` and `format[.]com`.
+ *
+ * The obvious fix — exempt those tails when there is no scheme, port or path — is wrong.
+ * It would stop defanging bare `evil.com`, the single most common C2 form there is, and
+ * `.pl`, `.cc` and `.rs` are all well represented in real infrastructure. The collision
+ * is not one-sided the way `.dll` and `.exe` are, so the TLD list cannot resolve it.
+ *
+ * Position can. A host never follows a single path separator; a filename almost always
+ * does. `//evil.com` is the exception that matters and is handled explicitly: two slashes
+ * is a protocol-relative URL, which the browser resolves against the page scheme, so it
+ * must still be defanged.
+ *
+ * Bare `install.sh` in prose is still defanged. That is over-defanging, and it stays,
+ * because the alternative is under-defanging `evil.sh` — and while MarkdownProse makes
+ * either safe to CLICK, only defanging protects against an analyst copy-pasting a live
+ * indicator into a browser.
+ */
+function isPathComponent(text: string, index: number): boolean {
+  if (index === 0) return false;
+  const prev = text[index - 1];
+  if (prev !== "/" && prev !== "\\") return false;
+  // `//host` and `/\host` are protocol-relative, not paths.
+  const beforePrev = index >= 2 ? text[index - 2] : "";
+  return beforePrev !== "/" && beforePrev !== "\\";
+}
+
 export function defang(text: string): string {
   if (!text) return text;
 
   // One pass handles hostnames and IPv4 alike. Already-defanged input contains `[.]`,
   // which the pattern cannot match, so this is naturally idempotent.
-  return text.replace(URLISH, (match, scheme, host, port, rest) => {
+  return text.replace(URLISH, (match, scheme, host, port, rest, offset: number) => {
+    // A path component's tail is a file extension, not a TLD. Only applies without a
+    // scheme: `http://evil.com/a` is a URL wherever it appears.
+    if (!scheme && isPathComponent(text, offset)) return match;
+
     // A dotted quad is only an IP if every octet is in range. This rejects
     // "1.2.3.400" and "999.0.0.1" — but note it CANNOT separate a 4-part version
     // string from an address, because "2.4.1.3" is a valid IP. That ambiguity is
