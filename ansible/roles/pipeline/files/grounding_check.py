@@ -89,7 +89,13 @@ _LITERAL_PATTERNS = (
     re.compile(r"\b(0x[0-9a-fA-F]{2,})\b"),
     re.compile(r"\b((?:FUN|DAT|LAB|SUB)_[0-9a-fA-F]{4,})\b"),
     re.compile(r"\b([0-9a-fA-F]{8,})\b"),
-    re.compile(r"\b([A-Za-z][A-Za-z0-9]*(?:[_#][A-Za-z0-9#]+)+)\b"),
+    # NOTE the separator run `[_#]+` and the body `[A-Za-z0-9]+` are DISJOINT. An
+    # earlier version had `#` in both (`[_#][A-Za-z0-9#]+`), so a run of `##` could be
+    # split between them many ways -- CodeQL py/redos, high severity, and a genuine
+    # availability bug here: this scorer parses model output derived from malware, so a
+    # crafted IOC string could hang the eval harness. Disjoint classes make the match
+    # unambiguous and linear.
+    re.compile(r"\b([A-Za-z][A-Za-z0-9]*(?:[_#]+[A-Za-z0-9]+)+)\b"),
     re.compile(r"\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)\b"),
     # Dotted artifacts: domains, IPv4, filenames. These are THE canonical fabricable
     # IOC — the module exists because qwen3:32b invented a C2 domain — and an early

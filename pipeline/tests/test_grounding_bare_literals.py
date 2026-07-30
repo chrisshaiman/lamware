@@ -209,3 +209,40 @@ def test_the_shared_extractor_contract_stays_a_list():
     assert isinstance(lits, list) and all(isinstance(x, str) for x in lits)
     detail, truncated = _extract_literals_detail(CLAIM_HEX)
     assert detail == lits and isinstance(truncated, bool)
+
+
+# --------------------------------------------------------------------------
+# ReDoS: this scorer parses adversarial input
+# --------------------------------------------------------------------------
+
+def test_literal_extraction_is_not_vulnerable_to_catastrophic_backtracking():
+    """CodeQL py/redos, high severity, on the identifier pattern added by #243.
+
+    The first version was `[A-Za-z][A-Za-z0-9]*(?:[_#][A-Za-z0-9#]+)+` -- `#` appeared in
+    BOTH the separator class and the body class, so a run of `##` could be split between
+    them exponentially many ways.
+
+    Not a theoretical concern here. `grounding_scorecard` runs over `code_level_ioc`
+    values produced by a model reading MALWARE, so the claim text is adversarial input in
+    the ordinary sense: a sample can influence what the model writes. A hang in the
+    scorer takes the eval harness with it.
+
+    Fixed by making the classes disjoint (`[_#]+` then `[A-Za-z0-9]+`), which makes the
+    match unambiguous and linear. This test pins the timing, because the pattern still
+    LOOKS fine if the classes silently overlap again.
+    """
+    import time
+
+    for n in (2_000, 10_000, 40_000):
+        pathological = "A" + "#" * n + "!"
+        start = time.perf_counter()
+        _extract_literals(pathological)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, (
+            f"extraction took {elapsed:.2f}s on {n} repeated '#' -- the separator and "
+            f"body character classes have probably started overlapping again")
+
+
+def test_the_pattern_still_matches_the_mutex_it_exists_for():
+    """The ReDoS fix must not quietly drop the case that motivated the pattern."""
+    assert "MilcoSoft_#Rip_X" in _extract_literals("Mutex/Event Name: MilcoSoft_#Rip_X")
