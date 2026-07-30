@@ -1,0 +1,25 @@
+{#
+  Deploy-time configuration for interpret-ghidra.py.
+
+  This file replaced the Jinja-ification of the whole 2,900-line script (#205). The
+  script had exactly nine template variables and paid for them by being un-importable,
+  so nothing in it could be tested and a syntax error surfaced at container-build time
+  instead of in CI. The nine values live here; the logic is now plain Python.
+
+  Rendered through `to_nice_json` rather than hand-written JSON so a value containing a
+  quote, or an int that gets templated where a string was expected, cannot emit a broken
+  file. The script warns loudly on stderr if this file exists but does not parse.
+
+  These are DEFAULTS. The orchestrator merges its own per-run config over them.
+#}
+{{ {
+     "model": interpret_model,
+     "escalation_threshold": interpret_escalation_threshold | int,
+     "escalation_model": interpret_escalation_model,
+     "max_output_tokens": interpret_max_output_tokens | int,
+     "max_tool_calls": interpret_max_tool_calls | int,
+     "max_tool_calls_per_turn": interpret_max_tool_calls_per_turn | int,
+     "max_imports": interpret_max_imports | int,
+     "max_strings": interpret_max_strings | int,
+     "max_string_length": interpret_max_string_length | int,
+   } | to_nice_json }}

@@ -3,12 +3,12 @@
 """Static guards: the two-phase RE synthesis (forced submit_analysis + think:false)."""
 from pathlib import Path
 
-TEMPLATE = (Path(__file__).resolve().parents[2]
-            / "ansible" / "roles" / "interpret" / "templates" / "interpret-ghidra.py.j2")
+SCRIPT = (Path(__file__).resolve().parents[2]
+          / "ansible" / "roles" / "interpret" / "files" / "interpret-ghidra.py")
 
 
 def _t() -> str:
-    return TEMPLATE.read_text(encoding="utf-8")
+    return SCRIPT.read_text(encoding="utf-8")
 
 
 def test_phase2b_serializes_only_the_conclusion_not_the_transcript():

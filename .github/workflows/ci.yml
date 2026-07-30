@@ -94,7 +94,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install packages
-        run: pip install ./shared ./pipeline pytest hypothesis
+        # [test] pulls anthropic/httpx so the #205 tests can import the interpret
+        # container script for real instead of stubbing its dependencies.
+        run: pip install ./shared "./pipeline[test]" pytest hypothesis
 
       - name: Test
         run: |

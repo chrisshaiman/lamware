@@ -9,6 +9,15 @@ authors = [{ name = "Christopher Shaiman" }]
 requires-python = ">=3.12"
 dependencies = ["lamware-shared", "pydantic>=2", "psycopg2-binary>=2.9", "requests>=2.31", "ppdeep==20260221"]
 
+# Not runtime deps of this package — the pipeline talks to the interpret container over a
+# pipe and never imports these. They are what the CONTAINER script imports, and the tests
+# added for #205 import that script for real rather than stubbing it. Stubbing `anthropic`
+# to prove a module imports would only prove it imports against a fake, and this repo has
+# already been bitten by leaked sys.modules stubs (#214 — it got the WebSocket tests
+# excluded from CI entirely).
+[project.optional-dependencies]
+test = ["anthropic>=0.40", "httpx>=0.27"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

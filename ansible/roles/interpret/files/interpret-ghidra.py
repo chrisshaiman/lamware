@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
 import sys
 import threading
@@ -38,15 +39,30 @@ import anthropic
 import httpx
 
 # ---------------------------------------------------------------------------
-# Configuration — injected by Jinja2 at deploy time, with env overrides
+# Configuration
 # ---------------------------------------------------------------------------
+# This file used to be a Jinja template (interpret-ghidra.py.j2) whose only
+# variables were the nine scalars below. That cost far more than it bought: 2,500
+# lines of logic became un-importable, so NO test could reach any of it, and a
+# syntax error surfaced at container-build time rather than in CI (#205).
+#
+# The values now arrive as JSON written by the role at deploy time, so ansible
+# remains the single source of truth, and the module is ordinary Python.
+#
+# The builtins below are a FALLBACK, not a second source of truth. They exist so
+# the module imports with no config file present — which is what makes it testable
+# — and they intentionally mirror roles/interpret/defaults/main.yml. A drift guard
+# (tests/test_interpret_config_defaults.py) fails if the two disagree.
+#
+# These are only DEFAULTS in any case: the orchestrator merges its own config over
+# them at runtime (`{**DEFAULT_CONFIG, **runtime_config}`).
 
-DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "{{ interpret_model }}",
-    "escalation_threshold": {{ interpret_escalation_threshold }},
-    "escalation_model": "{{ interpret_escalation_model }}",
-    "max_output_tokens": {{ interpret_max_output_tokens }},
-    "max_tool_calls": {{ interpret_max_tool_calls }},
+_BUILTIN_DEFAULTS: dict[str, Any] = {
+    "model": "claude-sonnet-4-6",
+    "escalation_threshold": 5,
+    "escalation_model": "claude-opus-4-6",
+    "max_output_tokens": 4096,
+    "max_tool_calls": 10,
     # Bounds how many tool calls are EXECUTED per model turn. `max_tool_calls` caps the
     # run total but never the per-turn batch, so the model could emit ~6 parallel
     # decompiles in one response and add ~59,000 chars (~14,800 tokens) to the context in
@@ -54,11 +70,45 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # from 0-10k to 50-60k), unbounded batching makes deep runs quadratic: one turn was
     # measured at 55 minutes. Deferring the surplus keeps every decompile the model asked
     # for — it just arrives across more turns instead of all at once. See #234.
-    "max_tool_calls_per_turn": {{ interpret_max_tool_calls_per_turn }},
-    "max_imports": {{ interpret_max_imports }},
-    "max_strings": {{ interpret_max_strings }},
-    "max_string_length": {{ interpret_max_string_length }},
+    "max_tool_calls_per_turn": 3,
+    "max_imports": 200,
+    "max_strings": 100,
+    "max_string_length": 500,
 }
+
+# Sits beside this file in the image; env var is for tests and ad-hoc runs.
+CONFIG_PATH = os.environ.get(
+    "INTERPRET_CONFIG",
+    str(pathlib.Path(__file__).with_name("interpret-config.json")),
+)
+
+
+def load_default_config(path: str = "") -> dict[str, Any]:
+    """Overlay the deploy-written config onto the builtin fallbacks.
+
+    A MISSING file is fine and silent — that is the import-without-deploy case that
+    makes this module testable. A file that exists but cannot be read or parsed is
+    NOT fine: it means the deploy wrote something broken, and silently running on
+    fallback values would hide a misconfigured model or tool budget behind a
+    perfectly healthy-looking run. That gets a loud warning on stderr.
+    """
+    config = dict(_BUILTIN_DEFAULTS)
+    target = path or CONFIG_PATH
+    try:
+        with open(target, encoding="utf-8") as fh:
+            config.update(json.load(fh))
+    except FileNotFoundError:
+        pass
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        print(
+            f"[interpret] WARNING: config at {target} is unreadable "
+            f"({type(e).__name__}: {e}); falling back to builtin defaults",
+            file=sys.stderr, flush=True,
+        )
+    return config
+
+
+DEFAULT_CONFIG: dict[str, Any] = load_default_config()
 
 # ---------------------------------------------------------------------------
 # Known-good network indicators — Windows guest VM telemetry, not IOCs
