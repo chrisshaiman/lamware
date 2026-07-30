@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run one (sample x arm) through the agentic RE loop; return a scorecard cell."""
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -76,6 +77,43 @@ def cell_out_dir(sample: CorpusSample, arm: Arm) -> Path:
     return Path(sample.corpus_dir) / "eval" / safe
 
 
+# Cells whose name starts with this are bookkeeping, not results. Readers that walk
+# `<corpus>/eval/*` must skip it or they will treat archived runs as live arms.
+ARCHIVE_DIR = "_archive"
+
+
+def archive_previous_cell(out: Path) -> Path | None:
+    """Move a previous run's artifacts aside before this run writes anything.
+
+    Cell paths are keyed only by (sample, arm), so re-running an arm lands on top of the
+    last run. `result.json` and the trail were overwritten, but `llm_audit/results/NNNN.json`
+    is numbered PER TOOL CALL and never cleared, so a shorter second run left the first
+    run's higher-numbered files in place — and `tool_output_text` greps exactly those files
+    to decide whether a claim is grounded. A claim could therefore be scored against
+    evidence from a DIFFERENT run, with nothing anywhere saying so.
+
+    Observed 2026-07-29: a re-run of qwen@10:s42 destroyed the previous run's forensic
+    trail (#197) while a question about that run was still open, making it permanently
+    unanswerable. It survives SIGKILL and did not survive a re-run, which is the far more
+    common event.
+
+    Moving rather than deleting keeps the history the trail exists for. The archive is
+    named for the PREVIOUS run's own timestamp rather than the current label, so it is
+    self-describing without threading the label through the runner.
+    """
+    if not out.exists() or not any(out.iterdir()):
+        return None
+    stamped = out / "result.json"
+    when = stamped.stat().st_mtime if stamped.exists() else out.stat().st_mtime
+    dest = out.parent / ARCHIVE_DIR / f"{out.name}__{time.strftime('%Y%m%d-%H%M%S', time.localtime(when))}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        # Same-second re-run of the same cell; the newer copy wins.
+        shutil.rmtree(dest)
+    out.rename(dest)
+    return dest
+
+
 def _rough_cost(model: str, usage: dict) -> float:
     ci, co = _RATES.get(model, (0.0, 0.0))
     return round(usage.get("input_tokens", 0) / 1e6 * ci
@@ -123,6 +161,12 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     if arm.re_backend == "local":
         cfg["re_backend"] = "local"
     out = cell_out_dir(sample, arm)
+    # Start from an empty cell: see archive_previous_cell for why overwriting is not
+    # enough. Stale per-tool-call artifacts would otherwise be scored as this run's
+    # evidence.
+    archived = archive_previous_cell(out)
+    if archived is not None:
+        print(f"    [eval] previous cell archived -> {archived}", flush=True)
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     res = run_interpret(gr, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd)

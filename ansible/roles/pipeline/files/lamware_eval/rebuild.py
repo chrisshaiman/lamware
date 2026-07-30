@@ -32,6 +32,10 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
         claude_family = ((report.get("llm_interpretation") or {})
                          .get("analysis", {}).get("malware_family_guess"))
         for arm_dir in sorted((cdir / "eval").glob("*")):
+            # Skip the archive of superseded runs (#245); those are history, not arms,
+            # and counting them would silently double-report old cells.
+            if arm_dir.name.startswith("_"):
+                continue
             rp = arm_dir / "result.json"
             if not rp.is_dir() and rp.exists():
                 res = json.loads(rp.read_text())
