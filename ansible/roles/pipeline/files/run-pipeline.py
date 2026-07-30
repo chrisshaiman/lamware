@@ -539,7 +539,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     update_stage(analysis_id_early, "ghidra", "started")
 
     # Check if this is an Office document — route to olevba
-    dotnet_origin = None
     if is_office_document(report):
         log.info("\n[Stage 4] Office document detected — running macro extraction...")
         office_result = run_office_analysis(sample_path, output_dir, office_cmd=OFFICE_CMD)
@@ -605,7 +604,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                             "analyzed_files": []}
     # Check if this is a .NET binary — route to ILSpy instead
     elif is_dotnet_binary(report):
-        dotnet_origin = "original"
         log.info("\n[Stage 4] .NET detected — running ILSpy decompilation...")
         dotnet_result = run_dotnet_analysis(
             sample_path, output_dir, dotnet_cmd=DOTNET_CMD)
@@ -694,7 +692,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                                                       report_dir=output_dir)
 
         if dotnet_extractions:
-            dotnet_origin = "extraction"
             log.info(f"\n[Stage 4] .NET payload(s) found in Cape extractions ({len(dotnet_extractions)}):")
             # Analyze the first (largest) .NET extraction
             best = max(dotnet_extractions, key=lambda x: x["size"])
@@ -1284,8 +1281,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     total_elapsed = round(_time.time() - pipeline_start, 1)
     stage_timings["total"] = total_elapsed
     report["timing"] = stage_timings
-    log.info(f"[Timing] Total: {total_elapsed:.0f}s | " +
-             " | ".join(f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total"))
+    stage_breakdown = " | ".join(
+        f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total")
+    log.info(f"[Timing] Total: {total_elapsed:.0f}s | {stage_breakdown}")
 
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(UTC).isoformat()

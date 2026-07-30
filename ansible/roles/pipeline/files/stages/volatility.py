@@ -644,15 +644,19 @@ def run_volatility(cape_data: dict, output_dir: Path,
     insights = result["insights"]
     if insights:
         items = []
-        if insights.get("suspicious_cmdlines"): items.append(f"{len(insights['suspicious_cmdlines'])} suspicious cmdlines")
-        if insights.get("active_connections"): items.append(f"{len(insights['active_connections'])} active connections")
+        if insights.get("suspicious_cmdlines"):
+            items.append(f"{len(insights['suspicious_cmdlines'])} suspicious cmdlines")
+        if insights.get("active_connections"):
+            items.append(f"{len(insights['active_connections'])} active connections")
         if insights.get("mutex_summary"):
             ms = insights["mutex_summary"]
             items.append(f"{ms['unique_names']} unique mutexes ({ms['total_handles']} handles)")
         elif insights.get("mutexes"):
             items.append(f"{len(insights['mutexes'])} mutexes")
-        if insights.get("suspicious_dlls"): items.append(f"{len(insights['suspicious_dlls'])} suspicious DLLs")
-        if insights.get("anomalous_parents"): items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
+        if insights.get("suspicious_dlls"):
+            items.append(f"{len(insights['suspicious_dlls'])} suspicious DLLs")
+        if insights.get("anomalous_parents"):
+            items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
         if items:
             print(f"    Volatility insights: {', '.join(items)}")
 
