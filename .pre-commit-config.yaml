@@ -16,7 +16,11 @@ repos:
         # src/ (#211) would have left this hook silently matching ZERO files while
         # still reporting green — a scope narrower than it looks was already the
         # complaint in #206. These are the live Python trees.
-        files: ^(api|shared|pipeline)/
+        #
+        # ansible/ added in #206: it holds the analysis pipeline itself (~12k lines of
+        # Python), which was outside every gate. Matching it here means findings surface
+        # at commit time rather than only in CI.
+        files: ^(api|shared|pipeline|ansible)/
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.4

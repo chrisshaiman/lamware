@@ -22,35 +22,15 @@ import argparse
 import json
 import logging
 import os
+import random
 import subprocess
 import sys
 import uuid
-import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from stages.triage import run_triage, derive_tags_from_triage, derive_package_from_triage
-from stages.cape import (
-    derive_filename, submit_to_cape, poll_cape_task,
-    get_cape_signatures, extract_cape_intel,
-)
-from stages.volatility import (
-    should_run_volatility, run_volatility, extract_shellcode_artifacts,
-)
-from stages.pcap import get_cape_pcap, run_pcap_analysis
-from stages.dotnet import is_dotnet_binary, find_dotnet_extractions, run_dotnet_analysis
-from stages.go import is_go_binary, run_go_analysis
-from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
-from stages.java import is_java_binary, run_java_analysis
-from stages.office import is_office_document, run_office_analysis
-from stages.powershell import is_powershell_script, extract_powershell_from_cape, run_powershell_analysis
-from stages.script_analysis import is_text_script, read_script_source
-from stages.ghidra import should_run_ghidra, run_ghidra
-from stages.interpret import run_interpret, run_summarize, run_plain_english
-from stages.single_shot_init import build_dotnet_init, build_go_init, build_ps_init
-from ioc_extract import extract_iocs, map_iocs_to_techniques
 from db_ingest import ingest_to_db, mark_pdf_generated
-from pipeline_status import create_analysis_row, update_stage, complete_pipeline
+from ioc_extract import extract_iocs, map_iocs_to_techniques
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.correlation import (
     build_mitre_mapping,
@@ -58,7 +38,35 @@ from lamware_pipeline.correlation import (
     cross_correlate,
     determine_family,
 )
-
+from pipeline_status import complete_pipeline, create_analysis_row, update_stage
+from stages.cape import (
+    derive_filename,
+    extract_cape_intel,
+    get_cape_signatures,
+    poll_cape_task,
+    submit_to_cape,
+)
+from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
+from stages.ghidra import run_ghidra, should_run_ghidra
+from stages.go import is_go_binary, run_go_analysis
+from stages.interpret import run_interpret, run_plain_english, run_summarize
+from stages.java import is_java_binary, run_java_analysis
+from stages.office import is_office_document, run_office_analysis
+from stages.pcap import get_cape_pcap, run_pcap_analysis
+from stages.powershell import (
+    extract_powershell_from_cape,
+    is_powershell_script,
+    run_powershell_analysis,
+)
+from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
+from stages.script_analysis import is_text_script, read_script_source
+from stages.single_shot_init import build_dotnet_init, build_go_init, build_ps_init
+from stages.triage import derive_package_from_triage, derive_tags_from_triage, run_triage
+from stages.volatility import (
+    extract_shellcode_artifacts,
+    run_volatility,
+    should_run_volatility,
+)
 
 # -------------------------------------------------------------------------
 # Logging
@@ -218,7 +226,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         "task_id": task_id,
         "sample": str(sample_path),
         "sample_name": original_name or sample_path.name,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
         "bazaar_family": bazaar_family,
     }
 
@@ -266,7 +274,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 offset_days = random.randint(7, 30)  # nosec B311 — jitter for sandbox guest-clock anti-evasion, not security/crypto
                 guest_dt = compile_dt + timedelta(days=offset_days)
                 # Don't set clock to the future
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 if guest_dt > now:
                     guest_dt = now - timedelta(days=random.randint(1, 7))  # nosec B311 — jitter for sandbox guest-clock anti-evasion, not security/crypto
                 cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
@@ -392,7 +400,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     cape_task_id = report.get("cape", {}).get("task_id")
     pcap_path = get_cape_pcap(cape_task_id) if PCAP_ENABLED else None
     if pcap_path:
-        log.info(f"\n[Stage 2.7] PCAP Analysis: running Zeek + Suricata...")
+        log.info("\n[Stage 2.7] PCAP Analysis: running Zeek + Suricata...")
         pcap_output_dir = str(output_dir / "pcap_analysis")
         pcap_result = run_pcap_analysis(
             pcap_path, pcap_output_dir, pcap_cmd=PCAP_CMD, timeout=PCAP_TIMEOUT,
@@ -422,7 +430,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     # Stage 3: Volatility (triggered by Cape signatures)
     _vol_start = _time.time()
     update_stage(analysis_id_early, "volatility", "started")
-    log.info(f"\n[Stage 3] Volatility: checking triggers...")
+    log.info("\n[Stage 3] Volatility: checking triggers...")
     if should_run_volatility(cape_data, volatility_cmd=VOLATILITY_CMD,
                              volatility_triggers=VOLATILITY_TRIGGERS,
                              get_cape_signatures_fn=get_cape_signatures):
@@ -531,9 +539,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     update_stage(analysis_id_early, "ghidra", "started")
 
     # Check if this is an Office document — route to olevba
-    dotnet_origin = None
     if is_office_document(report):
-        log.info(f"\n[Stage 4] Office document detected — running macro extraction...")
+        log.info("\n[Stage 4] Office document detected — running macro extraction...")
         office_result = run_office_analysis(sample_path, output_dir, office_cmd=OFFICE_CMD)
         report["office_analysis"] = office_result
         if office_result.get("analysis_success"):
@@ -551,16 +558,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                          f"W={'Y' if mraptor.get('write') else 'N'} "
                          f"X={'Y' if mraptor.get('execute') else 'N'}")
                 if office_result.get("xlm_detected"):
-                    log.info(f"  XLM/Excel 4.0 macros detected (no deobfuscation)")
+                    log.info("  XLM/Excel 4.0 macros detected (no deobfuscation)")
             else:
-                log.info(f"  Valid Office document but no macros found")
+                log.info("  Valid Office document but no macros found")
         else:
             log.warning(f"olevba failed: {office_result.get('error', 'unknown')}")
 
         report["ghidra"] = {"triggered": True, "office_routed": True,
                             "analyzed_files": []}
     elif is_powershell_script(report):
-        log.info(f"\n[Stage 4] PowerShell script detected — running deobfuscation...")
+        log.info("\n[Stage 4] PowerShell script detected — running deobfuscation...")
         ps_result = run_powershell_analysis(sample_path, output_dir, powershell_cmd=POWERSHELL_CMD)
         report["powershell_analysis"] = ps_result
         if ps_result.get("analysis_success"):
@@ -597,8 +604,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                             "analyzed_files": []}
     # Check if this is a .NET binary — route to ILSpy instead
     elif is_dotnet_binary(report):
-        dotnet_origin = "original"
-        log.info(f"\n[Stage 4] .NET detected — running ILSpy decompilation...")
+        log.info("\n[Stage 4] .NET detected — running ILSpy decompilation...")
         dotnet_result = run_dotnet_analysis(
             sample_path, output_dir, dotnet_cmd=DOTNET_CMD)
         report["dotnet_analysis"] = dotnet_result
@@ -613,7 +619,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         report["ghidra"] = {"triggered": True, "dotnet_routed": True,
                             "analyzed_files": []}
     elif is_go_binary(report):
-        log.info(f"\n[Stage 4] Go binary detected — running GoReSym analysis...")
+        log.info("\n[Stage 4] Go binary detected — running GoReSym analysis...")
         go_result = run_go_analysis(sample_path, output_dir, go_cmd=GO_CMD)
         report["go_analysis"] = go_result
         if go_result.get("analysis_success"):
@@ -628,7 +634,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             # GoReSym failed — likely garble-obfuscated. Fall back to Ghidra
             # for raw pseudocode analysis without function name metadata.
             log.warning(f"GoReSym failed: {go_result.get('error', 'unknown')}")
-            log.info(f"  Falling back to Ghidra for obfuscated Go binary...")
+            log.info("  Falling back to Ghidra for obfuscated Go binary...")
             if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                                  get_cape_signatures_fn=get_cape_signatures):
                 report["ghidra"] = run_ghidra(
@@ -640,7 +646,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 report["ghidra"]["go_goresym_failed"] = True
             else:
                 # Force Ghidra even if not triggered — we need SOME analysis
-                log.info(f"  Ghidra not triggered but forcing for Go fallback...")
+                log.info("  Ghidra not triggered but forcing for Go fallback...")
                 report["ghidra"] = run_ghidra(
                     cape_data, output_dir, sample_path,
                     ghidra_cmd=GHIDRA_CMD,
@@ -649,7 +655,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 )
                 report["ghidra"]["go_goresym_failed"] = True
     elif is_pyinstaller_binary(report, sample_path):
-        log.info(f"\n[Stage 4] PyInstaller binary detected — extracting and decompiling...")
+        log.info("\n[Stage 4] PyInstaller binary detected — extracting and decompiling...")
         pyinstaller_result = run_pyinstaller_analysis(
             sample_path, output_dir, pyinstaller_cmd=PYINSTALLER_CMD)
         report["pyinstaller_analysis"] = pyinstaller_result
@@ -665,7 +671,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         report["ghidra"] = {"triggered": True, "pyinstaller_routed": True,
                             "analyzed_files": []}
     elif is_java_binary(report):
-        log.info(f"\n[Stage 4] Java JAR detected — running CFR decompilation...")
+        log.info("\n[Stage 4] Java JAR detected — running CFR decompilation...")
         java_result = run_java_analysis(sample_path, output_dir, java_cmd=JAVA_CMD)
         report["java_analysis"] = java_result
         if java_result.get("analysis_success"):
@@ -686,7 +692,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                                                       report_dir=output_dir)
 
         if dotnet_extractions:
-            dotnet_origin = "extraction"
             log.info(f"\n[Stage 4] .NET payload(s) found in Cape extractions ({len(dotnet_extractions)}):")
             # Analyze the first (largest) .NET extraction
             best = max(dotnet_extractions, key=lambda x: x["size"])
@@ -706,7 +711,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             # Still run Ghidra on the original native PE sample
             if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                                  get_cape_signatures_fn=get_cape_signatures):
-                log.info(f"  Also running Ghidra on original native PE...")
+                log.info("  Also running Ghidra on original native PE...")
                 report["ghidra"] = run_ghidra(
                     cape_data, output_dir, sample_path,
                     ghidra_cmd=GHIDRA_CMD,
@@ -718,7 +723,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                                     "analyzed_files": []}
         elif should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                                get_cape_signatures_fn=get_cape_signatures):
-            log.info(f"\n[Stage 4] Ghidra: checking triggers...")
+            log.info("\n[Stage 4] Ghidra: checking triggers...")
             log.info("  Triggered — running Ghidra headless")
             report["ghidra"] = run_ghidra(
                 cape_data, output_dir, sample_path,
@@ -727,7 +732,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 shellcode_candidates=shellcode_candidates,
             )
         else:
-            log.info(f"\n[Stage 4] Ghidra: checking triggers...")
+            log.info("\n[Stage 4] Ghidra: checking triggers...")
             log.info("  Not triggered")
             report["ghidra"] = {"triggered": False}
 
@@ -783,7 +788,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     if dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
         # .NET path — send C# source directly to LLM (no Ghidra tools needed)
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         dotnet_init = build_dotnet_init(dotnet_data, _llm_context, cape_sigs)
         report["llm_interpretation"] = run_interpret(
@@ -804,7 +809,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif java_data.get("analysis_success") and INTERPRET_ENABLED:
         # Java path — send decompiled Java source directly to LLM
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Java decompilation...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Java decompilation...")
         java_init = {
             **_llm_context,
             "analysis_type": "java_cfr",
@@ -836,7 +841,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif office_data.get("analysis_success") and office_data.get("has_macros") and INTERPRET_ENABLED:
         # Office macro path — send VBA source to LLM for deobfuscation + analysis
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Office macros...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Office macros...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         office_init = {
             **_llm_context,
@@ -873,7 +878,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif ps_data.get("analysis_success") and INTERPRET_ENABLED:
         # PowerShell path — send decoded script to LLM
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing PowerShell script...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing PowerShell script...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         ps_init = build_ps_init(ps_data, _llm_context, cape_sigs)
         report["llm_interpretation"] = run_interpret(
@@ -926,7 +931,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif pyinstaller_data.get("analysis_success") and INTERPRET_ENABLED:
         # PyInstaller path — send Python source directly to LLM (no tools needed)
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing PyInstaller decompilation...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing PyInstaller decompilation...")
         py_source = pyinstaller_data.get("decompilation", {}).get("source", "")
         py_imports = pyinstaller_data.get("imports", [])
         py_strings = pyinstaller_data.get("strings_of_interest", [])
@@ -960,7 +965,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif go_data.get("analysis_success") and INTERPRET_ENABLED:
         # Go path — send GoReSym metadata directly to LLM (no tools needed)
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Go binary metadata...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Go binary metadata...")
         go_init = build_go_init(go_data, _llm_context)
         report["llm_interpretation"] = run_interpret(
             go_init, output_dir,
@@ -980,7 +985,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif successful:
         # Native PE path — agentic Ghidra investigation
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
         report["llm_interpretation"] = run_interpret(
             successful[0], output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -1000,7 +1005,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             log.warning(f"Error: {interp['error']}")
     else:
         if INTERPRET_ENABLED and (ghidra_data.get("triggered") or dotnet_data):
-            log.info(f"\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")
+            log.info("\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")
             report["llm_interpretation"] = {"enabled": True, "reason": "no_analysis_data"}
         else:
             report["llm_interpretation"] = {"enabled": INTERPRET_ENABLED,
@@ -1098,10 +1103,14 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     if cape_task_id:
         shots_dir = Path(f"/opt/CAPEv2/storage/analyses/{cape_task_id}/shots")
         if shots_dir.is_dir() and any(shots_dir.glob("*.png")):
-            log.info(f"\n[Stage 5.5] Screenshot Analysis: dedup + QR detection...")
+            log.info("\n[Stage 5.5] Screenshot Analysis: dedup + QR detection...")
             try:
+                # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                # List form, no shell. The command is a module-level constant from
+                # deploy config and the arguments are pipeline-derived paths, not
+                # sample-controlled input. Mirrors the existing bandit B603 skip.
                 screenshot_result = subprocess.run(
-                    [SCREENSHOT_CMD, str(shots_dir), str(output_dir)],
+                    [SCREENSHOT_CMD, str(shots_dir), str(output_dir)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     capture_output=True, text=True, timeout=60,
                 )
                 if screenshot_result.returncode == 0:
@@ -1114,11 +1123,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                         evasion = screenshot_data.get("evasion_signal", False)
                         log.info(f"  {total} total → {unique} unique frames, {qr_count} QR codes")
                         if evasion:
-                            log.info(f"  Evasion signal: all screenshots identical — no visual activity")
+                            log.info("  Evasion signal: all screenshots identical — no visual activity")
                         for qr in screenshot_data.get("qr_codes", []):
                             log.info(f"  QR [{qr.get('type')}]: {qr.get('value', '')[:80]}")
                     except json.JSONDecodeError:
-                        log.warning(f"Screenshot analysis returned invalid JSON")
+                        log.warning("Screenshot analysis returned invalid JSON")
                 else:
                     log.warning(f"Screenshot analysis failed: {screenshot_result.stderr[:200]}")
             except subprocess.TimeoutExpired:
@@ -1131,7 +1140,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     # Cross-tool correlation — must run BEFORE severity calculation
     # (severity reads cross_correlations to boost score for critical findings)
-    log.info(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
+    log.info("\n[Cross-Correlation] Comparing Cape and Volatility data...")
     report["cross_correlations"] = cross_correlate(report)
     for finding in report["cross_correlations"]:
         severity = finding.get("severity", "info")
@@ -1142,7 +1151,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         log.info("  No cross-tool findings detected")
 
     # Programmatic analysis — deterministic, runs before LLM
-    log.info(f"\n[Analysis] Programmatic analysis...")
+    log.info("\n[Analysis] Programmatic analysis...")
     report["family"] = determine_family(report)
     report["severity"] = calculate_severity(report)
     report["mitre_mapping"] = build_mitre_mapping(report)
@@ -1151,7 +1160,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     # IOC extraction — pull actionable indicators from all stages
-    log.info(f"\n[IOC Extraction] Scanning all stages for indicators...")
+    log.info("\n[IOC Extraction] Scanning all stages for indicators...")
     report["extracted_iocs"] = extract_iocs(report)
     ioc_count = len(report["extracted_iocs"])
     ioc_types = {}
@@ -1233,7 +1242,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     # Plain English summary for non-technical audiences
     if INTERPRET_ENABLED and report.get("executive_summary", {}).get("executive_summary"):
-        log.info(f"\n[Stage 5.1] Plain English Summary: generating...")
+        log.info("\n[Stage 5.1] Plain English Summary: generating...")
         plain_result = run_plain_english(
             report,
             interpret_cmd=INTERPRET_CMD,
@@ -1276,26 +1285,30 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     total_elapsed = round(_time.time() - pipeline_start, 1)
     stage_timings["total"] = total_elapsed
     report["timing"] = stage_timings
-    log.info(f"[Timing] Total: {total_elapsed:.0f}s | " +
-             " | ".join(f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total"))
+    stage_breakdown = " | ".join(
+        f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total")
+    log.info(f"[Timing] Total: {total_elapsed:.0f}s | {stage_breakdown}")
 
     # Write merged report (includes executive summary)
-    report["completed_at"] = datetime.now(timezone.utc).isoformat()
+    report["completed_at"] = datetime.now(UTC).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
     log.info(f"\n[Done] JSON report: {report_path}")
 
     # Database ingestion — write structured data to PostgreSQL
-    log.info(f"\n[DB Ingestion] Writing to database...")
+    log.info("\n[DB Ingestion] Writing to database...")
     analysis_id = ingest_to_db(report, existing_analysis_id=analysis_id_early)
 
     # Stage 6: PDF report generation (containerized)
-    log.info(f"\n[Stage 6] PDF Report: generating...")
+    log.info("\n[Stage 6] PDF Report: generating...")
     _pdf_start = _time.time()
     update_stage(analysis_id_early, "pdf", "started")
     pdf_path = report_path.parent / "report.pdf"
     try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        # List form, no shell; PDF_CMD is a deploy-config constant and the paths are
+        # pipeline-derived, not sample-controlled. See the screenshot call above.
         result = subprocess.run(
-            [PDF_CMD, str(report_path), str(pdf_path)],
+            [PDF_CMD, str(report_path), str(pdf_path)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             capture_output=True,
             text=True,
             timeout=120,
@@ -1353,7 +1366,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
     log.info(f"Replay] Stages: {', '.join(run_stages)}")
 
     if "correlate" in run_stages:
-        log.info(f"\n[Cross-Correlation] Comparing Cape and Volatility data...")
+        log.info("\n[Cross-Correlation] Comparing Cape and Volatility data...")
         report["cross_correlations"] = cross_correlate(report)
         for finding in report["cross_correlations"]:
             sev = finding.get("severity", "info")
@@ -1364,7 +1377,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             log.info("  No cross-tool findings detected")
 
     if "analysis" in run_stages:
-        log.info(f"\n[Analysis] Programmatic analysis...")
+        log.info("\n[Analysis] Programmatic analysis...")
         report["family"] = determine_family(report)
         report["severity"] = calculate_severity(report)
         report["mitre_mapping"] = build_mitre_mapping(report)
@@ -1373,7 +1386,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
 
     if "iocs" in run_stages:
-        log.info(f"\n[IOC Extraction] Scanning all stages for indicators...")
+        log.info("\n[IOC Extraction] Scanning all stages for indicators...")
         report["extracted_iocs"] = extract_iocs(report)
         ioc_count = len(report["extracted_iocs"])
         ioc_types = {}
@@ -1384,7 +1397,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
 
     if "summary" in run_stages:
         if INTERPRET_ENABLED:
-            log.info(f"\n[Executive Summary] Generating...")
+            log.info("\n[Executive Summary] Generating...")
             report["executive_summary"] = run_summarize(
                 report,
                 interpret_cmd=INTERPRET_CMD,
@@ -1398,23 +1411,26 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
                 log.warning(f"Error: {summary['error']}")
 
     # Write updated report
-    report["replayed_at"] = datetime.now(timezone.utc).isoformat()
+    report["replayed_at"] = datetime.now(UTC).isoformat()
     report["replayed_stages"] = run_stages
     new_report_path = write_report(task_id, report, REPORTS_DIR)
     log.info(f"\n[Done] Updated report: {new_report_path}")
 
     if "db" in run_stages:
-        log.info(f"\n[DB Ingestion] Writing to database...")
+        log.info("\n[DB Ingestion] Writing to database...")
         analysis_id = ingest_to_db(report)
     else:
         analysis_id = None
 
     if "pdf" in run_stages:
-        log.info(f"\n[PDF Report] Generating...")
+        log.info("\n[PDF Report] Generating...")
         pdf_path = new_report_path.parent / "report.pdf"
         try:
+            # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            # List form, no shell; PDF_CMD is a deploy-config constant and the paths are
+            # pipeline-derived, not sample-controlled. See the screenshot call above.
             result = subprocess.run(
-                [PDF_CMD, str(new_report_path), str(pdf_path)],
+                [PDF_CMD, str(new_report_path), str(pdf_path)],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -1485,7 +1501,7 @@ def main():
         llm_enabled = report.get("llm_interpretation", {}).get("enabled", False)
         llm_family = report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess", "n/a")
 
-        log.info(f"\nSummary:")
+        log.info("\nSummary:")
         log.info(f"  Triage:     {yara_count} YARA matches")
         log.info(f"  Cape:       {cape_status}")
         log.info(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")

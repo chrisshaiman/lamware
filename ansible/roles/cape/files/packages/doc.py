@@ -4,7 +4,6 @@
 #
 # Modified: LibreOffice fallback when MS Word is not installed.
 
-import os
 
 from lib.common.abstracts import Package
 from lib.common.common import check_file_extension

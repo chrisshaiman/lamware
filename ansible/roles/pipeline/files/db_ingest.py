@@ -6,12 +6,10 @@ License: Apache 2.0
 """
 
 import os
-import sys
 
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.db import build_insert, build_update
 from lamware_pipeline.relationships import write_relationships_safe
-
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
 # Covers common techniques seen in malware analysis. Techniques not in this
@@ -72,8 +70,9 @@ MITRE_TACTICS = {
     "T1574": ["persistence", "privilege-escalation", "defense-evasion"],
     "T1480": ["defense-evasion"],
     "T1485": ["impact"],
-    "T1489": ["impact"],
-    "T1490": ["impact"],
+    # T1489/T1490 were re-declared here identically to lines 54-55 — a merge artifact in
+    # a hand-maintained table. Behaviour was unaffected (same value), but a duplicate key
+    # in a lookup table is one careless edit away from becoming a silent override.
     "T1564": ["defense-evasion"],
     "T1070": ["defense-evasion"],
     "T1070.004": ["defense-evasion"],

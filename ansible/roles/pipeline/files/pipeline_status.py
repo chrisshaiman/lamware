@@ -12,11 +12,10 @@ License: Apache 2.0
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lamware_pipeline.config import PipelineConfig
-
 
 # -------------------------------------------------------------------------
 # Configuration (injected by Ansible template)
@@ -143,7 +142,7 @@ def update_stage(analysis_id: int | None, stage: str, status: str,
                 "analysis_id": analysis_id,
                 "stage": stage,
                 "status": status,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             })]
         )
 
@@ -190,7 +189,7 @@ def complete_pipeline(analysis_id: int | None, status: str = "completed",
                 "event": event,
                 "analysis_id": analysis_id,
                 "stage_timings": stage_timings or {},
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             })]
         )
 

@@ -18,7 +18,6 @@ import struct
 import subprocess
 from pathlib import Path
 
-
 DOTNET_YARA_INDICATORS = [
     "isnet", "net_exe", "netexecutable", "msil", "dotnet", "csharp",
 ]

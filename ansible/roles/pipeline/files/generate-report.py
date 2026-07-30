@@ -21,8 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import markdown as md
-from weasyprint import HTML, CSS
-
+from weasyprint import CSS, HTML
 
 # ---------------------------------------------------------------------------
 # Source attribution badges — each finding tagged with originating stage

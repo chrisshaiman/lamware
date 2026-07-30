@@ -14,7 +14,6 @@ import json
 import subprocess
 from pathlib import Path
 
-
 GO_YARA_INDICATORS = [
     "golang", "go_binary", "gobinary", "goresym",
 ]

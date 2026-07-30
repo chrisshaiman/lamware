@@ -13,9 +13,7 @@ import time
 from pathlib import Path
 
 import requests
-
 from lamware_pipeline.config import PipelineConfig
-
 
 # -------------------------------------------------------------------------
 # Configuration (loaded from config.json; secret from the environment)
@@ -155,6 +153,29 @@ def _get_arg(args, name):
     return ""
 
 
+def _parse_size(value: object) -> int | None:
+    """Parse a Cape size argument, which may be decimal or hex, into an int.
+
+    Cape is inconsistent: WriteProcessMemory's BufferLength arrives decimal, while
+    NtWriteVirtualMemory's NumberOfBytesToWrite is frequently `0x1000`. Returns None
+    for anything unparseable so callers can distinguish "not recorded" from "zero"
+    — a distinction that matters, because only a KNOWN declared length can prove a
+    buffer was truncated.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text, 16) if text.lower().startswith("0x") else int(text)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
 def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]:
     """Extract injected shellcode bytes from Cape's WriteProcessMemory traces.
 
@@ -191,7 +212,10 @@ def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]
             target_pid_str = _get_arg(args, "ProcessId")
             base_addr = _get_arg(args, "BaseAddress")
             buffer_data = _get_arg(args, "Buffer")
-            buf_len_str = _get_arg(args, "BufferLength") or _get_arg(args, "NumberOfBytesToWrite")
+            # How many bytes the malware ASKED to write, which is not necessarily how
+            # many Cape captured — see the truncation check below.
+            declared_size = _parse_size(
+                _get_arg(args, "BufferLength") or _get_arg(args, "NumberOfBytesToWrite"))
 
             target_pid = int(target_pid_str) if target_pid_str and str(target_pid_str).isdigit() else 0
             if not target_pid or target_pid == source_pid:
@@ -236,12 +260,31 @@ def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]
             import hashlib
             content_hash = hashlib.sha256(raw_bytes).hexdigest()
 
+            # Cape caps how much of a buffer argument it records, so a large injection
+            # can arrive SHORTER than the malware asked to write. Nothing downstream
+            # could tell the difference: `size` is the captured length, it is what the
+            # report shows an analyst, and it is what gates Ghidra analysis
+            # (`analyze_with_ghidra: size >= 1024`). A truncated buffer was therefore
+            # indistinguishable from a complete one in the path the README calls
+            # ground-truth shellcode extraction -- partial shellcode hashed, scanned and
+            # reported as whole. The declared length was parsed and discarded.
+            truncated = declared_size is not None and declared_size > len(raw_bytes)
+            if truncated:
+                print(f"    [!] injection buffer TRUNCATED by Cape: captured "
+                      f"{len(raw_bytes)} of {declared_size} bytes "
+                      f"(pid {source_pid} -> {target_pid} at {base_addr}); "
+                      f"treat the extracted payload as partial", flush=True)
+
             injections.append({
                 "source_pid": source_pid,
                 "source_process": source_name,
                 "target_pid": target_pid,
                 "injection_address": base_addr,
                 "size": len(raw_bytes),
+                # What the malware asked to write (None when Cape did not record it),
+                # and whether we got less than that.
+                "declared_size": declared_size,
+                "truncated": truncated,
                 "api": api,
                 "path": filepath,
                 "filename": filename,

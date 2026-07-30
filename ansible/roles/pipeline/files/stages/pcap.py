@@ -16,8 +16,6 @@ License: Apache 2.0
 import json
 import os
 import subprocess
-from pathlib import Path
-
 
 CAPE_STORAGE = "/opt/CAPEv2/storage/analyses"
 
