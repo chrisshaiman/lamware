@@ -11,15 +11,32 @@ def _t() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
-def test_phase2b_serializes_only_the_conclusion_not_the_transcript():
-    """A forced tool_choice is silently ignored at RE-scale context.
+def _func(name: str) -> str:
+    """Source of one top-level function, from its `def` to the next one.
 
-    Measured 2026-07-25 on the live llama.cpp/LiteLLM path: a forced
-    submit_analysis returned finish_reason=tool_calls with valid JSON at short
-    context, but finish_reason=stop with prose and NO tool call at ~25k chars.
-    Passing the full investigation transcript (concl_msgs) put every real run in
-    the failing regime, so local RE always emitted family=unknown with no
-    capabilities and no IOCs.
+    Several of these guards used a fixed character window instead. That silently
+    truncates the moment anyone adds a comment above the code being asserted on --
+    which is exactly how adding the #246 comment broke two passing tests without
+    changing a line of their subject.
+    """
+    body = _t().split(f"def {name}(", 1)[1]
+    return body.split("\ndef ", 1)[0]
+
+
+def test_phase2b_serializes_only_the_conclusion_not_the_transcript():
+    """Phase 2b must build a fresh, minimal message list.
+
+    Measured 2026-07-25 on the live llama.cpp/LiteLLM path: submit_analysis came
+    back as a valid tool call at short context but as prose with NO tool call at
+    ~25k chars, so passing the full transcript (concl_msgs) made local RE emit
+    family=unknown with no capabilities and no IOCs.
+
+    The symptom was real; the MECHANISM originally recorded here was not. It was
+    never "a forced tool_choice ignored at scale" -- tool_choice was never applied
+    at any context, because it was sent in an object form llama.cpp rejects (see
+    test_tool_choice_is_a_string_not_an_object). The model was choosing freely and
+    simply preferred prose on a long prompt. Keeping 2b's prompt small remains
+    correct either way, which is what this guards.
     """
     block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
     assert "serialize_msgs = [{" in block, (
@@ -48,11 +65,71 @@ def test_phase2a_failure_is_logged_not_silent():
 
 def test_phase2a_disables_thinking_via_no_think():
     """The router path cannot forward chat_template_kwargs, so /no_think is the
-    only lever. The model already reasoned across the tool-call investigation;
-    measured 2026-07-25 this cut the call 154s -> 115s with no loss of substance.
+    only lever. Measured 2026-07-25 it cut the call 154s -> 115s.
+
+    Whether the switch still does anything is OPEN (#260): a 2026-07-30 probe on
+    this transport had the /no_think arm return an empty response where the same
+    request without it produced correct prose. Unchanged pending a
+    production-scale A/B, so this guard stays -- but it asserts what the code
+    currently DOES, not that the behaviour is settled.
     """
     block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
     assert "/no_think" in block, "phase 2a prompt must carry the /no_think switch"
+    assert "#260" in block, "the open question about /no_think must stay visible in the code"
+
+
+def test_phase2a_carries_the_loop_tools_block_for_prefix_reuse():
+    """#246: phase 2a must send the SAME tools block the loop sends.
+
+    Tool definitions render near the front of the chat template, so omitting them
+    changes the prompt at its start and llama.cpp can reuse nothing after that
+    point. Measured on the 2026-07-29 run: the last loop turn reused every one of
+    the 6,176 tokens available to it; phase 2a, with a 31,023-token prompt, reused
+    THREE -- 1,280s of prompt evaluation, 72% of the run's wall-clock. Passing the
+    same block took reuse from 0% to 99.4% both directly against llama.cpp and
+    through the LiteLLM router.
+
+    It must be TOOLS itself: a subset or a rebuilt block diverges just as badly.
+    """
+    block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
+    concl = block.split("concl = create_message(", 1)
+    assert len(concl) == 2, "phase 2a must still issue its create_message call"
+    # Up to the next statement, not to the first ")" -- the argument list contains
+    # max(max_output_tokens, 8192), whose paren would truncate the slice early.
+    call = concl[1].split("concl_text =", 1)[0]
+    assert "tools=TOOLS" in call, (
+        "phase 2a must pass tools=TOOLS or it re-evaluates the whole transcript (#246)"
+    )
+
+
+def test_phase2a_logs_a_tool_call_reply():
+    """Offering tools makes a tool_use reply possible where it was not before.
+
+    It did not occur in any probe, but an unlogged tool_use would empty
+    concl_text, skip phase 2b and silently drop the run to the legacy path -- the
+    same silent shape #246's sibling bugs already cost two benchmark passes.
+    """
+    block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
+    assert "tool_use" in block, "phase 2a must detect a tool_use reply"
+    assert "instead of prose" in block, "and say so in the log"
+
+
+def test_tool_choice_is_a_string_not_an_object():
+    """llama.cpp's server accepts only a STRING for tool_choice.
+
+    The OpenAI object form is rejected outright --
+        Wrong type supplied for parameter 'tool_choice'. Expected 'string'
+    -- and silently falls back to "auto". Confirmed in the llama-cpp journal on
+    6 of 6 synthesis runs 2026-07-27..07-29: the "forced" call was never once
+    forced. Every success so far was the model complying voluntarily.
+    """
+    body = _func("synthesize_analysis")
+    assert '"tool_choice": "required"' in body, (
+        "tool_choice must be a string; the object form is silently discarded"
+    )
+    assert '"tool_choice": {' not in body, (
+        "the object form of tool_choice is rejected by llama.cpp"
+    )
 
 
 def test_synthesis_failure_is_logged_not_silent():
@@ -79,9 +156,8 @@ def test_synth_openai_base_read_from_env():
 
 
 def test_synthesize_analysis_defined_forced_tool_thinkfalse():
-    t = _t()
-    assert "def synthesize_analysis(" in t
-    body = t.split("def synthesize_analysis(", 1)[1][:2000]
+    assert "def synthesize_analysis(" in _t()
+    body = _func("synthesize_analysis")
     assert '"submit_analysis"' in body
     assert '"tool_choice"' in body and '"function"' in body
     assert '"enable_thinking": False' in body
@@ -90,8 +166,7 @@ def test_synthesize_analysis_defined_forced_tool_thinkfalse():
 
 def test_synthesize_returns_none_on_no_toolcall():
     # The helper must return None on failure so callers fall back to parse_final_response.
-    body = _t().split("def synthesize_analysis(", 1)[1][:2000]
-    assert "return None" in body
+    assert "return None" in _func("synthesize_analysis")
 
 
 def test_all_three_synthesis_sites_use_local_synthesizer():

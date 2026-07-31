@@ -1766,7 +1766,14 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
             "description": "Submit the final structured malware analysis. Call exactly once.",
             "parameters": SUBMIT_ANALYSIS_SCHEMA,
         }}],
-        "tool_choice": {"type": "function", "function": {"name": "submit_analysis"}},
+        # STRING, not the OpenAI object form. llama.cpp's server accepts only a string
+        # here and rejects the object outright, logging
+        #   Wrong type supplied for parameter 'tool_choice'. Expected 'string',
+        #   using default value: type must be string, but is object
+        # and silently falling back to "auto". Confirmed in the llama-cpp journal on
+        # 6 of 6 synthesis runs 2026-07-27..07-29: the forced choice has NEVER once
+        # been applied. Every "forced" call so far was the model complying voluntarily.
+        "tool_choice": "required",
         "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
@@ -2547,8 +2554,10 @@ Technical summary: {executive}"""
         LOOP, by giving it a prose stage to land in before anything has to be valid
         JSON. It does not mean either synthesis phase reasons — NEITHER DOES:
 
-        Phase 2a — a PROSE conclusion via the router `client`, with thinking OFF
-        (the prompt appends Qwen's `/no_think`; see the comment below for why).
+        Phase 2a — a PROSE conclusion via the router `client`, with thinking intended
+        OFF (the prompt appends Qwen's `/no_think`; whether that switch actually does
+        anything on this path is open — see #260 and the comment below). It carries the
+        loop's `tools` block so the request keeps the loop's KV-cache prefix (#246).
         Prose, not JSON, so there is no formatting pressure and no nesting or
         truncation. Phase 2b — a think:false forced submit_analysis call that
         serializes that conclusion into valid structured JSON.
@@ -2567,12 +2576,19 @@ Technical summary: {executive}"""
         worse than before. (local backend => $0, so the extra call's tokens are not
         separately accounted.)
         """
-        # /no_think is a Qwen3 soft switch that disables reasoning for this turn.
-        # It works on the Anthropic router path, where LiteLLM does NOT forward
-        # chat_template_kwargs, so it is the only lever available here. The model
-        # has already reasoned across the whole tool-call investigation; measured
-        # 2026-07-25, /no_think cut this call from 154s to 115s and produced a
-        # tighter conclusion with no loss of substance.
+        # /no_think is a Qwen3 soft switch intended to disable reasoning for this turn.
+        # It is the only lever available on the Anthropic router path, where LiteLLM
+        # does NOT forward chat_template_kwargs. Measured 2026-07-25 it cut this call
+        # from 154s to 115s and produced a tighter conclusion with no loss of substance.
+        #
+        # UNRESOLVED (#260): that measurement predates the #222 sampling change, and a
+        # 2026-07-30 probe on this exact transport found the /no_think arm returning an
+        # EMPTY response (no content blocks, stop=end_turn) where the identical request
+        # without the switch produced correct prose — at the same 99.4% prefix reuse.
+        # An empty 2a skips phase 2b and drops the run to the legacy path, so this is
+        # worth settling. Deliberately NOT changed here: that probe used a synthetic
+        # transcript, and real runs (e.g. 2026-07-29) do produce substantial output.
+        # Needs a production-scale A/B before touching. Left as-is on purpose.
         concl_msgs = msgs + [{"role": "user", "content": (
             "Based on your investigation, summarize your findings and state your "
             "conclusion in prose: malware family, capabilities, MITRE techniques, and "
@@ -2580,11 +2596,40 @@ Technical summary: {executive}"""
         )}]
         concl_text = ""
         try:
+            # tools=TOOLS is NOT here to let 2a call anything — it is here so this
+            # request keeps the loop's KV-cache prefix (#246).
+            #
+            # The chat template renders tool definitions near the FRONT of the prompt.
+            # Omitting them changed the prompt at its start, so llama.cpp could reuse
+            # nothing after that point and re-evaluated the entire transcript. Measured
+            # on the 2026-07-29 run: the last loop turn (task 1006) had a 21,979-token
+            # prompt and reused every one of the 6,176 tokens available to it, while
+            # phase 2a (task 1413) had a 31,023-token prompt and reused THREE tokens —
+            # 1,280s of prompt evaluation, 72% of the run's wall-clock.
+            #
+            # Passing the same tools block restores it. Measured 0% -> 99.4% reuse both
+            # directly against llama.cpp and through the LiteLLM router in Anthropic
+            # wire format (the transport this call actually uses). Expected effect on a
+            # real run: ~1,280s -> ~300s, since the ~8,600 tokens appended after the
+            # last loop turn still have to be evaluated once.
+            #
+            # The block must stay byte-identical to the loop's or the prefix breaks
+            # again — that is why this passes TOOLS itself rather than a subset.
             concl = create_message(
                 client,
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
-                system=CACHED_SYSTEM, messages=concl_msgs)
+                system=CACHED_SYSTEM, tools=TOOLS, messages=concl_msgs)
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
+            # Offering tools makes a tool_use reply newly POSSIBLE here, where before it
+            # was not. It did not happen in any probe — with an explicit "summarize in
+            # prose" instruction the model answered in prose every time, while the same
+            # tools block on a loop-shaped prompt did produce tool_use — but an
+            # unlogged tool_use would empty concl_text, skip phase 2b and silently drop
+            # the run to the legacy path. Name it if it ever occurs.
+            if not concl_text.strip() and any(b.type == "tool_use" for b in concl.content):
+                print("    [synth] phase 2a answered with a tool call instead of prose "
+                      f"({', '.join(b.name for b in concl.content if b.type == 'tool_use')}); "
+                      "falling back", flush=True)
             if not concl_text.strip():
                 # Non-empty response but no visible text: everything came back as
                 # reasoning. Phase 2b is skipped when this is empty, so say so.
@@ -2599,15 +2644,24 @@ Technical summary: {executive}"""
             # like "the model won't commit to a family" for two benchmark passes.
             print(f"    [synth] phase 2a failed: {type(e).__name__}: {str(e)[:200]}",
                   flush=True)
-        # Phase 2b gets ONLY the prose conclusion — never the investigation
-        # history. A forced tool_choice is silently ignored at RE-scale context:
-        # measured 2026-07-25 against this exact llama.cpp/LiteLLM path, a forced
-        # submit_analysis returned finish_reason=tool_calls with valid JSON at a
-        # short context, but finish_reason=stop with prose and NO tool call once
-        # the context reached ~25k chars. Passing concl_msgs (the whole tool-call
-        # transcript plus every decompiled function) put every real run in the
-        # failing regime, so local RE always fell through to the prose parse and
-        # emitted family=unknown with no capabilities or IOCs.
+        # Phase 2b gets ONLY the prose conclusion — never the investigation history.
+        #
+        # The 2026-07-25 observation behind this was real: a forced submit_analysis
+        # returned valid JSON at short context but finish_reason=stop with prose once
+        # the context reached ~25k chars, so passing concl_msgs (the whole transcript
+        # plus every decompiled function) made local RE fall through to the prose parse
+        # and emit family=unknown with no capabilities or IOCs.
+        #
+        # The MECHANISM recorded here was wrong, and the correction matters because it
+        # changes what to do about it. tool_choice was never "ignored at RE-scale
+        # context" — it was never applied AT ALL, at any context, because it was sent in
+        # the OpenAI object form that llama.cpp rejects outright (see synthesize_analysis).
+        # The model was choosing freely every time: it happened to comply at 1.6k and
+        # happened to prefer prose at 25k. Same symptom, different cause.
+        #
+        # Keeping the small prompt is still right — a short, single-purpose request is
+        # the reliable one whether or not the choice is enforced — and it is now
+        # belt-and-braces with a tool_choice that actually applies.
         #
         # The conclusion already contains everything the schema needs — that is
         # what phase 2a exists to produce — so serializing it alone is both the
