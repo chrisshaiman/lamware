@@ -223,6 +223,20 @@ configure:
 		(echo "ERROR: ansible/inventory/hosts not found. Run make infra-ovh first." && exit 1)
 	@echo "==> Installing Ansible Galaxy requirements..."
 	@ansible-galaxy install -r $(ANSIBLE_DIR)/requirements.yml --force-with-deps
+	@echo "==> Checking controller Python requirements..."
+# Exercises the filter through ansible itself rather than checking `python3 -c
+# "import netaddr"`, because the interpreter running ansible is often not the one
+# on PATH — pipx and `uv tool install` both put it in their own venv. Testing the
+# capability is install-method agnostic; guessing the interpreter is not.
+	@ansible localhost -m debug \
+		-a "msg={{ '10.0.0.1/24' | ansible.utils.ipaddr('address') }}" >/dev/null 2>&1 || \
+		( echo "ERROR: the ansible.utils.ipaddr filter is unusable — netaddr is missing from"; \
+		  echo "       the environment running ansible. Without it site.yml fails mid-run."; \
+		  echo "       Install the controller requirements into that same environment:"; \
+		  echo "         pip install -r $(ANSIBLE_DIR)/requirements-python.txt"; \
+		  echo "       For a uv tool install of ansible, instead run:"; \
+		  echo "         uv tool install ansible-core --with netaddr"; \
+		  exit 1 )
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \
