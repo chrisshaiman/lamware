@@ -18,7 +18,17 @@
 # Configuration — override via environment or .env file
 # -----------------------------------------------------------------------------
 
-ANSIBLE_USER    ?= root
+# `ubuntu`, not `root`: the hardening role writes PermitRootLogin no into
+# /etc/ssh/sshd_config.d/01-hardening.conf during the FIRST site.yml run, so root
+# SSH stops working the moment the playbook it is meant to run has succeeded once.
+# The ubuntu user ships with the OVH Ubuntu image, is the sole member of the sudo
+# group that sshd's AllowGroups permits, and has passwordless sudo — which is what
+# site.yml's `become: true` needs. For the one pre-hardening bootstrap run against
+# a freshly reinstalled box, override: make configure ANSIBLE_USER=root
+ANSIBLE_USER    ?= ubuntu
+# Overridable so a second workstation with its own per-device keypair does not have
+# to rename its key or symlink it into place.
+ANSIBLE_KEY     ?= ~/.ssh/sandbox_ed25519
 PACKER_DIR      := packer
 
 # `--syntax-check` still loads vars_files, and vars/secrets.yml is vault-encrypted, so
@@ -241,7 +251,8 @@ configure:
 		ansible-playbook \
 			-i inventory/hosts \
 			-u $(ANSIBLE_USER) \
-			--private-key ~/.ssh/sandbox_ed25519 \
+			--private-key $(ANSIBLE_KEY) \
+			$(VAULT_ARGS) \
 			site.yml
 	@echo "==> Configuration complete."
 
