@@ -208,6 +208,8 @@ The executive summary organizes findings by behavior — injection, persistence,
 ### Prerequisites
 
 - Terraform >= 1.6, Packer >= 1.10, Ansible >= 2.14
+  (plus `pip install -r ansible/requirements-python.txt` into the same environment
+  as ansible — the `ipaddr` filter needs `netaddr`)
 - OVHcloud API credentials
 - WireGuard keypair
 - Anthropic API key
@@ -229,6 +231,7 @@ scp output/windows11-office.qcow2 sandbox:/home/ubuntu/
 # 4. Configure everything
 cd ansible
 ansible-galaxy install -r requirements.yml
+pip install -r requirements-python.txt
 ansible-vault create vars/secrets.yml   # cape_api_key, anthropic_api_key, etc.
 ansible-playbook -i inventory/hosts site.yml --ask-vault-pass
 

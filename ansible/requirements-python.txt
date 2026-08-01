@@ -1,0 +1,21 @@
+# ansible/requirements-python.txt — Python packages the Ansible *controller* needs.
+#
+# Install into the same environment as ansible itself:
+#   pip install -r ansible/requirements-python.txt
+#
+# This is deliberately not requirements-dev.txt: that file holds test and CI
+# tooling (pytest, ruff, bandit), and per its own header this repo declares
+# dependencies where they are used rather than in a catch-all. These are neither
+# test tools nor a package/container runtime dependency — they are what the
+# machine running ansible-playbook needs in order to evaluate the playbooks.
+#
+# netaddr backs the ansible.utils.ipaddr filter, which vars/main.yml.example and
+# the cape, frontend and api roles use to split the host out of wireguard_address.
+# The collection is declared in requirements.yml, but a Galaxy collection cannot
+# pull in a pip package, so without this `make configure` dies mid-run with
+# "Failed to import the required Python library (netaddr)".
+#
+# ansible-lint cannot catch a missing entry here: syntax-check does not evaluate
+# Jinja filters, so nothing in CI ever imports netaddr. The `configure` target
+# preflights the filter for real instead.
+netaddr==1.3.0

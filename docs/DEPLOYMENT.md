@@ -296,6 +296,20 @@ file created in Phase 2 — no plaintext secrets are stored in the repo.
 ansible-galaxy install -r ansible/requirements.yml --force-with-deps
 ```
 
+The controller also needs a Python package that no Galaxy collection can supply —
+`netaddr`, which backs the `ansible.utils.ipaddr` filter used by `vars/main.yml`
+and the cape, frontend and api roles. Install it into the **same environment as
+ansible**:
+
+```bash
+pip install -r ansible/requirements-python.txt
+```
+
+If ansible came from `uv tool install` or `pipx`, that environment is not the `pip`
+on your PATH — use `uv tool install ansible-core --with netaddr` instead. Skipping
+this fails partway through `site.yml` with `Failed to import the required Python
+library (netaddr)`; `make configure` preflights it and stops early with the fix.
+
 ### 5b. Run the playbook
 
 ```bash
