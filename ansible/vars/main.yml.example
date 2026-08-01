@@ -38,10 +38,23 @@ management_interface: eth0
 wireguard_interface: wg0
 wireguard_address: 10.200.0.1/24
 wireguard_port: 51820
-# Operator laptop's WireGuard public key — generate with:
+
+# Peer devices. Generate a keypair per device — never reuse one across machines:
+# two peers sharing a key also share a tunnel address, so they fight over the
+# handshake and only one connects at a time, and revoking one revokes both.
 #   wg genkey | tee ~/wg-private.key | wg pubkey > ~/wg-public.key
 # Host keypair is generated on the server by Ansible (never leaves the host).
+#
+# Every *_address must be unique within 10.200.0.0/24 (the server holds .1).
+# Only the laptop is required; the rest render only when their pubkey is set.
 wireguard_peer_pubkey: ""
+wireguard_peer_address: 10.200.0.2/32
+
+wireguard_phone_pubkey: ""
+wireguard_phone_address: 10.200.0.3/32
+
+wireguard_t16_pubkey: ""
+wireguard_t16_address: 10.200.0.4/32
 
 # -----------------------------------------------------------------------------
 # Cape
@@ -60,9 +73,6 @@ cape_interface: "{{ detonation_bridge }}"
 cape_api_port: 8000
 # Cape API URL as seen from the bare metal host (wg0 IP, local loopback to same machine)
 cape_api_url: "http://{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}/apiv2"
-
-# WireGuard peer — operator laptop tunnel address (AllowedIPs in server peer block)
-wireguard_peer_address: 10.200.0.2/32
 
 # -----------------------------------------------------------------------------
 # Cape guest VM definitions (ADR-012, ADR-013)

@@ -11,11 +11,24 @@ PrivateKey = {{ wireguard_private_key }}
 # not a gateway for analysis traffic.
 
 [Peer]
-# Operator laptop
+# Operator laptop — the required peer, asserted non-empty in site.yml.
 PublicKey  = {{ wireguard_peer_pubkey }}
 AllowedIPs = {{ wireguard_peer_address }}
+{# Additional devices are optional: each block renders only when its pubkey is
+   set, so omitting a device is a peer fewer rather than a template error. The
+   phone vars were referenced here before they existed in vars/main.yml.example,
+   so a fresh copy of that example failed on an undefined variable. #}
+{% if wireguard_phone_pubkey | default('') | length > 0 %}
 
 [Peer]
 # Operator phone
 PublicKey  = {{ wireguard_phone_pubkey }}
 AllowedIPs = {{ wireguard_phone_address }}
+{% endif %}
+{% if wireguard_t16_pubkey | default('') | length > 0 %}
+
+[Peer]
+# Operator ThinkPad T16
+PublicKey  = {{ wireguard_t16_pubkey }}
+AllowedIPs = {{ wireguard_t16_address }}
+{% endif %}
