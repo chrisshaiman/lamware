@@ -16,3 +16,10 @@ collections:
   # PostgreSQL modules (used by postgres role for DB/user management)
   - name: community.postgresql
     version: ">=3.0.0"
+  # sysctl module (kvm, networking, podman roles) and mount (pipeline role)
+  - name: ansible.posix
+    version: ">=1.5.4"
+  # ipaddr filter (cape, frontend, api roles) — splits the host out of
+  # wireguard_address. Needs the netaddr Python package on the controller.
+  - name: ansible.utils
+    version: ">=2.5.0"

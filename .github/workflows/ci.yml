@@ -123,8 +123,9 @@ jobs:
       - name: Install ansible-lint and dependencies
         run: |
           pip install ansible-lint
+          # requirements.yml is the single source of truth for Galaxy deps —
+          # do not add collections here, add them there.
           ansible-galaxy install -r ansible/requirements.yml
-          ansible-galaxy collection install ansible.posix community.general
 
       - name: Run ansible-lint
         run: ansible-lint ansible/site.yml
