@@ -236,13 +236,18 @@ The server is available once the OVH Manager shows status "Ready".
 ssh -i ~/.ssh/sandbox_ed25519 root@<server-ip>
 ```
 
+> **This is the only step where you log in as `root`.** The hardening role writes
+> `PermitRootLogin no` during the first `make configure`, so from then on you connect
+> as `ubuntu` (shipped with the OVH image, in the `sudo` group, passwordless sudo).
+> Every later SSH/scp step in this guide uses `ubuntu@`.
+
 `make infra-ovh` writes the server IP to `ansible/inventory/hosts` automatically.
 If you ran terraform directly, create the file manually:
 
 ```bash
 # ansible/inventory/hosts
 [sandbox]
-<server-ip>  ansible_user=root  ansible_ssh_private_key_file=~/.ssh/sandbox_ed25519
+<server-ip>  ansible_user=ubuntu  ansible_ssh_private_key_file=~/.ssh/sandbox_ed25519
 
 [sandbox:vars]
 ansible_python_interpreter=/usr/bin/python3
@@ -301,9 +306,18 @@ ansible-galaxy install -r ansible/requirements.yml --force-with-deps
 ```bash
 make configure
 # Equivalent to:
-# ansible-playbook -i ansible/inventory/hosts -u root \
-#   --private-key ~/.ssh/sandbox_ed25519 ansible/site.yml
+# ansible-playbook -i ansible/inventory/hosts -u ubuntu \
+#   --private-key ~/.ssh/sandbox_ed25519 --ask-vault-pass ansible/site.yml
 ```
+
+`make configure` supplies the vault argument for you: `--vault-password-file
+~/.vault_pass` when that file exists, `--ask-vault-pass` otherwise. Override with
+`make configure VAULT_ARGS="--vault-password-file /path/to/pass"`.
+
+> **Bootstrap exception.** On a freshly reinstalled box the `ubuntu` user has your key
+> but hardening has not run yet, so either user works. After that first run `root` is
+> locked out. If you ever reinstall the OS and need the root path back for one run:
+> `make configure ANSIBLE_USER=root`.
 
 Expected runtime: **45–90 minutes**. The `kvm-qemu.sh` step (building a DSDT-patched
 QEMU binary from source) takes 30–60 minutes and is guarded by a stamp file —
@@ -314,7 +328,7 @@ it only runs once and is skipped on re-runs.
 SSH into the host and confirm all services are running:
 
 ```bash
-ssh -i ~/.ssh/sandbox_ed25519 root@<server-ip>
+ssh -i ~/.ssh/sandbox_ed25519 ubuntu@<server-ip>
 
 systemctl status cape
 systemctl status cape-web
@@ -442,14 +456,20 @@ Output files: `packer/output/windows10-guest.qcow2` and `packer/output/windows10
 
 ### 6e. Copy images to the bare metal host
 
+`/var/lib/libvirt/images` is owned by `cape:cape` and is not writable by `ubuntu`, so
+copy into the home directory first and move the files into place with sudo:
+
 ```bash
 scp -i ~/.ssh/sandbox_ed25519 \
   packer/output/windows10-guest.qcow2 \
-  root@<server-ip>:/var/lib/libvirt/images/
-
-scp -i ~/.ssh/sandbox_ed25519 \
   packer/output/windows10-office.qcow2 \
-  root@<server-ip>:/var/lib/libvirt/images/
+  ubuntu@<server-ip>:/home/ubuntu/
+```
+
+```bash
+ssh -i ~/.ssh/sandbox_ed25519 ubuntu@<server-ip> \
+  'sudo mv /home/ubuntu/windows10-{guest,office}.qcow2 /var/lib/libvirt/images/ && \
+   sudo chown cape:cape /var/lib/libvirt/images/windows10-{guest,office}.qcow2'
 ```
 
 ### 6f. Re-run Ansible to define libvirt domains
@@ -471,7 +491,7 @@ snapshots manually after verifying the guest images are working.
 SSH into the bare metal host:
 
 ```bash
-ssh -i ~/.ssh/sandbox_ed25519 root@<server-ip>
+ssh -i ~/.ssh/sandbox_ed25519 ubuntu@<server-ip>
 ```
 
 **Clean snapshot (base Windows + cape-agent):**
@@ -540,7 +560,7 @@ make smoke
 EICAR is universally recognised by AV engines and completely harmless:
 
 ```bash
-ssh -i ~/.ssh/sandbox_ed25519 root@<server-ip>
+ssh -i ~/.ssh/sandbox_ed25519 ubuntu@<server-ip>
 
 printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
   > /tmp/eicar.com
