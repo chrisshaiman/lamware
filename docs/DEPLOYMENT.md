@@ -16,6 +16,11 @@ Follow in order — each phase depends on the one before it.
 7. [Libvirt Snapshots](#7-libvirt-snapshots)
 8. [Smoke Test](#8-smoke-test)
 
+Not part of the linear install: [Working from a second
+workstation](#working-from-a-second-workstation) ·
+[Troubleshooting](#troubleshooting) · [Re-running after
+changes](#re-running-after-changes)
+
 > **AWS is not part of this deployment.** An earlier design submitted samples through
 > API Gateway → S3 → SQS to an agent on the bare metal host. That data plane never
 > worked (the Cape API is unreachable without WireGuard) and was decommissioned by
@@ -183,6 +188,9 @@ wireguard_peer_pubkey: "<contents of ~/wg-public.key>"
 
 `site.yml` asserts the required variables are populated before doing any work, so a
 missing value fails the run immediately rather than midway through.
+
+> Setting up a second machine against a host that is already deployed? Do not repeat
+> this phase — see [Working from a second workstation](#working-from-a-second-workstation).
 
 ---
 
@@ -601,6 +609,102 @@ With WireGuard connected:
 - lamware dashboard — `https://<lamware_domain>`, the sample appears with its report
 
 If the gate passes and the sample completes end to end, the sandbox is operational.
+
+---
+
+## Working from a second workstation
+
+Phases 1–8 describe a clean install. This section is for the different problem of
+bringing a *second* machine up against an *already deployed* host.
+
+`git clone` is not enough. Five artifacts are deliberately kept out of the repo, and
+without all five the second machine cannot run `make configure`:
+
+| Artifact | Form | Why it is not in git |
+|---|---|---|
+| `ansible/vars/secrets.yml` | vault-encrypted, `0600` | secrets |
+| `ansible/vars/main.yml` | **plaintext** | host IPs, domain, sizing |
+| `ansible/inventory/hosts` | plaintext | target address |
+| `~/.ssh/sandbox_ed25519` | private key | credential |
+| the vault password | — | credential |
+
+`main.yml` is the one that gets forgotten: it is not a secret, so it is easy to assume
+it travels with the repo. It does not (`.gitignore:30`), it is the largest of the three
+files, and it is what drifts most between deploys.
+
+### Do not commit the encrypted vault to this repo
+
+Committing Ansible Vault ciphertext is safe in a private repo and is a common pattern.
+It is **not** safe here: `chrisshaiman/lamware` is public. Vault format 1.1 derives its
+key with PBKDF2-HMAC-SHA256 at 10,000 iterations — weak enough to be worth attacking
+offline — and once the ciphertext is pushed it is public permanently, since `git rm`
+does not remove it from history. There is no revocation path. Keep the `.gitignore`
+entries as they are.
+
+### The vault password: a script, not a file
+
+`make` passes `--vault-password-file ~/.vault_pass` when that path exists and falls
+back to `--ask-vault-pass` otherwise (`Makefile:39-40`). Ansible executes that path if it
+is executable and reads the password from stdout, so it can fetch from a password
+manager instead of storing the password on disk:
+
+```bash
+cat > ~/.vault_pass <<'EOF'
+#!/bin/sh
+op read "op://Private/lamware-ansible-vault/password"
+EOF
+chmod 700 ~/.vault_pass
+```
+
+Bitwarden: `bw get password lamware-ansible-vault`. Run the same setup on both
+machines. Rotating the password is then one edit in the password manager plus
+`ansible-vault rekey ansible/vars/secrets.yml`.
+
+### The three config files: a private repo
+
+Put `secrets.yml`, `main.yml`, and `hosts` in a **private** repo (`lamware-config`),
+clone it alongside this one on each machine, and symlink them into place:
+
+```bash
+git clone git@github.com:<you>/lamware-config.git ~/projects/lamware-config
+cd ~/projects/lamware
+ln -sf ~/projects/lamware-config/secrets.yml ansible/vars/secrets.yml
+ln -sf ~/projects/lamware-config/main.yml    ansible/vars/main.yml
+ln -sf ~/projects/lamware-config/hosts       ansible/inventory/hosts
+```
+
+Ansible reads through symlinks, and all three paths are already gitignored here so
+there is no risk of committing them back into the public repo.
+
+Keep `secrets.yml` vault-encrypted inside the private repo as well — private-repo
+access and the vault password should be two independent failures, not one.
+
+The version history is the real benefit. When a deploy behaves differently on one
+laptop, `git -C ~/projects/lamware-config diff` answers why; before, that state existed
+only as two divergent untracked files.
+
+### The SSH key: issue a second one, do not copy the first
+
+Generate a fresh keypair on the second machine and authorise it on the host:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/sandbox_ed25519 -C "lamware-laptop2"
+ssh-copy-id -i ~/.ssh/sandbox_ed25519.pub ubuntu@<public_ip>
+```
+
+Copying the private key between machines means one compromised laptop burns both and
+neither can be revoked independently. A second key costs one command and makes
+revocation per-device. Add the new public key to `ovh/terraform.tfvars` too, so a
+server reinstall does not lock the second machine out.
+
+### Verify before trusting it
+
+```bash
+make validate                                   # parses the vault; proves the password works
+ansible -i ansible/inventory/hosts all -m ping  # proves the SSH key is authorised
+```
+
+Run a real `make deploy TAGS=api` from the second machine only after both pass.
 
 ---
 
