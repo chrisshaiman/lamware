@@ -7,10 +7,15 @@ litellm_enabled: true
 litellm_install_dir: /opt/litellm
 litellm_port: 4000
 litellm_listen_address: "127.0.0.1"
-litellm_master_key: "sk-lamware"
 litellm_image: "ghcr.io/berriai/litellm:main-latest"
 litellm_db_user: "litellm"
 litellm_db_name: "litellm"
+
+# NOTE: litellm_master_key is deliberately NOT defaulted here. It authenticates
+# every component to the LLM router, and a role default satisfies `| mandatory`,
+# so defining it made the three `| mandatory` guards at the call sites unfirable
+# and shipped a shared credential published in a public repo (#238). It comes
+# from vars/secrets.yml (vault) only — see vars/secrets.yml.example.
 
 # Local LLM (Ollama) routing for the summary stages.
 litellm_local_model_backend: "ollama_chat/qwen3.6:35b-a3b-q4_K_M"

@@ -90,6 +90,11 @@
     owner: pipeline
     group: pipeline
     mode: "0750"
+  # Suppresses the rendered body under --diff, which would otherwise print
+  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # firing `| mandatory` would report "censored" instead of naming the missing
+  # variable — the opaque-guard problem #238 exists to fix.
+  diff: false
 
 - name: Create convenience symlink
   ansible.builtin.file:
@@ -115,7 +120,7 @@
   # podman -e LITELLM_API_KEY (no value) forwards it from this environment. Output stays
   # visible (no no_log) so a probe failure is debuggable.
   environment:
-    LITELLM_API_KEY: "{{ litellm_master_key | default('sk-lamware') }}"
+    LITELLM_API_KEY: "{{ litellm_master_key | mandatory }}"
   ansible.builtin.command:
     cmd: >
       podman run --rm --network=none

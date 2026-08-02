@@ -30,6 +30,30 @@
             cape_api_key          — Cape API token (ansible/vars/secrets.yml)
             bazaar_auth_key       — MalwareBazaar auth key (ansible/vars/secrets.yml)
 
+    # Separate from the block above, and tagged `always`, because the assert above
+    # does NOT run on a tagged deploy — and a key rotation is exactly a tagged deploy
+    # (make deploy TAGS=litellm,api,interpret,ntfy-alerts). Two gaps compound there:
+    # pre_tasks are skipped unless tagged `always`, and `| mandatory` at the call
+    # sites fires only on UNDEFINED, not on empty. Without this, a rotation with an
+    # unfilled vault entry renders master_key: "" into LiteLLM's config and reports
+    # success — the same silently-passing guard as #238 itself.
+    #
+    # Scoped to this one variable rather than tagging the whole block, so tagged
+    # workflows that tolerate an empty optional secret keep working.
+    - name: Validate the LiteLLM master key (runs on tagged deploys too)
+      ansible.builtin.assert:
+        that:
+          - litellm_master_key is defined
+          - litellm_master_key | length > 0
+        fail_msg: |
+          litellm_master_key is unset or empty in ansible/vars/secrets.yml.
+          It authenticates the API, the interpret container, and the daily digest to
+          the LiteLLM router, and has no default by design (#238).
+
+            python3 -c "import secrets; print('sk-' + secrets.token_urlsafe(32))"
+            ansible-vault edit ansible/vars/secrets.yml
+      tags: [always]
+
   roles:
     # 1. OS hardening — CIS-aligned baseline (konstruktoid)
     - role: hardening

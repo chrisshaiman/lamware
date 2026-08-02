@@ -64,12 +64,20 @@ def test_settings_names_match_what_the_deploy_template_writes():
 
 
 def test_litellm_key_is_not_silently_defaulted_in_templates():
-    """A missing vault var must fail the deploy, not ship a working default credential."""
+    """A missing vault var must fail the deploy, not ship a working default credential.
+
+    Scans .yml as well as .j2. It used to glob only `*.j2`, and the single live offender
+    was `roles/interpret/tasks/main.yml` — a tasks file, not a template. The guard written
+    to catch this exact bug could not see the one instance of it (#238).
+    """
     offenders = []
-    for tmpl in (REPO_ROOT / "ansible").rglob("*.j2"):
-        text = tmpl.read_text(errors="ignore")
-        if re.search(r"litellm_master_key\s*\|\s*default\(", text):
-            offenders.append(str(tmpl.relative_to(REPO_ROOT)))
+    for pattern in ("*.j2", "*.yml", "*.yaml"):
+        for path in (REPO_ROOT / "ansible").rglob(pattern):
+            if path.name.endswith(".example"):
+                continue
+            text = path.read_text(errors="ignore")
+            if re.search(r"litellm_master_key\s*\|\s*default\(", text):
+                offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
         f"litellm_master_key is defaulted in {offenders}; use `| mandatory` so a missing "
         f"vault variable fails loudly instead of deploying a known default credential.")

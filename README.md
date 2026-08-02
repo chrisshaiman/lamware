@@ -270,7 +270,9 @@ Every analysis tool runs in a **rootless** Podman container with:
 
 - All Claude API calls route through a self-hosted **LiteLLM proxy** (root Podman container, systemd-managed)
 - The Anthropic API key exists only in LiteLLM's environment file (`0600`, root-owned) — never in pipeline templates or container env vars
-- Analysis containers authenticate to LiteLLM with an internal master key (`sk-lamware`)
+- Analysis containers authenticate to LiteLLM with an internal master key, supplied from
+  the Ansible vault (`litellm_master_key`) — there is no default, so a deploy that omits
+  it fails rather than falling back to a shared credential
 - LiteLLM's Anthropic passthrough endpoint preserves the native SDK protocol — no code rewrite needed
 
 **LLM prompt injection mitigations:**

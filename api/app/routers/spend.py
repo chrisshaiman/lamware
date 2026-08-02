@@ -23,6 +23,28 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/spend", tags=["spend"])
 
 
+def _zeroed(error: str) -> dict:
+    """The empty payload, with a reason attached.
+
+    Shared so an unconfigured key and an unreachable proxy return the same SHAPE while
+    still saying different things — a zero total is indistinguishable from genuinely
+    free local inference, so the distinction has to live in `error`.
+    """
+    return {
+        "error": error,
+        "by_model": [],
+        "by_day": [],
+        "totals": {
+            "total_cost": 0,
+            "total_requests": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+        },
+    }
+
+
 @router.get("")
 async def get_spend_summary(
     days: int = Query(default=30, ge=1, le=90, description="Days of history"),
@@ -34,6 +56,15 @@ async def get_spend_summary(
     Returns per-model cost breakdown, daily cost series, token usage,
     and cache efficiency metrics.
     """
+    # Checked before the request, not inside the try: an unset key would otherwise
+    # surface as a 401 wrapped in "Could not reach LiteLLM spend API", pointing at the
+    # network when the actual fault is deployment config (#238).
+    if not settings.litellm_key:
+        log.error("LAMWARE_LITELLM_KEY is not set — spend API cannot authenticate. "
+                  "It is written by roles/api/templates/lamware-api.env.j2 from the "
+                  "vault variable litellm_master_key.")
+        return _zeroed("LiteLLM key not configured (LAMWARE_LITELLM_KEY)")
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -49,19 +80,7 @@ async def get_spend_summary(
         # say so somewhere.
         log.warning("LiteLLM spend API unreachable at %s: %s: %s",
                     settings.litellm_url, type(e).__name__, e)
-        return {
-            "error": f"Could not reach LiteLLM spend API: {type(e).__name__}",
-            "by_model": [],
-            "by_day": [],
-            "totals": {
-                "total_cost": 0,
-                "total_requests": 0,
-                "total_input_tokens": 0,
-                "total_output_tokens": 0,
-                "cache_hits": 0,
-                "cache_misses": 0,
-            },
-        }
+        return _zeroed(f"Could not reach LiteLLM spend API: {type(e).__name__}")
 
     if not isinstance(logs, list):
         logs = []
