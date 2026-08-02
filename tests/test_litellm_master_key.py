@@ -141,10 +141,28 @@ def test_secrets_example_documents_the_key():
         "secrets.yml.example should carry a generation command for the key")
 
 
-def test_site_yml_rejects_an_empty_key():
-    """`| mandatory` fires on UNDEFINED only; copying the example leaves it defined-empty."""
+def test_site_yml_rejects_an_empty_key_even_on_a_tagged_deploy():
+    """The empty-key check must survive `--tags`, because a rotation IS a tagged deploy.
+
+    Two gaps compound without this. pre_tasks are skipped unless tagged `always`, and
+    `| mandatory` at the call sites fires only on UNDEFINED, never on empty. Measured
+    with an empty key and `--tags litellm`: the assert is skipped, the template renders
+    `master_key: ""`, and the play reports ok=1 failed=0.
+
+    So it is not enough for the check to exist — it has to be in a task carrying the
+    `always` tag.
+    """
     text = SITE_YML.read_text()
-    assert re.search(r"litellm_master_key\s*\|\s*length\s*>\s*0", text), (
-        "site.yml's pre_tasks assert must check litellm_master_key is non-empty. "
-        "`| mandatory` at the call sites cannot catch a copied-but-unfilled example, "
-        "which is the realistic failure.")
+    assert "litellm_master_key" in text, (
+        "site.yml must assert litellm_master_key is non-empty; `| mandatory` at the "
+        "call sites cannot catch a copied-but-unfilled example.")
+
+    # Find the assert task that mentions the key and confirm it is tagged `always`.
+    tasks = re.split(r"\n(?=\s*- name:)", text)
+    owning = [t for t in tasks
+              if "litellm_master_key" in t and "assert" in t and "length > 0" in t]
+    assert owning, "no assert task checks litellm_master_key | length > 0"
+    assert any(re.search(r"tags:\s*\[[^\]]*\balways\b", t) for t in owning), (
+        "the litellm_master_key assert must be tagged `always`. Without it, "
+        "`make deploy TAGS=litellm,...` — the rotation path — skips the check and "
+        "renders an empty master key into LiteLLM's config, reporting success.")
