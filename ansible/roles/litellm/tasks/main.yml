@@ -24,6 +24,11 @@
     owner: root
     group: root
     mode: "0600"
+  # Suppresses the rendered body under --diff, which would otherwise print
+  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # firing `| mandatory` would report "censored" instead of naming the missing
+  # variable — the opaque-guard problem #238 exists to fix.
+  diff: false
   notify: Restart LiteLLM
 
 - name: Deploy LiteLLM environment file (contains API key)

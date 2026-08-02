@@ -153,7 +153,11 @@
     owner: "{{ api_user }}"
     group: "{{ api_user }}"
     mode: "0600"
-  no_log: true
+  # Was no_log: true. Now that litellm_master_key has no role default, `| mandatory`
+  # in this template can actually fire — and no_log would have reported that as
+  # "censored", hiding which variable is missing (#238). diff: false keeps the
+  # rendered body out of --diff while leaving failures legible.
+  diff: false
   notify: Restart lamware-api
 
 - name: Allow lamware-api to run investigation tools as pipeline user

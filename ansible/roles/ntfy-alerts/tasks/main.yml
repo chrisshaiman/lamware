@@ -29,6 +29,11 @@
     owner: pipeline
     group: pipeline
     mode: "0750"
+  # Suppresses the rendered body under --diff, which would otherwise print
+  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # firing `| mandatory` would report "censored" instead of naming the missing
+  # variable — the opaque-guard problem #238 exists to fix.
+  diff: false
 
 - name: Install daily digest cron job
   ansible.builtin.cron:

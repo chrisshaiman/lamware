@@ -569,3 +569,39 @@ def test_async_generator_tool_call_and_result():
     assert msgs[2]["role"] == "tool"
     assert msgs[3]["role"] == "assistant"
     assert msgs[3]["content"] == "Found 1 match."
+
+
+def test_missing_litellm_key_fails_closed_before_any_request():
+    """An unconfigured key must stop the turn, not fall back to a default credential.
+
+    `litellm_key` used to default to a hardcoded value that was published in a public
+    repo (#238). With the default removed, "unset" has to be an explicit, legible
+    failure — otherwise it reaches the router as an empty bearer token and surfaces as
+    a generic 401, which reads as an upstream problem rather than deploy config.
+    """
+    class ExplodingClient:
+        def __init__(self, **kwargs):
+            raise AssertionError(
+                "no HTTP client may be constructed when litellm_key is unset")
+
+    saved_client = _ns["httpx"].AsyncClient
+    saved_key = _settings.litellm_key
+    _ns["httpx"].AsyncClient = ExplodingClient
+    _settings.litellm_key = ""
+    try:
+        events = asyncio.run(_collect(run_conversation_turn(
+            messages=[{"role": "user", "content": "What is the C2 IP?"}],
+            system_prompt="You are a malware analyst.",
+            model="claude-sonnet-4-6",
+            session=MagicMock(),
+            report={},
+            analysis_id=1,
+        )))
+    finally:
+        _ns["httpx"].AsyncClient = saved_client
+        _settings.litellm_key = saved_key
+
+    assert [e["event"] for e in events] == ["error"], (
+        "an unset key must yield exactly one error event and stop")
+    assert "LAMWARE_LITELLM_KEY" in events[0]["data"]["message"], (
+        "the error must name the env var so the fault reads as config, not network")

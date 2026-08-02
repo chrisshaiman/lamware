@@ -111,5 +111,5 @@ litellm_settings:
   fallbacks: [{"local-qwen": ["haiku-fallback"]}]
 
 general_settings:
-  master_key: "{{ litellm_master_key }}"
+  master_key: "{{ litellm_master_key | mandatory }}"
   database_url: "os.environ/DATABASE_URL"

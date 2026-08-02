@@ -50,7 +50,12 @@ class Settings(BaseSettings):
 
     # Investigation agent
     litellm_url: str = "http://127.0.0.1:4000"
-    litellm_key: str = "sk-lamware"
+    # No default. The hardcoded key that used to sit here was a shared credential
+    # published in a public repo, and it made the deploy template's `| mandatory` look
+    # like it was enforcing something it could not (#238). Empty fails closed: the router
+    # rejects the request rather than authenticating with a known key. Callers check
+    # for empty explicitly so the failure reads as "unconfigured", not "unreachable".
+    litellm_key: str = ""
     investigation_max_turns: int = 100
     investigation_cost_alert_usd: float = 2.0
     investigation_max_tool_calls_per_turn: int = 20

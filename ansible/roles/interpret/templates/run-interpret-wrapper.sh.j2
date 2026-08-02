@@ -23,6 +23,12 @@ if [ ! -S "$SOCK" ]; then
     exit 1
 fi
 
+# Forwarded to the container BY NAME below (`-e LITELLM_API_KEY`, no value) rather than
+# written inline into podman's argv. /proc/<pid>/cmdline is world-readable, so an inline
+# value is visible to every local user in `ps` for the life of the run — which for a deep
+# analysis is hours. Same reason the netcheck probe in tasks/main.yml passes it by name.
+export LITELLM_API_KEY="{{ litellm_master_key | mandatory }}"
+
 podman run --rm -i \
     --network=none \
     --read-only \
@@ -35,7 +41,7 @@ podman run --rm -i \
     --tmpfs /nonexistent:size=10m \
     --user 65534:65534 \
     -v "$SOCK":/run/litellm.sock:ro \
-    -e LITELLM_API_KEY="{{ litellm_master_key | mandatory }}" \
+    -e LITELLM_API_KEY \
     -e LITELLM_BASE_URL="http://litellm.invalid/anthropic" \
     -e LITELLM_ROUTER_BASE_URL="http://litellm.invalid" \
     -e LITELLM_OPENAI_BASE_URL="http://litellm.invalid/v1" \

@@ -174,6 +174,17 @@ async def run_conversation_turn(
 
     Yields event dicts: {"event": <type>, "data": <dict>}
     """
+    # Checked once, up front: without a key every turn 401s, and the retry/stream
+    # error path reports that as an upstream failure rather than as missing deploy
+    # config. There is no default key to fall back on by design (#238).
+    if not settings.litellm_key:
+        log.error("LAMWARE_LITELLM_KEY is not set — investigation agent cannot "
+                  "authenticate to LiteLLM. Written by lamware-api.env.j2 from the "
+                  "vault variable litellm_master_key.")
+        yield {"event": "error",
+               "data": {"message": "LiteLLM key not configured (LAMWARE_LITELLM_KEY)"}}
+        return
+
     openai_tools = _build_openai_tools()
     total_input_tokens = 0
     total_output_tokens = 0
