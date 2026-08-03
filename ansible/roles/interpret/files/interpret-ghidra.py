@@ -1180,8 +1180,13 @@ def emit_turn(response, turn_index: int) -> None:
     AI reach its verdict", which is the question chain-of-custody asks.
     """
     text_parts, thinking_parts, calls = [], [], []
+    block_types: list[str] = []
+    unknown_types: set[str] = set()
     for block in getattr(response, "content", []) or []:
         btype = getattr(block, "type", "")
+        block_types.append(btype)
+        if btype not in ("text", "thinking", "redacted_thinking", "tool_use"):
+            unknown_types.add(btype)
         if btype == "text":
             text_parts.append(block.text)
         elif btype == "thinking":
@@ -1197,6 +1202,14 @@ def emit_turn(response, turn_index: int) -> None:
         "type": "turn",
         "turn_index": turn_index,
         "stop_reason": getattr(response, "stop_reason", None),
+        # Shape of what came back, so a turn that records nothing can be told apart
+        # from a turn that returned nothing. LiteLLM's openai->anthropic conversion
+        # drops reasoning_content entirely (#283): llama.cpp generates it, counts it
+        # in output_tokens, and the Messages response arrives with an empty thinking
+        # block or no blocks at all. Every layer then behaves correctly on empty input
+        # and the trail reads as "the model was silent" when it emitted 1,255 tokens.
+        "block_types": block_types,
+        "unknown_block_types": sorted(unknown_types),
         "text": "\n".join(text_parts),
         "thinking": "\n".join(thinking_parts),
         "tool_calls": calls,

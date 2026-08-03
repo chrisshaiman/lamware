@@ -342,6 +342,27 @@ class TurnTrail:
         """
         text = msg.get("text") or ""
         thinking = msg.get("thinking") or ""
+        calls = msg.get("tool_calls") or []
+        usage = msg.get("usage") or {}
+
+        # Reconcile what the model was BILLED for against what we can show. The trail
+        # already recorded both and never compared them, which is how #283 stayed
+        # invisible: LiteLLM's openai->anthropic conversion discards reasoning_content,
+        # so turns generating 1,255 output tokens recorded zero characters and read as
+        # silence. Measured on the same prompt: the OpenAI route returns 1,146 chars of
+        # reasoning where the Anthropic route returns an empty content array.
+        #
+        # A rough char/token ratio is fine here. The gap this exists to catch is most
+        # of the turn, not a rounding error, and a precise tokenizer in the orchestrator
+        # would be a second thing to keep in sync with the server.
+        accounted = len(text) + len(thinking) + len(json.dumps(calls, default=str))
+        out_tokens = usage.get("output_tokens") or 0
+        unaccounted = max(0, out_tokens - accounted // 2)
+        if out_tokens and unaccounted > max(50, out_tokens * 0.5):
+            print(f"    [!] turn {msg.get('turn_index')}: {out_tokens} output tokens but "
+                  f"only {accounted} chars captured — ~{unaccounted} tokens unrecorded "
+                  f"(reasoning dropped in transport? see #283)")
+
         self.event("turn",
                    turn_index=msg.get("turn_index"),
                    stop_reason=msg.get("stop_reason"),
@@ -350,7 +371,11 @@ class TurnTrail:
                    tool_calls=msg.get("tool_calls") or [],
                    usage=msg.get("usage") or {},
                    text=text,
-                   thinking=thinking)
+                   thinking=thinking,
+                   block_types=msg.get("block_types") or [],
+                   unknown_block_types=msg.get("unknown_block_types") or [],
+                   accounted_chars=accounted,
+                   unaccounted_output_tokens=unaccounted)
 
     def request(self, msg: dict) -> None:
         """Record the SHAPE of an outbound request, before the model answers it.
