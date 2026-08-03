@@ -7,6 +7,29 @@ SCRIPT = (Path(__file__).resolve().parents[2]
           / "ansible" / "roles" / "interpret" / "files" / "interpret-ghidra.py")
 
 
+def _comment_block_above(anchor: str) -> str:
+    """The contiguous comment lines immediately preceding `anchor`.
+
+    Walks backwards over `#` lines rather than slicing a fixed character window. The
+    window version is a known trap in this repo: test_interpret_synthesis.py records
+    that fixed windows "silently truncate the moment anyone adds a comment above the
+    code being asserted on -- which is exactly how adding the #246 comment broke two
+    passing tests without changing a line of their subject". A comment guard built on
+    one would fail on unrelated edits above it, which is how a guard earns removal.
+    """
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+    idx = next(i for i, ln in enumerate(lines) if anchor in ln)
+    out = []
+    for line in reversed(lines[:idx]):
+        if line.strip().startswith("#"):
+            out.append(line)
+        elif line.strip() == "":
+            continue
+        else:
+            break
+    return "\n".join(reversed(out))
+
+
 def test_ss_client_defined_from_backend_flag():
     text = SCRIPT.read_text(encoding="utf-8")
     assert 'ss_client = summary_client if config.get("single_shot_backend") == "local" else client' in text
@@ -48,9 +71,9 @@ def test_the_transport_comment_names_both_routes():
     reasoning about local qwen that cites the passthrough is about a transport local
     runs never touch, and #246's investigation was exactly that.
     """
-    text = SCRIPT.read_text(encoding="utf-8")
-    head = text.split("router_base = os.environ.get", 1)[0][-2200:]
-    assert "404" in head, (
+    block = _comment_block_above("router_base = os.environ.get")
+    assert "404" in block, (
         "the transport comment should carry the measured evidence, not an assertion")
-    assert "CLOUD" in head and "ROUTER" in head, (
+    upper = block.upper()
+    assert "CLOUD" in upper and "ROUTER" in upper, (
         "it must say which transport serves which path, rather than naming one")
