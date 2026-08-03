@@ -7,7 +7,21 @@ and assert the 8 core nav pages render. Run automatically after deploy via `make
 ## One-time setup (control node / WSL)
 
 ```bash
-make smoke-setup        # creates tests/smoke/.venv, installs deps, installs Chromium
+make smoke-setup        # venv + deps + Chromium, then PROVES a browser can launch
+```
+
+`smoke-setup` finishes by actually launching a browser. Downloading one is not the same
+as being able to run one: `playwright install` exits 0 even when the host lacks the
+browser's shared libraries, so the target used to report success in a state where the
+gate could never run (#269).
+
+**Host packages.** Chromium needs system libraries that a headless Debian/Ubuntu/WSL box
+usually does not have:
+
+```bash
+sudo apt-get install -y libnss3 libnspr4 libasound2t64
+# or let playwright pick them:
+sudo tests/smoke/.venv/bin/playwright install-deps
 ```
 
 Or manually:
@@ -16,7 +30,18 @@ cd tests/smoke
 python3.12 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/playwright install chromium
+./.venv/bin/python verify_browser.py     # do not skip — this is the step that proves it
 ```
+
+## Diagnosing a red gate
+
+`make smoke` now checks the control node before it tests the site, so the two causes are
+distinguishable rather than both being red:
+
+| Message | Meaning |
+|---|---|
+| `Chromium cannot launch — CONTROL NODE problem` | your workstation, not the deploy |
+| test failures against the live site | the deploy |
 
 ## Run
 

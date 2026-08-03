@@ -340,13 +340,29 @@ smoke-setup:
 	@cd $(SMOKE_DIR) && python3.12 -m venv .venv
 	@cd $(SMOKE_DIR) && ./.venv/bin/pip -q install -r requirements.txt
 	@cd $(SMOKE_DIR) && ./.venv/bin/playwright install chromium
+	@# `playwright install` exits 0 when the host is missing the browser's shared
+	@# libraries — it prints a banner and carries on. So this target used to announce
+	@# "Smoke gate ready" in a state where the browser could never launch, and the
+	@# subsequent `make smoke` failure read as "the deploy broke the site" rather than
+	@# "this workstation is missing three apt packages" (#269). Launching a browser is
+	@# the only thing that actually proves readiness, so do that before claiming it.
+	@$(MAKE) --no-print-directory smoke-verify
 	@echo "==> Smoke gate ready. Run 'make smoke'."
 
-smoke:
-	@echo "==> Running Playwright smoke gate against $${SMOKE_BASE_URL:-https://lamware.shaiman.net}..."
+smoke-verify:
 	@if [ ! -x "$(SMOKE_DIR)/.venv/bin/python" ]; then \
 		echo "ERROR: smoke venv missing. Run 'make smoke-setup' first." && exit 1; \
 	fi
+	@$(SMOKE_DIR)/.venv/bin/python $(SMOKE_DIR)/verify_browser.py
+
+smoke:
+	@echo "==> Running Playwright smoke gate against $${SMOKE_BASE_URL:-https://lamware.shaiman.net}..."
+	@# Prove the control node can run the gate BEFORE running it. Both failures are red
+	@# otherwise, and the gate is what tells you whether a deploy is good — so "my
+	@# workstation lacks three apt packages" and "the deploy broke the site" were
+	@# indistinguishable, and the ntfy alert below cried wolf about the site either way.
+	@# This exits first, with its own message, and never reaches that alert (#269).
+	@$(MAKE) --no-print-directory smoke-verify
 	@PW_PASS="$$SMOKE_TEST_PASSWORD"; \
 	if [ -z "$$PW_PASS" ]; then \
 		echo "==> Extracting smoke test password from vault (enter vault pass)..."; \
