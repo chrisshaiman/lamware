@@ -110,6 +110,36 @@
     group: pipeline
     mode: "0644"
 
+- name: Deploy prompt A/B probe
+  # Measurement tooling, not part of any run. Bind-mounted into the interpret image on
+  # demand by run-prompt-ab, the same way netcheck.py is — so it always executes against
+  # the deployed container rather than a second copy of its dependencies.
+  ansible.builtin.copy:
+    src: prompt_ab.py
+    dest: "{{ interpret_install_dir }}/prompt_ab.py"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Deploy prompt A/B wrapper
+  ansible.builtin.template:
+    src: run-prompt-ab.sh.j2
+    dest: "{{ interpret_install_dir }}/run-prompt-ab"
+    owner: pipeline
+    group: pipeline
+    mode: "0750"
+  # Suppresses the rendered body under --diff, which would otherwise print
+  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # firing `| mandatory` would report "censored" instead of naming the missing
+  # variable — the opaque-guard problem #238 exists to fix.
+  diff: false
+
+- name: Symlink run-prompt-ab onto PATH
+  ansible.builtin.file:
+    src: "{{ interpret_install_dir }}/run-prompt-ab"
+    dest: /usr/local/bin/run-prompt-ab
+    state: link
+
 - name: Verify interpret network isolation (--network=none probe container)
   # Proves the container CAN reach LiteLLM via the socket and CANNOT reach host
   # services. Runs as the pipeline user (same rootless context that runs interpret).
