@@ -316,6 +316,36 @@ class TurnTrail:
                    text=text,
                    thinking=thinking)
 
+    def request(self, msg: dict) -> None:
+        """Record the SHAPE of an outbound request, before the model answers it.
+
+        The other events here describe what came back. This one is the only record of
+        what went out, and it is the one #246 needed: "does phase 2a's prompt match the
+        loop's through message k?" took a day of journalctl archaeology and two wrong
+        attributions to answer, from information that existed at request-build time.
+
+        Content is deliberately absent — `prefix_hashes` gives the diff without copying
+        sample-derived prompt text into a second forensic file, and `prefix_chars`
+        gives the size picture without it either. See request_shape() in
+        interpret-ghidra.py for the hashing scheme.
+
+        Emitted only by containers built after #262; older images never send it, and
+        unknown message types were already ignored, so this is backward-compatible.
+        """
+        self.event("request",
+                   request_phase=msg.get("phase"),
+                   model=msg.get("model"),
+                   # Hashes compare only within one wire format — see request_shape().
+                   wire=msg.get("wire", "anthropic"),
+                   turn_index=msg.get("turn_index"),
+                   n_messages=msg.get("n_messages"),
+                   roles=msg.get("roles"),
+                   has_tools=msg.get("has_tools"),
+                   system_hash=msg.get("system_hash"),
+                   tools_hash=msg.get("tools_hash"),
+                   prefix_hashes=msg.get("prefix_hashes") or [],
+                   prefix_chars=msg.get("prefix_chars") or [])
+
     def stream_progress(self, msg: dict) -> None:
         """Heartbeat while a request is outstanding.
 
@@ -594,6 +624,11 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 # after #197; older images simply never send it, and unknown message
                 # types were already ignored here, so this is backward-compatible.
                 trail.turn(msg)
+
+            elif msg_type == "request":
+                # What we are about to SEND. Every other event here describes what came
+                # back (#262).
+                trail.request(msg)
 
             elif msg_type == "stream":
                 trail.stream_progress(msg)

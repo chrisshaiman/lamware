@@ -25,6 +25,7 @@ License: Apache 2.0
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -899,6 +900,123 @@ def read_message() -> dict[str, Any] | None:
 def emit_status(message: str, tool_calls_used: int) -> None:
     """Emit a status message to the orchestrator."""
     emit({"type": "status", "message": message, "tool_calls_used": tool_calls_used})
+
+
+# ---------------------------------------------------------------------------
+# Request-shape logging (#262)
+#
+# The #197 trail records what the model RETURNED — stop_reason, usage, tool calls,
+# text, thinking. It recorded nothing about what we SENT, and that gap turned #246
+# into archaeology: answering "does phase 2a's prompt match the loop's through message
+# k?" meant reading journalctl, backing out a cache-hit count from rounded progress
+# checkpoints, and inferring which phase issued which server request from token sizes.
+# The attribution came out wrong twice before it came out right.
+#
+# All of that information exists at the moment we build the request. These helpers keep
+# it. Hashes rather than content, because the trail is a chain-of-custody artefact and
+# prompts contain sample-derived data — a hash gives the diff without copying malware
+# strings into a second file, and keeps the event small enough to write per request.
+# ---------------------------------------------------------------------------
+
+# Hash prefix length. 12 hex chars = 48 bits: ample for spotting a divergence between
+# two requests in one run, and short enough to eyeball in a terminal.
+_HASH_CHARS = 12
+
+
+def _canon(obj: Any) -> bytes:
+    """Deterministic bytes for one prompt component.
+
+    Key order is PRESERVED, not sorted. The chat template renders a dict in whatever
+    order it iterates, so a reordering genuinely changes the bytes the server sees and
+    should surface as a mismatch rather than be normalised away by the instrument.
+    """
+    return json.dumps(obj, separators=(",", ":"), default=str).encode("utf-8", "replace")
+
+
+def request_shape(phase: str, model: str, system: Any, tools: Any,
+                  messages: list[dict[str, Any]] | None,
+                  wire: str = "anthropic", **extra: Any) -> dict[str, Any]:
+    """Describe an outbound request by shape and hash, never by content.
+
+    `prefix_hashes[i]` is a rolling SHA-256 over everything serialised up to and
+    including `messages[i]` — system first, then tools, then each message in order.
+    So the index lines up with the message index, and comparing two requests is a list
+    diff instead of an inference:
+
+        loop turn 7 : b71e04 2c88fd 91aa07 44de12 ...
+        synth 2a    : b71e04 2c88fd 91aa07 44de12 ... 7fc001
+                                                     ^ first divergence: message 14
+
+    Because system and tools are folded into the base before any message is hashed, a
+    request that drops the tools block diverges at message 0 — which is exactly the
+    #246 failure (31,023-token prompt, 3 tokens reused), visible as a mismatch on the
+    very first entry rather than something to be derived.
+
+    It also separates two failure modes that look identical from outside: the prompt
+    diverged (hashes differ) versus the cache was evicted (hashes identical, reuse
+    still zero).
+
+    `wire` guards against a false positive in the instrument itself. Hashes are only
+    comparable within one wire format: the OpenAI leg (phase 2b) serialises tools
+    differently and sends no system message, so its base differs before any message is
+    hashed and it diverges at message 0 unconditionally. Diffing across formats would
+    manufacture a prefix bug that is not there.
+    """
+    h = hashlib.sha256()
+    total = 0
+    for part in (system, tools):
+        if part is None or part == [] or part == "":
+            continue
+        blob = _canon(part)
+        h.update(blob)
+        total += len(blob)
+
+    prefix_hashes: list[str] = []
+    prefix_chars: list[int] = []
+    for msg in messages or []:
+        blob = _canon(msg)
+        h.update(blob)
+        total += len(blob)
+        prefix_hashes.append(h.hexdigest()[:_HASH_CHARS])
+        prefix_chars.append(total)
+
+    def _digest(obj: Any) -> str | None:
+        if obj is None or obj == [] or obj == "":
+            return None
+        return hashlib.sha256(_canon(obj)).hexdigest()[:_HASH_CHARS]
+
+    shape = {
+        "phase": phase,
+        "model": model,
+        "wire": wire,
+        "n_messages": len(messages or []),
+        # First letter per role, in order — "u,a,u,a,…". Makes an unbalanced or
+        # reordered transcript legible at a glance without carrying its content.
+        "roles": ",".join(str(m.get("role", "?"))[:1] for m in (messages or [])),
+        "has_tools": bool(tools),
+        "system_hash": _digest(system),
+        "tools_hash": _digest(tools),
+        "prefix_hashes": prefix_hashes,
+        "prefix_chars": prefix_chars,
+    }
+    shape.update(extra)
+    return shape
+
+
+def log_request_shape(phase: str, model: str, system: Any, tools: Any,
+                      messages: list[dict[str, Any]] | None,
+                      wire: str = "anthropic", **extra: Any) -> None:
+    """Emit one request-shape event. Never let the instrument break the run.
+
+    Cost is a few hundred microseconds of hashing against a request that spends
+    5-20 MINUTES in prompt evaluation, so this is free at the resolution that matters.
+    """
+    try:
+        emit({"type": "request", **request_shape(phase, model, system, tools,
+                                                 messages, wire, **extra)})
+    except Exception as e:  # noqa: BLE001 - instrumentation must never be fatal
+        print(f"    [!] request-shape logging failed ({type(e).__name__}: {e})",
+              file=sys.stderr, flush=True)
 
 
 # One budget for every leg of an LLM call. CPU-local inference is slow enough that the
@@ -1776,6 +1894,19 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
         "tool_choice": "required",
         "chat_template_kwargs": {"enable_thinking": False},
     }
+    # Hashed from the payload actually posted, not from the call arguments — this leg
+    # speaks OpenAI wire format (POST /chat/completions, tools wrapped in
+    # {"type":"function",...}, no system message), so deriving the shape from the
+    # signature would record something that was never sent.
+    #
+    # `wire` is load-bearing, not decoration. These hashes are NOT comparable to the
+    # loop's or 2a's: a different tools serialization and an absent system message
+    # change the base before any message is hashed, so 2b diverges at message 0 every
+    # time. That is by design — 2b gets only the prose conclusion, never the transcript
+    # — and a reader that diffed it against the loop would report a prefix bug that
+    # does not exist. Compare 2b only against other 2b requests (#262).
+    log_request_shape("synth_2b", model, None, payload["tools"], messages,
+                      wire="openai", tool_choice=payload.get("tool_choice"))
     try:
         resp = http_client.post(
             base_url.rstrip("/") + "/chat/completions",
@@ -2615,6 +2746,12 @@ Technical summary: {executive}"""
             #
             # The block must stay byte-identical to the loop's or the prefix breaks
             # again — that is why this passes TOOLS itself rather than a subset.
+            # Logged immediately before the call, with the SAME arguments the call
+            # receives, so the trail records what was actually sent rather than what
+            # this comment claims. The prefix must stay byte-identical to the loop's;
+            # a divergence here shows up as a hash mismatch at message 0 (#262).
+            log_request_shape("synth_2a", current_model, CACHED_SYSTEM, TOOLS,
+                              concl_msgs)
             concl = create_message(
                 client,
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
@@ -2679,6 +2816,10 @@ Technical summary: {executive}"""
         if concl_text.strip():
             return parse_final_response(concl_text)
         try:
+            # No tools block. That is the prefix-breaking shape from #246, so it is
+            # worth recording rather than assuming: the reader will show this diverging
+            # from the loop at message 0.
+            log_request_shape("synth_legacy", "local-qwen", CACHED_SYSTEM, None, msgs)
             resp = client.messages.create(
                 model="local-qwen", max_tokens=max(max_output_tokens, 8192),
                 system=CACHED_SYSTEM, messages=msgs)
@@ -2701,6 +2842,8 @@ Technical summary: {executive}"""
             # Heartbeat variant: this is the call that can run for tens of minutes on a
             # local model, and from outside it was previously indistinguishable from a
             # hang. Same return shape as create_message().
+            log_request_shape("loop", current_model, CACHED_SYSTEM, TOOLS, messages,
+                              turn_index=tool_calls_used)
             response = create_message_streaming(
                 client,
                 turn_index=tool_calls_used,
@@ -2890,6 +3033,12 @@ Technical summary: {executive}"""
                         })
                         sys.exit(0)
                     try:
+                        # Single-shot final synthesis: no tools block, so it cannot
+                        # reuse the loop's prefix. Recorded so that shows in the trail
+                        # as a divergence at message 0 rather than as unexplained
+                        # prompt-eval time (#262).
+                        log_request_shape("single_shot", current_model,
+                                          CACHED_SYSTEM, None, messages)
                         final_response = create_message(
                             client,
                             model=current_model,
@@ -2969,6 +3118,9 @@ Technical summary: {executive}"""
                     })
                     sys.exit(0)
                 try:
+                    # Second single-shot exit, same no-tools shape as above (#262).
+                    log_request_shape("single_shot", current_model,
+                                      CACHED_SYSTEM, None, messages)
                     final_response = create_message(
                         client,
                         model=current_model,

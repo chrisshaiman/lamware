@@ -89,6 +89,11 @@ def render(rows: list[dict]) -> str:
                           f"{r.get('thinking_tokens', 0)} thinking tokens")
         elif r.get("event") == "status":
             detail = r.get("message", "")[:70]
+        elif r.get("event") == "request":
+            detail = (f"-> {r.get('request_phase')} "
+                      f"{r.get('n_messages', 0)} msgs, "
+                      f"{(r.get('prefix_chars') or [0])[-1]:,} chars, "
+                      f"tools={'yes' if r.get('has_tools') else 'no'}")
         elif r.get("event") == "final":
             detail = (f"tool_calls={r.get('tool_calls_used')} "
                       f"analysis={'yes' if r.get('has_analysis') else 'NO'}")
@@ -113,6 +118,89 @@ def render(rows: list[dict]) -> str:
     out.append("  by tool (calls / bytes returned):")
     for tool, e in sorted(s["by_tool"].items(), key=lambda kv: -kv[1]["bytes"]):
         out.append(f"    {tool:<22} {e['calls']:3d} calls  {e['bytes']:>10,}B")
+    return "\n".join(out)
+
+
+def first_divergence(a: dict, b: dict) -> int | None:
+    """Index of the first message whose prefix hash differs, or None if neither diverges.
+
+    None means one request's prefix is a prefix of the other's — including identical.
+    That is the HEALTHY answer for phase 2a against the last loop turn: 2a appends to
+    the loop's transcript, so it should reproduce every hash the loop had and then
+    continue. A checker that called that a divergence would flag the correct case as
+    the bug, which is the opposite of the job.
+
+    Returns 0 when the bases differ, because system and tools are folded in before any
+    message is hashed — so a request that drops the tools block diverges at message 0.
+    That is exactly the #246 shape: 31,023-token prompt, three tokens reused.
+    """
+    ha, hb = a.get("prefix_hashes") or [], b.get("prefix_hashes") or []
+    for i, (x, y) in enumerate(zip(ha, hb)):
+        if x != y:
+            return i
+    return None
+
+
+def compare_requests(rows: list[dict]) -> str:
+    """Diff each request against the last one that used the same wire format.
+
+    This is the whole point of #262. "Where does the prefix break" becomes a list diff
+    instead of an inference from sim_best and batch-boundary arithmetic, and the two
+    failure modes that look identical from outside separate cleanly:
+
+      - hashes differ            -> the PROMPT diverged
+      - hashes identical, no reuse -> the CACHE was evicted
+
+    Requests are only compared within one wire format. The OpenAI leg (phase 2b)
+    serialises tools differently and sends no system message, so it diverges at
+    message 0 against an Anthropic-format request every time, by construction. Diffing
+    across formats would report a prefix bug that does not exist.
+    """
+    reqs = [r for r in rows if r.get("event") == "request"]
+    out = ["", "=== outbound requests ===",
+           "   t(min)  phase         wire       msgs  chars    tools  vs previous"]
+    if not reqs:
+        out.append("  (no request records — container predates #262)")
+        return "\n".join(out)
+
+    last_by_wire: dict[str, dict] = {}
+    for r in reqs:
+        wire = r.get("wire", "anthropic")
+        prev = last_by_wire.get(wire)
+        chars = (r.get("prefix_chars") or [0])[-1]
+        if prev is None:
+            verdict = "(first of this wire format)"
+        else:
+            idx = first_divergence(prev, r)
+            n_prev = len(prev.get("prefix_hashes") or [])
+            n_this = len(r.get("prefix_hashes") or [])
+            if idx is None and n_this > n_prev:
+                # The healthy case, and the one #246 was about: the prefix carried and
+                # only new messages have to be evaluated.
+                verdict = f"prefix intact, extends by {n_this - n_prev}"
+            elif idx is None and n_this == n_prev:
+                verdict = "identical prefix"
+            elif idx is None:
+                verdict = f"prefix intact, {n_prev - n_this} shorter"
+            elif idx == 0:
+                # Distinguishing these matters: a missing tools block is the #246 bug,
+                # a changed first message is an ordinary new conversation.
+                why = []
+                if prev.get("tools_hash") != r.get("tools_hash"):
+                    why.append("tools differ")
+                if prev.get("system_hash") != r.get("system_hash"):
+                    why.append("system differs")
+                verdict = "diverges at message 0"
+                if why:
+                    verdict += f"  <-- {', '.join(why)}"
+            else:
+                shared = (prev.get("prefix_chars") or [0])[idx - 1]
+                verdict = f"shared through message {idx - 1} ({shared:,} chars), " \
+                          f"diverges at {idx}"
+        out.append(f"  {r.get('t', 0)/60:7.1f}  {str(r.get('request_phase')):<13} "
+                   f"{wire:<10} {r.get('n_messages', 0):>4}  "
+                   f"{chars:>7,}  {'yes' if r.get('has_tools') else 'no ':<5}  {verdict}")
+        last_by_wire[wire] = r
     return "\n".join(out)
 
 
@@ -152,6 +240,7 @@ def main() -> None:
         print("  (empty trail — the run died before its first event)")
         raise SystemExit(1)
     print(render(rows))
+    print(compare_requests(rows))
     if "--reasoning" in sys.argv or "-r" in sys.argv:
         print(render_reasoning(rows))
     else:
