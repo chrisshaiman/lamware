@@ -15,8 +15,12 @@ Two properties are non-negotiable and both are asserted here:
      metric then scores as fabrication when the harness dropped the evidence.
 """
 import json
+import string
 import sys
 from pathlib import Path
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ansible" / "roles" / "pipeline" / "files"))
@@ -137,3 +141,92 @@ def test_idempotent():
 
 def test_production_cap_is_sane():
     assert 2000 <= TOOL_RESULT_CHAR_CAP <= 20000
+
+
+def test_serialized_result_fits_the_cap_including_container_overhead():
+    """The cap must bound the number a CALLER measures, not an internal sum (#242).
+
+    Measured 2026-08-02 on a live deep run: a decompile_function result recorded
+    12,064 B against a 12,000 cap, carrying no truncation marker. The cap had budgeted
+    the sum of field contents; the trail recorded json.dumps() of the whole object.
+    Those differ by the dict's own serialization — braces, quoted keys, colons, commas
+    — plus the quotes and escape expansion on every string.
+
+    64 B is harmless. A cap that bounds a different quantity than the one anyone
+    observes is not: #242's acceptance criterion was written in the units the cap did
+    not control, so it could never be satisfied exactly.
+    """
+    result = {
+        "code": "int main() {\n    return 0;\n}\n" * 900,   # newlines: 1 char -> 2 in JSON
+        "strings": ["evil.example/c2" * 40 for _ in range(60)],
+        "address": "0x0041b500",
+        "status": "ok",
+    }
+    capped = cap_tool_result(result, cap=TOOL_RESULT_CHAR_CAP)
+    serialized = len(json.dumps(capped, default=str))
+    assert serialized <= TOOL_RESULT_CHAR_CAP, (
+        f"serialized result is {serialized} B against a {TOOL_RESULT_CHAR_CAP} cap — "
+        f"the cap must budget its own container serialization and string escaping, "
+        f"or it bounds a number nobody can observe")
+
+
+def test_many_small_keys_is_where_the_overhead_gap_is_widest():
+    """Structural cost scales with FIELD COUNT, not payload size.
+
+    A result of many short keys is the adversarial case: each one contributes quotes,
+    a colon and a comma that the old per-field accounting never counted.
+    """
+    result = {f"field_{i:03d}": f"value {i}" for i in range(120)}
+    result["code"] = "A" * 40000
+    capped = cap_tool_result(result, cap=TOOL_RESULT_CHAR_CAP)
+    assert len(json.dumps(capped, default=str)) <= TOOL_RESULT_CHAR_CAP
+
+
+def test_escape_heavy_payload_still_fits():
+    """Quotes and backslashes double under JSON encoding; decompilation is full of both."""
+    result = {"code": '"\\' * 9000, "status": "ok"}
+    capped = cap_tool_result(result, cap=TOOL_RESULT_CHAR_CAP)
+    assert len(json.dumps(capped, default=str)) <= TOOL_RESULT_CHAR_CAP
+
+
+# ---------------------------------------------------------------------------
+# Property: the invariant, not the examples
+# ---------------------------------------------------------------------------
+
+_KEYS = st.text(alphabet=string.ascii_lowercase + "_", min_size=1, max_size=12)
+_PAYLOAD = st.one_of(
+    st.text(max_size=3000),                       # quotes/backslashes/newlines included
+    st.lists(st.text(max_size=200), max_size=60),
+    st.integers(),
+    st.none(),
+)
+
+
+@settings(max_examples=250, deadline=None)
+@given(result=st.dictionaries(_KEYS, _PAYLOAD, min_size=1, max_size=25),
+       cap=st.integers(min_value=1200, max_value=20000))
+def test_capped_result_never_exceeds_its_cap_when_serialized(result, cap):
+    """For ANY result and any cap: json.dumps(capped) fits.
+
+    The examples above encode the two shapes that were actually wrong — container
+    overhead and escape expansion. This encodes the rule they are instances of, which
+    is what stops the next unconsidered shape from slipping through. Hypothesis is
+    free to find the field counts, key lengths and escape densities that hurt most.
+    """
+    capped = cap_tool_result(result, cap=cap)
+    assert len(json.dumps(capped, default=str)) <= cap
+
+
+@settings(max_examples=150, deadline=None)
+@given(result=st.dictionaries(_KEYS, _PAYLOAD, min_size=1, max_size=15))
+def test_capping_is_idempotent(result):
+    """Capping an already-capped result must not keep shrinking or keep growing.
+
+    The function's own comment records a bug where the note was appended after
+    budgeting, so a second pass grew the result each time. That is a property, and
+    properties are cheaper to hold than to re-derive.
+    """
+    once = cap_tool_result(result, cap=TOOL_RESULT_CHAR_CAP)
+    twice = cap_tool_result(once, cap=TOOL_RESULT_CHAR_CAP)
+    assert len(json.dumps(twice, default=str)) <= TOOL_RESULT_CHAR_CAP
+    assert set(twice) == set(once), "capping must not add or drop keys on a second pass"
