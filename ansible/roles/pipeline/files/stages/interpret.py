@@ -514,6 +514,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     audit_dir.mkdir(parents=True, exist_ok=True)
     audit_path = audit_dir / audit_filename(ghidra_result.get("analysis_type"))
     tool_call_log = []
+    # Message types this orchestrator does not know, warned about once each. See the
+    # else branch in the dispatch loop below for why silence here was a problem.
+    _seen_unknown_types: set[str] = set()
 
     # Forensic trail — appended and fsynced per event so a SIGKILLed run still has one.
     trail = TurnTrail(
@@ -632,6 +635,28 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
 
             elif msg_type == "stream":
                 trail.stream_progress(msg)
+
+            else:
+                # Say something ONCE per unknown type. Ignoring unknown types is what
+                # makes a newer container safe against an older orchestrator, and that
+                # tolerance is deliberate — but silent tolerance hides a half-deploy.
+                #
+                # Measured 2026-08-02: the interpret image was rebuilt with #262's
+                # request-shape events while stages/interpret.py was still the 07-29
+                # copy, because the feature spans two ansible roles and the deploy ran
+                # `--tags interpret` without `pipeline`. The container emitted `request`
+                # events for a full run; this loop dropped every one without a word.
+                # Everything looked healthy, the trail simply had no requests in it.
+                # Caught only by going looking for data that should have been there.
+                #
+                # A line in the log turns that into a two-second diagnosis. Kept to one
+                # line per type so a chatty future protocol cannot flood a long run.
+                if msg_type not in _seen_unknown_types:
+                    _seen_unknown_types.add(msg_type)
+                    print(f"    [!] container sent unhandled message type "
+                          f"{msg_type!r} — this orchestrator may be older than the "
+                          f"container image (deploy --tags pipeline,interpret together)")
+                    trail.event("unhandled_message_type", message_type=msg_type)
 
     except Exception as e:
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")
