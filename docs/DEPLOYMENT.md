@@ -579,18 +579,45 @@ make smoke
 
 ### 8b. Submit a test sample
 
-EICAR is universally recognised by AV engines and completely harmless:
+EICAR is a harmless AV test string. **The pipeline runs as the `pipeline` user**, and
+`ubuntu` is in neither the `pipeline` nor the `lamware` group, so every path below is
+unreadable to the account you SSH in as:
+
+```
+drwxr-s--- 15 pipeline lamware   /opt/pipeline
+-rw-r-----  1 pipeline pipeline  /opt/pipeline/pipeline.env
+-rwxr-x---  1 pipeline pipeline  /opt/pipeline/run-pipeline.py
+```
+
+Those permissions are correct — the pipeline owning its own files is the point. So run
+the commands *as that user* rather than changing them:
 
 ```bash
 ssh -i ~/.ssh/sandbox_ed25519 ubuntu@<server-ip>
 
-printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
-  > /tmp/eicar.com
+# Stage the sample somewhere the pipeline user owns. NOT /tmp — see the warning below.
+sudo install -d -o pipeline -g pipeline /opt/pipeline/smoke
+sudo -u pipeline bash -c "printf 'X5O!P%%@AP[4\\\\PZX54(P^)7CC)7}\$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!\$H+H*' \
+  > /opt/pipeline/smoke/eicar.com"
 
-set -a; . /opt/pipeline/pipeline.env; set +a
-/opt/pipeline/venv/bin/python -u /opt/pipeline/run-pipeline.py \
-  /tmp/eicar.com --task-id smoke-eicar --filename eicar.com
+sudo -u pipeline bash -c '
+  set -a; . /opt/pipeline/pipeline.env; set +a
+  /opt/pipeline/venv/bin/python -u /opt/pipeline/run-pipeline.py \
+    /opt/pipeline/smoke/eicar.com --task-id smoke-eicar --filename eicar.com
+'
 ```
+
+> **Do not stage the sample in `/tmp`.** The host sets `fs.protected_regular = 2`, which
+> stops *any* user — including root — from opening a file with `O_CREAT` in a sticky,
+> world-writable directory when someone else owns that file. A second attempt at this
+> section therefore fails with `Permission denied` **for root** on a leftover
+> `/tmp/eicar.com` from the first attempt, which is a genuinely confusing error to debug.
+> The control is correct and should stay; just stage the sample somewhere owned by the
+> user running it.
+
+`sudo -u pipeline` is required, not stylistic: run as `ubuntu`, the commands fail with
+`Permission denied` on `pipeline.env` and on the venv's `python` before the pipeline
+starts.
 
 ### 8c. Watch it run
 
