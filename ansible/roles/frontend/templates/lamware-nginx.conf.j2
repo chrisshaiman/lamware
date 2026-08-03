@@ -11,11 +11,19 @@
 # =============================================================================
 
 # Rate limiting zones
-# API: 30 requests/sec per IP (burst 50) — normal browsing
-# Auth: 5 requests/sec per IP (burst 10) — login/token endpoints
-# Upload: 2 requests/sec per IP (burst 5) — sample submission
+# API:   30 req/sec per IP (burst 50)  — normal browsing
+# Auth:   5 req/sec per IP (burst 50)  — login/token endpoints
+# Admin: 30 req/sec per IP (burst 100) — Keycloak admin console
+# Upload: 2 req/sec per IP (burst 5)   — sample submission
+#
+# The auth burst reads 50, not the 10 this comment claimed until #209. The deployed
+# value is the one that works, so the comment was corrected rather than the config:
+# tightening a live login path on the strength of a stale comment is the wrong
+# direction to resolve a mismatch. If 10 was the real intent it needs a login test
+# behind it, not an edit here.
 limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=admin:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=upload:10m rate=2r/s;
 limit_req_status 429;
 
@@ -68,6 +76,16 @@ server {
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
+        # nginx add_header does NOT merge: any add_header in a location REPLACES every
+        # inherited server-level header. This block previously added Cache-Control only,
+        # which silently dropped all six security headers from every static asset —
+        # including HSTS and CSP (#209).
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss://{{ frontend_server_name }}; frame-ancestors 'none'" always;
     }
 
     # Investigation agent SSE — buffering must be off or events queue up
@@ -143,9 +161,19 @@ server {
         proxy_set_header Host $host;
     }
 
-    # Keycloak admin console — no rate limit (makes many rapid API calls)
+    # Keycloak admin console. Previously exempted from rate limiting entirely, with
+    # "makes many rapid API calls" as the reason — true, but it left the highest-value
+    # target on the host as the one auth path with no brute-force control, while
+    # /auth/ immediately below it had one (#209).
+    #
+    # Given its own zone rather than reusing `auth` (5 r/s), which would very likely
+    # break the console and is why it was exempted in the first place. 30 r/s with a
+    # burst of 100 sits far above interactive use and far below useful credential
+    # stuffing. NOT yet validated against a real admin session — see the issue.
+    #
     # Must appear before /auth/ so nginx matches the more specific prefix.
     location /auth/admin/ {
+        limit_req zone=admin burst=100 nodelay;
         proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -159,6 +187,12 @@ server {
         add_header X-Content-Type-Options nosniff always;
         add_header X-XSS-Protection "1; mode=block" always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
+        # Re-added: overriding X-Frame-Options here replaced the whole inherited set,
+        # so HSTS and CSP were silently dropped on every Keycloak response (#209).
+        # The X-Frame-Options override was deliberate and documented; these two were
+        # collateral and nobody noticed.
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'" always;
     }
 
     # Keycloak identity broker proxy
@@ -180,6 +214,12 @@ server {
         add_header X-Content-Type-Options nosniff always;
         add_header X-XSS-Protection "1; mode=block" always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
+        # Re-added: overriding X-Frame-Options here replaced the whole inherited set,
+        # so HSTS and CSP were silently dropped on every Keycloak response (#209).
+        # The X-Frame-Options override was deliberate and documented; these two were
+        # collateral and nobody noticed.
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'" always;
     }
 
     # Gzip compression
