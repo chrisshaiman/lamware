@@ -1,0 +1,77 @@
+#!/bin/bash
+# =============================================================================
+# run-prompt-ab — host-side wrapper for the prompt A/B probe
+#
+# Paired A/B of prompt variants against ONE fixed transcript. See
+# roles/interpret/files/prompt_ab.py for what it measures and why.
+#
+# Usage:
+#   run-prompt-ab --audit /opt/pipeline/eval-corpus/<sample>/eval/<arm>/llm_audit/tool_calls.json \
+#                 --model local-qwen-llamacpp-re-s42 --suffix ' /no_think' --repeats 2
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -euo pipefail
+
+SOCK=/run/litellm/litellm.sock
+if [ ! -S "$SOCK" ]; then
+    echo "[!] LiteLLM socket $SOCK missing — is litellm-socket.service running?" >&2
+    exit 1
+fi
+
+# --audit is read on the HOST side so the file can live anywhere the pipeline user can
+# reach; the container only ever sees the one path we bind in.
+AUDIT=""
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --audit) AUDIT="$2"; shift 2 ;;
+        --audit=*) AUDIT="${1#*=}"; shift ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+if [ -z "$AUDIT" ]; then
+    echo "[!] --audit <tool_calls.json> is required" >&2
+    exit 2
+fi
+if [ ! -r "$AUDIT" ]; then
+    echo "[!] cannot read audit log: $AUDIT" >&2
+    exit 2
+fi
+
+OUT_DIR="${PROMPT_AB_OUT:-/opt/interpret/ab-results}"
+mkdir -p "$OUT_DIR"
+
+# Exported, then forwarded BY NAME below. Never inline in podman's argv:
+# /proc/<pid>/cmdline is world-readable, so an inline value is visible to every local
+# user in `ps` for the life of the run (#238). This is the same mistake the #260
+# measurement made from an ad-hoc command line, which is half the reason this wrapper
+# exists at all.
+export LITELLM_API_KEY="{{ litellm_master_key | mandatory }}"
+
+exec podman run --rm -i \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ interpret_container_memory }} \
+    --cpus={{ interpret_container_cpus }} \
+    --tmpfs /tmp:size=100m \
+    --tmpfs /nonexistent:size=10m \
+    --user 65534:65534 \
+    -v "$SOCK":/run/litellm.sock:ro \
+    -v "$AUDIT":/opt/audit.json:ro \
+    -v "$OUT_DIR":/opt/out:rw \
+    -v {{ interpret_install_dir }}/prompt_ab.py:/opt/prompt_ab.py:ro \
+    -e LITELLM_API_KEY \
+    `# ROUTER base, not the /anthropic passthrough. The passthrough serves no local` \
+    `# model at all — local-qwen-llamacpp-re 404s there and 200s here (#273), which` \
+    `# is what the re_backend==local branch in interpret-ghidra.py is doing when it` \
+    `# swaps to summary_client. Pointing at /anthropic silently breaks every arm.` \
+    -e LITELLM_BASE_URL="http://litellm.invalid" \
+    -e LITELLM_UDS=/run/litellm.sock \
+    --entrypoint python3 \
+    localhost/interpret:latest \
+    /opt/prompt_ab.py "${ARGS[@]}"
