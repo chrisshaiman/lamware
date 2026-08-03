@@ -2294,10 +2294,38 @@ def main() -> None:
         client_kwargs["http_client"] = _uds_client(uds)
     client = anthropic.Anthropic(**client_kwargs)
 
-    # Summary/plain-english calls route through LiteLLM's /v1/messages ROUTER
-    # (model_list) so a local model name (e.g. local-qwen) reaches Ollama. The
-    # agentic RE path keeps using `client` (the /anthropic passthrough) to
-    # preserve prompt caching + tool_use fidelity. Verified 2026-07-04 spike.
+    # TWO transports, and which one a request takes depends on the MODEL, not the stage:
+    #
+    #   /anthropic passthrough (`client`)      — CLOUD models only
+    #   /v1/messages ROUTER (`summary_client`) — local models (model_list aliases)
+    #
+    # Summary/plain-english calls always take the router, so a local name like
+    # local-qwen reaches Ollama. The agentic RE path takes the passthrough when it runs
+    # on Claude — which is the deployed default (interpret-config.json ships
+    # claude-sonnet-4-6) — and switches to the router when re_backend is local, at the
+    # `client = summary_client` line further down.
+    #
+    # That switch is REQUIRED, not an optimisation. The passthrough serves no local
+    # model whatsoever. Measured over the production UDS, 2026-08-02:
+    #
+    #   local-qwen-llamacpp-re      /anthropic/v1/messages -> 404 not_found_error
+    #   local-qwen-llamacpp-re      /v1/messages           -> 200
+    #   local-qwen-llamacpp-re-s42  /anthropic/v1/messages -> 404 not_found_error
+    #   local-qwen-llamacpp-re-s42  /v1/messages           -> 200
+    #
+    # This comment previously said only that "the agentic RE path keeps using `client`
+    # (the /anthropic passthrough)", unqualified, and that reads as universal. It cost
+    # four 404s while setting up the #260 measurement, and a cheap failure there is the
+    # lucky version: any cache or latency reasoning about LOCAL qwen that cites the
+    # passthrough is reasoning about a transport local runs never touch, and that fails
+    # silently instead (#273). #246's whole investigation was KV-prefix reuse on local
+    # qwen — which happens on the router.
+    #
+    # "preserve prompt caching + tool_use fidelity. Verified 2026-07-04 spike" was the
+    # original justification and is retained deliberately, but scoped: that spike
+    # predates local RE and measured the CLOUD path. Whether the two routes cache
+    # identically has not been measured here, so do not assume a passthrough result
+    # transfers to the router.
     router_base = os.environ.get("LITELLM_ROUTER_BASE_URL", "")
     summary_kwargs: dict[str, Any] = {"api_key": api_key}
     if router_base:
@@ -2383,7 +2411,9 @@ Technical summary: {executive}"""
     # Single-shot backend selection: route .NET/Go/PowerShell through the LiteLLM
     # /v1/messages router (-> local Ollama) when asked; default stays the /anthropic
     # passthrough (Claude). Only ever set by the eval harness — production never sets
-    # it, so this is a no-op in normal runs. Mirrors the re_backend knob (agentic path).
+    # it, so this is a no-op in normal runs. Mirrors re_backend on the agentic path,
+    # and for the same non-negotiable reason: the passthrough serves no local model,
+    # so "local" and "router" are one choice here, not two (#273).
     ss_client = summary_client if config.get("single_shot_backend") == "local" else client
 
     # ---- .NET path — single-shot, no tools ----
@@ -2654,11 +2684,16 @@ Technical summary: {executive}"""
             })
         sys.exit(0)
 
-    # A/B knob: route the agentic RE loop through the LiteLLM router to a local
-    # model (e.g. local-qwen-re, think-on) instead of the /anthropic passthrough.
-    # summary_client is already the router client. Pure-local: disable escalation
-    # so the loop never falls back to Claude. Absent re_backend => unchanged
-    # production behaviour (cloud, sonnet->opus).
+    # Route the agentic RE loop through the LiteLLM router to a local model instead of
+    # the /anthropic passthrough. summary_client is already the router client.
+    # Pure-local: disable escalation so the loop never falls back to Claude. Absent
+    # re_backend => unchanged production behaviour (cloud, sonnet->opus).
+    #
+    # LOAD-BEARING, not an A/B knob — the wording it replaces. Deleting this branch does
+    # not make local RE take a slower or less cache-friendly path; it makes local RE
+    # impossible, because the passthrough 404s for every local model (see the transport
+    # note at the client construction above, #273). Guarded by
+    # pipeline/tests/test_interpret_backend.py.
     if config.get("re_backend") == "local" and router_base:
         client = summary_client
         escalation_model = model
