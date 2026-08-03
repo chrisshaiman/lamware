@@ -100,7 +100,25 @@ def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
         return result
 
     def size(value: object) -> int:
-        return len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
+        """Serialized size, not content length.
+
+        This returned `len(value)` for strings, which omits the surrounding quotes and
+        every escape expansion — a newline is one character in memory and two in JSON,
+        so a decompiled function undercounted by roughly its line count.
+        """
+        return len(json.dumps(value, default=str))
+
+    # The dict's OWN serialization — braces, quoted key names, colons, commas — is part
+    # of what a caller measures and was never budgeted. Measured 2026-08-02 on a live
+    # deep run: a decompile_function result came back at 12,064 B against a 12,000 cap
+    # with no truncation marker, because the cap bounded the sum of field contents while
+    # the trail recorded json.dumps() of the whole object. 64 B is harmless; a cap that
+    # bounds a different number than the one anyone observes is not, and #242's own
+    # acceptance criterion was stated in the units the cap did not control.
+    #
+    # dict.fromkeys(result, 0) renders each value as a single character, so subtracting
+    # one per field leaves exactly the structural cost.
+    container_overhead = len(json.dumps(dict.fromkeys(result, 0))) - len(result)
 
     # The bookkeeping has to be budgeted too. Two bugs came from not doing that: the
     # per-field truncation markers alone overshot a 2,000-char cap by 3,300 when many
@@ -126,7 +144,8 @@ def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
     small = {k: v for k, v in result.items() if k not in big}
 
     # Metadata first — it is tiny and it is what makes a truncated result interpretable.
-    remaining = cap - NOTE_ALLOWANCE - sum(size(v) for v in small.values())
+    remaining = (cap - NOTE_ALLOWANCE - container_overhead
+                 - sum(size(v) for v in small.values()))
     out: dict = dict(small)
     notes: list[str] = []
     omitted_fields: list[str] = []
@@ -139,13 +158,30 @@ def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
             omitted_fields.append(key)
             continue
         if isinstance(value, str):
-            if len(value) <= remaining:
+            if size(value) <= remaining:
                 out[key] = value
-                remaining -= len(value)
+                remaining -= size(value)
             else:
-                budget = remaining
-                out[key] = value[:budget] + _marker(f"{len(value) - budget} more characters")
-                notes.append(f"{key}: truncated to {budget} chars")
+                # Binary search the longest prefix whose SERIALIZED size, marker
+                # included, fits the budget. Slicing by character count was wrong once
+                # the budget moved to serialized units: JSON doubles every quote,
+                # backslash and newline, so `value[:remaining]` overshot by up to 2x on
+                # escape-heavy payloads — decompiled C is nothing but those. Measured
+                # before the fix: a 12,000 cap produced a 23,390 B result.
+                #
+                # The marker length varies with the omitted count, so it is recomputed
+                # per candidate rather than reserved as a constant.
+                lo, hi, fitted = 0, len(value), ""
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    candidate = value[:mid] + _marker(
+                        f"{len(value) - mid} more characters")
+                    if size(candidate) <= remaining:
+                        fitted, lo = candidate, mid + 1
+                    else:
+                        hi = mid - 1
+                out[key] = fitted
+                notes.append(f"{key}: truncated to {len(fitted)} chars")
                 remaining = 0
         else:  # list — drop whole elements; a partial element is malformed input
             kept: list = []
