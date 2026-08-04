@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
+.PHONY: provenance provenance-has all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -29,6 +29,10 @@ ANSIBLE_USER    ?= ubuntu
 # Overridable so a second workstation with its own per-device keypair does not have
 # to rename its key or symlink it into place.
 ANSIBLE_KEY     ?= ~/.ssh/sandbox_ed25519
+# SSH alias (or user@host) used by the provenance targets to read the deploy
+# marker. Defaults to the ~/.ssh/config alias; override if yours differs:
+#   make provenance ANSIBLE_HOST_ALIAS=ubuntu@10.200.0.1
+ANSIBLE_HOST_ALIAS ?= sandbox
 PACKER_DIR      := packer
 
 # `--syntax-check` still loads vars_files, and vars/secrets.yml is vault-encrypted, so
@@ -334,6 +338,53 @@ security-test:
 			security-test.yml \
 			--ask-vault-pass
 	@echo "==> Security tests complete."
+
+# -----------------------------------------------------------------------------
+# provenance — is the code I am looking at actually the code that is running? (#151)
+# -----------------------------------------------------------------------------
+provenance:
+	@echo "==> Deploy provenance"
+	@REMOTE=$$(ssh $(ANSIBLE_HOST_ALIAS) 'cat /opt/lamware/deploy-provenance.json' 2>/dev/null); \
+	if [ -z "$$REMOTE" ]; then \
+		echo "    NO MARKER on the host."; \
+		echo "    Either nothing has been deployed since #151, or the deploy predates it."; \
+		echo "    Run 'make deploy TAGS=<roles>' to write one."; \
+		exit 1; \
+	fi; \
+	echo "$$REMOTE" | sed 's/^/    /'; \
+	DEPLOYED=$$(echo "$$REMOTE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])'); \
+	DIRTY=$$(echo "$$REMOTE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["dirty"])'); \
+	LOCAL=$$(git rev-parse HEAD); \
+	echo ""; \
+	if [ "$$DIRTY" = "True" ]; then \
+		echo "    WARNING: deployed from a DIRTY tree — those bytes match no commit."; \
+	fi; \
+	if [ "$$DEPLOYED" = "$$LOCAL" ]; then \
+		echo "    OK: host matches your HEAD ($$(echo $$LOCAL | cut -c1-12))."; \
+	elif git merge-base --is-ancestor "$$DEPLOYED" HEAD 2>/dev/null; then \
+		echo "    STALE: host runs $$(echo $$DEPLOYED | cut -c1-12), an ANCESTOR of your HEAD $$(echo $$LOCAL | cut -c1-12)."; \
+		echo "    Your local commits are NOT deployed:"; \
+		git --no-pager log --oneline "$$DEPLOYED..HEAD" | sed 's/^/      /'; \
+		exit 1; \
+	else \
+		echo "    DIVERGED: host runs $$(echo $$DEPLOYED | cut -c1-12), which is not an ancestor of your"; \
+		echo "    HEAD $$(echo $$LOCAL | cut -c1-12). The host was deployed from a different branch."; \
+		echo "    This is the 2026-08-03 failure: a feature-branch change was reverted"; \
+		echo "    by a later deploy from main, silently."; \
+		exit 1; \
+	fi
+
+# Is a SPECIFIC commit live? `make provenance-has COMMIT=<sha>`
+provenance-has:
+	@test -n "$(COMMIT)" || { echo "usage: make provenance-has COMMIT=<sha>"; exit 1; }
+	@DEPLOYED=$$(ssh $(ANSIBLE_HOST_ALIAS) 'cat /opt/lamware/deploy-provenance.json' 2>/dev/null \
+		| python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])'); \
+	if git merge-base --is-ancestor "$(COMMIT)" "$$DEPLOYED" 2>/dev/null; then \
+		echo "    LIVE: $(COMMIT) is contained in deployed $$(echo $$DEPLOYED | cut -c1-12)."; \
+	else \
+		echo "    NOT LIVE: $(COMMIT) is absent from deployed $$(echo $$DEPLOYED | cut -c1-12)."; \
+		exit 1; \
+	fi
 
 smoke-setup:
 	@echo "==> Setting up smoke-gate venv + Chromium..."
