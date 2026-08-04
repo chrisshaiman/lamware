@@ -17,20 +17,30 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self.active_connections: set[WebSocket] = set()
+        # Connection -> authenticated principal. Kept alongside rather than inside the
+        # set because the set is the broadcast fan-out and must stay cheap to iterate.
+        # Without this, nothing on a WebSocket channel was attributable to a user (#208).
+        self.principals: dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, principal: str = "anonymous") -> None:
         await websocket.accept()
-        self.active_connections.add(websocket)
-        log.info("WebSocket client connected (%d total)", len(self.active_connections))
+        self.track(websocket, principal=principal)
 
-    def track(self, websocket: WebSocket) -> None:
-        """Add an already-accepted WebSocket to the broadcast pool."""
+    def track(self, websocket: WebSocket, principal: str = "anonymous") -> None:
+        """Add an already-accepted, AUTHENTICATED WebSocket to the broadcast pool."""
         self.active_connections.add(websocket)
-        log.info("WebSocket client tracked (%d total)", len(self.active_connections))
+        self.principals[websocket] = principal
+        log.info(
+            "WebSocket client tracked: %s (%d total)", principal, len(self.active_connections)
+        )
 
     def disconnect(self, websocket: WebSocket) -> None:
         self.active_connections.discard(websocket)
-        log.info("WebSocket client disconnected (%d total)", len(self.active_connections))
+        principal = self.principals.pop(websocket, "unknown")
+        log.info(
+            "WebSocket client disconnected: %s (%d total)",
+            principal, len(self.active_connections),
+        )
 
     async def broadcast(self, message: dict) -> None:
         """Send a JSON message to all connected clients.
@@ -40,7 +50,9 @@ class ConnectionManager:
         payload = json.dumps(message)
         dead: list[WebSocket] = []
 
-        for ws in self.active_connections:
+        # Iterate a snapshot: a send that fails can trigger disconnect() on the same
+        # loop, and mutating active_connections mid-iteration raises RuntimeError.
+        for ws in list(self.active_connections):
             try:
                 await ws.send_text(payload)
             except Exception:
@@ -48,6 +60,7 @@ class ConnectionManager:
 
         for ws in dead:
             self.active_connections.discard(ws)
+            self.principals.pop(ws, None)
             log.info("Removed dead WebSocket client (%d total)", len(self.active_connections))
 
 
