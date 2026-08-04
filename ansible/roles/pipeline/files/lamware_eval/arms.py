@@ -28,6 +28,39 @@ class Arm:
 
 _REGISTRY: dict[str, Arm] = {
     "qwen@10": Arm("qwen@10", _LOCAL_MODEL, "local", 10),
+    # A MEASUREMENT arm. The depth question is OPEN — do not promote this over qwen@10
+    # without more n, and do not read the single completed run as settling anything.
+    #
+    # What one run showed (qwen@15:s1337, raccoonstealer, 3017s / 16 calls): grounded
+    # 5/5 = 1.000 after the #286 scorer fix. Tempting, but qwen@10 already reaches
+    # 1.000 on this same sample at THREE separate seeds, and spans 0.500-1.000 across
+    # its five runs here. A single 1.000 at depth 15 sits inside that spread and is
+    # not evidence of improvement.
+    #
+    # The signal that does look real is recall, not precision. Absolute grounded
+    # findings on this sample scale with depth while the RATIO stays flat and noisy:
+    #
+    #     depth 10   ~3 grounded (mean of 5 runs)   ratio 0.860 (0.500-1.000)
+    #     depth 15    5 grounded (n=1)              ratio 1.000
+    #     depth 30    9 grounded (n=1)              ratio 0.750
+    #
+    # So depth may buy MORE true findings rather than better-grounded ones — which
+    # matters for analyst-facing reports and not at all for triage, where qwen@10 at
+    # ~14min is the operating point. n=1 at depths 15 and 30 is far too thin to act
+    # on; that is what this arm exists to fix.
+    #
+    # It also exists because 25 does NOT fit. On 2026-08-03 qwen@25:s1337 finished its
+    # tool loop in 97.6min, then was SIGKILLed at exactly 10801s with phase-2a still
+    # generating, 82.5min into a single request. The killer was not depth but KV
+    # prefix reuse collapsing as context grows -- measured across these two runs:
+    #
+    #     depth 15  ~38.6k tok ctx   5,354 tok re-evaluated   86% reuse   13.2min
+    #     depth 25  ~67.6k tok ctx  35,828 tok re-evaluated   47% reuse  >82.5min
+    #
+    # 1.75x the context, 6.7x the re-evaluated tokens, and the eval rate degrades
+    # 12.3 -> 8.2 tok/s on top. At depth 15's reuse rate, depth 25's synthesis would
+    # have taken ~29min and the run would have landed at ~127min, inside the budget.
+    "qwen@15": Arm("qwen@15", _LOCAL_MODEL, "local", 15),
     "qwen@25": Arm("qwen@25", _LOCAL_MODEL, "local", 25),
     # Depth probe: let the local model run to its natural stopping point rather than
     # to a budget. Local inference is $0, so the question "how deep does it go before
