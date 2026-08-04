@@ -67,6 +67,9 @@
     # the next eval would have run at the wrong depth for 50 minutes. A bare SHA would
     # have looked perfectly healthy — main was clean and current. What was needed was
     # the ability to ask "is THIS commit live?", which `make provenance` now answers.
+    # No `run_once` on these: the play targets a single host so they run once
+    # anyway, and ansible-lint's run-once[task] rule rejects it as
+    # strategy-dependent. The git reads are idempotent regardless.
     - name: Read the deploying checkout's git HEAD
       ansible.builtin.command:
         cmd: git rev-parse HEAD
@@ -75,7 +78,6 @@
       changed_when: false
       delegate_to: localhost
       become: false
-      run_once: true
       tags: [always]
 
     - name: Read the deploying checkout's branch
@@ -86,7 +88,6 @@
       changed_when: false
       delegate_to: localhost
       become: false
-      run_once: true
       tags: [always]
 
     # Uncommitted changes mean the deployed bytes correspond to NO commit, so the SHA
@@ -101,7 +102,6 @@
       changed_when: false
       delegate_to: localhost
       become: false
-      run_once: true
       tags: [always]
 
     - name: Ensure the provenance directory exists
