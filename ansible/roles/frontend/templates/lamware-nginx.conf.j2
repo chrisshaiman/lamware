@@ -15,6 +15,7 @@
 # Auth:   5 req/sec per IP (burst 50)  — login/token endpoints
 # Admin: 30 req/sec per IP (burst 100) — Keycloak admin console
 # Upload: 2 req/sec per IP (burst 5)   — sample submission
+# ws:     5 req/sec per IP (burst 10)  — WebSocket handshakes (#208)
 #
 # The auth burst reads 50, not the 10 this comment claimed until #209. The deployed
 # value is the one that works, so the comment was corrected rather than the config:
@@ -25,6 +26,7 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
 limit_req_zone $binary_remote_addr zone=admin:10m rate=30r/s;
 limit_req_zone $binary_remote_addr zone=upload:10m rate=2r/s;
+limit_req_zone $binary_remote_addr zone=ws:10m rate=5r/s;
 limit_req_status 429;
 
 # HTTP — ACME challenges + HTTPS redirect
@@ -136,14 +138,28 @@ server {
         proxy_set_header Host $host;
     }
 
-    # WebSocket proxy (for future real-time pipeline updates)
+    # WebSocket proxy — real-time pipeline updates
     location /ws/ {
+        # Rate limit the HANDSHAKE, not the message stream: limit_req counts requests,
+        # and an established WebSocket is one request. This bounds connect attempts,
+        # which is the brute-force surface -- /ws/ authenticates in-band via the first
+        # frame, so an unlimited handshake rate is an unlimited token-guessing rate.
+        # It was the only proxied location with no limit_req at all (#208).
+        #
+        # burst=10: a page load opens one socket, and a reconnect storm after a deploy
+        # is the legitimate worst case. Deliberately far below the api zone's 50.
+        limit_req zone=ws burst=10 nodelay;
+
         proxy_pass http://{{ frontend_api_upstream }};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        # 24h is intentional and is why the application enforces its own session
+        # deadline: without one, a socket could outlive a ~5-minute Keycloak token by
+        # a full day, so disabling a user would not disconnect them. See
+        # _MAX_WS_SESSION_S in api/app/routers/ws.py.
         proxy_read_timeout 86400;
     }
 

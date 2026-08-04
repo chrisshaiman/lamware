@@ -13,6 +13,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC
 
 import asyncpg
@@ -84,6 +85,17 @@ def _get_current_state(session: Session) -> dict:
     }
 
 
+# Absolute ceiling on a WebSocket session, applied when the token's own `exp` is
+# further out (or absent). nginx sets proxy_read_timeout 86400 on /ws/, so without a
+# deadline here a session could outlive a ~5-minute Keycloak token by up to 24 hours:
+# disabling a user in Keycloak would not disconnect them (#208).
+_MAX_WS_SESSION_S = 900.0
+
+# Seconds to close BEFORE the token actually expires, so the client is told to
+# reconnect while its token is still valid rather than racing the boundary.
+_WS_EXPIRY_MARGIN_S = 10.0
+
+
 @router.websocket("/ws/pipeline")
 async def websocket_pipeline(websocket: WebSocket):
     """
@@ -91,30 +103,57 @@ async def websocket_pipeline(websocket: WebSocket):
 
     Auth: client sends {"type": "auth", "token": "<jwt>"} as first message
     within 5 seconds.
+
+    The accept()-then-authenticate shape is forced by the protocol: browsers cannot
+    set an Authorization header on a WebSocket handshake, so the token has to arrive
+    in-band. What follows accept() is therefore the whole of the auth boundary, and
+    every rejection path below is logged — REST logged failed auth and this file did
+    not, which made credential stuffing on /ws/ invisible (#208).
     """
     await websocket.accept()
+
+    from ..auth import _log_failed_auth, _validate_jwt
 
     # --- Auth via first message (5s timeout) ---
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
         msg = json.loads(raw)
     except (TimeoutError, json.JSONDecodeError):
+        _log_failed_auth(websocket, "WS auth timeout or malformed first message")
         await websocket.close(code=4001, reason="Auth timeout or invalid message")
+        return
+    except WebSocketDisconnect:
         return
 
     if msg.get("type") != "auth" or not msg.get("token"):
+        _log_failed_auth(websocket, "WS first message was not an auth frame")
         await websocket.close(code=4001, reason="First message must be auth with JWT token")
         return
 
-    from ..auth import _validate_jwt
+    # Bind the principal. The result used to be discarded, so the connection carried
+    # no identity and nothing on the channel was attributable to a user (#208).
     try:
-        await _validate_jwt(msg["token"])
-    except Exception:
+        auth = await _validate_jwt(msg["token"])
+    except Exception as e:
+        _log_failed_auth(websocket, f"WS token rejected: {e}")
         await websocket.close(code=4001, reason="Invalid token")
         return
 
+    # Parity with the REST twin. GET /api/pipeline/status is guarded by require_auth,
+    # NOT require_role, so authentication alone is the correct bar for the same data
+    # over a different transport. Stated explicitly because the asymmetry this issue
+    # is about came from nobody writing down what the bar was.
+    principal = auth.user_id or auth.email or "unknown"
+
     # --- Authenticated — join broadcast pool ---
-    manager.track(websocket)
+    manager.track(websocket, principal=principal)
+
+    deadline = (
+        auth.exp - _WS_EXPIRY_MARGIN_S
+        if auth.exp is not None
+        else time.time() + _MAX_WS_SESSION_S
+    )
+    deadline = min(deadline, time.time() + _MAX_WS_SESSION_S)
 
     try:
         # Send current state
@@ -125,9 +164,20 @@ async def websocket_pipeline(websocket: WebSocket):
             state = {"running": [], "recent_completed": [], "as_of": ""}
         await websocket.send_json(state)
 
-        # Keep alive — wait for client disconnect
+        # Keep alive until the client disconnects OR the session deadline passes.
+        # The timeout is what enforces expiry: an idle socket never returns from
+        # receive_text(), so without it the deadline would only be checked on traffic
+        # the client controls -- which is exactly the client we are bounding.
         while True:
-            await websocket.receive_text()
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+            except TimeoutError:
+                break
+        log.info("WS session expired for %s — closing to force re-auth", principal)
+        await websocket.close(code=4003, reason="Session expired — reauthenticate")
     except WebSocketDisconnect:
         pass
     finally:
@@ -170,13 +220,27 @@ async def _pg_listener() -> None:
             await asyncio.sleep(5)
 
 
+# Strong references to in-flight broadcast tasks.
+#
+# asyncio.create_task() returns the ONLY strong reference to the task; the event loop
+# holds a weak one. Discarding it lets a broadcast be garbage collected mid-flight, so
+# notifications drop silently under load — precisely when the drop matters and least
+# when it would be noticed. `_listener_task` below already stores its handle, so the
+# pattern was understood in this file and just not applied here (#208).
+_broadcast_tasks: set[asyncio.Task] = set()
+
+
 def _on_notification(conn, pid, channel, payload):
     """Callback for PG NOTIFY — runs in asyncpg's event loop."""
     try:
         message = json.loads(payload)
-        asyncio.create_task(manager.broadcast(message))
     except json.JSONDecodeError:
         log.warning("Invalid JSON in PG NOTIFY payload: %s", payload[:200])
+        return
+
+    task = asyncio.create_task(manager.broadcast(message))
+    _broadcast_tasks.add(task)
+    task.add_done_callback(_broadcast_tasks.discard)
 
 
 _listener_task: asyncio.Task | None = None

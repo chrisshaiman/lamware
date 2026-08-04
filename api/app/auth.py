@@ -10,8 +10,9 @@ import logging
 from dataclasses import dataclass, field
 
 import jwt
-from fastapi import Depends, HTTPException, Request, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
 
 from app.config import settings
 
@@ -65,6 +66,11 @@ class AuthContext:
     name: str
     roles: list[str] = field(default_factory=list)
     auth_method: str = "jwt"
+    # Unix expiry from the token's `exp`. REST re-validates on every request so it has
+    # never needed this; a WebSocket validates ONCE and then holds the socket open, so
+    # it is the only path that must enforce expiry itself (#208). None means the token
+    # carried no exp — treated as immediately stale rather than eternal.
+    exp: int | None = None
 
 
 # --- Security scheme -------------------------------------------------------
@@ -76,7 +82,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def require_auth(
-    request: Request,
+    request: HTTPConnection,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> AuthContext:
     """
@@ -96,8 +102,16 @@ async def require_auth(
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
-def _log_failed_auth(request: Request, reason: str) -> None:
-    """Log failed authentication attempts for security monitoring."""
+def _log_failed_auth(request: HTTPConnection, reason: str) -> None:
+    """Log failed authentication attempts for security monitoring.
+
+    Typed on HTTPConnection, the Starlette base of BOTH Request and WebSocket, so the
+    WebSocket path logs through this exact function rather than a parallel copy. Every
+    attribute used below is defined on the base, so the two paths cannot drift in what
+    they record — which is the failure #208 documents: REST logged failed auth and the
+    three WebSocket rejection paths logged nothing, making credential stuffing on /ws/
+    invisible.
+    """
     client_ip = request.headers.get("x-real-ip", request.client.host if request.client else "unknown")
     user_agent = request.headers.get("user-agent", "unknown")
     log.warning(
@@ -157,6 +171,7 @@ async def _validate_jwt(token: str) -> AuthContext:
         name=payload.get("name", payload.get("preferred_username", "")),
         roles=roles,
         auth_method="jwt",
+        exp=payload.get("exp"),
     )
 
 
