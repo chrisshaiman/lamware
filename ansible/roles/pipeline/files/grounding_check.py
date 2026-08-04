@@ -150,6 +150,9 @@ def _extract_literals_detail(value: str, limit: int = _LITERAL_LIMIT) -> tuple[l
             # Skip fragments too short or too generic to be evidence.
             if len(tok) < 4 or key in seen:
                 continue
+            # Wildcard symbols name a family, not an artifact — see _PLACEHOLDER_SYMBOL.
+            if _PLACEHOLDER_SYMBOL.match(tok):
+                continue
             if len(out) >= limit:
                 return _drop_subsumed(out), True
             seen.add(key)
@@ -177,6 +180,68 @@ def _drop_subsumed(literals: list[str]) -> list[str]:
             kept.append(lit)
     # Restore the original discovery order so output stays stable and readable.
     return [lit for lit in literals if lit in kept]
+
+
+# Hex addresses are the one literal class whose spelling varies WITHIN a single
+# tool's output. Ghidra prints zero-padded addresses in string listings
+# (`0x00419070`) and bare ones in decompiled operands (`0x41970c`), so a model that
+# faithfully quotes the listing form for an address that appears in code is scored as
+# having invented it.
+#
+# Measured 2026-08-03 (qwen@15:s1337, raccoonstealer). The claim
+#   "XOR Key Pattern: hex strings in data section (0x00419070-0x0041970c) are
+#    16-byte XOR-encoded API names"
+# was flagged fabricated on the single literal `0x0041970c`, while the source held
+#   pCVar1 = FUN_0040b477(0x41970c,"23ff5473b825af32",0x18);
+#   DAT_0041c094 = GetProcAddress(pHVar2,pCVar1);
+# — the same address, feeding a decode helper into GetProcAddress. The claim was not
+# merely grounded but correct, and it was the run's only "fabrication".
+#
+# This is the same failure this module already carries a scar for: substring matching
+# once scored every DESCRIPTIVE claim as fabricated (0/20 on 2026-07-25). That was
+# fixed by extracting literals; this is the narrower form, one layer down, where the
+# literal itself is re-spelled.
+#
+# Matching by VALUE rather than by spelling. Boundary-anchored in both directions so
+# the fix cannot widen into a loophole: a shorter address must not be satisfied by a
+# longer one that merely contains it (`0x4197` is NOT grounded by `0x41970c`), which
+# plain substring matching would have allowed and still would.
+_HEX_LITERAL = re.compile(r"^0x([0-9a-f]+)$")
+
+
+def _hex_value_pattern(literal: str) -> "re.Pattern | None":
+    """A source pattern matching any zero-padding of `literal`, or None if not hex."""
+    m = _HEX_LITERAL.match(literal)
+    if not m:
+        return None
+    digits = m.group(1).lstrip("0") or "0"
+    return re.compile(rf"(?<![0-9a-z])0x0*{digits}(?![0-9a-f])")
+
+
+# Placeholder notation is a pattern, not an artifact. Models write `DAT_0041cXXX` to
+# denote a FAMILY of addresses; the X's are wildcards standing in for digits. Such a
+# token can never appear in any source, so the claim scored `fabricated` — recording
+# "the model invented this" for what is really "this claim names a pattern".
+#
+# Measured 2026-08-03: qwen@10:s42's "API Resolution Table: Multiple DAT_0041cXXX
+# function pointers" was flagged, though DAT_0041c008, DAT_0041c074 and DAT_0041c094
+# are all present in the decompilation.
+#
+# Dropping the placeholder routes such a claim to `unscoreable`, which is honest
+# labelling and — BY DESIGN — scores identically, because unscoreable stays in the
+# denominator. This changes what we say about a model, not what we score it.
+# Deliberately narrow: only Ghidra symbol prefixes with a trailing run of X's, so it
+# cannot be used to launder a real fabrication into an unscoreable one.
+_PLACEHOLDER_SYMBOL = re.compile(r"^(?:FUN|DAT|LAB|PTR|SUB|UNK)_[0-9a-fA-F]*X{2,}$")
+
+
+def _literal_in_source(literal: str, norm_source: str) -> bool:
+    """True when `literal` is attested by `norm_source`, allowing hex re-spelling."""
+    norm = normalize(literal)
+    pattern = _hex_value_pattern(norm)
+    if pattern is not None:
+        return pattern.search(norm_source) is not None
+    return norm in norm_source
 
 
 def grounding_scorecard(analysis: dict, source_text: str) -> dict:
@@ -239,7 +304,7 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
             details.append({"claim": value, "verdict": "unscoreable", "found": 0, "of": 0})
             continue
 
-        found = [t for t in literals if normalize(t) in norm_source]
+        found = [t for t in literals if _literal_in_source(t, norm_source)]
         detail = {"claim": value, "found": len(found), "of": len(literals),
                   "missing": [t for t in literals if t not in found][:5]}
         if len(found) == len(literals):
