@@ -41,10 +41,20 @@ def test_seed_lists_match_across_the_boundary():
 
 
 def test_the_template_actually_generates_an_alias_per_seed():
-    """A matching list is worthless if the template stopped looping over it."""
+    """A matching list is worthless if the template stopped looping over it.
+
+    This guards ALIAS EXISTENCE, which is the drift risk described above: an arm
+    naming a seed with no alias behind it fails at request time, hours in.
+
+    It used to also assert `seed: {{ seed }}` was set on each entry. That assertion
+    is gone because the parameter is gone, and the parameter is gone because it never
+    worked: three seeds produced byte-identical transcripts (#292), and llama-server
+    ignores `seed` on /v1/messages outright. Asserting its presence tested that a
+    dead control was still written down. test_litellm_re_transport.py now asserts the
+    opposite — that no entry claims a seed it cannot apply.
+    """
     assert "{% for seed in litellm_llamacpp_seeds %}" in LITELLM_CFG
     assert 'model_name: "local-qwen-llamacpp-re-s{{ seed }}"' in LITELLM_CFG
-    assert "seed: {{ seed }}" in LITELLM_CFG
 
 
 def test_every_local_arm_has_a_seeded_variant():

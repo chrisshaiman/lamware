@@ -23,9 +23,17 @@ litellm_ollama_api_base: "http://127.0.0.1:11434"
 litellm_fallback_backend: "claude-haiku-4-5"
 
 # llama.cpp (agentic RE) routing.
+#
+# TWO bases, because the RE aliases moved to the anthropic provider in #285 while
+# the OpenAI-shaped base is still referenced elsewhere:
+#   _api_base          OpenAI shape   — needs the /v1 suffix
+#   _anthropic_base    Anthropic      — must NOT have it; LiteLLM appends
+#                                       /v1/messages itself for anthropic providers
+# Pointing the anthropic entry at a .../v1 base yields /v1/v1/messages and a 404.
 litellm_llamacpp_api_base: "http://127.0.0.1:11435/v1"
+litellm_llamacpp_anthropic_base: "http://127.0.0.1:11435"
 
-# Seeds to expose as pinned model aliases, for multi-seed consensus scoring.
-# These values are arbitrary and exist to be REPORTED, not tuned — see the
-# comment in templates/config.yaml.j2 and issue #222.
+# Aliases to expose per seed. NB the aliases are NOT actually seeded — see the
+# block in templates/config.yaml.j2 and #292. The list is retained so that arms
+# naming a seed keep resolving; the values themselves no longer reach the sampler.
 litellm_llamacpp_seeds: [42, 1337, 8675309]
