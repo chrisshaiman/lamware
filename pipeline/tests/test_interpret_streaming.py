@@ -211,9 +211,21 @@ def test_read_timeout_is_generous_and_connect_is_not():
 
 
 def test_synthesis_paths_share_the_same_budget():
-    """Phase 2b runs on the largest transcript, so it cannot keep the old 600s."""
+    """Synthesis runs on the largest transcript of the run, so it cannot keep the old
+    600s default — a bare client here dies mid-prompt-eval for the same reason the
+    agentic client did.
+
+    The check moved from `timeout=LLM_TIMEOUT_S` to the client kwarg because #298
+    removed phase 2b and with it the separate httpx client that carried that exact
+    string. The PROPERTY is unchanged — synthesis shares the agentic budget — but it is
+    now inherited from the one Anthropic client rather than set on a second one. A
+    literal-string assertion would have gone green by matching a line in an unrelated
+    path, which is worse than failing.
+    """
     assert "timeout=600.0" not in TMPL
-    assert "timeout=LLM_TIMEOUT_S" in TMPL
+    assert '"timeout": LLM_TIMEOUT_S' in TMPL, (
+        "the Anthropic client must carry the long budget; synthesis now shares it "
+        "rather than owning a second client (#298)")
 
 
 def test_single_shot_paths_are_left_alone():

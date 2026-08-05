@@ -130,13 +130,17 @@ def test_a_broken_response_never_raises():
     assert captured and captured[0]["usage"] == {}
 
 
-def test_both_synthesis_legs_log_a_result():
-    """Guards the call sites, not just the helper.
+def test_synthesis_logs_a_result():
+    """Guards the call site, not just the helper.
 
     A logger nothing calls is the failure this issue describes, so the wiring is
     asserted separately from the function.
+
+    Only synth_2a now: #298 removed phase 2b, whose whole job was converting 2a's prose
+    into the schema without ever seeing the tool output. The OpenAI-shape branch in
+    log_request_result is kept and still tested, because the helper is the general one
+    and a future OpenAI leg must not silently record zero.
     """
     src = CONTAINER.read_text(encoding="utf-8")
-    for phase in ("synth_2a", "synth_2b"):
-        assert f'log_request_result("{phase}"' in src, (
-            f"{phase} emits a request shape but never its cost — the gap #299 is about")
+    assert 'log_request_result("synth_2a"' in src, (
+        "synthesis emits a request shape but never its cost — the gap #299 is about")

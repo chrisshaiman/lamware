@@ -751,6 +751,23 @@ CACHED_SUMMARY_SYSTEM = [{"type": "text", "text": SUMMARY_SYSTEM_PROMPT,
 # Tool definitions — 6 tools matching GhidraTool.java
 # ---------------------------------------------------------------------------
 
+# Forced-tool schema for the local RE final synthesis. Grammar-constrained by
+# llama.cpp so the tool-call arguments are always complete, valid, un-nested JSON.
+SUBMIT_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "malware_family_guess": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "attack_techniques": {"type": "array", "items": {"type": "object",
+            "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
+        "code_level_iocs": {"type": "array", "items": {"type": "string"}},
+        "risk_assessment": {"type": "string"},
+        "narrative": {"type": "string"},
+    },
+    "required": ["malware_family_guess", "capabilities", "narrative"],
+}
+
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "decompile_function",
@@ -866,6 +883,32 @@ TOOLS: list[dict[str, Any]] = [
             },
             "required": ["address"],
         },
+    },
+    # submit_analysis is in the LOOP's tool block on purpose, even though the loop
+    # never executes it (#298).
+    #
+    # Synthesis forces this tool to produce structured output. Adding it only at
+    # synthesis time would change the tools block between the loop and phase 2a — and
+    # the chat template renders tool definitions near the FRONT of the prompt, so any
+    # change there invalidates the entire KV prefix after it. That is #246 exactly:
+    # phase 2a once had a 31,023-token prompt and reused THREE tokens, 1,280s of
+    # prompt evaluation, 72% of the run's wall-clock.
+    #
+    # Declaring it from turn 1 keeps the block byte-identical across every request of
+    # the run, so the prefix survives. Verified 2026-08-05 that adding `tool_choice`
+    # itself does NOT perturb the prefix: an extended request reused 3,367 of 3,371
+    # tokens with a forced choice attached.
+    #
+    # The loop intercepts a mid-run call to it rather than dispatching to Ghidra,
+    # which has no handler for it — see the interception in the tool loop.
+    {
+        "name": "submit_analysis",
+        "description": (
+            "Submit your final structured malware analysis. Do NOT call this while "
+            "still investigating — you will be asked for it explicitly when the "
+            "investigation is complete."
+        ),
+        "input_schema": SUBMIT_ANALYSIS_SCHEMA,
     },
 ]
 
@@ -1899,97 +1942,6 @@ def build_evasion_message(evasion_data: dict[str, Any], config: dict[str, Any]) 
 # ---------------------------------------------------------------------------
 
 
-# Forced-tool schema for the local RE final synthesis. Grammar-constrained by
-# llama.cpp so the tool-call arguments are always complete, valid, un-nested JSON.
-SUBMIT_ANALYSIS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "malware_family_guess": {"type": "string"},
-        "capabilities": {"type": "array", "items": {"type": "string"}},
-        "attack_techniques": {"type": "array", "items": {"type": "object",
-            "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
-        "code_level_iocs": {"type": "array", "items": {"type": "string"}},
-        "risk_assessment": {"type": "string"},
-        "narrative": {"type": "string"},
-    },
-    "required": ["malware_family_guess", "capabilities", "narrative"],
-}
-
-
-def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
-                        model: str, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Grammar-constrained, reasoning-off final synthesis via LiteLLM /chat/completions.
-
-    Forces a submit_analysis tool call with enable_thinking:false so the whole
-    budget produces complete, valid, un-nested structured JSON (llama.cpp
-    grammar-constrains the tool arguments). Returns the analysis dict, or None
-    if the call/extraction fails so the caller falls back to the free-text parse.
-    """
-    payload = {
-        "model": model,
-        "max_tokens": 3000,
-        "messages": messages,
-        "tools": [{"type": "function", "function": {
-            "name": "submit_analysis",
-            "description": "Submit the final structured malware analysis. Call exactly once.",
-            "parameters": SUBMIT_ANALYSIS_SCHEMA,
-        }}],
-        # STRING, not the OpenAI object form. llama.cpp's server accepts only a string
-        # here and rejects the object outright, logging
-        #   Wrong type supplied for parameter 'tool_choice'. Expected 'string',
-        #   using default value: type must be string, but is object
-        # and silently falling back to "auto". Confirmed in the llama-cpp journal on
-        # 6 of 6 synthesis runs 2026-07-27..07-29: the forced choice has NEVER once
-        # been applied. Every "forced" call so far was the model complying voluntarily.
-        "tool_choice": "required",
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
-    # Hashed from the payload actually posted, not from the call arguments — this leg
-    # speaks OpenAI wire format (POST /chat/completions, tools wrapped in
-    # {"type":"function",...}, no system message), so deriving the shape from the
-    # signature would record something that was never sent.
-    #
-    # `wire` is load-bearing, not decoration. These hashes are NOT comparable to the
-    # loop's or 2a's: a different tools serialization and an absent system message
-    # change the base before any message is hashed, so 2b diverges at message 0 every
-    # time. That is by design — 2b gets only the prose conclusion, never the transcript
-    # — and a reader that diffed it against the loop would report a prefix bug that
-    # does not exist. Compare 2b only against other 2b requests (#262).
-    log_request_shape("synth_2b", model, None, payload["tools"], messages,
-                      wire="openai", tool_choice=payload.get("tool_choice"))
-    try:
-        _t2b = time.time()
-        resp = http_client.post(
-            base_url.rstrip("/") + "/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            timeout=LLM_TIMEOUT_S,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        # Logged from the parsed BODY, not the httpx response: this leg speaks OpenAI,
-        # so the counts live under completion_tokens/prompt_tokens. wire="openai" so a
-        # reader does not compare 2b's numbers against 2a's without noticing.
-        log_request_result("synth_2b", data, time.time() - _t2b, wire="openai")
-        choice = data["choices"][0]
-        tool_calls = (choice["message"] or {}).get("tool_calls") or []
-        if not tool_calls:
-            # Do NOT fail silently. This exact case — a forced tool_choice
-            # returning finish_reason=stop with prose — cost an entire benchmark
-            # pass to diagnose because nothing was logged.
-            print(f"    [synth] no tool_call returned "
-                  f"(finish_reason={choice.get('finish_reason')}); falling back",
-                  flush=True)
-            return None
-        args = json.loads(tool_calls[0]["function"]["arguments"])
-        if not isinstance(args, dict) or not args.get("malware_family_guess"):
-            print("    [synth] tool_call args unusable; falling back", flush=True)
-            return None
-        args.setdefault("narrative", "")
-        return args
-    except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError, TypeError) as e:
-        print(f"    [synth] failed: {type(e).__name__}: {str(e)[:200]}", flush=True)
-        return None
 
 
 def parse_final_response(text: str) -> dict[str, Any]:
@@ -2389,15 +2341,11 @@ def main() -> None:
         summary_kwargs["http_client"] = _uds_client(uds)
     summary_client = anthropic.Anthropic(**summary_kwargs) if router_base else client
 
-    # Local RE final synthesis uses LiteLLM's OpenAI /chat/completions endpoint
-    # (grammar-constrained forced submit_analysis tool + chat_template_kwargs
-    # enable_thinking:false) so the whole budget produces complete, un-nested
-    # structured JSON. httpx routes over the same UDS; base host is cosmetic.
-    synth_openai_base = os.environ.get("LITELLM_OPENAI_BASE_URL", "")
-    # Same generous read budget as the agentic client — phase 2b runs on the largest
-    # transcript of the run, so a bare client here fails for the same reason.
-    synth_http = (_uds_client(uds) if uds
-                  else httpx.Client(timeout=httpx.Timeout(LLM_TIMEOUT_S, connect=30.0)))
+    # The separate OpenAI /chat/completions client for phase 2b is gone (#298):
+    # synthesis now forces submit_analysis on the Anthropic route, in the same request
+    # that holds the transcript. LITELLM_OPENAI_BASE_URL is still exported by the
+    # wrapper and is now unused here — left in place rather than removed in the same
+    # change, so a rollback does not also need a redeploy of the wrapper.
 
     # ---- Wait for init or summarize message ----
     init_msg = read_message()
@@ -2797,23 +2745,27 @@ Technical summary: {executive}"""
         worse than before. (local backend => $0, so the extra call's tokens are not
         separately accounted.)
         """
-        # /no_think is a Qwen3 soft switch intended to disable reasoning for this turn.
-        # It is the only lever available on the Anthropic router path, where LiteLLM
-        # does NOT forward chat_template_kwargs. Measured 2026-07-25 it cut this call
-        # from 154s to 115s and produced a tighter conclusion with no loss of substance.
+        # `/no_think` was removed here (#297). It never worked. Measured 2026-08-05,
+        # identical prompt, direct to llama-server:
+        #     plain prompt            thinking=3111  text=  0
+        #     prompt + /no_think      thinking=2948  text=266
+        #     enable_thinking:false   thinking=   0  text=989
+        # 3111 -> 2948 is noise. The switch that works is chat_template_kwargs, and
+        # LiteLLM does NOT forward it on the Anthropic route — re-measured post-#285,
+        # 3111 chars with and without. So this call has no thinking control at all, and
+        # a prompt asking for something it does not get is worse than not asking.
         #
-        # UNRESOLVED (#260): that measurement predates the #222 sampling change, and a
-        # 2026-07-30 probe on this exact transport found the /no_think arm returning an
-        # EMPTY response (no content blocks, stop=end_turn) where the identical request
-        # without the switch produced correct prose — at the same 99.4% prefix reuse.
-        # An empty 2a skips phase 2b and drops the run to the legacy path, so this is
-        # worth settling. Deliberately NOT changed here: that probe used a synthetic
-        # transcript, and real runs (e.g. 2026-07-29) do produce substantial output.
-        # Needs a production-scale A/B before touching. Left as-is on purpose.
+        # That is acceptable: thinking costs ~2.4k of the 8,192 budget here, and since
+        # #285 it is CAPTURED rather than discarded, which is the point of #197.
+        #
+        # #260 reached the same verdict from an A/B run while LiteLLM was dropping
+        # thinking entirely — so "no observable difference" could not distinguish "the
+        # switch does nothing" from "it works and we cannot see it". This replaces that
+        # inference with the measurement.
         concl_msgs = msgs + [{"role": "user", "content": (
-            "Based on your investigation, summarize your findings and state your "
-            "conclusion in prose: malware family, capabilities, MITRE techniques, and "
-            "notable code-level IOCs. Do not output JSON. /no_think"
+            "Your investigation is complete. Call submit_analysis now with your final "
+            "structured findings. Use only what the investigation established; do not "
+            "invent values."
         )}]
         concl_text = ""
         try:
@@ -2840,25 +2792,44 @@ Technical summary: {executive}"""
             # receives, so the trail records what was actually sent rather than what
             # this comment claims. The prefix must stay byte-identical to the loop's;
             # a divergence here shows up as a hash mismatch at message 0 (#262).
+            # tool_choice FORCES submit_analysis (#298). Verified 2026-08-05 with a
+            # discriminating probe — a question no tool should answer, so voluntary
+            # compliance cannot be mistaken for forcing:
+            #     no tool_choice   stop=end_turn  tools=[]                  text='Paris'
+            #     {"type":"tool"}  stop=tool_use  tools=['submit_analysis']
+            # That control arm matters: an earlier probe using "summarize in prose"
+            # produced a tool call in ALL arms, which is precisely how the original
+            # forced-choice bug hid — every "forced" call was voluntary compliance.
+            #
+            # Forcing does NOT perturb the KV prefix: an extended request reused 3,367
+            # of 3,371 tokens with a forced choice attached (measured same day).
             log_request_shape("synth_2a", current_model, CACHED_SYSTEM, TOOLS,
-                              concl_msgs)
+                              concl_msgs,
+                              tool_choice="tool:submit_analysis")
             _t2a = time.time()
             concl = create_message(
                 client,
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
-                system=CACHED_SYSTEM, tools=TOOLS, messages=concl_msgs)
+                system=CACHED_SYSTEM, tools=TOOLS, messages=concl_msgs,
+                tool_choice={"type": "tool", "name": "submit_analysis"})
             log_request_result("synth_2a", concl, time.time() - _t2a)
+
+            # The forced tool call IS the analysis. It is built with the full
+            # transcript in context, so IOCs come straight from the tool output rather
+            # than having to survive a round-trip through prose — the bottleneck that
+            # made phase 2b unable to see any evidence at all (#298).
+            for b in concl.content:
+                if b.type == "tool_use" and b.name == "submit_analysis":
+                    args = b.input if isinstance(b.input, dict) else {}
+                    if args.get("malware_family_guess"):
+                        return args
+                    print("    [synth] submit_analysis returned no family; falling back",
+                          flush=True)
+
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
-            # Offering tools makes a tool_use reply newly POSSIBLE here, where before it
-            # was not. It did not happen in any probe — with an explicit "summarize in
-            # prose" instruction the model answered in prose every time, while the same
-            # tools block on a loop-shaped prompt did produce tool_use — but an
-            # unlogged tool_use would empty concl_text, skip phase 2b and silently drop
-            # the run to the legacy path. Name it if it ever occurs.
-            if not concl_text.strip() and any(b.type == "tool_use" for b in concl.content):
-                print("    [synth] phase 2a answered with a tool call instead of prose "
-                      f"({', '.join(b.name for b in concl.content if b.type == 'tool_use')}); "
-                      "falling back", flush=True)
+            print("    [synth] forced submit_analysis produced no usable tool call "
+                  f"(stop_reason={getattr(concl, 'stop_reason', None)}); "
+                  "falling back to prose parse", flush=True)
             if not concl_text.strip():
                 # Non-empty response but no visible text: everything came back as
                 # reasoning. Phase 2b is skipped when this is empty, so say so.
@@ -2873,38 +2844,21 @@ Technical summary: {executive}"""
             # like "the model won't commit to a family" for two benchmark passes.
             print(f"    [synth] phase 2a failed: {type(e).__name__}: {str(e)[:200]}",
                   flush=True)
-        # Phase 2b gets ONLY the prose conclusion — never the investigation history.
+        # Phase 2b is gone (#298). It converted 2a's PROSE into the schema and never
+        # saw the tool output, so every IOC had to survive a round-trip through English
+        # before anything structured looked at it — a bottleneck sitting directly
+        # upstream of grounded_ratio, the metric the eval harness is built on.
         #
-        # The 2026-07-25 observation behind this was real: a forced submit_analysis
-        # returned valid JSON at short context but finish_reason=stop with prose once
-        # the context reached ~25k chars, so passing concl_msgs (the whole transcript
-        # plus every decompiled function) made local RE fall through to the prose parse
-        # and emit family=unknown with no capabilities or IOCs.
+        # It existed because a forced submit_analysis returned prose at ~25k context
+        # while complying at 1.6k. That observation was real; the mechanism recorded for
+        # it was not. tool_choice was never "ignored at scale" — it was never applied AT
+        # ALL, at any context, because it was sent in the OpenAI object form llama.cpp
+        # rejects. The model was choosing freely both times. With a choice that actually
+        # applies (verified above, with a control arm), the split has no remaining
+        # justification and costs an information channel.
         #
-        # The MECHANISM recorded here was wrong, and the correction matters because it
-        # changes what to do about it. tool_choice was never "ignored at RE-scale
-        # context" — it was never applied AT ALL, at any context, because it was sent in
-        # the OpenAI object form that llama.cpp rejects outright (see synthesize_analysis).
-        # The model was choosing freely every time: it happened to comply at 1.6k and
-        # happened to prefer prose at 25k. Same symptom, different cause.
-        #
-        # Keeping the small prompt is still right — a short, single-purpose request is
-        # the reliable one whether or not the choice is enforced — and it is now
-        # belt-and-braces with a tool_choice that actually applies.
-        #
-        # The conclusion already contains everything the schema needs — that is
-        # what phase 2a exists to produce — so serializing it alone is both the
-        # documented intent and small enough for the constraint to hold.
-        if synth_openai_base and concl_text.strip():
-            serialize_msgs = [{"role": "user", "content": (
-                "Convert the following malware analysis into a submit_analysis "
-                "tool call. Use only what the analysis states; do not invent "
-                "values.\n\n" + concl_text
-            )}]
-            got = synthesize_analysis(synth_http, synth_openai_base, api_key,
-                                      current_model, serialize_msgs)
-            if got is not None:
-                return got
+        # The prose fallback below stays: if the forced call yields nothing usable, a
+        # parse of whatever text came back is still better than the legacy path.
         if concl_text.strip():
             return parse_final_response(concl_text)
         try:
@@ -3050,6 +3004,33 @@ Technical summary: {executive}"""
                                 f"Only {max_tool_calls_per_turn} tool calls run per turn. "
                                 f"This call was NOT executed and nothing was lost — "
                                 f"request it again in your next message and it will run."
+                            ),
+                        }),
+                    })
+                    continue
+
+                # ---- submit_analysis is declared but not dispatchable (#298) ----
+                # It is in TOOLS so the tools block stays byte-identical between the
+                # loop and synthesis — see the comment on the definition. Ghidra has no
+                # handler for it, so forwarding it to the orchestrator would surface as
+                # an unknown-tool error and burn a call.
+                #
+                # NOT counted against tool_calls_used, for the same reason a deferral is
+                # not: nothing was executed. Charging for it would silently shrink the
+                # run's real depth, which is the trap #234 documents.
+                if block.name == "submit_analysis":
+                    emit_status("Model offered submit_analysis mid-loop — deferred to "
+                                "synthesis", tool_calls_used)
+                    tool_results_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps({
+                            "deferred": True,
+                            "reason": (
+                                "Not yet. Continue investigating with the analysis "
+                                "tools. You will be asked for submit_analysis "
+                                "explicitly when the investigation is complete, and "
+                                "nothing you provide now would be kept."
                             ),
                         }),
                     })
