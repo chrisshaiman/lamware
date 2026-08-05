@@ -206,16 +206,49 @@ def _drop_subsumed(literals: list[str]) -> list[str]:
 # the fix cannot widen into a loophole: a shorter address must not be satisfied by a
 # longer one that merely contains it (`0x4197` is NOT grounded by `0x41970c`), which
 # plain substring matching would have allowed and still would.
+#
+# THE PREFIX IS NOT PART OF THE VALUE EITHER. The first version of this required a
+# literal `0x` in the SOURCE, which fixed the padding case and missed the commoner
+# one — Ghidra names an address as a SYMBOL far more often than it prints it as a
+# number:
+#
+#   claim:  "Encrypted Payload at 0x140054300"
+#   source: DAT_140054300
+#
+# Measured 2026-08-04 on the qwen@15 six-sample sweep: NINE of amadey's eleven
+# "fabrications" were this, dropping that cell to 2/13 = 0.154 when the true score is
+# 11/13 = 0.846, and the sweep mean from 0.655 to 0.516. Every address was in the
+# source, several of them four times over.
+#
+# So the address is matched with an OPTIONAL `0x` and any non-hex-word boundary
+# before it, which covers `0x140054300`, `140054300`, `DAT_140054300` and
+# `FUN_140054300` alike. Generalising here rather than adding a third special case:
+# the property wanted is "this hex value appears in the source", and the surrounding
+# syntax is Ghidra's choice, not the model's claim.
+#
+# A prefix-less match needs >= _MIN_BARE_HEX_DIGITS digits. Without a `0x` to anchor
+# on, a short value like `0x40` would collide with any decimal 40 in the tool output
+# (a length, a count, an offset) and ground a claim on a coincidence. Real addresses
+# in this corpus are 6-12 digits, so the floor costs nothing and closes that hole.
 _HEX_LITERAL = re.compile(r"^0x([0-9a-f]+)$")
+_MIN_BARE_HEX_DIGITS = 4
 
 
 def _hex_value_pattern(literal: str) -> "re.Pattern | None":
-    """A source pattern matching any zero-padding of `literal`, or None if not hex."""
+    """A source pattern matching `literal`'s VALUE however it is spelled, or None.
+
+    Tolerates zero-padding and an absent `0x`, so a claim citing an address matches
+    whether the source wrote it as a number or embedded it in a Ghidra symbol.
+    """
     m = _HEX_LITERAL.match(literal)
     if not m:
         return None
     digits = m.group(1).lstrip("0") or "0"
-    return re.compile(rf"(?<![0-9a-z])0x0*{digits}(?![0-9a-f])")
+    # `(?<![0-9a-z])` also rejects a match inside a longer hex run, and permits the
+    # `_` of DAT_/FUN_ (underscore is outside the class). `(?![0-9a-f])` stops a
+    # short value being satisfied by a longer one that merely starts with it.
+    prefix = "0x0*" if len(digits) < _MIN_BARE_HEX_DIGITS else "(?:0x)?0*"
+    return re.compile(rf"(?<![0-9a-z]){prefix}{digits}(?![0-9a-f])")
 
 
 # Placeholder notation is a pattern, not an artifact. Models write `DAT_0041cXXX` to
