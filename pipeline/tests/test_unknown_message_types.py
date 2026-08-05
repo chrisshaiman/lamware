@@ -39,7 +39,8 @@ def _dispatch(messages: list[dict], trail: TurnTrail) -> list[str]:
     the tail of that chain, and the handled-type list is asserted against the source
     separately below so the two cannot drift apart silently.
     """
-    handled = {"final", "tool_call", "status", "turn", "request", "stream"}
+    handled = {"final", "tool_call", "status", "turn", "request", "request_result",
+               "stream"}
     seen: set[str] = set()
     warnings: list[str] = []
     for msg in messages:
@@ -98,7 +99,8 @@ def test_distinct_unknown_types_each_get_their_own_line(trail):
 def test_known_types_stay_silent(trail):
     """The warning must not fire on the normal protocol, or it is noise from day one."""
     known = [{"type": t} for t in
-             ("final", "tool_call", "status", "turn", "request", "stream")]
+             ("final", "tool_call", "status", "turn", "request", "request_result",
+              "stream")]
     assert _dispatch(known, trail) == []
     assert _rows(trail) == []
 
@@ -114,7 +116,8 @@ def test_the_handled_set_matches_the_dispatch_chain():
            / "stages" / "interpret.py").read_text(encoding="utf-8")
     loop = src.split("msg_type = msg.get(\"type\")", 1)[1].split("\n    except ", 1)[0]
     in_source = set(re.findall(r'msg_type == "([a-z_]+)"', loop))
-    assert in_source == {"final", "tool_call", "status", "turn", "request", "stream"}, (
+    assert in_source == {"final", "tool_call", "status", "turn", "request",
+                         "request_result", "stream"}, (
         f"dispatch chain changed to {sorted(in_source)} — update _dispatch() in this "
         f"file to match, or these tests silently cover the wrong branches")
 

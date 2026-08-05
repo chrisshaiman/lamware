@@ -407,6 +407,27 @@ class TurnTrail:
                    prefix_hashes=msg.get("prefix_hashes") or [],
                    prefix_chars=msg.get("prefix_chars") or [])
 
+    def request_result(self, msg: dict) -> None:
+        """Record what a request COST, paired with the `request` shape event (#299).
+
+        Loop turns already carry usage on their `turn` event. Synthesis has no turn
+        event, so 2a and 2b were the only legs of a run whose cost was recorded
+        nowhere — answering "does synthesis have budget headroom?" meant hand-reading
+        `eval time = ... / N tokens` out of journalctl, from a trail that exists so
+        that is unnecessary.
+
+        `wire` is carried through because 2a and 2b do not share one: 2a is Anthropic,
+        2b posts OpenAI to /chat/completions. Their token counts come from differently
+        named fields and their prefixes are not comparable (#262), so a reader must be
+        able to tell them apart without inferring it from the phase name.
+        """
+        self.event("request_result",
+                   request_phase=msg.get("request_phase"),
+                   wire=msg.get("wire", "anthropic"),
+                   usage=msg.get("usage") or {},
+                   elapsed_s=msg.get("elapsed_s"),
+                   stop_reason=msg.get("stop_reason"))
+
     def stream_progress(self, msg: dict) -> None:
         """Heartbeat while a request is outstanding.
 
@@ -693,6 +714,10 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 # What we are about to SEND. Every other event here describes what came
                 # back (#262).
                 trail.request(msg)
+
+            elif msg_type == "request_result":
+                # What that request COST, paired with the shape event above (#299).
+                trail.request_result(msg)
 
             elif msg_type == "stream":
                 trail.stream_progress(msg)

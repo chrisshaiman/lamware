@@ -1019,6 +1019,43 @@ def log_request_shape(phase: str, model: str, system: Any, tools: Any,
               file=sys.stderr, flush=True)
 
 
+def log_request_result(phase: str, response: Any, elapsed_s: float,
+                       wire: str = "anthropic") -> None:
+    """Emit what a request COST, paired with the shape event that preceded it (#299).
+
+    `request` records only what went OUT — message count, prefix hashes, tools, wire
+    format. For loop turns that is enough, because the paired `turn` event carries
+    usage. Synthesis has no turn event, so 2a and 2b were the only legs of a run whose
+    cost appeared nowhere: answering "does synthesis have budget headroom" meant
+    reading `eval time = ... / N tokens` out of journalctl by hand, from a trail built
+    to make exactly that unnecessary.
+
+    Handles both wire formats because 2a and 2b do not share one. 2a gets an Anthropic
+    SDK object (`usage.output_tokens`); 2b posts raw httpx to /chat/completions and
+    gets a dict (`usage.completion_tokens`). Reading only the first would have left 2b
+    silently at zero — the failure mode this issue is about, reproduced one layer down.
+    """
+    try:
+        usage: dict[str, Any] = {}
+        u = getattr(response, "usage", None)
+        if u is not None and not isinstance(u, dict):          # Anthropic SDK object
+            usage = {"input_tokens": getattr(u, "input_tokens", 0),
+                     "output_tokens": getattr(u, "output_tokens", 0)}
+        elif isinstance(response, dict):                        # OpenAI JSON body
+            raw = response.get("usage") or {}
+            usage = {"input_tokens": raw.get("prompt_tokens", 0),
+                     "output_tokens": raw.get("completion_tokens", 0)}
+        elif isinstance(u, dict):
+            usage = {"input_tokens": u.get("input_tokens", u.get("prompt_tokens", 0)),
+                     "output_tokens": u.get("output_tokens", u.get("completion_tokens", 0))}
+        emit({"type": "request_result", "request_phase": phase, "wire": wire,
+              "usage": usage, "elapsed_s": round(elapsed_s, 1),
+              "stop_reason": getattr(response, "stop_reason", None)})
+    except Exception as e:  # noqa: BLE001 - instrumentation must never be fatal
+        print(f"    [!] request-result logging failed ({type(e).__name__}: {e})",
+              file=sys.stderr, flush=True)
+
+
 # One budget for every leg of an LLM call. CPU-local inference is slow enough that the
 # defaults of BOTH libraries are too small, and they fail in different places.
 #
@@ -1921,6 +1958,7 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
     log_request_shape("synth_2b", model, None, payload["tools"], messages,
                       wire="openai", tool_choice=payload.get("tool_choice"))
     try:
+        _t2b = time.time()
         resp = http_client.post(
             base_url.rstrip("/") + "/chat/completions",
             json=payload,
@@ -1929,6 +1967,10 @@ def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
         )
         resp.raise_for_status()
         data = resp.json()
+        # Logged from the parsed BODY, not the httpx response: this leg speaks OpenAI,
+        # so the counts live under completion_tokens/prompt_tokens. wire="openai" so a
+        # reader does not compare 2b's numbers against 2a's without noticing.
+        log_request_result("synth_2b", data, time.time() - _t2b, wire="openai")
         choice = data["choices"][0]
         tool_calls = (choice["message"] or {}).get("tool_calls") or []
         if not tool_calls:
@@ -2800,10 +2842,12 @@ Technical summary: {executive}"""
             # a divergence here shows up as a hash mismatch at message 0 (#262).
             log_request_shape("synth_2a", current_model, CACHED_SYSTEM, TOOLS,
                               concl_msgs)
+            _t2a = time.time()
             concl = create_message(
                 client,
                 model=current_model, max_tokens=max(max_output_tokens, 8192),
                 system=CACHED_SYSTEM, tools=TOOLS, messages=concl_msgs)
+            log_request_result("synth_2a", concl, time.time() - _t2a)
             concl_text = "".join(b.text for b in concl.content if b.type == "text")
             # Offering tools makes a tool_use reply newly POSSIBLE here, where before it
             # was not. It did not happen in any probe — with an explicit "summarize in
