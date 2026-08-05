@@ -135,3 +135,77 @@ def test_a_placeholder_cannot_launder_a_real_fabrication():
     """A claim citing a wildcard AND an invented domain is still flagged."""
     r = _score("Table DAT_0041cXXX exfils to evil-c2.example.com", REAL_SOURCE)
     assert r["fabricated"], "the invented domain must still flag the claim"
+
+
+# --- the address may be a SYMBOL, not a number (#286, second pass) ----------
+#
+# The first fix required a literal `0x` in the source. Ghidra names an address as a
+# symbol far more often than it prints it as a number, so that missed the commoner
+# case entirely — and it was the dominant error in the six-sample sweep.
+
+AMADEY_SOURCE = (
+    '"decompilation": "  uVar3 = DAT_140014c40 ^ 0x9e3779b9;\\n'
+    "  puVar1 = (undefined8 *)DAT_140054300;\\n"
+    '  DAT_1400546f0 = FUN_140054480(puVar1);"\n'
+)
+
+
+@pytest.mark.parametrize("claim_hex,source_form", [
+    ("0x140014c40", "DAT_140014c40"),     # the measured amadey case
+    ("0x140054300", "DAT_140054300"),
+    ("0x140054480", "FUN_140054480"),     # function symbols too
+    ("0x41970c", "LAB_41970c"),
+    ("0x140054300", "140054300"),         # bare, no prefix at all
+    ("0x0140054300", "DAT_140054300"),    # padded claim vs symbol
+])
+def test_an_address_inside_a_ghidra_symbol_is_grounded(claim_hex, source_form):
+    r = _score(f"Encrypted Payload at {claim_hex}", f"  x = {source_form};")
+    assert r["grounded"] == 1, (
+        f"{claim_hex} should be grounded by {source_form} — the surrounding syntax "
+        f"is Ghidra's choice, not part of the model's claim")
+
+
+def test_the_measured_amadey_regression():
+    """Nine of amadey's eleven 'fabrications' were this, on the 2026-08-04 sweep.
+
+    Reported 2/13 = 0.154; the true score is 11/13 = 0.846. Every address was in the
+    source, several of them four times over.
+    """
+    claims = [f"Encrypted Payload at {h}" for h in
+              ("0x140014c40", "0x140054300", "0x1400546f0", "0x140054480")]
+    r = grounding_scorecard({"code_level_iocs": claims}, AMADEY_SOURCE)
+    assert r["fabricated"] == [], (
+        f"addresses present as DAT_/FUN_ symbols are grounded, not invented: "
+        f"{r['fabricated']}")
+    assert r["grounded_ratio"] == 1.0
+
+
+# --- guards on the WIDER match ---------------------------------------------
+
+
+@pytest.mark.parametrize("claim_hex,source_form", [
+    ("0x4197", "DAT_41970c"),        # short must not match a longer symbol
+    ("0x140054", "DAT_140054300"),
+    ("0x54300", "DAT_140054300"),    # nor a SUFFIX of a longer address
+    ("0xdead", "DAT_deadbeef"),
+])
+def test_a_longer_symbol_does_not_ground_a_shorter_address(claim_hex, source_form):
+    """Dropping the `0x` requirement widens the match; it must not widen into a
+    free pass. Same direction as the padding guards above."""
+    r = _score(f"Key at {claim_hex}", f"  x = {source_form};")
+    assert r["fabricated"], f"{claim_hex} must not be grounded by {source_form}"
+
+
+def test_a_short_value_still_requires_the_0x_prefix():
+    """Without `0x` to anchor on, a 2-digit value collides with any decimal in the
+    tool output — a length, a count, an offset — and would ground a claim on a
+    coincidence. Short values keep the strict rule."""
+    r = _score("Flag 0x40 controls the branch", '{"length": 40, "count": 12}')
+    assert r["fabricated"], (
+        "a 2-digit hex value must not be grounded by a bare decimal 40; that is a "
+        "collision, not evidence")
+
+
+def test_a_long_invented_address_is_still_fabricated():
+    r = _score("Payload at 0x140099999", AMADEY_SOURCE)
+    assert r["fabricated"], "an address absent in every spelling stays fabricated"
