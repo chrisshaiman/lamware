@@ -143,6 +143,9 @@ def _extract_literals_detail(value: str, limit: int = _LITERAL_LIMIT) -> tuple[l
     seen: set[str] = set()
     # Refang FIRST, keeping case: `evil[.]com` matches no pattern, `evil.com` does.
     value = refang(value)
+    # Taxonomy labels are dropped before extraction, not after, so they cannot reach
+    # `seen` and mask a later identical token that IS evidence.
+    type_labels = {m.lower() for m in _TYPE_LABEL.findall(value)}
     for pat in _LITERAL_PATTERNS:
         for m in pat.findall(value):
             tok = m.strip()
@@ -152,6 +155,9 @@ def _extract_literals_detail(value: str, limit: int = _LITERAL_LIMIT) -> tuple[l
                 continue
             # Wildcard symbols name a family, not an artifact — see _PLACEHOLDER_SYMBOL.
             if _PLACEHOLDER_SYMBOL.match(tok):
+                continue
+            # A `type:` value is the model's category for the evidence, not evidence.
+            if key in type_labels:
                 continue
             if len(out) >= limit:
                 return _drop_subsumed(out), True
@@ -266,6 +272,29 @@ def _hex_value_pattern(literal: str) -> "re.Pattern | None":
 # Deliberately narrow: only Ghidra symbol prefixes with a trailing run of X's, so it
 # cannot be used to launder a real fabrication into an unscoreable one.
 _PLACEHOLDER_SYMBOL = re.compile(r"^(?:FUN|DAT|LAB|PTR|SUB|UNK)_[0-9a-fA-F]*X{2,}$")
+
+# A `type:` field names the KIND of evidence. It is not evidence.
+#
+# When the model fills the schema directly it often writes structured claims:
+#
+#     type: magic_value, value: 0x2b992ddfa232, context: Anti-sandbox check in FUN_...
+#
+# `magic_value` contains an underscore, so the identifier rule above — written for
+# mutex and event names like `MilcoSoft_#Rip_X` — captures it as an artifact. It then
+# cannot be found in any decompilation, because it is the model's own taxonomy
+# vocabulary, and the whole claim is scored as a fabrication.
+#
+# Measured 2026-08-05 on qwen@15 / warmcookie after #298 moved synthesis to a single
+# forced tool call: THREE of four claims flagged, dropping the cell to 1/4 = 0.250 when
+# every hex value and function name in them was present. Corrected score 4/4 = 1.000.
+# The format change came from #298, so this would have contaminated every before/after
+# comparison of that change — a scoring artifact masquerading as a regression.
+#
+# Narrow by construction: only the value of an explicit `type:`/`kind:`/`category:`
+# key is dropped, and only that token. Everything else in the claim — the hex value,
+# the function name, the context prose — is extracted and checked exactly as before.
+_TYPE_LABEL = re.compile(r"\b(?:type|kind|category)\s*:\s*([A-Za-z][A-Za-z0-9_#]*)",
+                         re.IGNORECASE)
 
 
 def _literal_in_source(literal: str, norm_source: str) -> bool:
