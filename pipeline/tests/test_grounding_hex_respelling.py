@@ -209,3 +209,84 @@ def test_a_short_value_still_requires_the_0x_prefix():
 def test_a_long_invented_address_is_still_fabricated():
     r = _score("Payload at 0x140099999", AMADEY_SOURCE)
     assert r["fabricated"], "an address absent in every spelling stays fabricated"
+
+
+# --- a `type:` value is a category, not evidence (#286, third pass) ---------
+#
+# When the model fills the schema directly (#298) it writes structured claims. The
+# `type:` value contains an underscore, so the identifier rule — written for mutex
+# names like MilcoSoft_#Rip_X — captures it as an artifact that can never be found.
+
+WARMCOOKIE_SOURCE = (
+    '"decompilation": "  uVar2 = FUN_69906c80();\\n'
+    "  if (uVar2 == 0x2b992ddfa232) { RtlAddFunctionTable(...); }\\n"
+    '  lVar3 = 0xffffd466d2205dcc;"\n'
+)
+
+
+def test_the_measured_warmcookie_regression():
+    """Three of four claims flagged on qwen@15/warmcookie, 2026-08-05.
+
+    Dropped the cell to 1/4 = 0.250 when every hex value and function name in those
+    claims was present. The format change came from #298, so this artifact would have
+    contaminated every before/after comparison of that change.
+    """
+    claims = [
+        "type: magic_value, value: 0x2b992ddfa232, context: Anti-sandbox constant "
+        "compared in FUN_69906c80",
+        "type: magic_value, value: 0xffffd466d2205dcc, context: Secondary value in "
+        "FUN_69906c80",
+        "type: function, value: RtlAddFunctionTable, context: Used in setup",
+    ]
+    r = grounding_scorecard({"code_level_iocs": claims}, WARMCOOKIE_SOURCE)
+    assert r["fabricated"] == [], (
+        f"`magic_value` is the model's own taxonomy, not an artifact: {r['fabricated']}")
+    assert r["grounded_ratio"] == 1.0
+
+
+@pytest.mark.parametrize("label_key", ["type", "kind", "category", "TYPE", "Type"])
+def test_the_label_key_is_recognised_case_insensitively(label_key):
+    r = _score(f"{label_key}: anti_debug, value: FUN_69906c80", WARMCOOKIE_SOURCE)
+    assert r["grounded"] == 1, f"{label_key}: value should not be treated as evidence"
+
+
+# --- guards: the drop must stay narrow --------------------------------------
+
+
+def test_only_the_type_value_is_dropped_not_the_rest_of_the_claim():
+    """The hex value and function name in the SAME claim are still checked."""
+    r = _score("type: magic_value, value: 0xdeadbeefcafe, context: in FUN_69906c80",
+               WARMCOOKIE_SOURCE)
+    assert r["fabricated"], (
+        "an invented hex value must still flag the claim; only the taxonomy word is "
+        "exempt")
+
+
+def test_an_underscore_identifier_outside_a_type_field_is_still_evidence():
+    """`MilcoSoft_#Rip_X` is exactly what the identifier rule exists for.
+
+    Dropping every underscore token would disarm mutex/event-name grounding entirely.
+    """
+    r = _score('Registry Mutex: "MilcoSoft_#Rip_X"', 'mutex "MilcoSoft_#Rip_X" opened')
+    assert r["grounded"] == 1
+    r2 = _score('Registry Mutex: "Invented_#Name_Y"', 'mutex "MilcoSoft_#Rip_X" opened')
+    assert r2["fabricated"], "an invented mutex name must still be flagged"
+
+
+def test_a_token_that_is_both_type_label_and_evidence_cannot_launder_a_claim():
+    """The drop is claim-wide, so a token used as BOTH the type label and the value is
+    removed everywhere in that claim. The claim then yields no literals and lands in
+    `unscoreable`.
+
+    That is the safe direction, and it is why the claim-wide drop is acceptable rather
+    than needing positional parsing: `unscoreable` counts in the DENOMINATOR as
+    ungrounded (see grounding_scorecard's docstring), so a model cannot hide a
+    fabricated artifact by also declaring it as the type. It scores 0 either way.
+    """
+    r = _score("type: magic_value, value: magic_value, context: literal name",
+               'the symbol magic_value appears here')
+    assert r["grounded"] == 0
+    assert len(r["unscoreable"]) == 1
+    assert r["grounded_ratio"] == 0.0, (
+        "an unscoreable claim must not score as grounded — that would make the "
+        "type-label drop a laundering route")
