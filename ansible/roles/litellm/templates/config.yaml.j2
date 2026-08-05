@@ -58,35 +58,67 @@ model_list:
   # reliable (PR #180). Thinking is on by DEFAULT here (llama-server --jinja);
   # it is disabled per-request via chat_template_kwargs.enable_thinking, NOT by a
   # `think` param, so none is set.
-  # NOTE: an OpenAI-provider entry — llama.cpp ignores the api_key.
+  #
+  # ANTHROPIC-provider entry, not OpenAI (#285). llama-server implements
+  # /v1/messages natively and fills thinking blocks on it, so routing through the
+  # OpenAI shape asked LiteLLM to translate a format the backend already speaks —
+  # and that translation is lossy in exactly the way that matters.
+  #
+  # Measured 2026-08-04 against llama-server on 11435, no LiteLLM in the path:
+  #   thinking   568 chars returned alongside a tool_use block in one response
+  #   tool calls stop_reason=tool_use, correct name and arguments
+  #   KV cache   call 2 of an identical prefix: input=4, cache_read=1220 (99.7%)
+  # while the SAME request through LiteLLM's OpenAI leg returned content: [] with
+  # usage.output_tokens: 80 — 80 tokens generated, none delivered. That empty array
+  # is #283's "trail records ZERO model output on tool-calling turns".
+  #
+  # api_base has NO /v1 suffix: LiteLLM appends /v1/messages itself for anthropic
+  # providers. LITELLM_ANTHROPIC_DISABLE_URL_SUFFIX exists if that ever changes.
+  # llama.cpp ignores api_key.
   - model_name: "local-qwen-llamacpp-re"
     litellm_params:
-      model: "openai/qwen3.6"
-      api_base: "{{ litellm_llamacpp_api_base | default('http://127.0.0.1:11435/v1') }}"
+      model: "anthropic/qwen3.6"
+      api_base: "{{ litellm_llamacpp_anthropic_base | default('http://127.0.0.1:11435') }}"
       api_key: "sk-none"
 {% for seed in litellm_llamacpp_seeds %}
 {% if loop.first %}
-  # Seed-pinned variants of the RE model, one alias per seed. The interpret client
-  # speaks the Anthropic Messages shape, which has no `seed` field — so the seed
-  # cannot be a per-request argument and has to be bound to a model alias here.
+  # ---------------------------------------------------------------------------
+  # THESE ALIASES ARE NOT SEEDED. The name says -s42; the sampling is not pinned.
+  # ---------------------------------------------------------------------------
   #
-  # These exist for MULTI-SEED CONSENSUS: run the same sample across several seeds
-  # and keep the claims that appear in >= k of them. Independent sampling agreeing
-  # is evidence a claim is real; a claim appearing once is more likely confabulation.
-  # Affordable only because local inference is $0 (see issue #222).
+  # They were built for MULTI-SEED CONSENSUS — run a sample at N seeds, keep claims
+  # appearing in >= k of them — on the reasoning that independent samples agreeing
+  # is evidence a claim is real (#222). They have never delivered that.
   #
-  # Everything ELSE about sampling (temperature, top_p, top_k, min_p) is set
-  # server-side by the llama-cpp role, NOT here: top_k and min_p are not OpenAI
-  # parameters and `drop_params: true` above would silently discard them.
+  # Measured 2026-08-03/04 (#292):
+  #   Three runs, one per seed, consecutive, same sample, same code:
+  #     qwen_10_s42.variance   28330 bytes  sha256=a0dd30d0a5749724...
+  #     qwen_10_s1337          28330 bytes  sha256=a0dd30d0a5749724...
+  #     qwen_10_s8675309       28330 bytes  sha256=a0dd30d0a5749724...
+  #   And at depth 15, qwen_15_s42 vs qwen_15_s1337: 71331 bytes, identical SHA,
+  #   zero bytes differing across the whole tool loop.
   #
-  # Do NOT pick the best-scoring seed. Selection on noise invalidates the result.
+  # llama.cpp is not at fault — direct to /v1/chat/completions with an explicit
+  # seed, the same seed reproduces byte-for-byte and a different seed diverges. The
+  # seed simply never arrives. On /v1/messages, llama-server ignores the field
+  # outright (measured: seeds 42 and 1337 produced identical output).
+  #
+  # So the entries below carry no `seed:`, because setting one would be a lie that
+  # `drop_params: true` would swallow silently — the same failure mode this file
+  # already warns about for top_k/min_p. They stay REGISTERED, identical to the
+  # base alias, only so that an arm naming a seed keeps resolving instead of
+  # failing with model-not-found hours into a run.
+  #
+  # Consequence for anyone reading a scorecard: --consensus-k does not filter
+  # confabulation. Identical loops agree on everything, so k=2 confirms every claim
+  # for free — precisely what __main__.py rejects k=1 for. Treat consensus output
+  # as meaningless until #292 is fixed.
 {% endif %}
   - model_name: "local-qwen-llamacpp-re-s{{ seed }}"
     litellm_params:
-      model: "openai/qwen3.6"
-      api_base: "{{ litellm_llamacpp_api_base | default('http://127.0.0.1:11435/v1') }}"
+      model: "anthropic/qwen3.6"
+      api_base: "{{ litellm_llamacpp_anthropic_base | default('http://127.0.0.1:11435') }}"
       api_key: "sk-none"
-      seed: {{ seed }}
 {% endfor %}
   - model_name: "haiku-fallback"
     litellm_params:

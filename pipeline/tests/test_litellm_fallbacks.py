@@ -58,8 +58,39 @@ def test_re_model_is_still_registered_as_a_model():
 
 
 def test_no_cloud_provider_sneaks_into_the_re_entry():
-    """The RE entry must point at the local llama.cpp server, not an anthropic/ model."""
+    """The RE entry must reach the LOCAL llama.cpp server — never a cloud endpoint.
+
+    Malware decompilation goes over this route. Sending it to a third-party API is
+    the single worst regression this config could suffer, so the guard is deliberately
+    strict about the DESTINATION.
+
+    It used to assert `"anthropic/" not in block`, which conflated two independent
+    things: the provider prefix (the wire FORMAT LiteLLM speaks) and where the
+    request actually goes. #285 moved the entry to `anthropic/qwen3.6` against
+    `api_base: http://127.0.0.1:11435` — the Anthropic message shape, spoken to
+    llama-server on loopback, because llama-server implements /v1/messages natively
+    and the OpenAI translation was discarding the model's reasoning.
+
+    So the check now pins the destination directly, which is both the real property
+    and a stricter one: a prefix test would have passed `openai/gpt-4` with a cloud
+    api_base.
+    """
     block = CFG.split('model_name: "local-qwen-llamacpp-re"')[1].split("model_name:")[0]
-    assert "openai/qwen3.6" in block
-    assert "anthropic/" not in block, "RE entry must not resolve to a cloud provider"
-    assert "127.0.0.1" in block or "litellm_llamacpp_api_base" in block
+
+    assert "qwen3.6" in block, "the RE entry must serve the local qwen model"
+
+    api_base = re.search(r'api_base: "([^"]+)"', block)
+    assert api_base, "the RE entry must pin an explicit api_base, never a provider default"
+    target = api_base.group(1)
+    assert ("127.0.0.1" in target or "localhost" in target
+            or "llamacpp" in target), (
+        f"RE api_base is {target!r} — it must resolve to the local llama.cpp server. "
+        f"Malware decompilation travels this route.")
+
+    # A cloud credential in this entry means the request can leave the host.
+    assert "ANTHROPIC_API_KEY" not in block and "OPENAI_API_KEY" not in block, (
+        "the RE entry must not reference a cloud API key; llama.cpp ignores api_key "
+        "entirely, so a real one here can only mean the traffic is leaving")
+    for cloud_model in ("claude-", "gpt-4", "gpt-5"):
+        assert cloud_model not in block, (
+            f"RE entry names {cloud_model!r} — that is a cloud model, not local qwen")
