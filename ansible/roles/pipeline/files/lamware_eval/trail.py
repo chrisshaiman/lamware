@@ -157,8 +157,32 @@ def compare_requests(rows: list[dict]) -> str:
     across formats would report a prefix bug that does not exist.
     """
     reqs = [r for r in rows if r.get("event") == "request"]
+
+    # Pair each request with the cost event that followed it (#299). Matched on phase
+    # in emission order rather than by index: a phase can be retried, and a run that
+    # died mid-request has a shape with no result — which must render as blank cost,
+    # not silently shift every later row onto the wrong request.
+    pending: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("event") == "request_result":
+            pending.setdefault(str(r.get("request_phase")), []).append(r)
+    taken: dict[str, int] = {}
+
+    def _cost(req: dict) -> str:
+        phase = str(req.get("request_phase"))
+        i = taken.get(phase, 0)
+        results = pending.get(phase) or []
+        if i >= len(results):
+            return "      -        -"
+        taken[phase] = i + 1
+        u = results[i].get("usage") or {}
+        secs = results[i].get("elapsed_s")
+        return (f"  {u.get('output_tokens', 0):>6,} tok "
+                f"{(f'{secs / 60:.1f}m' if secs else '-'):>6}")
+
     out = ["", "=== outbound requests ===",
-           "   t(min)  phase         wire       msgs  chars    tools  vs previous"]
+           "   t(min)  phase         wire       msgs  chars    tools  "
+           "out       time  vs previous"]
     if not reqs:
         out.append("  (no request records — container predates #262)")
         return "\n".join(out)
@@ -199,7 +223,8 @@ def compare_requests(rows: list[dict]) -> str:
                           f"diverges at {idx}"
         out.append(f"  {r.get('t', 0)/60:7.1f}  {str(r.get('request_phase')):<13} "
                    f"{wire:<10} {r.get('n_messages', 0):>4}  "
-                   f"{chars:>7,}  {'yes' if r.get('has_tools') else 'no ':<5}  {verdict}")
+                   f"{chars:>7,}  {'yes' if r.get('has_tools') else 'no ':<5}"
+                   f"{_cost(r)}  {verdict}")
         last_by_wire[wire] = r
     return "\n".join(out)
 
