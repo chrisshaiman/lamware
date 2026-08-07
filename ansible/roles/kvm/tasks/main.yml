@@ -93,3 +93,73 @@
   when: kvm_virsh_default_info.rc == 0
   changed_when: true
   failed_when: false
+
+# ---------------------------------------------------------------------------
+# Nested virtualisation OFF for detonation guests (#305, CVE-2026-64561)
+# ---------------------------------------------------------------------------
+#
+# Zapscape is a use-after-free in KVM's shadow-MMU recursive zap path that gives a
+# guest-to-host escape with root. Its two controllable prerequisites are kernel
+# privilege inside the L1 guest, and nested virtualisation exposed to that guest.
+#
+# The first is satisfied here BY DESIGN: these guests detonate live malware with no
+# in-guest containment, so SYSTEM and driver loading are expected, not exceptional.
+# That leaves the second as the only prerequisite we control.
+#
+# Verified on the host 2026-08-06: kernel 6.8.0-110-generic, GenuineIntel,
+# kvm_intel nested = Y, and the live domain XML passing `host-passthrough` with only
+# the `hypervisor` CPUID bit disabled — so VMX was reaching the guests.
+#
+# WHY HOST-WIDE RATHER THAN PER-GUEST XML. `<feature policy='disable' name='vmx'/>`
+# in guest-domain.xml.j2 has the same CPUID effect, but has to be remembered for every
+# guest anyone defines later, and a forgotten one fails open and silently. A module
+# parameter cannot be forgotten. Same reasoning as #238: a control that depends on
+# remembering is documentation, not enforcement.
+#
+# WHY THIS STAYS EVEN AFTER THE KERNEL IS PATCHED (decision deferred, see the backlog
+# item on #305). Patching fixes THIS bug; disabling nesting removes the precondition
+# for the next one. The same researcher has published three KVM escapes — Januscape
+# (CVE-2026-53359), ITScape and Zapscape, one of them a 16-year-old flaw — so this is
+# an actively productive attack surface, and nothing in this deployment uses nesting.
+#
+# COST: a guest can no longer see VMX in CPUID. That is itself a weak virtualisation
+# tell against ADR-012's anti-detection goal, but a mild one — plenty of real corporate
+# machines ship with VT-x disabled in firmware — and far weaker than the `hypervisor`
+# bit already cleared. Verified against the Win11 build first: no VBS/HVCI/Device Guard
+# configuration anywhere in packer or the autounattend, no <hyperv> enlightenments in
+# the domain XML, and Secure Boot deliberately left in Setup Mode with no keys enrolled,
+# which is what stops Windows 11 auto-enabling VBS on otherwise capable hardware.
+- name: Disable nested virtualisation on the KVM modules (#305)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/99-lamware-no-nested.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/kvm) — see #305 / CVE-2026-64561.
+      # Detonation guests run hostile code; nested virtualisation is an escape
+      # prerequisite and is unused by this deployment. Do not enable without
+      # reading the rationale in roles/kvm/tasks/main.yml.
+      options kvm_intel nested=0
+      options kvm_amd nested=0
+  register: kvm_nested_conf
+
+# Deliberately NOT auto-reloading the module. `modprobe -r kvm_intel` requires every
+# VM to be stopped, so doing it inside a routine deploy would kill running detonations
+# without warning. Report the pending state instead and let an operator choose the
+# window — a loud, accurate "not yet in effect" beats a deploy that silently reboots
+# the analysis fleet.
+- name: Read the live nested setting
+  ansible.builtin.command: cat /sys/module/kvm_intel/parameters/nested
+  register: kvm_nested_live
+  changed_when: false
+  failed_when: false
+
+- name: Report whether the nested-virt mitigation is actually in effect
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'nested virt is OFF — #305 mitigation active'
+        if kvm_nested_live.stdout | default('') | trim in ['N', '0']
+        else 'WARNING: nested virt is STILL ENABLED (' ~ (kvm_nested_live.stdout | default('?') | trim) ~
+             '). The modprobe.d file is in place but the module has not been reloaded. ' ~
+             'Stop all guests and `modprobe -r kvm_intel && modprobe kvm_intel`, or reboot. (#305)'
+      }}
