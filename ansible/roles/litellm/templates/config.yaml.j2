@@ -109,10 +109,16 @@ model_list:
   # base alias, only so that an arm naming a seed keeps resolving instead of
   # failing with model-not-found hours into a run.
   #
-  # Consequence for anyone reading a scorecard: --consensus-k does not filter
-  # confabulation. Identical loops agree on everything, so k=2 confirms every claim
-  # for free — precisely what __main__.py rejects k=1 for. Treat consensus output
-  # as meaningless until #292 is fixed.
+  # RESOLVED 2026-08-07 (#292), by removing the claim rather than the aliases.
+  # `--consensus-k` now defaults to 0 and REFUSES seed variants of one arm with an
+  # explanation, instead of printing a section where identical loops agreed on
+  # everything and k=2 confirmed every claim for free — precisely what __main__.py
+  # rejects k=1 for. Scorecards from before that date carry the vacuous section;
+  # ignore it. #310 tracks cross-MODEL consensus, which is a real axis.
+  #
+  # The aliases stay REGISTERED so old arm names keep resolving. They are not,
+  # and are not going to be, seeded — see #310 for why that is a backend
+  # constraint and not a TODO.
 {% endif %}
   - model_name: "local-qwen-llamacpp-re-s{{ seed }}"
     litellm_params:

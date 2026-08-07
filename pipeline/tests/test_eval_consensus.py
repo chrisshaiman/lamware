@@ -104,3 +104,62 @@ def test_render_reports_singletons_rather_than_hiding_them():
 def test_render_says_so_when_there_is_nothing_to_reconcile():
     md = render_consensus("t", {}, k=2)
     assert "nothing to reconcile" in md
+
+
+# ---------------------------------------------------------------------------
+# Vacuity: agreement between identical runs is not agreement (#292)
+# ---------------------------------------------------------------------------
+
+def test_identical_runs_are_counted_as_one_distinct_run():
+    """n_runs cannot tell agreement from duplication; distinct_runs can.
+
+    This is the #292 condition itself — three seeds, byte-identical transcripts —
+    detected from the data rather than inferred from arm names, so it stays
+    correct if independence is ever restored (#310).
+    """
+    res = consensus([_a(["a.dll"]), _a(["a.dll"]), _a(["a.dll"])], k=2)
+    field = res["code_level_iocs"]
+    assert field["n_runs"] == 3
+    assert field["distinct_runs"] == 1
+
+
+def test_genuinely_different_runs_are_counted_as_distinct():
+    res = consensus([_a(["a.dll"]), _a(["a.dll", "b.dll"])], k=2)
+    assert res["code_level_iocs"]["distinct_runs"] == 2
+
+
+def test_distinct_runs_is_per_field_not_per_sample():
+    """Runs can duplicate one field and diverge on another. Collapsing to a single
+    per-sample verdict would either suppress a real result or bless a vacuous one."""
+    res = consensus([
+        _a(["a.dll"], ["persists via `Run` key"]),
+        _a(["a.dll"], ["injects into `explorer.exe`"]),
+    ], k=2)
+    assert res["code_level_iocs"]["distinct_runs"] == 1
+    assert res["capabilities"]["distinct_runs"] == 2
+
+
+def test_render_refuses_to_tabulate_agreement_over_identical_runs():
+    """THE regression guard.
+
+    The old renderer printed `3/3` for every claim, which reads as strong
+    confirmation and is an artifact of the runs being copies. The warning must
+    REPLACE the table: a reader who sees 3/3 rows treats a caveat above them as a
+    footnote, and the rows are what gets quoted.
+    """
+    md = render_consensus("t", {"abc — qwen@10": consensus(
+        [_a(["a.dll"]), _a(["a.dll"])], k=2)}, k=2)
+    assert "NOT A RESULT" in md
+    assert "#292" in md
+    assert "2/2" not in md, (
+        "an agreement row over identical runs must not be rendered at all")
+
+
+def test_render_still_tabulates_real_agreement():
+    """The vacuity guard must not fire on genuine agreement, or it would suppress
+    every real result #310 is meant to produce."""
+    md = render_consensus("t", {"abc — cross-model": consensus(
+        [_a(["a.dll"]), _a(["a.dll", "b.dll"])], k=2)}, k=2)
+    assert "NOT A RESULT" not in md
+    assert "2/2" in md
+    assert "unconfirmed" in md

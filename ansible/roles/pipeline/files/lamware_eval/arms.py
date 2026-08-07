@@ -90,6 +90,18 @@ _REGISTRY: dict[str, Arm] = {
 #     to 6-8 unpaired ones. It does NOT reduce the number of runs needed: a fixed
 #     seed is one sample from a distribution, repeatable but not representative.
 #   CONSENSUS — run N seeds, keep claims appearing in >= k of them.
+#
+# NEITHER USE WORKS. The seeds do not reach the sampler (#292): llama-server ignores
+# `seed` on /v1/messages, which is the transport #285 chose because the OpenAI leg
+# discarded thinking. So seeded variants of one arm are byte-identical, paired
+# comparison has no shared variance to cancel, and `--consensus-k` now refuses them
+# outright rather than reporting 100% agreement.
+#
+# The variants stay registered so existing arm names and stored result paths keep
+# resolving. Prefer the unseeded name for new work; `:s42` conveys a precision that
+# does not exist. Determinism is not purely a loss — it is why the noise floor is
+# 0.22% and why a single-run depth difference can be trusted — but it means `n` comes
+# from MORE SAMPLES, never from more seeds. #310 tracks the real independence axis.
 def _register_seed_variants(registry: dict[str, Arm]) -> None:
     for base in [a for a in list(registry.values()) if a.re_backend == "local"]:
         for seed in SEEDS:
