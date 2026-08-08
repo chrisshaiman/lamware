@@ -29,9 +29,10 @@ TOOL_DEFINITIONS = [
     {
         "name": "search_iocs",
         "description": (
-            "Search for an IOC value across all analyses. Returns matching analyses "
-            "with family, severity, and source stage. Use to answer 'have we seen "
-            "this C2/domain/hash before?'"
+            "Search for an IOC value ACROSS ALL analyses. Returns matching "
+            "analyses with family, severity, and source stage. Use to answer 'have "
+            "we seen this C2/domain/hash before?'. If you already have an "
+            "analysis_id and want that one analysis's IOCs, use get_iocs instead."
         ),
         "input_schema": {
             "type": "object",
@@ -117,7 +118,11 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_iocs",
-        "description": "Get IOCs for an analysis, optionally filtered by type.",
+        "description": (
+            "Get all IOCs for ONE analysis you already have the id for, optionally "
+            "filtered by type. To find which analyses contain a specific IOC value, "
+            "use search_iocs instead."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -153,7 +158,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_xrefs_to",
         "description": (
-            "Get all callers (cross-references TO) a function in the Ghidra project."
+            "Get all CALLERS of a function — cross-references pointing TO it — in "
+            "the Ghidra project. Answers 'what invokes this?'. For the opposite "
+            "direction (what this function calls), use get_xrefs_from."
         ),
         "input_schema": {
             "type": "object",
@@ -164,7 +171,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_xrefs_from",
         "description": (
-            "Get all callees (cross-references FROM) a function in the Ghidra project."
+            "Get all CALLEES of a function — cross-references pointing FROM it — "
+            "in the Ghidra project. Answers 'what does this call?'. For the opposite "
+            "direction (what invokes it), use get_xrefs_to."
         ),
         "input_schema": {
             "type": "object",
@@ -194,7 +203,8 @@ TOOL_DEFINITIONS = [
         "name": "list_functions",
         "description": (
             "List functions in the binary, with optional wildcard filter "
-            "(e.g., *crypt*)."
+            "(e.g., *crypt*). Returns names decompile_function accepts — call this "
+            "first to find candidates, then decompile the interesting ones."
         ),
         "input_schema": {
             "type": "object",
@@ -219,8 +229,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_cape_payloads",
         "description": (
-            "List payloads dropped/extracted by Cape during dynamic analysis "
-            "of this sample."
+            "List payloads dropped/extracted by Cape during dynamic analysis of "
+            "this sample. Returns the indices read_payload expects — call this "
+            "first if you do not already know a payload_index."
         ),
         "input_schema": {
             "type": "object",
