@@ -40,7 +40,13 @@ get_counter() {
     local iface
 
     case "$direction" in
-        out_eth0) iface="eth0" ;;
+        # Templated, NOT hardcoded. This read `eth0` while the host's management
+        # interface is `{{ management_interface }}`, so the awk match below never
+        # matched a real rule: det_eth0_accept was permanently 0 and the
+        # internet-egress alarm could never fire. The one continuous control
+        # watching the containment boundary reported healthy while measuring
+        # nothing, for as long as the host has not been called eth0.
+        out_eth0) iface="{{ management_interface }}" ;;
         out_wg0)  iface="wg0" ;;
         *)        echo "0"; return ;;
     esac
@@ -52,6 +58,46 @@ get_counter() {
           '$3 == tgt && $6 == bridge && $7 == iface { sum += $1 } END { print sum+0 }')
     echo "$count"
 }
+
+# -------------------------------------------------------------------------
+# Do the DROP rules still EXIST?
+#
+# Counter deltas alone cannot answer this. Flush the FORWARD chain (default
+# policy ACCEPT) and every rule disappears: no ACCEPT rule matches, the delta is
+# zero, and this script reports `ok` while nothing is blocked at all. The check
+# was measuring "have the packets I am watching increased", not "is the air gap
+# enforced".
+#
+# `--line-numbers` shifts the columns by one: num pkts bytes target prot opt in out
+# -------------------------------------------------------------------------
+
+rule_survey() {
+    # Emits: <drop_count> <first_drop_idx> <accept_count> <first_accept_idx>
+    local iface="$1"
+    iptables -L FORWARD -v -n -x --line-numbers 2>/dev/null \
+        | awk -v bridge="$BRIDGE" -v iface="$iface" '
+            $4 == "DROP"   && $7 == bridge && $8 == iface { if (!d) d = $1; dc++ }
+            $4 == "ACCEPT" && $7 == bridge && $8 == iface { if (!a) a = $1; ac++ }
+            END { print dc+0, d+0, ac+0, a+0 }'
+}
+
+check_rules() {
+    local iface="$1" label="$2"
+    read -r dc di ac ai <<< "$(rule_survey "$iface")"
+    if [ "$dc" -eq 0 ]; then
+        echo "MISSING: no DROP rule for $BRIDGE -> $label ($iface)"
+        return
+    fi
+    # A DROP that sits below an ACCEPT for the same pair never sees the traffic.
+    if [ "$ac" -gt 0 ] && [ "$ai" -lt "$di" ]; then
+        echo "ORDERING: ACCEPT at rule $ai precedes DROP at rule $di for $BRIDGE -> $label ($iface)"
+    fi
+}
+
+rules_problem=""
+rules_problem="${rules_problem}$(check_rules "{{ management_interface }}" internet)"
+rules_problem="${rules_problem}${rules_problem:+; }$(check_rules wg0 management)"
+rules_problem="${rules_problem%; }"
 
 # Current counters
 det_eth0_accept=$(get_counter out_eth0 ACCEPT)
@@ -65,6 +111,18 @@ det_wg0_drop=$(get_counter out_wg0 DROP)
 
 status="ok"
 alert_message=""
+
+# A missing or out-of-order DROP rule is a breach of the containment DESIGN, not
+# of a packet threshold, so it alarms on its own — before any counter is read.
+if [ -n "$rules_problem" ]; then
+    status="alert"
+    alert_message="AIR-GAP RULES NOT ENFORCED: $rules_problem"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
+    touch "$PAUSE_FILE"
+    python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
+        "AIR-GAP RULES MISSING" "$alert_message" \
+        --priority urgent --tags skull 2>/dev/null || true
+fi
 
 if [ -f "$BASELINE_FILE" ]; then
     # Read baseline ACCEPT counters
@@ -315,6 +373,10 @@ status = {
         'accept_packets': $det_wg0_accept,
         'drop_packets': $det_wg0_drop,
         'status': 'alert' if $det_wg0_accept > 0 else 'ok',
+    },
+    'air_gap_rules': {
+        'enforced': not bool('''$rules_problem'''),
+        'problem': '''$rules_problem''' or None,
     },
     'qemu_status': '$qemu_status',
     'qemu_unexpected_children': '$qemu_unexpected'.split(chr(10)) if '$qemu_unexpected' else [],
