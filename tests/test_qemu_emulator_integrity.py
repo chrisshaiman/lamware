@@ -223,18 +223,38 @@ def test_the_preserved_path_is_outside_dpkgs_namespace():
     assert path.startswith("/usr/local/")
 
 
-def test_the_domains_are_deliberately_not_repointed_yet():
-    """Guards the SPLIT, and fails loudly when #327 lands so this file gets updated
-    rather than silently asserting a stale intent."""
+def test_the_domains_point_at_the_preserved_emulator():
+    """#327. Repointed only after the preserved copy was verified on the host:
+    identical sha256 to a binary dpkg reports as MODIFIED (i.e. our build, not the
+    package's), version 9.2.2 against stock 8.2.2, and supporting pc-q35-9.2 —
+    the type both domains are frozen against."""
     text = CAPE_DEFAULTS.read_text(encoding="utf-8")
     line = next(ln for ln in text.splitlines()
                 if ln.strip().startswith("cape_qemu_binary:"))
     path = line.split(":", 1)[1].strip()
-    assert path == "/usr/bin/qemu-system-x86_64", (
-        f"cape_qemu_binary is {path!r}. If #327 has landed and repointed the "
-        f"domains, delete this test and restore the assertion that the emulator "
-        f"is outside /usr/bin.")
+    assert not path.startswith("/usr/bin/"), (
+        f"cape_qemu_binary is {path!r}, a dpkg-owned path — apt overwrites the "
+        f"DSDT-patched build there, which is #308")
+    assert path.startswith("/usr/local/")
 
+
+def test_the_snapshot_mismatch_is_reported():
+    """The repoint is INCOMPLETE on its own, and nothing else would say so.
+
+    libvirt stores the full domain config inside each snapshot, and CAPE reverts to
+    snapshot before every detonation — so a redefined domain still boots the OLD
+    emulator until the snapshots are recreated. Verified 2026-08-08: both `clean`
+    and `office` snapshots pinned /usr/bin/qemu-system-x86_64.
+
+    Reported rather than fatal: recreating a snapshot means taking a fresh pristine
+    baseline, which is an operator decision, not something a deploy should do. But
+    a repoint that cannot take effect must not look finished.
+    """
+    assert "snapshot-dumpxml" in TASKS, (
+        "the role must read what the snapshots would actually restore")
+    assert "SNAPSHOT EMULATOR MISMATCH" in TASKS
+    assert "NOT a failure" in TASKS, (
+        "must be explicit that this reports incompleteness, not an error")
 
 def test_the_guest_template_uses_the_variable_not_a_hardcoded_path():
     """A hardcoded /usr/bin path in the template would defeat #327 before it starts."""

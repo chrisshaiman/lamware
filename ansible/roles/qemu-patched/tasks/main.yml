@@ -367,3 +367,51 @@
       (virsh returned nothing). This check needs at least one defined domain to
       know what to require. It is NOT a pass.
   when: qemu_required_machines.stdout_lines | length == 0
+
+# ---------------------------------------------------------------------------
+# Snapshot metadata pins the emulator too (#327)
+# ---------------------------------------------------------------------------
+#
+# `virsh define` updates the persistent domain XML; it does NOT touch existing
+# snapshots. libvirt stores the full domain config inside each snapshot, and
+# `snapshot-revert` restores it -- so a domain repointed at the preserved emulator
+# still boots the OLD path on every revert. CAPE reverts before each detonation,
+# which means the repoint has no effect on real analyses until the snapshots are
+# recreated.
+#
+# Verified 2026-08-08: both `clean` and `office` snapshots pinned
+# /usr/bin/qemu-system-x86_64 while the domains were about to be redefined.
+#
+# Reported, not fatal. Recreating a snapshot means rebooting the guest and taking a
+# fresh pristine baseline, which is an operator decision with fidelity consequences,
+# not something a routine deploy should do. But it must not look done when it isn't.
+- name: Read the emulator each snapshot would restore
+  ansible.builtin.shell: |
+    set -o pipefail
+    virsh list --all --name 2>/dev/null | while read -r d; do
+      [ -n "$d" ] || continue
+      virsh snapshot-list "$d" --name 2>/dev/null | while read -r s; do
+        [ -n "$s" ] || continue
+        emu=$(virsh snapshot-dumpxml "$d" "$s" 2>/dev/null \
+              | sed -n 's|.*<emulator>\(.*\)</emulator>.*|\1|p' | head -1)
+        [ -n "$emu" ] && echo "$d/$s $emu"
+      done
+    done
+  args:
+    executable: /bin/bash
+  register: qemu_snapshot_emulators
+  changed_when: false
+  failed_when: false
+
+- name: Report snapshots that would restore a different emulator
+  ansible.builtin.debug:
+    msg: >-
+      SNAPSHOT EMULATOR MISMATCH — these snapshots restore an emulator other than
+      {{ cape_qemu_binary }}, and CAPE reverts to snapshot before every detonation,
+      so those analyses will NOT use the configured emulator:
+      {{ qemu_snapshot_emulators.stdout_lines
+         | reject('search', cape_qemu_binary | regex_escape) | list | join('; ') }}
+      — recreate the snapshots to make the repoint effective. This is NOT a failure:
+      it is the repoint being incomplete, reported so it cannot look finished.
+  when: qemu_snapshot_emulators.stdout_lines
+        | default([]) | reject('search', cape_qemu_binary | regex_escape) | list | length > 0

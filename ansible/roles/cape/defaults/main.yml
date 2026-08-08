@@ -1,6 +1,15 @@
 ---
 # roles/cape/defaults/main.yml
 
-cape_qemu_binary: /usr/bin/qemu-system-x86_64
+# The PRESERVED patched emulator, not the distro path (#327). /usr/bin is owned by
+# qemu-system-x86; on 2026-08-06 an apt transaction pulling libguestfs-tools replaced
+# the DSDT-patched build there with stock 8.2.2 and every guest stopped starting (#308).
+#
+# INCOMPLETE ON ITS OWN. libvirt snapshots store the domain config as it was at
+# snapshot time, and CAPE reverts to snapshot for every detonation -- so a domain
+# redefined against this path still boots the snapshot's emulator until the snapshots
+# are recreated. The qemu-patched role reports that mismatch on every run rather than
+# letting the repoint look complete.
+cape_qemu_binary: /usr/local/bin/qemu-system-x86_64
 cape_guest_image_dir: /var/lib/libvirt/images
 cape_resultserver_port: 2042
