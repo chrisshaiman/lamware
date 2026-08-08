@@ -1916,6 +1916,53 @@ SUBMIT_ANALYSIS_SCHEMA = {
 }
 
 
+# Cloud counterpart of SUBMIT_ANALYSIS_SCHEMA, used only to RECOVER a cloud response
+# whose free-text JSON failed to parse (#317). Two deliberate differences:
+#
+# 1. `code_level_iocs` is an ARRAY OF OBJECTS, matching what all seven system prompts
+#    actually ask for ("list of {type, value, context} objects"). The local schema
+#    above types it as an array of strings, which contradicts those prompts — a
+#    contradiction worth fixing separately, but NOT by copying it here. Forcing the
+#    cloud model through the string form would flatten exactly the field that makes
+#    its output useful: measured 2026-08-07, every claude-sonnet-5 IOC on
+#    raccoonstealer and icedid carried a `context` ("0x811c9dc5 — FNV-1a hash
+#    offset-basis used to validate decrypted embedded data"), while qwen@15 emitted
+#    12 of 17 as bare `DAT_` symbol names with no context at all. A recovery path
+#    that discards context would make the analysis worse than the parse failure it
+#    is repairing.
+#
+# 2. It carries the FULL field set from the prompts. A forced tool call can only
+#    return properties the schema declares, so omitting `working_notes`,
+#    `novel_techniques` or `yara_suggestion` here would silently drop them during
+#    recovery — trading one kind of data loss for another.
+_IOC_OBJECT = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string"},
+        "value": {"type": "string"},
+        "context": {"type": "string"},
+    },
+    "required": ["value"],
+}
+
+CLOUD_SUBMIT_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "malware_family_guess": {"type": "string"},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "attack_techniques": {"type": "array", "items": {"type": "object",
+            "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
+        "novel_techniques": {"type": "array", "items": {"type": "string"}},
+        "code_level_iocs": {"type": "array", "items": _IOC_OBJECT},
+        "yara_suggestion": {"type": "string"},
+        "risk_assessment": {"type": "string"},
+        "narrative": {"type": "string"},
+        "working_notes": {"type": "string"},
+    },
+    "required": ["malware_family_guess", "capabilities", "narrative"],
+}
+
+
 def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
                         model: str, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Grammar-constrained, reasoning-off final synthesis via LiteLLM /chat/completions.
@@ -2921,6 +2968,73 @@ Technical summary: {executive}"""
             return {"malware_family_guess": "unknown", "capabilities": [],
                     "narrative": "", "parse_note": "local synthesis failed"}
 
+    def cloud_synthesize(msgs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Recover a cloud analysis whose free-text JSON failed to parse (#317).
+
+        The local backend has had two protections against an unparseable final
+        response since #285: a grammar-constrained `submit_analysis` tool call, and
+        a retry gated on `re_backend == "local"`. Cloud — which is what PRODUCTION
+        runs, since `config.json.j2` never sets `re_backend` — had neither. When
+        `parse_final_response` failed there, the model's entire analysis was moved
+        into `narrative` as raw text and scored as zero claims.
+
+        Measured 2026-08-07 on `573e68608bbb` (amadey), claude-sonnet-5: 3,224
+        output tokens containing a family guess, four capabilities, techniques and
+        IOCs — generated, paid for, and discarded.
+
+        This costs ONE extra request, and only on the path where the alternative is
+        losing the response entirely. It does not touch the happy path: a cloud run
+        whose JSON parses makes exactly as many calls as before.
+
+        `tool_choice` is the OBJECT form here. That is correct for the Anthropic API
+        and is NOT the llama.cpp mistake documented in synthesize_analysis — that
+        server accepts only a string and silently ignores the object. Different
+        wire, different requirement; the two must not be unified.
+
+        Returns None if the call or extraction fails, so the caller keeps whatever
+        it already had rather than trading a partial result for nothing.
+        """
+        nonlocal total_input_tokens, total_output_tokens
+        try:
+            log_request_shape("synth_cloud_recover", current_model, CACHED_SYSTEM,
+                              None, msgs)
+            resp = client.messages.create(
+                model=current_model,
+                max_tokens=max(max_output_tokens, 4096),
+                system=CACHED_SYSTEM,
+                messages=msgs + [{"role": "user", "content": (
+                    "Submit your analysis as a submit_analysis tool call. Use only "
+                    "what your analysis above states; do not invent values."
+                )}],
+                tools=[{
+                    "name": "submit_analysis",
+                    "description": ("Submit the final structured malware analysis. "
+                                    "Call exactly once."),
+                    "input_schema": CLOUD_SUBMIT_ANALYSIS_SCHEMA,
+                }],
+                tool_choice={"type": "tool", "name": "submit_analysis"},
+            )
+        except anthropic.APIError as e:
+            emit_status(f"cloud re-synthesis failed: {e}", tool_calls_used)
+            return None
+        # Bill it. Omitting this would under-report the cost of the recovery path
+        # and make it look free, which is the reporting failure #299 fixed for the
+        # local synthesis leg.
+        u = usage_from_response(resp)
+        total_input_tokens += u.get("input_tokens") or 0
+        total_output_tokens += u.get("output_tokens") or 0
+        for block in resp.content:
+            if block.type == "tool_use" and block.name == "submit_analysis":
+                got = dict(block.input or {})
+                if got.get("malware_family_guess") or got.get("capabilities"):
+                    return got
+        # Forced tool_choice returning no tool_use is worth surfacing rather than
+        # silently falling back — it is the shape that hid the llama.cpp tool_choice
+        # bug for six runs.
+        emit_status("cloud re-synthesis returned no submit_analysis block",
+                    tool_calls_used)
+        return None
+
     # ---- Agentic loop ----
     while True:
         # Check model escalation
@@ -3257,13 +3371,31 @@ Technical summary: {executive}"""
             # reasoning eats the budget), leaving it empty or unparseable. Re-synthesize
             # with think:false so the whole budget goes to a clean, complete structured
             # output. Only re-run when the think-on output actually failed.
-            if config.get("re_backend") == "local" and (not final_text.strip() or analysis.get("parse_note")):
+            needs_resynth = not final_text.strip() or analysis.get("parse_note")
+            if needs_resynth:
                 # The think:true end-turn output was empty or nested/truncated. Re-run
                 # the two-phase reasoning-preserving synthesis (prose conclusion + forced
                 # think:false serialize), preserving the end-turn text as context.
                 ctx = messages + ([{"role": "assistant", "content": final_text}]
                                   if final_text.strip() else [])
-                analysis = local_synthesize(ctx)
+                if config.get("re_backend") == "local":
+                    analysis = local_synthesize(ctx)
+                else:
+                    # Cloud used to be excluded here (#317), so a production run whose
+                    # JSON failed to parse kept the unparsed text and reported zero
+                    # claims. Cloud IS production: config.json.j2 never sets
+                    # re_backend, so `re_backend != "local"` is the default path.
+                    #
+                    # Keep the original analysis when recovery fails — it still holds
+                    # the raw text in `narrative`, which is strictly more than nothing
+                    # and is what a human would need to read to recover manually.
+                    recovered = cloud_synthesize(ctx)
+                    if recovered is not None:
+                        recovered.setdefault(
+                            "parse_note",
+                            "Recovered via forced submit_analysis tool call after "
+                            "free-text JSON parse failure (#317).")
+                        analysis = recovered
             emit({
                 "type": "final",
                 "analysis": analysis,
