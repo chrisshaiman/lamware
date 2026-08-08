@@ -36,6 +36,7 @@ chmod 644 "$WORK_DIR/$BINARY_NAME"
 
 podman run --rm \
     --network=none \
+    --read-only \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --memory={{ pyinstaller_analysis_container_memory }} \
