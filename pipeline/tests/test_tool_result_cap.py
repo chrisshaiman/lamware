@@ -230,3 +230,35 @@ def test_capping_is_idempotent(result):
     twice = cap_tool_result(once, cap=TOOL_RESULT_CHAR_CAP)
     assert len(json.dumps(twice, default=str)) <= TOOL_RESULT_CHAR_CAP
     assert set(twice) == set(once), "capping must not add or drop keys on a second pass"
+
+
+def test_a_non_string_note_does_not_kill_the_cap():
+    """`note` is exempt from truncation, so it arrives with its original type.
+
+    A list here raised `TypeError: sequence item 0: expected str instance, list
+    found`, which in the pipeline means a tool result that cannot be capped and
+    therefore cannot be sent at all.
+
+    Found by the Hypothesis test above, never in production — real tools write a
+    string. That is the case for generating inputs rather than imagining them: this
+    shape was reachable for as long as the cap has existed.
+    """
+    result = {"note": ["already", "structured"], "payload": "x" * (CAP * 2)}
+    capped = cap_tool_result(result, CAP)
+    assert isinstance(capped["note"], str)
+    assert "TRUNCATED" in capped["note"]
+    assert "already" in capped["note"], "the prior note must survive, not be dropped"
+    assert _size(capped) <= CAP * 1.2
+
+
+def test_other_non_string_note_types_are_also_survivable():
+    for prior in ({"k": "v"}, 42, True):
+        capped = cap_tool_result({"note": prior, "payload": "x" * (CAP * 2)}, CAP)
+        assert isinstance(capped["note"], str), f"{type(prior).__name__} note"
+        assert "TRUNCATED" in capped["note"]
+
+
+def test_a_string_note_is_still_passed_through_unchanged():
+    """The fix must not reformat the normal case."""
+    capped = cap_tool_result({"note": "prior text", "payload": "x" * (CAP * 2)}, CAP)
+    assert capped["note"].startswith("prior text; TRUNCATED")
