@@ -11,8 +11,16 @@ FROM docker.io/library/python:3.12-slim
 # Build pycdc from source — supports Python 3.11/3.12 bytecode
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git cmake make g++ \
-    && git clone --depth 1 https://github.com/zrax/pycdc.git /tmp/pycdc \
+    # PINNED. `git clone --depth 1` took whatever HEAD happened to be, so the
+    # decompiler in a malware-analysis toolchain could change silently between
+    # deploys with nothing recording which build produced a given result — and
+    # every deploy depended on GitHub being reachable (it wasn't, 2026-08-08).
+    # Shallow fetch of a specific commit; GitHub allows fetching by SHA.
+    && git init /tmp/pycdc \
     && cd /tmp/pycdc \
+    && git remote add origin https://github.com/zrax/pycdc.git \
+    && git fetch --depth 1 origin {{ pycdc_commit }} \
+    && git checkout FETCH_HEAD \
     && cmake . \
     && make -j$(nproc) \
     && cp pycdc /usr/local/bin/pycdc \

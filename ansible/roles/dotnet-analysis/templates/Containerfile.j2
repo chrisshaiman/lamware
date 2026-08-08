@@ -14,7 +14,13 @@ RUN dotnet tool install -g ilspycmd \
 # Install de4dotEx — GPL-3.0 licensed .NET deobfuscator.
 # Invoked as a subprocess only; not linked into Apache 2.0 code.
 RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && git clone --depth 1 https://github.com/GDATAAdvancedAnalytics/de4dotEx.git /tmp/de4dotEx \
+    # PINNED — see the pyinstaller Containerfile for the rationale. An unpinned
+    # deobfuscator changes what the analysis sees, not just how fast it builds.
+    && git init /tmp/de4dotEx \
+    && cd /tmp/de4dotEx \
+    && git remote add origin https://github.com/GDATAAdvancedAnalytics/de4dotEx.git \
+    && git fetch --depth 1 origin {{ de4dotex_commit }} \
+    && git checkout FETCH_HEAD \
     && cd /tmp/de4dotEx \
     && dotnet publish de4dot -c Release -f net8.0 -o /opt/de4dot \
     && chmod -R a+rX /opt/de4dot \
