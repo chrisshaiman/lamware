@@ -259,11 +259,18 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         analysis = interp.get("analysis", {})
         summary = report.get("executive_summary", {})
 
-        # Programmatic analysis is authoritative for severity/family;
-        # LLM values are fallback only
+        # Programmatic analysis is authoritative for severity. The LLM's
+        # `risk_assessment` used to be the last fallback here, which meant that
+        # whenever the programmatic verdict was absent the model wrote the verdict
+        # column directly — the second path by which model output became a decision
+        # (GHSA-f5q8-v78c-mr55; calculate_severity was the first).
+        #
+        # Absent stays absent. A missing verdict is a visible gap an analyst can
+        # act on; a model-supplied one looks identical to a real verdict and is
+        # trusted like one. The model's view is still stored on the analysis row
+        # via the interpretation fields, so nothing is lost but the authority.
         severity = (report.get("severity")
-                    or summary.get("severity")
-                    or analysis.get("risk_assessment"))
+                    or summary.get("severity"))
         family = (report.get("family")
                   or analysis.get("malware_family_guess"))
 

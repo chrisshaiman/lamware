@@ -201,18 +201,58 @@ def determine_family(report: dict) -> str:
     return _result("unknown", "none")
 
 
-def calculate_severity(report: dict) -> str:
-    """Calculate severity from all pipeline stages.
+# Family sources that come from a MODEL rather than from code. `evasion_analysis`
+# belongs here and is easy to miss: the evasion hunter is a run_interpret() call, so
+# its "likely behavior" family and its self-reported `confidence` are both LLM output
+# wearing a programmatic-looking key.
+_LLM_DERIVED_SOURCES = frozenset({"llm_interpretation", "evasion_analysis"})
 
-    Scoring sources:
+
+def _band(score: int | float) -> str:
+    if score >= 30:
+        return "critical"
+    if score >= 20:
+        return "high"
+    if score >= 10:
+        return "medium"
+    return "low"
+
+
+def calculate_severity(report: dict) -> str:
+    """Calculate severity. Returns the PROGRAMMATIC verdict (GHSA-f5q8-v78c-mr55).
+
+    THREAT_MODEL.md §4.3/§5 justify accepting best-effort prompt-injection defence
+    with: "LLM output never sets verdicts or triggers pipeline actions... a
+    fully-deceived model corrupts a narrative, not a decision."
+
+    That was false. This function scored LLM-produced fields directly — capability
+    count (+5), the evasion hunter's self-reported confidence (+15), and a family
+    that may itself be LLM-derived (+10). Up to +30 against a `critical` threshold
+    of 30: model output alone could set the top verdict, and the inverse could talk
+    a real threat down to `low`. A sample that reaches the context can argue about
+    its own severity, and the deflation direction is the dangerous one, because a
+    `low` verdict is what nobody looks at twice.
+
+    So the two are scored separately:
+
+      _severity_score              deterministic evidence only — DRIVES the verdict
+      _severity_score_llm_context  model-asserted signal — recorded, never decisive
+      _severity_band_with_llm      what the band WOULD be including it
+
+    The LLM contribution is kept rather than discarded because it is genuinely
+    informative; it just cannot be load-bearing. A large gap between the two bands
+    is itself worth an analyst's attention — it means the model and the evidence
+    disagree, which is either a real find or an injection attempt.
+
+    Scoring sources (programmatic):
     - Cape malscore and behavioral signatures
     - YARA match count and rule severity
-    - Known malware family identification
-    - Evasion detection (evasive = likely sophisticated)
-    - LLM capabilities assessment
-    - Go offensive module detection
+    - Known malware family identification, when NOT model-derived
+    - Office macro and Go offensive-module detection
     """
     score = 0
+    llm_score = 0
+    llm_inputs: list[str] = []
     cape = report.get("cape", {})
 
     # Cape malscore (0-10)
@@ -248,10 +288,17 @@ def calculate_severity(report: dict) -> str:
 
     # --- Additional signals beyond Cape ---
 
-    # Known malware family = at least medium severity
+    # Known malware family = at least medium severity — but only when the family
+    # came from evidence. determine_family() already records its provenance in
+    # `_family_source`, so this needs no new plumbing.
     family = report.get("family", "unknown")
     if family != "unknown":
-        score += 10
+        if report.get("_family_source") in _LLM_DERIVED_SOURCES:
+            llm_score += 10
+            llm_inputs.append(
+                f"family={family!r} (source: {report.get('_family_source')})")
+        else:
+            score += 10
 
     # YARA match count — many matches = well-known malicious
     triage = report.get("triage", {})
@@ -262,13 +309,18 @@ def calculate_severity(report: dict) -> str:
         score += 3
 
     # Evasion detected — sandbox-aware samples are typically sophisticated
+    # `confidence` is a raw string the evasion-hunter MODEL emitted about its own
+    # output (run-pipeline.py: report["evasion_analysis"] = run_interpret(...)).
+    # It was the single largest model-controlled contribution at +15.
     evasion = report.get("evasion_analysis", {})
     if evasion.get("enabled") and evasion.get("analysis"):
         confidence = evasion["analysis"].get("confidence", "")
         if confidence == "high":
-            score += 15  # confirmed evasion = at least high severity
+            llm_score += 15
+            llm_inputs.append("evasion confidence=high")
         elif confidence == "medium":
-            score += 10
+            llm_score += 10
+            llm_inputs.append("evasion confidence=medium")
 
     # Office macro mraptor flags — auto_exec + write + execute = high confidence
     office_data = report.get("office_analysis", {})
@@ -310,23 +362,23 @@ def calculate_severity(report: dict) -> str:
             score += 15
             break
 
-    # LLM identified capabilities
+    # Capability COUNT is a number the model chose. "List ten capabilities" is a
+    # one-line injection.
     llm = report.get("llm_interpretation", {}).get("analysis", {})
     capabilities = llm.get("capabilities", [])
     if len(capabilities) >= 10:
-        score += 5
+        llm_score += 5
+        llm_inputs.append(f"{len(capabilities)} capabilities")
     elif len(capabilities) >= 5:
-        score += 3
+        llm_score += 3
+        llm_inputs.append(f"{len(capabilities)} capabilities")
 
     report["_severity_score"] = score
+    report["_severity_score_llm_context"] = llm_score
+    report["_severity_llm_inputs"] = llm_inputs
+    report["_severity_band_with_llm"] = _band(score + llm_score)
 
-    if score >= 30:
-        return "critical"
-    elif score >= 20:
-        return "high"
-    elif score >= 10:
-        return "medium"
-    return "low"
+    return _band(score)
 
 
 def build_mitre_mapping(report: dict) -> list[dict]:
