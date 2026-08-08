@@ -487,6 +487,8 @@
     mode: "0640"
   loop:
     - grounding_check.py
+    - attack_check.py       # #318 — ATT&CK ID/name validation
+    - attack_catalog.json   # #318 — pinned catalog; attack_check is useless without it
     - llm_ab_singleshot.py
     - llm_ab_re.py
 
