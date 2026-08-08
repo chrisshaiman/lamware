@@ -28,7 +28,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MONITOR = (ROOT / "ansible" / "roles" / "network-monitor" / "templates"
            / "network-monitor.sh.j2")
 CI = ROOT / ".github" / "workflows" / "ci.yml"
+# The real vars file is gitignored (it carries the server IP), so the shipped
+# contract is the example. Checked local-first so a developer with a real file
+# gets the stronger assertion, without CI failing on a file it cannot have.
 ANSIBLE_VARS = ROOT / "ansible" / "vars" / "main.yml"
+ANSIBLE_VARS_EXAMPLE = ROOT / "ansible" / "vars" / "main.yml.example"
 
 MONITOR_SRC = MONITOR.read_text(encoding="utf-8")
 CI_SRC = CI.read_text(encoding="utf-8")
@@ -59,11 +63,22 @@ def test_the_interface_is_templated_not_hardcoded():
 
 
 def test_the_interface_variable_actually_exists():
-    """A template referencing an undefined var renders empty, which would match
-    every rule rather than none — failing open in the opposite direction."""
-    variables = yaml.safe_load(ANSIBLE_VARS.read_text(encoding="utf-8"))
+    """A template referencing an undefined var fails the play, and one that
+    somehow rendered empty would match EVERY rule rather than none — failing open
+    in the opposite direction.
+
+    Asserted against `main.yml.example`, which ships. The live `main.yml` is
+    gitignored because it carries the server IP, so CI cannot read it; when it is
+    present locally it is checked too.
+    """
+    src = ANSIBLE_VARS if ANSIBLE_VARS.exists() else ANSIBLE_VARS_EXAMPLE
+    variables = yaml.safe_load(src.read_text(encoding="utf-8"))
     assert variables.get("management_interface"), (
-        "management_interface must be defined in ansible/vars/main.yml")
+        f"management_interface must be defined in {src.name}")
+    assert yaml.safe_load(
+        ANSIBLE_VARS_EXAMPLE.read_text(encoding="utf-8")).get("management_interface"), (
+        "the example must define it too — it is the only copy a fresh clone gets, "
+        "and the network monitor's air-gap check renders from it")
 
 
 def test_the_drop_rules_are_asserted_to_exist():

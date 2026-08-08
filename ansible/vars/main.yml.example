@@ -29,7 +29,11 @@ detonation_gateway: 192.168.100.1
 detonation_dhcp_start: 192.168.100.10
 detonation_dhcp_end: 192.168.100.50
 
-# Management interface (adjust if provider uses different name)
+# Management interface. MUST match this host's real interface name (check with `ip -br link`).
+# It is not decoration: roles/network-monitor renders its air-gap iptables
+# check from this value, and a wrong name matches no rule — the check then
+# reports healthy while watching nothing (GHSA-f5q8-v78c-mr55). The literal
+# `eth0` below is a placeholder; predictable names like enp3s0f0 are usual.
 management_interface: eth0
 
 # -----------------------------------------------------------------------------
