@@ -15,12 +15,17 @@ Measured 2026-08-07, `573e68608bbb` (amadey), claude-sonnet-5:
 3,224 output tokens holding a family guess, four capabilities, techniques and IOCs
 — generated, billed, and scored as zero claims.
 
-The recovery schema is NOT the local one. `SUBMIT_ANALYSIS_SCHEMA` types
+The recovery schema WAS forked from the local one because that typed
 `code_level_iocs` as an array of strings, contradicting all seven system prompts
-("list of {type, value, context} objects"). Reusing it would flatten the field
-that makes cloud output worth having: every claude-sonnet-5 IOC on raccoonstealer
-and icedid carried a context, while qwen@15 emitted 12 of 17 as bare `DAT_`
-symbols. A recovery that strips context is worse than the failure it repairs.
+("list of {type, value, context} objects"). Reusing it would have flattened the
+field that makes cloud output worth having: every claude-sonnet-5 IOC on
+raccoonstealer and icedid carried a context, while qwen@15 emitted 12 of 17 as
+bare `DAT_` symbols.
+
+#321 fixed the contradiction at its source, so the fork is gone and both names
+refer to one schema. The tests below still pin the properties that made the fork
+necessary, because losing them would be just as bad now that there is nowhere
+else to fall back to.
 """
 import ast
 import sys
@@ -94,16 +99,15 @@ def test_cloud_schema_types_iocs_as_objects_not_strings():
     assert "value" in items["properties"]
 
 
-def test_cloud_schema_does_not_reuse_the_contradictory_local_one():
-    """The local schema contradicts the prompts. Copying it here would propagate
-    the contradiction into the one path added to FIX a data-loss bug."""
-    local = _assign("SUBMIT_ANALYSIS_SCHEMA")
-    cloud = _assign("CLOUD_SUBMIT_ANALYSIS_SCHEMA")
-    assert local["properties"]["code_level_iocs"]["items"]["type"] == "string", (
-        "if the local schema has been fixed to objects, delete this test and "
-        "collapse the two schemas — the divergence exists only to avoid a "
-        "behaviour change to the local arm mid-evaluation")
-    assert cloud != local
+def test_the_cloud_and_local_schemas_are_the_same_object_now():
+    """#317 forked a cloud schema purely to avoid inheriting the local one's
+    string-typed IOCs. #321 fixed that contradiction at the source, so the fork has
+    nothing left to diverge on — and two schemas required to stay identical will
+    not stay identical.
+
+    This replaces a test that asserted the local schema STILL typed IOCs as strings
+    and told the next reader to delete it once #321 landed. That is this."""
+    assert _assign("SUBMIT_ANALYSIS_SCHEMA") == _assign("CLOUD_SUBMIT_ANALYSIS_SCHEMA")
 
 
 def test_cloud_schema_carries_every_field_the_prompts_ask_for():

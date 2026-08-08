@@ -1899,42 +1899,33 @@ def build_evasion_message(evasion_data: dict[str, Any], config: dict[str, Any]) 
 # ---------------------------------------------------------------------------
 
 
-# Forced-tool schema for the local RE final synthesis. Grammar-constrained by
-# llama.cpp so the tool-call arguments are always complete, valid, un-nested JSON.
-SUBMIT_ANALYSIS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "malware_family_guess": {"type": "string"},
-        "capabilities": {"type": "array", "items": {"type": "string"}},
-        "attack_techniques": {"type": "array", "items": {"type": "object",
-            "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
-        "code_level_iocs": {"type": "array", "items": {"type": "string"}},
-        "risk_assessment": {"type": "string"},
-        "narrative": {"type": "string"},
-    },
-    "required": ["malware_family_guess", "capabilities", "narrative"],
-}
-
-
-# Cloud counterpart of SUBMIT_ANALYSIS_SCHEMA, used only to RECOVER a cloud response
-# whose free-text JSON failed to parse (#317). Two deliberate differences:
+# Forced-tool schema for the final synthesis, on BOTH backends.
 #
-# 1. `code_level_iocs` is an ARRAY OF OBJECTS, matching what all seven system prompts
-#    actually ask for ("list of {type, value, context} objects"). The local schema
-#    above types it as an array of strings, which contradicts those prompts — a
-#    contradiction worth fixing separately, but NOT by copying it here. Forcing the
-#    cloud model through the string form would flatten exactly the field that makes
-#    its output useful: measured 2026-08-07, every claude-sonnet-5 IOC on
-#    raccoonstealer and icedid carried a `context` ("0x811c9dc5 — FNV-1a hash
-#    offset-basis used to validate decrypted embedded data"), while qwen@15 emitted
-#    12 of 17 as bare `DAT_` symbol names with no context at all. A recovery path
-#    that discards context would make the analysis worse than the parse failure it
-#    is repairing.
+# `code_level_iocs` is an ARRAY OF OBJECTS because that is what all seven system
+# prompts ask for: "list of {type, value, context} objects". It used to be an array
+# of strings, which contradicted every one of them (#321).
 #
-# 2. It carries the FULL field set from the prompts. A forced tool call can only
-#    return properties the schema declares, so omitting `working_notes`,
-#    `novel_techniques` or `yara_suggestion` here would silently drop them during
-#    recovery — trading one kind of data loss for another.
+# The contradiction was not cosmetic. llama.cpp grammar-constrains tool arguments,
+# so on the local path the SCHEMA won: the model was forced to emit bare strings
+# while its prompt asked for objects. Cloud, unconstrained, followed the prompt and
+# emitted objects. Neither model was being inconsistent; each obeyed whichever
+# instruction was binding on its path.
+#
+# `context` is the field that carries the finding. Measured 2026-08-07 on
+# raccoonstealer and icedid, every claude-sonnet-5 IOC had one ("0x811c9dc5 — FNV-1a
+# hash offset-basis used to validate decrypted embedded data") while qwen@15 emitted
+# 12 of 17 as bare DAT_ symbol names. Part of that gap was this schema forbidding the
+# local arm from supplying context even when it had it — a harness artifact scored as
+# a model difference, in the comparison the whole evaluation rests on.
+#
+# The full prompt field set is declared. A forced tool call can only return properties
+# the schema names, so the previous six-property version silently dropped
+# working_notes, novel_techniques and yara_suggestion during forced serialisation.
+#
+# RESULTS ARE NOT COMPARABLE ACROSS THIS CHANGE. The local arm's output shape moves
+# from strings to objects, which changes what grounding_check extracts. Everything
+# archived before 2026-08-08 was produced under the string form; re-baseline rather
+# than mixing them.
 _IOC_OBJECT = {
     "type": "object",
     "properties": {
@@ -1945,7 +1936,7 @@ _IOC_OBJECT = {
     "required": ["value"],
 }
 
-CLOUD_SUBMIT_ANALYSIS_SCHEMA = {
+SUBMIT_ANALYSIS_SCHEMA = {
     "type": "object",
     "properties": {
         "malware_family_guess": {"type": "string"},
@@ -1954,6 +1945,11 @@ CLOUD_SUBMIT_ANALYSIS_SCHEMA = {
             "properties": {"id": {"type": "string"}, "name": {"type": "string"}}}},
         "novel_techniques": {"type": "array", "items": {"type": "string"}},
         "code_level_iocs": {"type": "array", "items": _IOC_OBJECT},
+        # Office and PowerShell only, and their prompts call it "the most valuable
+        # output for an analyst". Undeclared here it was silently dropped by forced
+        # serialisation on exactly those sample types. Found by the schema/prompt
+        # agreement test, not by anyone reading the schema.
+        "deobfuscated_payload": {"type": "string"},
         "yara_suggestion": {"type": "string"},
         "risk_assessment": {"type": "string"},
         "narrative": {"type": "string"},
@@ -1961,6 +1957,12 @@ CLOUD_SUBMIT_ANALYSIS_SCHEMA = {
     },
     "required": ["malware_family_guess", "capabilities", "narrative"],
 }
+
+# #317 introduced a separate cloud schema purely to avoid inheriting the string-typed
+# IOCs above. With that contradiction gone there is nothing left to diverge on, so the
+# two are one schema and this name stays only as an alias for the recovery call site.
+CLOUD_SUBMIT_ANALYSIS_SCHEMA = SUBMIT_ANALYSIS_SCHEMA
+
 
 
 def synthesize_analysis(http_client: httpx.Client, base_url: str, api_key: str,
