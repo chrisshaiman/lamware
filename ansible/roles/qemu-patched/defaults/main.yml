@@ -7,3 +7,13 @@
 # Short brand names (e.g. "GIGABYTE"), NOT full DSDT hex dump.
 cape_hw_brand: "GIGABYTE"
 cape_hw_bios_vendor: "GIGABYTE"
+
+# Where the DSDT-patched emulator is preserved, outside dpkg's namespace (#308).
+# /usr/bin/qemu-system-x86_64 belongs to the qemu-system-x86 package; anything that
+# pulls that package in -- even as an incidental dependency -- overwrites the patched
+# build there. /usr/local/bin is never touched by apt.
+#
+# NOTHING points at this path yet. cape_qemu_binary still resolves to /usr/bin, so the
+# guests are unaffected by this change. #327 repoints them, once preservation has been
+# observed working on a real host.
+qemu_patched_preserved_path: /usr/local/bin/qemu-system-x86_64
