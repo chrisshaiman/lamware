@@ -605,3 +605,77 @@ def test_missing_litellm_key_fails_closed_before_any_request():
         "an unset key must yield exactly one error event and stop")
     assert "LAMWARE_LITELLM_KEY" in events[0]["data"]["message"], (
         "the error must name the env var so the fault reads as config, not network")
+
+
+# ---------------------------------------------------------------------------
+# _execute_tool_with_own_session — the session itself must not be able to escape
+# ---------------------------------------------------------------------------
+
+
+def test_a_db_session_failure_returns_an_error_dict_instead_of_escaping():
+    """Session construction happens OUTSIDE execute_tool's try.
+
+    execute_tool promises "always returns a JSON-safe dict, never raises", but
+    that promise covered only the dispatch it wraps — not obtaining a session in
+    the first place. An unreachable engine or exhausted pool raised here,
+    propagated through asyncio.to_thread, and escaped the tool loop.
+
+    By then the assistant message carrying `tool_calls` is already appended, so
+    the turn ends with a tool call that has no matching `role: "tool"` reply — a
+    malformed conversation the provider rejects, caused by a transient DB blip.
+    """
+    run = _ns["_execute_tool_with_own_session"]
+
+    class ExplodingSession:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "could not connect to postgresql://analyst:hunter2@10.20.30.40/lamware")
+
+    saved = sys.modules["sqlmodel"].Session
+    sys.modules["sqlmodel"].Session = ExplodingSession
+    try:
+        result = run("search_iocs", {"value": "1.2.3.4"}, {}, 1)
+    finally:
+        sys.modules["sqlmodel"].Session = saved
+
+    assert isinstance(result, dict), "must return a dict, not raise"
+    assert "error" in result
+    assert "search_iocs" in result["error"]
+
+
+def test_the_session_failure_does_not_leak_connection_details_to_the_model():
+    """Same disclosure rule as execute_tool: exception TYPE only.
+
+    The raised message here carries a DSN with credentials and a host — exactly
+    what must not ride out in a string the model can quote back into a report.
+    """
+    run = _ns["_execute_tool_with_own_session"]
+
+    class ExplodingSession:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError(
+                "could not connect to postgresql://analyst:hunter2@10.20.30.40/lamware")
+
+    saved = sys.modules["sqlmodel"].Session
+    sys.modules["sqlmodel"].Session = ExplodingSession
+    try:
+        result = run("search_iocs", {}, {}, 1)
+    finally:
+        sys.modules["sqlmodel"].Session = saved
+
+    blob = json.dumps(result)
+    for secret in ("hunter2", "10.20.30.40", "postgresql://", "lamware"):
+        assert secret not in blob, f"{secret!r} leaked into the model-visible error"
+    assert "RuntimeError" in blob, "the exception TYPE is the useful, safe part"
+
+
+def test_the_happy_path_still_returns_the_tools_result():
+    """The guard must not swallow normal results."""
+    run = _ns["_execute_tool_with_own_session"]
+    sentinel = {"iocs": [{"value": "1.2.3.4"}]}
+    saved = _ns["execute_tool"]
+    _ns["execute_tool"] = lambda *a, **k: sentinel
+    try:
+        assert run("search_iocs", {}, {}, 1) == sentinel
+    finally:
+        _ns["execute_tool"] = saved
