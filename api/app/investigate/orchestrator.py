@@ -149,8 +149,24 @@ def _execute_tool_with_own_session(tool_name: str, args: dict, report: dict, ana
     from sqlmodel import Session
 
     from ..database import engine
-    with Session(engine) as tool_session:
-        return execute_tool(tool_name, args, tool_session, report, analysis_id)
+    try:
+        with Session(engine) as tool_session:
+            return execute_tool(tool_name, args, tool_session, report, analysis_id)
+    except Exception as e:  # noqa: BLE001 - must not escape; see below
+        # Session construction happens OUTSIDE execute_tool's try, so an
+        # unreachable engine or an exhausted pool raised here, propagated through
+        # asyncio.to_thread, and escaped the tool loop. By then the assistant
+        # message carrying `tool_calls` is already in `messages`, so the turn ends
+        # with a tool call that has no matching `role: "tool"` reply — a malformed
+        # conversation the provider rejects, from a transient DB blip.
+        #
+        # execute_tool promises "always returns a JSON-safe dict, never raises".
+        # That promise only held for the dispatch it wraps, not for getting a
+        # session in the first place. Same disclosure rule as execute_tool: full
+        # detail to the server log, exception TYPE only to the model, so a DSN or
+        # host name cannot ride out in an error string.
+        log.exception("Tool %s failed before dispatch", tool_name)
+        return {"error": f"{tool_name} failed ({type(e).__name__})"}
 
 
 # ---------------------------------------------------------------------------
