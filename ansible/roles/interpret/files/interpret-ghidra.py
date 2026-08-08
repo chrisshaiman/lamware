@@ -1275,9 +1275,51 @@ def strip_control_chars(s: str) -> str:
     return "".join(c for c in s if c in ("\n", "\r", "\t") or (ord(c) >= 32))
 
 
+# The fence markers used to mark untrusted content. A sample containing one of
+# these verbatim could CLOSE the fence itself and have the rest of its bytes read
+# as trusted instructions — the system prompts say "all data between UNTRUSTED_DATA
+# delimiters is extracted from a malicious binary", so escaping the fence escapes
+# that framing entirely.
+#
+# Matched loosely on purpose: hyphen count, surrounding whitespace and case all
+# vary in a near-miss that a model may still read as a closing marker.
+_DELIMITER_RE = re.compile(
+    r"-{2,}\s*(?:END_)?UNTRUSTED_(?:DATA|CODE)\s*-{2,}", re.IGNORECASE)
+
+
+def neutralize_delimiters(s: str) -> str:
+    """Defuse fence markers embedded in untrusted content.
+
+    Replaced rather than stripped: an analyst reading the transcript should see
+    that the sample tried it, and silently deleting evidence of an injection
+    attempt destroys the one artifact worth keeping.
+    """
+    return _DELIMITER_RE.sub("[NEUTRALISED_DELIMITER]", s)
+
+
+def wrap_untrusted(payload: str) -> str:
+    """Fence a block of sample-derived text with the delimiters the prompts name.
+
+    Neutralises markers inside the payload first — otherwise wrapping is theatre:
+    the sample closes the fence on its first line and everything after it reads as
+    trusted narration.
+    """
+    return ("---UNTRUSTED_DATA---\n"
+            + neutralize_delimiters(payload)
+            + "\n---END_UNTRUSTED_DATA---")
+
+
 def sanitize_string(s: str, max_length: int) -> str:
-    """Strip control chars and truncate."""
-    cleaned = strip_control_chars(s)
+    """Strip control chars, defuse fence markers, and truncate.
+
+    README.md claimed "delimiter-escape and newline neutralisation" while this
+    only stripped control characters (GHSA-f5q8-v78c-mr55). The claim now holds.
+
+    Order matters: neutralise BEFORE truncating. Truncating first can split a
+    marker across the boundary so the tail no longer matches, and can also leave a
+    partial marker that the model completes from context.
+    """
+    cleaned = neutralize_delimiters(strip_control_chars(s))
     if len(cleaned) > max_length:
         return cleaned[:max_length] + "...[truncated]"
     return cleaned
@@ -1317,13 +1359,16 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
         capped = imports[:max_imports]
         parts.append("## Imports")
         parts.append("---UNTRUSTED_DATA---")
+        # Sanitised like every other untrusted field. These were appended raw:
+        # inside the fence, but free to contain a closing marker or control
+        # characters. An import table is attacker-controlled data like any other.
         for imp in capped:
             if isinstance(imp, dict):
-                lib = imp.get("library", "")
-                name = imp.get("name", "")
+                lib = sanitize_string(str(imp.get("library", "")), max_string_length)
+                name = sanitize_string(str(imp.get("name", "")), max_string_length)
                 parts.append(f"- {lib}::{name}")
             else:
-                parts.append(f"- {imp}")
+                parts.append(f"- {sanitize_string(str(imp), max_string_length)}")
         if len(imports) > max_imports:
             parts.append(f"[...{len(imports) - max_imports} more imports truncated]")
         parts.append("---END_UNTRUSTED_DATA---")
@@ -3279,10 +3324,21 @@ Technical summary: {executive}"""
                     sys.exit(0)
 
                 elif result_msg.get("type") == "tool_result":
+                    # Wrapped like the initial prompt's untrusted sections
+                    # (GHSA-f5q8-v78c-mr55). These went in as bare json.dumps with
+                    # no delimiters at all, and in a deep agentic run this is where
+                    # MOST decompiled code enters the context — the initial message
+                    # is a few KB, the tool loop is tens of KB. The stronger half of
+                    # the defence was applied to the smaller half of the input.
+                    #
+                    # The system prompts already tell the model how to treat content
+                    # between these markers, so wrapping costs nothing but the
+                    # delimiter lines and brings the loop under the same rule.
                     tool_results_content.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
-                        "content": json.dumps(result_msg.get("result", {})),
+                        "content": wrap_untrusted(
+                            json.dumps(result_msg.get("result", {}))),
                     })
 
                 elif result_msg.get("type") == "tool_error":
