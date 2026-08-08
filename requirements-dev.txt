@@ -15,3 +15,14 @@ ruff==0.15.13
 pre-commit==4.6.0
 bandit==1.9.4
 pip-audit==2.10.0
+
+# Ansible template tests render the .j2 files rather than string-matching their
+# source. Jinja conditionals — "emit <uuid> only when one is known" — cannot be
+# verified any other way, and this repo has repeatedly shipped guards that matched
+# their own explanatory comments instead of the code they guarded.
+#
+# PyYAML is used by the same tests and arrives transitively via bandit. Pinned here
+# too, because depending on a transitive dependency of a linter is exactly the kind
+# of accident that breaks on an unrelated upgrade.
+jinja2==3.1.6
+PyYAML==6.0.3
