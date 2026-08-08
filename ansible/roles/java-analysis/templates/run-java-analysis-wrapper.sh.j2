@@ -42,6 +42,7 @@ chmod 644 "$WORK_DIR/$JAR_NAME"
 
 podman run --rm \
     --network=none \
+    --read-only \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --memory={{ java_analysis_container_memory }} \
