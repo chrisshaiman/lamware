@@ -25,6 +25,17 @@
   <!-- Domain name = the machine label in kvm.conf -->
   <name>{{ item.name }}</name>
 
+  <!-- REUSE the existing UUID when the domain is already defined.
+       Without it libvirt generates a fresh UUID for this XML and then refuses
+       the define with "domain 'clean' already exists with uuid ...", because the
+       name collides with a different identity. That makes `virsh define`
+       non-idempotent: it works on first deploy and fails on every redefine
+       afterwards, which is how the #327 emulator repoint failed to apply.
+       Undefining first is not the answer -- that discards snapshot metadata. -->
+{% if cape_guest_uuid_map is defined and cape_guest_uuid_map.get(item.name) %}
+  <uuid>{{ cape_guest_uuid_map[item.name] }}</uuid>
+{% endif %}
+
   <!-- Memory: 4096 MB, no dynamic balloon during analysis.
        Balloon model is defined (required by QEMU) but growth is disabled. -->
   <memory unit='KiB'>{{ item.memory_kb | default(cape_guest_memory_kb) }}</memory>

@@ -57,6 +57,28 @@
     group: kvm
     mode: "0755"
 
+# `virsh define` updates an existing domain ONLY when the XML carries that
+# domain's UUID. The template omitted it, so libvirt minted a new one and rejected
+# the define on a name collision -- meaning the domain XML could never be updated
+# after first deploy. Found when #327's emulator repoint failed to apply.
+- name: Read existing domain UUIDs (a redefine must reuse them)
+  ansible.builtin.command: "virsh domuuid {{ item.name }}"
+  loop: "{{ cape_guests }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: cape_guest_uuids
+  changed_when: false
+  failed_when: false
+
+- name: Map guest name to its existing UUID
+  # Absent domain => non-zero rc and empty stdout => empty string => the template
+  # omits <uuid> and libvirt assigns one, which is correct for a first define.
+  ansible.builtin.set_fact:
+    cape_guest_uuid_map: >-
+      {{ dict(cape_guest_uuids.results | map(attribute='item.name') | list
+              | zip(cape_guest_uuids.results | map(attribute='stdout')
+                    | map('trim') | list)) }}
+
 - name: Deploy guest libvirt domain XML
   ansible.builtin.template:
     src: guest-domain.xml.j2
