@@ -201,7 +201,20 @@ def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
     if omitted_fields:
         notes.append(f"omitted entirely (budget exhausted): {', '.join(omitted_fields)}")
     if notes:
-        combined = "; ".join(filter(None, [result.get("note"),
+        # `note` is whatever the tool put there, and `is_payload` deliberately exempts
+        # it from truncation — so it reaches this line with its original type intact.
+        # A list raised `TypeError: sequence item 0: expected str instance, list found`
+        # and killed the cap outright, which in the pipeline means a tool result that
+        # cannot be capped and therefore cannot be sent.
+        #
+        # Found by the Hypothesis property test, never in production: real tools write
+        # a string here. That is the argument for generating inputs rather than
+        # imagining them — this shape was reachable for as long as the cap has existed
+        # and no hand-written case would have tried it.
+        prior = result.get("note")
+        if prior is not None and not isinstance(prior, str):
+            prior = json.dumps(prior, default=str)
+        combined = "; ".join(filter(None, [prior,
                                            "TRUNCATED — " + "; ".join(notes)]))
         out["note"] = combined[:NOTE_ALLOWANCE]
     elif "note" in result:
