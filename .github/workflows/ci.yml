@@ -246,6 +246,30 @@ jobs:
       - name: Run pre-commit (all files)
         run: pre-commit run --all-files
 
+      # The pre-commit gitleaks hook's entry is
+      #     gitleaks git --pre-commit --redact --staged --verbose
+      # `--staged` scans the git INDEX. On a fresh actions/checkout nothing is
+      # staged, so it scans an empty diff and exits 0 unconditionally — the CI half
+      # of the secret-scanning control has never examined a single file. It works
+      # locally, where a commit actually has staged content, which is why the
+      # difference went unnoticed.
+      #
+      # Scan the working tree instead. Version pinned to match .pre-commit-config
+      # so local and CI agree on rules, and the archive is checksum-verified
+      # against the release's own manifest.
+      - name: Secret scan (gitleaks — scans the tree, not an empty index)
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          BASE="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}"
+          curl -sSfL "$BASE/gitleaks_${VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          curl -sSfL "$BASE/gitleaks_${VERSION}_checksums.txt" -o /tmp/gitleaks.sums
+          ( cd /tmp && grep "gitleaks_${VERSION}_linux_x64.tar.gz" gitleaks.sums \
+              | sed "s#gitleaks_${VERSION}_linux_x64.tar.gz#gitleaks.tgz#" \
+              | sha256sum -c - )
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks dir . --redact --no-banner
+
       # Audit the tree we actually ship. Until #211 this audited a root
       # requirements.txt that named only decommissioned files (anthropic/boto3/Pillow
       # for the deleted src/ Lambda handlers), while the live API's dependencies were
