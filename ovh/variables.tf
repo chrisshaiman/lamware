@@ -66,7 +66,7 @@ variable "no_raid" {
 
 variable "admin_cidrs" {
   type        = list(string)
-  description = "CIDRs allowed to reach SSH (22/tcp) and WireGuard (UDP) on the robot firewall. Must be set explicitly — no default. Use your static IP(s) in CIDR notation (e.g. ['203.0.113.10/32']). Max 10 entries."
+  description = "CIDRs allowed to reach SSH (22/tcp) on the robot firewall. WireGuard is NOT restricted by this — it is permitted from 0.0.0.0/0 because the protocol drops unauthenticated packets itself and mobile access is behind carrier NAT (see ovh/main.tf). Must be set explicitly — no default. Use your static IP(s) in CIDR notation (e.g. ['203.0.113.10/32']). Max 5 entries."
 
   validation {
     condition     = length(var.admin_cidrs) > 0 && length(var.admin_cidrs) <= 5
@@ -82,5 +82,5 @@ variable "ssh_public_key" {
 variable "wireguard_port" {
   type        = number
   default     = 51820
-  description = "WireGuard UDP listen port. Robot firewall opens this port from admin_cidrs. Default 51820 is the WireGuard standard."
+  description = "WireGuard UDP listen port. The robot firewall opens this port from 0.0.0.0/0, NOT from admin_cidrs — the protocol authenticates before anything listens. Default 51820 is the WireGuard standard."
 }
