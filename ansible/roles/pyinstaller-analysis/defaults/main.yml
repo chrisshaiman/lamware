@@ -5,3 +5,8 @@ pyinstaller_analysis_install_dir: /opt/pyinstaller-analysis
 pyinstaller_analysis_container_memory: "1g"
 pyinstaller_analysis_container_cpus: "1"
 pyinstaller_analysis_container_timeout: "120"
+
+# Upstream commit for the tool built into the image. Resolved from HEAD on
+# 2026-08-08; bump deliberately, not implicitly.
+# https://github.com/zrax/pycdc/commit/b4289760970dbc399684f1e155ec6d1ea1cc787e
+pycdc_commit: b4289760970dbc399684f1e155ec6d1ea1cc787e
