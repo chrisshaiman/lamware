@@ -46,7 +46,7 @@ In rough priority order, what an attacker gains by breaking a boundary:
   └────────────────────────────────────────────────────────────┘
   ┌─ Detonation VLAN (HOSTILE / AIR-GAPPED) ───────────────────┐
   │  KVM guest VMs running live malware on virbr-det           │
-  │  iptables DROP: virbr-det ─X► eth0   virbr-det ─X► wg0     │
+  │  iptables DROP: virbr-det ─X► mgmt   virbr-det ─X► wg0     │
   └────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,8 @@ WireGuard private key, or authenticate to Keycloak.
 
 *Threat:* malware beacons out, or escapes the guest and pivots to the operator.
 
-- The detonation bridge `virbr-det` has **no route** to `eth0` (internet) or
+- The detonation bridge `virbr-det` has **no route** to the management interface (internet, named
+  by `management_interface` — `enp3s0f0` here, not literally `eth0`) or
   `wg0` (management VPN), enforced by iptables `FORWARD … -j DROP` rules at the
   hypervisor, set before any ACCEPT rule. Guest-level containment is *not*
   relied upon.
@@ -103,7 +104,12 @@ pipeline user or host.
 - Containers are rootless Podman under a dedicated `pipeline` service user,
   separate from `cape`, the API user, and root.
 - Tool arguments the LLM requests are validated against a regex whitelist
-  (`shared/lamware_shared/tool_validators.py`) before any tool runs.
+  (`shared/lamware_shared/tool_validators.py`) before any tool runs — **for the six
+  Ghidra tools it covers**. `validate_ghidra_args()` returns "valid" for any tool
+  absent from `GHIDRA_ARG_VALIDATORS`, and skips argument names it has no pattern
+  for; its own docstring says callers layer generic validation on top. So this is a
+  targeted allowlist on the tools that reach a decompiler, not blanket coverage of
+  every tool argument.
 
 ### 4.3 Sample-derived data → the LLM (prompt injection)
 
@@ -117,8 +123,33 @@ exfiltrate, or misuse tools.
   is decided by triage/CAPE/Volatility signals; the LLM is used only for
   *understanding* (narrative, hypotheses). A model that is fully deceived
   degrades the narrative, not the verdict.
+
+  This is enforced by **dual scoring**, not by convention. `calculate_severity()`
+  keeps two totals: `_severity_score` from deterministic evidence, which decides
+  the band, and `_severity_score_llm_context` from model-asserted signals
+  (capability count, the evasion hunter's self-reported confidence, and a family
+  whose `_family_source` is model-derived), which is recorded and never decisive.
+  `_severity_band_with_llm` shows what the band would be including it.
+
+  A gap between the two bands is itself a signal worth an analyst's attention: the
+  evidence and the model disagree, which is either a real finding or an injection
+  attempt. `db_ingest` likewise refuses to fall back to the model's
+  `risk_assessment` for the severity column — an absent verdict stays absent,
+  because a missing one is a visible gap while a model-supplied one is
+  indistinguishable from a real one.
+
+  Until 2026-08-08 this bullet was aspirational: model-derived inputs contributed
+  up to +30 against a `critical` threshold of 30, so a sample that reached the
+  context could set or suppress its own verdict.
 - A post-hoc `possible_prompt_influence` heuristic flags narratives that echo
   injection keywords ("benign", "false positive", …) for operator attention.
+
+> **Not in the §2 diagram, and it should be:** the interpret *container* is
+> egress-contained (§4.4), but the host-side LiteLLM proxy forwards sample-derived
+> text — hostile strings, decompiled code — to the LLM provider. That is a real
+> data flow out of the boundary. It is accepted rather than mitigated: the whole
+> design depends on reaching a model, and cloud interpretation is the default
+> backend. Recorded here so it is a decision rather than an oversight.
 
 ### 4.4 LLM container → internet (egress containment)
 
