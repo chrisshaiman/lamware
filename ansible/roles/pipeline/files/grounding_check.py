@@ -306,6 +306,107 @@ def _literal_in_source(literal: str, norm_source: str) -> bool:
     return norm in norm_source
 
 
+# Auto-generated Ghidra symbol names. A claim consisting of NOTHING BUT one of these
+# is contentless: it scores as grounded because appearing in the decompilation is what
+# makes it a symbol name in the first place.
+#
+# Measured 2026-08-07, raccoonstealer, qwen@15: 12 of 17 code_level_iocs were bare
+# `DAT_` addresses. It scored 16/17 = 0.941 and looked 3.4x more productive than
+# qwen@10's 5/5 = 1.000 — which had named the same findings WITH their significance
+# ("Magic constant 0x5cdabf15 used in GetObjectW parameter in anti-analysis routine").
+# The metric rewarded enumeration over explanation, which is #225's hypothesis.
+#
+# `FUN_0041246b is the core anti-analysis function` is NOT bare — the symbol carries a
+# claim about it. Only a value that is the symbol ALONE qualifies.
+_BARE_SYMBOL = re.compile(r"^(?:DAT|FUN|LAB|SUB|UNK|PTR)_[0-9A-Fa-f]+$", re.IGNORECASE)
+
+# Constants whose identity is unambiguous, for detecting a REAL value with a FABRICATED
+# explanation — a class grounding structurally cannot see, because the literal is
+# genuinely in the source and only the interpretation is wrong.
+#
+# Measured 2026-08-07, icedid: qwen@10 said "0x811c9dc5 used in FNV-1a hash validation
+# routine" (correct); qwen@15 said "Adler-32 initial value: 0x811c9dc5" (wrong). Both
+# scored grounded. Depth 15 REGRESSED and the scorecard showed it as an improvement.
+#
+# Every entry must be a mapping nobody disputes. A table that guesses is worse than no
+# table: a false `misattributed` would discredit the check that catches the real ones.
+_KNOWN_CONSTANTS: dict[str, tuple[str, frozenset[str]]] = {
+    "811c9dc5": ("FNV-1a 32-bit offset basis", frozenset({"fnv"})),
+    "1000193": ("FNV-1a 32-bit prime", frozenset({"fnv"})),
+    "cbf29ce484222325": ("FNV-1a 64-bit offset basis", frozenset({"fnv"})),
+    "100000001b3": ("FNV-1a 64-bit prime", frozenset({"fnv"})),
+    "edb88320": ("CRC-32 reversed polynomial", frozenset({"crc"})),
+    "4c11db7": ("CRC-32 polynomial", frozenset({"crc"})),
+    "5a827999": ("SHA-1 round constant", frozenset({"sha1", "sha-1"})),
+    "6a09e667": ("SHA-256 / BLAKE initial value", frozenset({"sha256", "sha-256", "blake"})),
+    "9e3779b9": ("TEA/XXTEA delta (golden ratio)", frozenset({"tea", "golden ratio"})),
+}
+
+# Algorithm names the checker is willing to call WRONG. Restricted to this vocabulary
+# so an unrecognised word is never treated as a contradiction — the check must only
+# fire when the claim names a specific algorithm that the table rules out.
+_ALGO_VOCAB: dict[str, str] = {
+    "fnv": "fnv", "adler-32": "adler", "adler32": "adler", "adler": "adler",
+    "crc-32": "crc", "crc32": "crc", "crc": "crc",
+    "md5": "md5", "sha-1": "sha1", "sha1": "sha1",
+    "sha-256": "sha256", "sha256": "sha256", "blake": "blake",
+    "tea": "tea", "xxtea": "tea", "xtea": "tea",
+    "aes": "aes", "rc4": "rc4", "des": "des", "murmur": "murmur",
+}
+
+# Windows constants checked in the OTHER direction: the claim names the symbol, so the
+# value it cites is verifiable. `Memory protection: 0x20 (PAGE_EXECUTE_READWRITE)` was
+# the observed instance — 0x20 is PAGE_EXECUTE_READ; READWRITE is 0x40.
+_NAMED_CONSTANTS: dict[str, str] = {
+    "page_noaccess": "1", "page_readonly": "2", "page_readwrite": "4",
+    "page_writecopy": "8", "page_execute": "10", "page_execute_read": "20",
+    "page_execute_readwrite": "40", "page_execute_writecopy": "80",
+}
+
+_HEX_IN_TEXT = re.compile(r"0x([0-9a-fA-F]+)")
+
+
+def constant_misattributions(text: str) -> list[str]:
+    """Constants in `text` whose stated meaning contradicts a known-unambiguous one.
+
+    Returns a human-readable description per contradiction, empty when the text either
+    names the constant correctly or expresses no opinion about it. Silence is the
+    default: naming no algorithm is not an error.
+    """
+    lowered = text.lower()
+    named = {term for term in _ALGO_VOCAB
+             if re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", lowered)}
+    families = {_ALGO_VOCAB[t] for t in named}
+    out: list[str] = []
+
+    for raw in _HEX_IN_TEXT.findall(text):
+        key = raw.lstrip("0").lower() or "0"
+        entry = _KNOWN_CONSTANTS.get(key)
+        if entry is None:
+            continue
+        canonical, ok_terms = entry
+        ok_families = {_ALGO_VOCAB[t] for t in ok_terms if t in _ALGO_VOCAB}
+        if families & ok_families:
+            continue  # named correctly
+        wrong = families - ok_families
+        if wrong:
+            out.append(f"0x{raw} is the {canonical}, not {'/'.join(sorted(wrong))}")
+
+    # Longest match only. These names nest — PAGE_EXECUTE is a substring of
+    # PAGE_EXECUTE_READWRITE — so matching every occurrence reports the shorter name
+    # against the longer one's value and flags correct claims as wrong.
+    present = [n for n in _NAMED_CONSTANTS if n in lowered]
+    present = [n for n in present
+               if not any(n != other and n in other for other in present)]
+    for name in present:
+        expected = _NAMED_CONSTANTS[name]
+        cited = {h.lstrip("0").lower() or "0" for h in _HEX_IN_TEXT.findall(text)}
+        if cited and expected not in cited:
+            out.append(f"{name.upper()} is 0x{expected.upper()}, not "
+                       f"0x{sorted(cited)[0].upper()}")
+    return out
+
+
 def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     """Score how many claimed code_level_ioc values are supported by the source.
 
@@ -344,6 +445,8 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     partial: list[str] = []
     fabricated: list[str] = []
     unscoreable: list[str] = []
+    bare_symbols: list[str] = []
+    misattributed: list[str] = []
     truncated = 0
     details: list[dict] = []
 
@@ -351,6 +454,18 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         value = _ioc_value(ioc)
         if not value:
             continue
+
+        # Reported, never silently excluded (#319). These deliberately do NOT change
+        # grounded_ratio: altering the headline would make every archived scorecard
+        # incomparable, and the point is to make the failure VISIBLE, not to
+        # re-baseline by stealth. Whether a bare symbol should count as grounded is a
+        # real question — it belongs to a deliberate re-baseline alongside #321, not
+        # to the change that first makes it measurable.
+        if _BARE_SYMBOL.match(value.strip().strip("`")):
+            bare_symbols.append(value)
+        wrong = constant_misattributions(value)
+        if wrong:
+            misattributed.extend(wrong)
 
         # A claim short enough to appear verbatim is grounded outright.
         if normalize(value) in norm_source:
@@ -397,5 +512,11 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         "partial": partial,
         "unscoreable": unscoreable,
         "truncated_claims": truncated,
+        # Added by #319. Both are ways a claim can score as grounded while being
+        # worthless or wrong, and they fail in OPPOSITE directions: bare symbols
+        # inflate the score, misattribution hides a regression. Neither is folded
+        # into grounded_ratio — see the loop above.
+        "bare_symbol_claims": bare_symbols,
+        "misattributed": misattributed,
         "details": details,
     }
