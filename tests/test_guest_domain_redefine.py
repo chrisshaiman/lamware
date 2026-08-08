@@ -21,6 +21,7 @@ change that needed a redefine to take effect.
 Undefining first is not the fix: `virsh undefine` discards snapshot metadata, and
 those snapshots are the pristine baseline for every detonation (#332).
 """
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
@@ -101,3 +102,84 @@ def test_the_role_never_undefines_a_domain():
 def test_the_rationale_survives():
     assert "#327" in TASKS_SRC or "#327" in TEMPLATE_SRC, (
         "record why the UUID is threaded through — it looks like noise otherwise")
+
+
+# Every variable the template references. Kept explicit so a new one produces an
+# UndefinedError here rather than a malformed domain on the host.
+_CTX = {
+    "item": {
+        "name": "clean",
+        "disk_path": "/var/lib/libvirt/images/windows11-guest.qcow2",
+        "mac": "3C:97:0E:4A:B2:10",
+        "memory_kb": 4194304,
+        "vcpus": 2,
+    },
+    "cape_qemu_binary": "/usr/local/bin/qemu-system-x86_64",
+    "detonation_bridge": "virbr-det",
+    "cape_guest_memory_kb": 4194304,
+    "cape_guest_vcpus": 2,
+}
+
+
+def _render_full(uuid_map=None) -> str:
+    """Render the ENTIRE template, the way Ansible does."""
+    from jinja2 import StrictUndefined
+    env = Environment(autoescape=False, undefined=StrictUndefined)  # noqa: S701
+    ctx = dict(_CTX)
+    if uuid_map is not None:
+        ctx["cape_guest_uuid_map"] = uuid_map
+    return env.from_string(TEMPLATE_SRC).render(**ctx)
+
+
+def test_the_rendered_domain_is_valid_xml():
+    """THE regression. `virsh define` rejected the domain with:
+
+        error: (domain_definition):34: Double hyphen within comment
+
+    because a comment I added to explain the UUID fix contained `--`, which XML
+    forbids inside comments. Two deploys failed in a row on this template, and the
+    existing tests passed through both: they rendered a FRAGMENT and substring-
+    matched it, never parsing the result as XML. Testing a proxy for the artifact
+    again.
+
+    Parsing is the artifact-level check — it fails on anything libvirt's parser
+    would reject, not just the mistake that happened to be made.
+    """
+    for uuid_map in ({"clean": "0f6cdad0-dce8-4925-8f48-e8f80c639a98"}, {}, None):
+        xml = _render_full(uuid_map)
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError as e:
+            raise AssertionError(
+                f"rendered domain XML is malformed ({e}) with uuid_map={uuid_map!r}"
+            ) from e
+        assert root.tag == "domain"
+        assert root.findtext("name") == "clean"
+
+
+def test_no_comment_contains_a_double_hyphen():
+    """Names the specific rule, so the failure explains itself.
+
+    `--` inside a comment body is illegal XML. It is easy to write in prose (an
+    em-dash typed as two hyphens) and the parser error names a line number in a
+    generated file, not the template.
+    """
+    import re
+    for body in re.findall(r"<!--(.*?)-->", TEMPLATE_SRC, re.S):
+        assert "--" not in body, (
+            f"illegal `--` inside an XML comment: {body.strip()[:80]!r}")
+
+
+def test_the_emulator_is_the_configured_one():
+    """Cheap end-to-end check that the #327 repoint reaches the rendered XML."""
+    root = ET.fromstring(_render_full({"clean": "0f6cdad0-dce8-4925-8f48-e8f80c639a98"}))
+    emulator = root.findtext("devices/emulator")
+    assert emulator == "/usr/local/bin/qemu-system-x86_64", emulator
+
+
+def test_the_uuid_lands_as_a_real_element_not_just_a_substring():
+    """Parsed, not grepped: a `<uuid>` inside a comment would satisfy a substring
+    check and be invisible to libvirt."""
+    root = ET.fromstring(_render_full({"clean": "0f6cdad0-dce8-4925-8f48-e8f80c639a98"}))
+    assert root.findtext("uuid") == "0f6cdad0-dce8-4925-8f48-e8f80c639a98"
+    assert ET.fromstring(_render_full({})).find("uuid") is None

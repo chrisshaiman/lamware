@@ -31,7 +31,7 @@
        name collides with a different identity. That makes `virsh define`
        non-idempotent: it works on first deploy and fails on every redefine
        afterwards, which is how the #327 emulator repoint failed to apply.
-       Undefining first is not the answer -- that discards snapshot metadata. -->
+       Undefining first is not the answer; that discards snapshot metadata. -->
 {% if cape_guest_uuid_map is defined and cape_guest_uuid_map.get(item.name) %}
   <uuid>{{ cape_guest_uuid_map[item.name] }}</uuid>
 {% endif %}
