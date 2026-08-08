@@ -4,6 +4,12 @@ lamware is a malware-analysis platform: it detonates and dissects live,
 adversary-controlled samples by design. Security reports are taken seriously
 and handled by the maintainer directly.
 
+## Supported versions
+
+lamware is a rolling project: only the current `main` branch receives
+security fixes. If you found an issue in an older checkout, please confirm
+it still reproduces on `main` before reporting.
+
 ## Reporting a vulnerability
 
 Use [GitHub private vulnerability reporting](https://github.com/chrisshaiman/lamware/security/advisories/new)
@@ -18,11 +24,14 @@ source (e.g., a MalwareBazaar link) instead.
 
 Please do not open public issues for suspected vulnerabilities.
 
+Test only against deployments you operate yourself; never probe someone
+else's lamware instance without their permission.
+
 ## What to expect
 
 This is a solo-maintained open-source project. Realistic expectations:
 
-- **Acknowledgement** within 72 hours.
+- **Acknowledgement** usually within 72 hours.
 - **Triage verdict** (accepted / not a vulnerability / out of scope) within
   1 week.
 - **Fixes** land as ordinary pull requests once a fix is ready; there is no
@@ -39,16 +48,21 @@ In scope:
   (`frontend/`), shared libraries (`shared/`), and the Ansible roles that
   configure the platform.
 - Containment regressions: anything that lets sample-derived data or code
-  escape the isolation described in `docs/SECURITY_CONSTRAINTS.md`
+  escape the isolation described in
+  [docs/SECURITY_CONSTRAINTS.md](docs/SECURITY_CONSTRAINTS.md)
   (container flags, detonation-VLAN isolation, prompt-injection handling in
   the LLM interpretation layer, tool-argument validation).
+- Resource exhaustion a *sample* can trigger: a sample that can wedge or
+  exhaust the analysis host is a containment problem, not a denial of
+  service.
 
 Out of scope (report upstream instead):
 
 - CAPEv2, Ghidra, Volatility, Suricata/Zeek, and other bundled analysis
   tools themselves.
 - The vendored `konstruktoid.hardening` role.
-- Denial of service against someone's own self-hosted deployment.
+- Volumetric denial of service against someone's self-hosted deployment,
+  or overloading your own instance.
 
 ## Known, accepted residual risk
 
@@ -62,7 +76,7 @@ mitigations can be *bypassed* is absolutely in scope.
 
 ## Reporting misuse
 
-lamware is built for defensive security work under an Apache 2.0 license.
-If you believe a public deployment of lamware is being used to develop or
-distribute malware rather than analyze it, report it through the same
-channels above.
+lamware is intended for defensive security work. The Apache 2.0 license
+does not restrict what it may be used for, but if you believe a public
+deployment of lamware is being used to develop or distribute malware
+rather than analyze it, report it through the same channels above.
