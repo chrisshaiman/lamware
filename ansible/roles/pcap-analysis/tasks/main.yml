@@ -52,6 +52,23 @@
     group: pipeline
     mode: "0644"
 
+# Fetched by the role, as root, because the build runs as `pipeline` — a user
+# whose egress allowlist covers loopback:5432 and loopback:8000 and which cannot
+# resolve DNS. The `curl` this replaces could never have worked from a cold
+# cache; it survived on an image built before that lockdown existed.
+#
+# This removes the SOURCE fetch. The build still runs apt against the Zeek repo,
+# which is a separate and still-unexplained question (#344) — do not read this
+# change as making the build hermetic.
+- name: Fetch the Zeek repo signing key into the build context
+  ansible.builtin.get_url:
+    url: "{{ zeek_repo_key_url }}"
+    dest: "{{ pcap_analysis_install_dir }}/build/zeek-repo-key.asc"
+    checksum: "sha256:{{ zeek_repo_key_sha256 }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
 - name: Build pcap-analysis container image
   ansible.builtin.command:
     cmd: >
