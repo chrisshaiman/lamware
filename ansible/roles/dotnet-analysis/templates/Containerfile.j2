@@ -13,20 +13,15 @@ RUN dotnet tool install -g ilspycmd \
 
 # Install de4dotEx — GPL-3.0 licensed .NET deobfuscator.
 # Invoked as a subprocess only; not linked into Apache 2.0 code.
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-    # PINNED — see the pyinstaller Containerfile for the rationale. An unpinned
-    # deobfuscator changes what the analysis sees, not just how fast it builds.
-    && git init /tmp/de4dotEx \
-    && cd /tmp/de4dotEx \
-    && git remote add origin https://github.com/GDATAAdvancedAnalytics/de4dotEx.git \
-    && git fetch --depth 1 origin {{ de4dotex_commit }} \
-    && git checkout FETCH_HEAD \
-    && cd /tmp/de4dotEx \
+# Source fetched into the build context by the role — see the pyinstaller
+# Containerfile. NB `dotnet publish` below still restores from NuGet, so this
+# build is not fully hermetic; it removes the GitHub dependency, not every one.
+COPY de4dotEx.tar.gz /tmp/de4dotEx.tar.gz
+RUN tar -xzf /tmp/de4dotEx.tar.gz -C /tmp \
+    && cd /tmp/de4dotEx-{{ de4dotex_commit }} \
     && dotnet publish de4dot -c Release -f net8.0 -o /opt/de4dot \
     && chmod -R a+rX /opt/de4dot \
-    && rm -rf /tmp/de4dotEx \
-    && apt-get purge -y git && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /tmp/de4dotEx.tar.gz /tmp/de4dotEx-{{ de4dotex_commit }}
 
 ENV PATH="${PATH}:/opt/dotnet-tools:/opt/de4dot"
 

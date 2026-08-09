@@ -10,3 +10,13 @@ pyinstaller_analysis_container_timeout: "120"
 # 2026-08-08; bump deliberately, not implicitly.
 # https://github.com/zrax/pycdc/commit/b4289760970dbc399684f1e155ec6d1ea1cc787e
 pycdc_commit: b4289760970dbc399684f1e155ec6d1ea1cc787e
+
+# sha256 of the codeload tarball for pycdc_commit
+pycdc_sha256: d7d8c53d37a1a586097145b532fca02535db2f2f0999b3b1e910133c9941bf31
+
+# was fetched from `master` — unpinned twice over (no commit, and needing
+# GitHub from a user with no network). Resolved from HEAD 2026-08-08.
+pyinstxtractor_commit: 815d31cf26bc71e62f851b2e549452e7b7c9dd98
+
+# sha256 of pyinstxtractor.py at that commit
+pyinstxtractor_sha256: 94e0b6c9d5151bbeefc7e7452e96e24b396c2dbfcb0348e5f12c4c0865fefe58

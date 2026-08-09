@@ -39,6 +39,36 @@
     group: pipeline
     mode: "0755"
 
+# Fetched HERE, as root, not inside the container build.
+#
+# The build runs as `pipeline`, whose outbound is restricted to loopback:5432 and
+# loopback:8000 — it cannot resolve DNS at all (#343). Two deploys failed on
+# `Could not resolve host: github.com` before that was understood. Ansible already
+# runs as root, which has network, so fetching here puts the download where the
+# network exists and leaves the build hermetic.
+#
+# `checksum` is the point, not a formality: it verifies the exact bytes BEFORE the
+# build starts. A commit sha alone still trusts whatever the network hands back
+# mid-build, and a build is a bad place to discover you got something else.
+- name: Fetch pinned pycdc source into the build context
+  ansible.builtin.get_url:
+    url: "https://codeload.github.com/zrax/pycdc/tar.gz/{{ pycdc_commit }}"
+    dest: "{{ pyinstaller_analysis_install_dir }}/build/pycdc.tar.gz"
+    checksum: "sha256:{{ pycdc_sha256 }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Fetch pinned pyinstxtractor into the build context
+  ansible.builtin.get_url:
+    url: >-
+      https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/{{ pyinstxtractor_commit }}/pyinstxtractor.py
+    dest: "{{ pyinstaller_analysis_install_dir }}/build/pyinstxtractor.py"
+    checksum: "sha256:{{ pyinstxtractor_sha256 }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
 - name: Build pyinstaller-analysis container image
   ansible.builtin.command:
     cmd: >
