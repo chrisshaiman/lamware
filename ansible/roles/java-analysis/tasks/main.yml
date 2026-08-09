@@ -22,10 +22,23 @@
     - "{{ java_analysis_install_dir }}/build"
     - "{{ java_analysis_install_dir }}/output"
 
+# `checksum` verifies WHAT ARRIVED. A pinned version pins what we ASK for; only
+# the hash catches a replaced asset, and a release tag's assets can be re-uploaded.
+# CFR was version-pinned but unverified until 2026-08-08.
 - name: Download CFR decompiler
   ansible.builtin.get_url:
     url: "{{ cfr_url }}"
     dest: "{{ java_analysis_install_dir }}/build/cfr.jar"
+    checksum: "sha256:{{ cfr_sha256 }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
+- name: Download java-deobfuscator
+  ansible.builtin.get_url:
+    url: "{{ java_deobfuscator_url }}"
+    dest: "{{ java_analysis_install_dir }}/build/java-deobfuscator.jar"
+    checksum: "sha256:{{ java_deobfuscator_sha256 }}"
     owner: pipeline
     group: pipeline
     mode: "0644"
