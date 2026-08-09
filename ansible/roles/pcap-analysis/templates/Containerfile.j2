@@ -3,15 +3,22 @@
 # Built locally by Ansible. Never pulled from a registry.
 FROM docker.io/library/ubuntu:24.04
 
-# Zeek requires its own repo — not in Ubuntu's default packages
+# Zeek requires its own repo — not in Ubuntu's default packages.
+#
+# The repo's signing key is fetched by the ROLE (get_url + sha256) and arrives
+# as zeek-repo-key.asc in the build context. It is NOT curled here: this build
+# runs as `pipeline`, which cannot resolve DNS, so the fetch has to happen where
+# there is a network. `curl` is gone from the image with it — one less fetch
+# tool in a container that parses attacker-controlled PCAPs.
+COPY zeek-repo-key.asc /tmp/zeek-repo-key.asc
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     ca-certificates \
-    curl \
     && echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' \
        > /etc/apt/sources.list.d/zeek.list \
-    && curl -fsSL 'https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key' \
-       | gpg --dearmor -o /etc/apt/trusted.gpg.d/zeek.gpg \
+    && gpg --dearmor -o /etc/apt/trusted.gpg.d/zeek.gpg < /tmp/zeek-repo-key.asc \
+    && rm /tmp/zeek-repo-key.asc \
     && apt-get update && apt-get install -y --no-install-recommends \
     zeek \
     suricata \

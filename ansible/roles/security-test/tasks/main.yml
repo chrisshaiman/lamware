@@ -28,7 +28,7 @@
   block:
     - name: Download nuclei release
       ansible.builtin.get_url:
-        url: "https://github.com/projectdiscovery/nuclei/releases/download/v{{ security_test_nuclei_version }}/nuclei_{{ security_test_nuclei_version }}_linux_amd64.zip"
+        url: "{{ security_test_nuclei_release_base }}/v{{ security_test_nuclei_version }}/nuclei_{{ security_test_nuclei_version }}_linux_amd64.zip"
         dest: /tmp/nuclei.zip
         mode: "0644"
 

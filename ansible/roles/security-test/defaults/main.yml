@@ -7,6 +7,10 @@ security_test_api_url: "https://{{ security_test_domain }}"
 security_test_keycloak_url: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth"
 security_test_nuclei_version: "3.8.0"
 
+# Split out to keep the get_url line inside the 160-char lint limit. A folded
+# scalar (`>-`) would join its lines with SPACES and corrupt the URL.
+security_test_nuclei_release_base: "https://github.com/projectdiscovery/nuclei/releases/download"
+
 # ntfy defaults — overridden by vars/main.yml or vars/secrets.yml if set
 ntfy_enabled: false
 ntfy_url: "https://ntfy.sh"

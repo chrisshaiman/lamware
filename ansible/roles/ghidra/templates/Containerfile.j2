@@ -1,20 +1,39 @@
 # Ghidra headless static analysis container
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/eclipse-temurin:21-jdk-jammy
+#
+# The release zip is fetched by the ROLE (get_url + sha256) and arrives here as
+# ghidra.zip in the build context. The build itself reaches no network: it runs
+# as `pipeline`, whose egress allowlist covers loopback:5432 and loopback:8000
+# and nothing else — it cannot even resolve DNS.
+#
+# Two stages, because the zip is ~486 MiB. A COPY in the final image would keep
+# it in a layer forever, `rm` or not, roughly doubling the image. Unpack here,
+# copy only the tree.
+
+FROM docker.io/library/eclipse-temurin:21-jdk-jammy AS ghidra-unpack
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
     unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ghidra.zip /tmp/ghidra.zip
+RUN unzip -q /tmp/ghidra.zip -d /opt \
+    && mv /opt/ghidra_{{ ghidra_version }}_PUBLIC /opt/ghidra \
+    && rm /tmp/ghidra.zip
+
+# -------------------------------------------------------------------------
+
+FROM docker.io/library/eclipse-temurin:21-jdk-jammy
+
+# wget and unzip are deliberately NOT installed here. Nothing at runtime uses
+# them, and this container is handed malware: the fewer fetch-and-unpack tools
+# inside it, the less a sample has to work with.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install Ghidra
-RUN wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_{{ ghidra_version }}_build/ghidra_{{ ghidra_version }}_PUBLIC_{{ ghidra_release_date }}.zip" \
-    -O /tmp/ghidra.zip \
-    && unzip -q /tmp/ghidra.zip -d /opt \
-    && mv /opt/ghidra_{{ ghidra_version }}_PUBLIC /opt/ghidra \
-    && rm /tmp/ghidra.zip
+COPY --from=ghidra-unpack /opt/ghidra /opt/ghidra
 
 COPY run-ghidra.py /opt/run-ghidra.py
 COPY ExportAnalysis.java /opt/ghidra/Ghidra/Features/Base/ghidra_scripts/ExportAnalysis.java

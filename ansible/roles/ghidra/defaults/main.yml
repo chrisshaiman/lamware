@@ -10,6 +10,19 @@ ghidra_projects_dir: /opt/ghidra/projects
 ghidra_version: "12.0.4"
 ghidra_release_date: "20260303"
 
+# Split out so the get_url line stays inside the 160-char lint limit. A folded
+# scalar is not an option here: `>-` joins its lines with SPACES, which would
+# quietly corrupt the URL.
+ghidra_release_base: "https://github.com/NationalSecurityAgency/ghidra/releases/download"
+
+# sha256 of the release zip, computed from the bytes fetched on 2026-08-09.
+# Upstream publishes no checksum file alongside the asset, so this is the record
+# of what we actually got — which is the point: the version says what to ASK for,
+# the hash says which bytes are acceptable, and it fails before the build starts.
+# https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.0.4_build/ghidra_12.0.4_PUBLIC_20260303.zip
+# 509952513 bytes
+ghidra_sha256: c3b458661d69e26e203d739c0c82d143cc8a4a29d9e571f099c2cf4bda62a120
+
 # Container resource limits — Ghidra's JVM needs significant memory
 # for decompilation of large binaries
 ghidra_container_memory: "4g"

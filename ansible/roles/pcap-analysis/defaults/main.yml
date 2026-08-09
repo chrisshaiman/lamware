@@ -8,3 +8,17 @@ pcap_analysis_container_timeout: "120"
 
 # Suricata rule update URL (ET Open ruleset)
 suricata_rules_url: "https://rules.emergingthreats.net/open/suricata-6.0/emerging-all.rules"
+
+# Signing key for the openSUSE-hosted Zeek repo — Zeek is not in Ubuntu's
+# archive, so the image adds that repo and must trust its key.
+# https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key
+zeek_repo_key_url: "https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key"
+
+# sha256 of that key as fetched on 2026-08-09 (2444 bytes).
+#
+# Pinning a signing key by hash is a deliberate trade: an upstream key ROTATION
+# will fail the deploy rather than silently start trusting new bytes. That is
+# the desired failure — a repo key is the thing deciding which binaries end up
+# inside a container that parses attacker-controlled PCAPs. On rotation, verify
+# the new key out of band and bump this.
+zeek_repo_key_sha256: b67ae73b8543af4195c930b52a07c208611253fdc519873adcf1190ffcfc1377

@@ -75,6 +75,22 @@
     group: pipeline
     mode: "0644"
 
+# The build runs as `pipeline`, whose outbound is an iptables owner-match
+# allowlist covering loopback:5432 and loopback:8000 — it cannot resolve DNS at
+# all, so the `wget` this replaces could never have worked from a cold cache. It
+# survived only because the image was already built on this host; a rebuilt host
+# would have failed the same way pyinstaller-analysis and java-analysis did.
+#
+# Ansible runs as root, which does have network. Fetch here, COPY in the build.
+- name: Fetch pinned Ghidra release into the build context
+  ansible.builtin.get_url:
+    url: "{{ ghidra_release_base }}/Ghidra_{{ ghidra_version }}_build/ghidra_{{ ghidra_version }}_PUBLIC_{{ ghidra_release_date }}.zip"
+    dest: "{{ ghidra_install_dir }}/build/ghidra.zip"
+    checksum: "sha256:{{ ghidra_sha256 }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
 - name: Build ghidra container image
   ansible.builtin.command:
     cmd: >

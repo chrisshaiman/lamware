@@ -84,10 +84,10 @@ def test_the_pinned_shas_are_real_and_resolvable_to_a_variable():
             f"tag or short sha, both of which can move or collide")
 
 
-MIGRATION_PENDING = {
-    "ghidra": "wget of a GitHub release — same failure mode, currently masked by a cached image",
-    "pcap-analysis": "curl of an openSUSE repo key — not GitHub, but still build-time network",
-}
+# Empty as of 2026-08-09 (#344): ghidra and pcap-analysis were the last two, and
+# both now fetch in the role. Keep the mechanism — the next role to need a
+# build-time fetch records the debt here instead of quietly shipping it.
+MIGRATION_PENDING: dict[str, str] = {}
 
 
 def test_no_containerfile_reaches_the_network_for_source():
@@ -130,10 +130,14 @@ def test_the_migration_list_does_not_go_stale():
     assert not stale, f"MIGRATION_PENDING is stale: {stale}"
 
 
+MIGRATED = ("pyinstaller-analysis", "dotnet-analysis", "java-analysis",
+            "ghidra", "pcap-analysis")
+
+
 def test_the_migrated_roles_are_actually_migrated():
     """Guards the guard: if these slipped into MIGRATION_PENDING the suite would
     pass while the bug returned."""
-    for role in ("pyinstaller-analysis", "dotnet-analysis", "java-analysis"):
+    for role in MIGRATED:
         assert role not in MIGRATION_PENDING, (
             f"{role} is the whole point of this change and must not be exempted")
 
@@ -146,7 +150,14 @@ def test_every_fetched_source_is_checksum_verified():
                          ("pyinstaller-analysis", "pyinstxtractor"),
                          ("dotnet-analysis", "de4dotex"),
                          ("java-analysis", "cfr"),
-                         ("java-analysis", "java_deobfuscator")):
+                         ("java-analysis", "java_deobfuscator"),
+                         # Not source, but the same contract: the version says
+                         # what to ask for, the hash says which bytes are OK.
+                         ("ghidra", "ghidra"),
+                         # A repo signing key. Pinned so an upstream rotation
+                         # fails the deploy instead of silently trusting new
+                         # bytes that then decide what apt installs.
+                         ("pcap-analysis", "zeek_repo_key")):
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
         assert "ansible.builtin.get_url" in tasks, f"{role} fetches nothing"
         defaults = _yaml.safe_load(
@@ -162,10 +173,79 @@ def test_every_fetched_source_is_checksum_verified():
 def test_the_fetch_happens_before_the_build():
     """get_url after podman build leaves the build COPYing a file that is not there
     yet, or worse, last deploy's copy of it."""
-    for role in ("pyinstaller-analysis", "dotnet-analysis", "java-analysis"):
+    for role in MIGRATED:
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
         assert tasks.index("ansible.builtin.get_url") < tasks.index("podman build"), (
             f"{role}: sources must be fetched before the image is built")
+
+
+def _get_url_dests(role: str) -> list[str]:
+    """Basenames the role fetches INTO THE BUILD CONTEXT.
+
+    Parsed from the task list rather than grepped: the dest is a Jinja path, so
+    only its final component is comparable, and a substring search over the raw
+    YAML would happily match the word inside a comment.
+
+    Scoped to `/build/`, because not every get_url feeds an image. pcap-analysis
+    also fetches the ET Open Suricata ruleset into `/rules/`, which is mounted at
+    runtime — deliberately unpinned and unchecksummed, since freezing an IDS
+    signature feed by hash would pin the detections themselves. Requiring a COPY
+    for it would be a false alarm, and this test exists partly because the first
+    version of it raised exactly that.
+    """
+    tasks = yaml.safe_load((ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    dests = [t["ansible.builtin.get_url"]["dest"]
+             for t in tasks if "ansible.builtin.get_url" in t]
+    return [Path(d).name for d in dests if "/build/" in d]
+
+
+def _copy_sources(text: str) -> list[str]:
+    """Build-context sources a Containerfile COPYs.
+
+    `COPY --from=<stage>` reads from another STAGE, not the context, so it is
+    excluded — counting it would let a missing fetch look satisfied.
+    """
+    sources = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        parts = parts[1:]
+        if any(p.startswith("--from=") for p in parts):
+            continue
+        parts = [p for p in parts if not p.startswith("--")]
+        sources.extend(Path(p).name for p in parts[:-1])  # last token is the dest
+    return sources
+
+
+def test_every_fetched_file_is_actually_copied_into_the_image():
+    """The two halves must agree on a FILENAME, and nothing else checks that.
+
+    get_url writing `ghidra.zip` while the Containerfile COPYs `ghidra-release.zip`
+    passes every other test in this file: the fetch is pinned, checksummed, and
+    ordered before the build. It fails on the host, mid-deploy, as a COPY error —
+    the same late-and-expensive failure this whole file exists to move earlier.
+    """
+    for role in MIGRATED:
+        fetched = _get_url_dests(role)
+        assert fetched, f"{role} is listed as migrated but fetches nothing"
+        copied = _copy_sources(CONTAINERFILES[role])
+        missing = [f for f in fetched if f not in copied]
+        assert not missing, (
+            f"{role}: the role fetches {missing} but the Containerfile never COPYs "
+            f"it — it copies {copied}. The build will fail on the host.")
+
+
+def test_the_copy_parser_ignores_cross_stage_copies():
+    """Guards the guard: ghidra's final stage pulls the unpacked tree with
+    `COPY --from=`. If that counted as a build-context source, a role that stopped
+    fetching entirely could still look satisfied."""
+    assert "COPY --from=" in CONTAINERFILES["ghidra"], (
+        "ghidra is no longer multi-stage — this control has nothing to guard")
+    assert "ghidra" not in _copy_sources(CONTAINERFILES["ghidra"]), (
+        "the --from= stage source leaked into the build-context source list")
+    assert "ghidra.zip" in _copy_sources(CONTAINERFILES["ghidra"]), (
+        "positive control: the real COPY of the fetched zip must still be seen")
 
 
 def test_the_pin_records_where_it_came_from():
