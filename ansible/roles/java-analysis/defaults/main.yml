@@ -21,4 +21,3 @@ cfr_sha256: "f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2"
 # runs, so it is a deliberate edit, not a silent upgrade.
 java_deobfuscator_url: "https://github.com/java-deobfuscator/deobfuscator/releases/download/latest/deobfuscator.jar"
 java_deobfuscator_sha256: "c1835bd9c9aad4cc453f8675110fc057f11cd3ca5e8f29b68c67baf086277eea"
-
