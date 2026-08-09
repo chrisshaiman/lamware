@@ -10,3 +10,6 @@ dotnet_analysis_container_timeout: "120"
 # 2026-08-08; bump deliberately, not implicitly.
 # https://github.com/GDATAAdvancedAnalytics/de4dotEx/commit/660088d663239de6bc0df7da15accabbd15495d7
 de4dotex_commit: 660088d663239de6bc0df7da15accabbd15495d7
+
+# sha256 of the codeload tarball for de4dotex_commit
+de4dotex_sha256: 7d989c185190cad59f696b3798597f8e098470d9f393077009f9f35670a4dabd

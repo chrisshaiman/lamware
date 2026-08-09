@@ -18,9 +18,9 @@ that looks fixed because the file did not change, while the thing it produces
 does. The repo already knew better — the CAPEv2 clone in `roles/qemu-patched` is
 pinned with a dated comment.
 
-Not covered here: `dotnet tool install -g ilspycmd` in the dotnet Containerfile
-takes the latest NuGet release and is unpinned for the same reason. Pinning it
-needs a version this test cannot resolve offline; see the PR.
+Still unpinned, and not covered here: `dotnet tool install -g ilspycmd` takes the
+latest NuGet release, and `dotnet publish` restores from NuGet — the dotnet image is
+not hermetic. This removes the GitHub dependency, not every one.
 """
 import re
 from pathlib import Path
@@ -84,15 +84,87 @@ def test_the_pinned_shas_are_real_and_resolvable_to_a_variable():
             f"tag or short sha, both of which can move or collide")
 
 
-def test_the_fetch_checks_out_what_it_fetched():
-    """`git fetch origin <sha>` leaves the working tree untouched. Without the
-    checkout the build compiles whatever `git init` left behind — nothing — or
-    silently the wrong ref. The pin would be decorative."""
+MIGRATION_PENDING = {
+    "ghidra": "wget of a GitHub release — same failure mode, currently masked by a cached image",
+    "java-analysis": "wget of java-deobfuscator.jar; builds with --no-cache so it refetches every deploy",
+    "pcap-analysis": "curl of an openSUSE repo key — not GitHub, but still build-time network",
+}
+
+
+def test_no_containerfile_reaches_the_network_for_source():
+    """The build runs as `pipeline`, which cannot resolve DNS at all (#343) — its
+    outbound is restricted to loopback:5432 and loopback:8000.
+
+    Two deploys failed on `Could not resolve host: github.com` before that was
+    understood. Sources are fetched by the ROLE, as root, where the network exists;
+    the build only COPYs them. `apt` and NuGet still reach out, which is why this
+    looks for source fetches specifically rather than all network use.
+    """
+    offenders = []
+    for role, text in sorted(CONTAINERFILES.items()):
+        if role in MIGRATION_PENDING:
+            continue
+        for line in text.splitlines():
+            code = line.split("#", 1)[0]
+            if re.search(r"\b(git\s+(clone|fetch)|wget|curl)\b", code):
+                offenders.append(f"{role}: {line.strip()[:70]}")
+    assert not offenders, (
+        "these Containerfiles fetch source at build time, from a user with no "
+        "network: " + "; ".join(offenders) +
+        " — fetch it in the role with get_url + checksum and COPY it in, or add a "
+        "justified entry to MIGRATION_PENDING")
+
+
+def test_the_migration_list_does_not_go_stale():
+    """A role that no longer fetches must leave the list, or it starts hiding
+    regressions instead of recording debt."""
+    stale = []
+    for role in MIGRATION_PENDING:
+        if role not in CONTAINERFILES:
+            stale.append(f"{role} has no Containerfile")
+            continue
+        fetches = any(
+            re.search(r"\b(git\s+(clone|fetch)|wget|curl)\b", ln.split("#", 1)[0])
+            for ln in CONTAINERFILES[role].splitlines())
+        if not fetches:
+            stale.append(f"{role} no longer fetches — remove it")
+    assert not stale, f"MIGRATION_PENDING is stale: {stale}"
+
+
+def test_the_migrated_roles_are_actually_migrated():
+    """Guards the guard: if these slipped into MIGRATION_PENDING the suite would
+    pass while the bug returned."""
     for role in ("pyinstaller-analysis", "dotnet-analysis"):
-        text = CONTAINERFILES[role]
-        assert "git fetch --depth 1 origin" in text, f"{role} missing pinned fetch"
-        assert "git checkout FETCH_HEAD" in text, (
-            f"{role} fetches a pinned commit but never checks it out")
+        assert role not in MIGRATION_PENDING, (
+            f"{role} is the whole point of this change and must not be exempted")
+
+
+def test_every_fetched_source_is_checksum_verified():
+    """A commit sha pins WHAT to fetch; only a checksum verifies WHAT ARRIVED, and
+    it does so before the build starts rather than mid-build."""
+    import yaml as _yaml
+    for role, prefix in (("pyinstaller-analysis", "pycdc"),
+                         ("pyinstaller-analysis", "pyinstxtractor"),
+                         ("dotnet-analysis", "de4dotex")):
+        tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
+        assert "ansible.builtin.get_url" in tasks, f"{role} fetches nothing"
+        defaults = _yaml.safe_load(
+            (ROLES / role / "defaults" / "main.yml").read_text(encoding="utf-8"))
+        sha = str(defaults.get(f"{prefix}_sha256", ""))
+        assert re.match(r"^[0-9a-f]{64}$", sha), (
+            f"{role}: {prefix}_sha256 is {sha!r} — must be a full sha256")
+        assert f"{prefix}_sha256" in tasks, (
+            f"{role} defines {prefix}_sha256 but never uses it — an unused "
+            f"checksum verifies nothing")
+
+
+def test_the_fetch_happens_before_the_build():
+    """get_url after podman build leaves the build COPYing a file that is not there
+    yet, or worse, last deploy's copy of it."""
+    for role in ("pyinstaller-analysis", "dotnet-analysis"):
+        tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
+        assert tasks.index("ansible.builtin.get_url") < tasks.index("podman build"), (
+            f"{role}: sources must be fetched before the image is built")
 
 
 def test_the_pin_records_where_it_came_from():

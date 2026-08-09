@@ -8,33 +8,34 @@
 # Neither is linked or imported into the Apache 2.0 project code.
 FROM docker.io/library/python:3.12-slim
 
+# Sources are fetched into the build context by the ROLE, not by this build.
+#
+# The build runs as the `pipeline` user, whose outbound is restricted to
+# loopback:5432 and loopback:8000 — it cannot even resolve DNS (#343). Ansible
+# runs as root, which can, so the fetch happens where the network exists and the
+# build stays hermetic. That also makes the pin real: a commit sha plus a sha256
+# of the exact bytes, verified before the build starts rather than trusted from
+# whatever the network returned mid-build.
+COPY pycdc.tar.gz /tmp/pycdc.tar.gz
+
 # Build pycdc from source — supports Python 3.11/3.12 bytecode
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake make g++ \
-    # PINNED. `git clone --depth 1` took whatever HEAD happened to be, so the
-    # decompiler in a malware-analysis toolchain could change silently between
-    # deploys with nothing recording which build produced a given result — and
-    # every deploy depended on GitHub being reachable (it wasn't, 2026-08-08).
-    # Shallow fetch of a specific commit; GitHub allows fetching by SHA.
-    && git init /tmp/pycdc \
-    && cd /tmp/pycdc \
-    && git remote add origin https://github.com/zrax/pycdc.git \
-    && git fetch --depth 1 origin {{ pycdc_commit }} \
-    && git checkout FETCH_HEAD \
+    cmake make g++ \
+    && tar -xzf /tmp/pycdc.tar.gz -C /tmp \
+    && cd /tmp/pycdc-{{ pycdc_commit }} \
     && cmake . \
     && make -j$(nproc) \
     && cp pycdc /usr/local/bin/pycdc \
     && cp pycdas /usr/local/bin/pycdas \
-    && rm -rf /tmp/pycdc \
-    && apt-get purge -y git cmake make g++ && apt-get autoremove -y \
+    && rm -rf /tmp/pycdc.tar.gz /tmp/pycdc-{{ pycdc_commit }} \
+    && apt-get purge -y cmake make g++ && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# pyinstxtractor is a single-file script — download from GitHub
-RUN apt-get update && apt-get install -y --no-install-recommends wget \
-    && wget -O /opt/pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py \
-    && chmod +x /opt/pyinstxtractor.py \
-    && apt-get purge -y wget && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+# pyinstxtractor — also fetched by the role. It was wget'd from `master`, so it
+# was doubly unpinned: the URL had no commit AND it needed GitHub from a user with
+# no network. Fixing only pycdc would have failed one line later.
+COPY pyinstxtractor.py /opt/pyinstxtractor.py
+RUN chmod +x /opt/pyinstxtractor.py
 
 COPY analyze-pyinstaller.py /opt/analyze-pyinstaller.py
 RUN chmod +x /opt/analyze-pyinstaller.py
