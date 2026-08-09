@@ -73,8 +73,8 @@ get_counter() {
 
 rule_survey() {
     # Emits: <drop_count> <first_drop_idx> <accept_count> <first_accept_idx>
-    local iface="$1"
-    iptables -L FORWARD -v -n -x --line-numbers 2>/dev/null \
+    local cmd="$1" iface="$2"
+    "$cmd" -L FORWARD -v -n -x --line-numbers 2>/dev/null \
         | awk -v bridge="$BRIDGE" -v iface="$iface" '
             $4 == "DROP"   && $7 == bridge && $8 == iface { if (!d) d = $1; dc++ }
             $4 == "ACCEPT" && $7 == bridge && $8 == iface { if (!a) a = $1; ac++ }
@@ -82,22 +82,63 @@ rule_survey() {
 }
 
 check_rules() {
-    local iface="$1" label="$2"
-    read -r dc di ac ai <<< "$(rule_survey "$iface")"
+    local cmd="$1" iface="$2" label="$3"
+    read -r dc di ac ai <<< "$(rule_survey "$cmd" "$iface")"
     if [ "$dc" -eq 0 ]; then
-        echo "MISSING: no DROP rule for $BRIDGE -> $label ($iface)"
+        echo "MISSING: no $cmd DROP rule for $BRIDGE -> $label ($iface)"
         return
     fi
     # A DROP that sits below an ACCEPT for the same pair never sees the traffic.
     if [ "$ac" -gt 0 ] && [ "$ai" -lt "$di" ]; then
-        echo "ORDERING: ACCEPT at rule $ai precedes DROP at rule $di for $BRIDGE -> $label ($iface)"
+        echo "ORDERING: $cmd ACCEPT at rule $ai precedes DROP at rule $di for $BRIDGE -> $label ($iface)"
+    fi
+}
+
+# -------------------------------------------------------------------------
+# The pipeline user's own egress allowlist, in BOTH families (#343).
+#
+# The counters above watch the detonation bridge. Nothing watched this chain,
+# and until #343 it existed only in IPv4 — so the v6 half could be absent, or
+# present but ordered behind its own DROP, and every other check stayed green.
+#
+# Ordering is the failure mode worth naming: Ansible APPENDS these rules, so an
+# allow added after the DROP-all is dead. It is still present, still matches a
+# `-C` check, and blocks the traffic it was written to permit.
+# -------------------------------------------------------------------------
+
+egress_survey() {
+    # Emits: <accept_count> <last_accept_idx> <drop_count> <first_drop_idx>
+    local cmd="$1"
+    "$cmd" -L OUTPUT -v -n -x --line-numbers 2>/dev/null \
+        | awk '
+            /pipeline: / && $4 == "ACCEPT" { a = $1; ac++ }
+            /pipeline: / && $4 == "DROP"   { if (!d) d = $1; dc++ }
+            END { print ac+0, a+0, dc+0, d+0 }'
+}
+
+check_egress() {
+    local cmd="$1"
+    read -r ac ai dc di <<< "$(egress_survey "$cmd")"
+    if [ "$dc" -eq 0 ]; then
+        echo "MISSING: no $cmd DROP-all for the pipeline user — its egress is unrestricted"
+        return
+    fi
+    if [ "$ac" -gt 0 ] && [ "$ai" -gt "$di" ]; then
+        echo "ORDERING: $cmd pipeline ACCEPT at rule $ai sits below the DROP-all at rule $di"
     fi
 }
 
 rules_problem=""
-rules_problem="${rules_problem}$(check_rules "{{ management_interface }}" internet)"
-rules_problem="${rules_problem}${rules_problem:+; }$(check_rules wg0 management)"
-rules_problem="${rules_problem%; }"
+for _fam in iptables ip6tables; do
+    for _check in \
+        "$(check_rules "$_fam" "{{ management_interface }}" internet)" \
+        "$(check_rules "$_fam" wg0 management)" \
+        "$(check_egress "$_fam")"
+    do
+        [ -n "$_check" ] || continue
+        rules_problem="${rules_problem}${rules_problem:+; }${_check}"
+    done
+done
 
 # Current counters
 det_eth0_accept=$(get_counter out_eth0 ACCEPT)

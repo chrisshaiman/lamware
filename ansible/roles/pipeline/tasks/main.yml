@@ -163,6 +163,65 @@
     jump: DROP
     comment: "pipeline: block all other outbound"
 
+# -------------------------------------------------------------------------
+# The same allowlist for IPv6 (#343).
+#
+# Every task above is IPv4-only — `ansible.builtin.iptables` defaults to
+# ip_version: ipv4 — so ip6tables carried NO pipeline rules at all, against a
+# default OUTPUT policy of ACCEPT. The allowlist was never what stopped v6
+# traffic; the host simply has no IPv6 route, and that is why this went
+# unnoticed. A route appearing (provider change, a tunnel, an accept_ra flip)
+# would unblock the pipeline user's entire v6 egress in one step, with every
+# existing check still green.
+#
+# The two ACCEPTs are inert today: postgres listens on 127.0.0.1 only, the CAPE
+# API on 10.200.0.1, and `localhost` resolves to 127.0.0.1 with no ::1 entry.
+# They are here so the two families say the same thing — if a service later
+# binds ::1, the allowlist already covers it instead of failing as a timeout.
+#
+# ORDER MATTERS AND THE MODULE DOES NOT ENFORCE IT: these tasks APPEND, so an
+# allow added below the DROP-all is dead on arrival while every presence check
+# still passes. New allows go ABOVE the DROP. network-monitor asserts the
+# ordering at runtime, in both families, for exactly this reason.
+# -------------------------------------------------------------------------
+
+- name: Allow pipeline user to reach PostgreSQL over IPv6
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "5432"
+    jump: ACCEPT
+    comment: "pipeline: PostgreSQL"
+
+- name: Allow pipeline user to reach CAPE API over IPv6
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "8000"
+    jump: ACCEPT
+    comment: "pipeline: CAPE API"
+
+- name: Block all other outbound IPv6 traffic from pipeline user
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    uid_owner: pipeline
+    jump: DROP
+    comment: "pipeline: block all other outbound"
+
+- name: Persist the pipeline egress rules across reboots (both families)
+  # netfilter-persistent writes rules.v4 AND rules.v6. Without this the v6
+  # allowlist survives only until the next boot — and a reboot is precisely
+  # when nobody is watching the rule set.
+  ansible.builtin.command: netfilter-persistent save
+  changed_when: true
+
 - name: Create lamware-api system user
   ansible.builtin.user:
     name: lamware-api
