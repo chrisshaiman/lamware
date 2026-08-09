@@ -9,3 +9,15 @@ java_analysis_container_timeout: "360"   # deobfuscation (120s) + decompilation 
 # CFR decompiler release — MIT licensed
 cfr_version: "0.152"
 cfr_url: "https://github.com/leibnitz27/cfr/releases/download/{{ cfr_version }}/cfr-{{ cfr_version }}.jar"
+
+# sha256 of cfr-0.152.jar, recorded 2026-08-08. Pinning the version says which file
+# to ask for; this says which bytes are acceptable.
+cfr_sha256: "f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2"
+
+# java-deobfuscator. NB `latest` here is a LITERAL git tag (published 2023-04-26),
+# not GitHub's /releases/latest redirect — the newest semver release is 1.5.2 from
+# 2020. So the URL is stable, but a maintainer can still replace the asset on a tag,
+# which is what the checksum is for. Changing this URL changes which deobfuscator
+# runs, so it is a deliberate edit, not a silent upgrade.
+java_deobfuscator_url: "https://github.com/java-deobfuscator/deobfuscator/releases/download/latest/deobfuscator.jar"
+java_deobfuscator_sha256: "c1835bd9c9aad4cc453f8675110fc057f11cd3ca5e8f29b68c67baf086277eea"

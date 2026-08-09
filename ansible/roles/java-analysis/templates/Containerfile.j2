@@ -7,16 +7,19 @@
 FROM docker.io/library/eclipse-temurin:21-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 wget \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # CFR decompiler JAR is downloaded at build time by Ansible
 COPY cfr.jar /opt/cfr.jar
 
 # java-deobfuscator — Apache 2.0, handles ZKM, Allatori, Stringer, etc.
-RUN wget -O /opt/java-deobfuscator.jar \
-    https://github.com/java-deobfuscator/deobfuscator/releases/download/latest/deobfuscator.jar \
-    && apt-get purge -y wget && apt-get autoremove -y
+# Fetched by the role like cfr.jar above, not wget'd here: the build runs as the
+# `pipeline` user, which cannot resolve DNS (#343). This step failed the deploy on
+# 2026-08-08 with "Temporary failure in name resolution" — while apt, in the same
+# build, had just pulled 47.7 MB. The correct pattern was already in this file for
+# CFR; the deobfuscator simply never got it.
+COPY java-deobfuscator.jar /opt/java-deobfuscator.jar
 
 COPY analyze-java.py /opt/analyze-java.py
 RUN chmod +x /opt/analyze-java.py

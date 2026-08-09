@@ -86,7 +86,6 @@ def test_the_pinned_shas_are_real_and_resolvable_to_a_variable():
 
 MIGRATION_PENDING = {
     "ghidra": "wget of a GitHub release — same failure mode, currently masked by a cached image",
-    "java-analysis": "wget of java-deobfuscator.jar; builds with --no-cache so it refetches every deploy",
     "pcap-analysis": "curl of an openSUSE repo key — not GitHub, but still build-time network",
 }
 
@@ -134,7 +133,7 @@ def test_the_migration_list_does_not_go_stale():
 def test_the_migrated_roles_are_actually_migrated():
     """Guards the guard: if these slipped into MIGRATION_PENDING the suite would
     pass while the bug returned."""
-    for role in ("pyinstaller-analysis", "dotnet-analysis"):
+    for role in ("pyinstaller-analysis", "dotnet-analysis", "java-analysis"):
         assert role not in MIGRATION_PENDING, (
             f"{role} is the whole point of this change and must not be exempted")
 
@@ -145,7 +144,9 @@ def test_every_fetched_source_is_checksum_verified():
     import yaml as _yaml
     for role, prefix in (("pyinstaller-analysis", "pycdc"),
                          ("pyinstaller-analysis", "pyinstxtractor"),
-                         ("dotnet-analysis", "de4dotex")):
+                         ("dotnet-analysis", "de4dotex"),
+                         ("java-analysis", "cfr"),
+                         ("java-analysis", "java_deobfuscator")):
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
         assert "ansible.builtin.get_url" in tasks, f"{role} fetches nothing"
         defaults = _yaml.safe_load(
@@ -161,7 +162,7 @@ def test_every_fetched_source_is_checksum_verified():
 def test_the_fetch_happens_before_the_build():
     """get_url after podman build leaves the build COPYing a file that is not there
     yet, or worse, last deploy's copy of it."""
-    for role in ("pyinstaller-analysis", "dotnet-analysis"):
+    for role in ("pyinstaller-analysis", "dotnet-analysis", "java-analysis"):
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
         assert tasks.index("ansible.builtin.get_url") < tasks.index("podman build"), (
             f"{role}: sources must be fetched before the image is built")
