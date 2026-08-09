@@ -84,8 +84,7 @@
 # Ansible runs as root, which does have network. Fetch here, COPY in the build.
 - name: Fetch pinned Ghidra release into the build context
   ansible.builtin.get_url:
-    url: >-
-      https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_{{ ghidra_version }}_build/ghidra_{{ ghidra_version }}_PUBLIC_{{ ghidra_release_date }}.zip
+    url: "{{ ghidra_release_base }}/Ghidra_{{ ghidra_version }}_build/ghidra_{{ ghidra_version }}_PUBLIC_{{ ghidra_release_date }}.zip"
     dest: "{{ ghidra_install_dir }}/build/ghidra.zip"
     checksum: "sha256:{{ ghidra_sha256 }}"
     owner: pipeline
