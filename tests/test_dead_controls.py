@@ -85,11 +85,11 @@ def test_the_drop_rules_are_asserted_to_exist():
     """Counter deltas cannot see a flushed chain: no rules means no matches means
     no delta means `ok`, with nothing blocked."""
     assert "rule_survey" in MONITOR_CODE
-    assert "MISSING: no DROP rule" in MONITOR_SRC
+    assert "MISSING: no $cmd DROP rule" in MONITOR_SRC
     assert "rules_problem" in MONITOR_CODE
 
 
-def test_the_rule_check_is_actually_CALLED():
+def test_the_rule_checks_are_actually_CALLED():
     """Defining `check_rules` and never calling it leaves the script exactly as
     blind as before, with more code to suggest otherwise.
 
@@ -97,16 +97,24 @@ def test_the_rule_check_is_actually_CALLED():
     machinery was PRESENT. A mutation that deleted the call site — leaving every
     function definition intact — passed the whole suite. Presence is not wiring,
     which is the same mistake as the control being fixed here.
+
+    It is a cheap structural check. What the checks actually REPORT is asserted in
+    test_air_gap_rule_checks.py, which runs them against fake firewall tables — a
+    check can be called and still be wrong, and no amount of grepping sees that.
     """
-    assigns = re.findall(r"^rules_problem=.*$", MONITOR_CODE, re.M)
-    assert assigns, "rules_problem is never assigned"
-    wired = [a for a in assigns if "check_rules" in a]
-    assert wired, (
-        f"rules_problem is assigned but never from check_rules, so the rule survey "
-        f"runs into nothing: {assigns!r}")
-    joined = " ".join(wired)
-    assert "{{ management_interface }}" in joined, "the internet path is unchecked"
-    assert "wg0" in joined, "the management path is unchecked"
+    driver = re.search(r"^for _fam in (.+?); do$(.*?)^done$",
+                       MONITOR_CODE, re.M | re.S)
+    assert driver, "the rule checks are no longer driven by a family loop"
+    families, body = driver.group(1).split(), driver.group(2)
+    assert {"iptables", "ip6tables"} <= set(families), (
+        f"the survey covers {families} — an unsurveyed family can be flushed "
+        f"silently, which is how the v6 air-gap rules went unwatched (#343)")
+    assert "check_rules" in body, "the bridge rule survey runs into nothing"
+    assert "check_egress" in body, "the pipeline egress allowlist is unchecked"
+    assert "{{ management_interface }}" in body, "the internet path is unchecked"
+    assert "wg0" in body, "the management path is unchecked"
+    assert re.search(r"^\s*rules_problem=.*_check", body, re.M), (
+        "the loop computes checks but never accumulates them into rules_problem")
 
 
 def test_rule_ordering_is_checked():
