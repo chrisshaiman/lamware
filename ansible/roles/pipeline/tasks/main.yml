@@ -573,6 +573,7 @@
     - trail.py
     - runner.py
     - rebuild.py
+    - motif.py
     - __main__.py
 
 - name: Seed the eval corpus manifest (force:false so operator-grown corpus is not clobbered)
