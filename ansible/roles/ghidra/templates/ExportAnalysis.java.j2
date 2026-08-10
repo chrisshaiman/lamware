@@ -42,6 +42,17 @@ public class ExportAnalysis extends GhidraScript {
     private static final int MAX_LINES_PER_FUNCTION = 200;
     // Maximum total pseudocode characters across all functions
     private static final int MAX_TOTAL_PSEUDOCODE_CHARS = 12000;
+    // Maximum imports collected. Was a bare literal 200, which silently dropped
+    // 1359 imports across 7 of the 29 MOTIF corpus samples — trickbot
+    // 1d9e9e60065c imports 567 and the model saw 200 (#370). Raised to cover
+    // everything in that corpus (max 567) and paired with imports_truncated so
+    // anything beyond it is declared rather than hidden. Imports are the
+    // cheapest high-signal evidence there is: they are what grounds a
+    // capability claim, and a few hundred of them cost far less context than
+    // one decompiled function body.
+    private static final int MAX_IMPORTS = 1000;
+    // Same treatment for strings; also previously a bare literal.
+    private static final int MAX_STRINGS_OF_INTEREST = 100;
 
     @Override
     public void run() throws Exception {
@@ -51,25 +62,40 @@ public class ExportAnalysis extends GhidraScript {
 
         // Extract imports by iterating each external library's symbols
         // ExternalLocationIterator doesn't implement Iterable — use while loop
+        // Iterate ALL of them even once the cap is reached, so importsTotal is the
+        // real number. Stopping early would leave us unable to say how much was
+        // dropped, which is the whole complaint in #370 — the model received
+        // exactly 200 and nothing could distinguish "imports 200" from
+        // "imports 567, you are seeing a third".
         List<String> imports = new ArrayList<>();
+        int importsTotal = 0;
         ExternalManager extMgr = currentProgram.getExternalManager();
         for (String libName : extMgr.getExternalLibraryNames()) {
             ExternalLocationIterator iter = extMgr.getExternalLocations(libName);
-            while (iter.hasNext() && imports.size() < 200) {
+            while (iter.hasNext()) {
                 ExternalLocation extLoc = iter.next();
                 String name = extLoc.getLabel();
                 if (name != null) {
-                    imports.add(libName + ":" + name);
+                    importsTotal++;
+                    if (imports.size() < MAX_IMPORTS) {
+                        imports.add(libName + ":" + name);
+                    }
                 }
             }
         }
+        boolean importsTruncated = importsTotal > imports.size();
 
         // Extract strings of interest
         List<String> stringsOfInterest = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         Listing listing = currentProgram.getListing();
         java.util.Iterator<Data> dataIter = listing.getDefinedData(true);
-        while (dataIter.hasNext() && stringsOfInterest.size() < 100) {
+        // Unlike imports, this stops at the cap: counting the true total would
+        // mean walking every defined datum in the program, which is expensive
+        // and not worth it. stringsTruncated therefore records THAT the list is
+        // capped, not how much was left — and says so rather than implying a
+        // count it does not have.
+        while (dataIter.hasNext() && stringsOfInterest.size() < MAX_STRINGS_OF_INTEREST) {
             Data data = dataIter.next();
             if (data.hasStringValue()) {
                 Object val = data.getValue();
@@ -119,6 +145,11 @@ public class ExportAnalysis extends GhidraScript {
         json.append("  \"functions_count\": ").append(functionCount).append(",\n");
         json.append("  \"project_dir\": \"").append(escapeJson(projectDir)).append("\",\n");
 
+        // Declared alongside the list, not inferred from its length: a consumer
+        // seeing exactly MAX_IMPORTS entries cannot otherwise tell a complete
+        // list from a clipped one (#370).
+        json.append("  \"imports_total\": ").append(importsTotal).append(",\n");
+        json.append("  \"imports_truncated\": ").append(importsTruncated).append(",\n");
         json.append("  \"imports\": [");
         for (int i = 0; i < imports.size(); i++) {
             if (i > 0) json.append(", ");
@@ -126,6 +157,8 @@ public class ExportAnalysis extends GhidraScript {
         }
         json.append("],\n");
 
+        json.append("  \"strings_truncated\": ")
+            .append(stringsOfInterest.size() >= MAX_STRINGS_OF_INTEREST).append(",\n");
         json.append("  \"strings_of_interest\": [");
         for (int i = 0; i < stringsOfInterest.size(); i++) {
             if (i > 0) json.append(", ");
