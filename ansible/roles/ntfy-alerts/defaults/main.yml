@@ -7,3 +7,12 @@ ntfy_topic: ""  # set in Ansible Vault
 ntfy_install_dir: /opt/ntfy-alerts
 ntfy_digest_hour: 20  # 8pm local time
 ntfy_digest_enabled: true
+
+# Users that have owned the digest cron in the past. `ansible.builtin.cron` is
+# scoped per user, so an entry left behind by a previous owner is invisible to
+# the install/remove tasks and keeps firing forever — `cape` held it before the
+# role moved to `pipeline`, and its copy failed nightly from at least
+# 2026-08-04 (#348). Add to this list when the owner changes; do not remove
+# entries, or the orphan comes back on the next fresh host.
+ntfy_digest_former_cron_users:
+  - cape

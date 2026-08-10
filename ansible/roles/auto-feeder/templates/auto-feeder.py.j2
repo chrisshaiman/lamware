@@ -44,11 +44,22 @@ except (ImportError, AttributeError):
 
 import requests
 
-# Optional ntfy push notifications
-sys.path.insert(0, "/opt/ntfy-alerts")
+# Optional ntfy push notifications.
+#
+# `except Exception`, not `except ImportError` (#347). An unreadable module
+# raises PermissionError, which is an OSError and would sail past the narrower
+# guard — terminating auto-feeder at startup instead of degrading to
+# ntfy_alert = None. That was live: the module deployed 0750 pipeline:pipeline
+# while this process runs as auto-feeder, and the import only kept working
+# because a stale group-readable .pyc satisfied it without opening the source.
+#
+# An alerting shim must never be able to take down the thing it reports on.
+sys.path.insert(0, "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}")
 try:
     from ntfy_notify import send_alert as ntfy_alert
-except ImportError:
+except Exception as _ntfy_err:  # noqa: BLE001 - see above
+    print(f"ntfy unavailable, alerts disabled: "
+          f"{type(_ntfy_err).__name__}: {_ntfy_err}", file=sys.stderr, flush=True)
     ntfy_alert = None
 
 # ---------------------------------------------------------------------------

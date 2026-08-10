@@ -19,7 +19,11 @@ import requests
 
 NTFY_URL = "{{ ntfy_url }}"
 NTFY_TOPIC = "{{ ntfy_topic }}"
-NTFY_ENABLED = {% if ntfy_enabled %}True{% else %}False{% endif %}
+{# `| bool` is load-bearing (#349). Bare Jinja truthiness tests the STRING:
+   `-e ntfy_enabled=false` on the command line arrives as "false", which is
+   non-empty and therefore true, so asking for alerts off rendered them ON.
+   Measured: naked_if=True, bool_filter=False, for the same input. #}
+NTFY_ENABLED = {% if ntfy_enabled | bool %}True{% else %}False{% endif %}
 
 log = logging.getLogger("ntfy")
 

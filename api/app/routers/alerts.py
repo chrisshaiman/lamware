@@ -109,12 +109,42 @@ def _read_disk_usage() -> dict | None:
 
 
 def _read_latest_digest() -> dict | None:
-    """Read /opt/ntfy-alerts/latest-digest.json."""
+    """Read /opt/ntfy-alerts/latest-digest.json, stamped with its own age.
+
+    The file is only rewritten on a day that produced analyses — "no analyses
+    today" correctly declines to overwrite it. That is sensible behaviour and
+    it left the endpoint unable to tell a digest written this morning from one
+    written six days ago: on 2026-08-09 it was serving `generated_at` of
+    2026-08-03 with nothing to say so (#351).
+
+    Age is computed here rather than in the frontend so every consumer gets it,
+    and so "how stale" is answered by the thing that read the file.
+    """
     try:
         with open(settings.digest_file) as f:
-            return json.load(f)
+            digest = json.load(f)
     except Exception:
         return None
+
+    generated = digest.get("generated_at")
+    if generated:
+        try:
+            when = datetime.fromisoformat(generated)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=UTC)
+            age_h = (datetime.now(UTC) - when).total_seconds() / 3600
+            digest["age_hours"] = round(age_h, 1)
+            # A digest older than ~36h means yesterday's run also produced
+            # nothing, or the cron is not running at all. Those look identical
+            # from here, which is why this reports the fact rather than a cause.
+            digest["stale"] = age_h > 36
+        except (TypeError, ValueError):
+            digest["age_hours"] = None
+            digest["stale"] = None
+    else:
+        digest["age_hours"] = None
+        digest["stale"] = None
+    return digest
 
 
 # ---------------------------------------------------------------------------

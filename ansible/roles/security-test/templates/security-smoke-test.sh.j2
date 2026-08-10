@@ -16,7 +16,13 @@ KC_URL="{{ security_test_keycloak_url }}"
 DOMAIN="{{ security_test_domain }}"
 NUCLEI="{{ security_test_install_dir }}/nuclei"
 NTFY_URL="{{ ntfy_url }}/{{ ntfy_topic }}"
-NTFY_ENABLED={{ 'true' if ntfy_enabled | default(false) else 'false' }}
+{# `| default(false)` only substitutes when UNDEFINED — a defined string
+   "false" sails straight through and is truthy, so `-e ntfy_enabled=false`
+   rendered this as true (#349). `| bool` is what actually tests the value.
+   This playbook has no `when: ntfy_enabled` to catch the mistake downstream,
+   so unlike site.yml it fails SILENTLY: the smoke test just starts pushing
+   alerts the operator asked it not to send. #}
+NTFY_ENABLED={{ 'true' if ntfy_enabled | default(false) | bool else 'false' }}
 RESULTS_DIR="{{ security_test_install_dir }}/results"
 
 PASSED=0
