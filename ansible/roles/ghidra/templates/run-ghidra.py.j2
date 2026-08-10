@@ -51,6 +51,66 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _pe_declares_imports(path: Path) -> bool | None:
+    """Does this PE's optional header declare a non-empty import directory?
+
+    True/False when the header parses, None when the file is not a PE we can
+    read — an unknown answer must not masquerade as "no imports declared", or
+    the check below would fire on every non-PE input.
+
+    Deliberately hand-rolled: this runs inside the Ghidra container, which has
+    no pefile, and the question is three struct reads deep.
+    """
+    import struct
+    try:
+        data = path.read_bytes()
+        if data[:2] != b"MZ":
+            return None
+        e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[e_lfanew:e_lfanew + 4] != b"PE\0\0":
+            return None
+        opt = e_lfanew + 4 + 20
+        magic = struct.unpack_from("<H", data, opt)[0]
+        # NumberOfRvaAndSizes sits at a different offset for PE32 vs PE32+, and
+        # the data directories follow it. Import is index 1.
+        ndirs_off = opt + (92 if magic == 0x10B else 108)
+        ndirs = struct.unpack_from("<I", data, ndirs_off)[0]
+        if ndirs < 2:
+            return False
+        rva, size = struct.unpack_from("<II", data, ndirs_off + 4 + 8)
+        return bool(rva and size)
+    except Exception:  # noqa: BLE001 - a diagnostic must never break the run
+        return None
+
+
+def _analysis_warnings(sample_path: Path, output: dict) -> list[str]:
+    """Ways the output contradicts the input, as plain sentences.
+
+    `analysis_success` reports that the analyser ran, which is not the same as
+    the analysis being usable — a defanged MOTIF sample returned success with 1
+    function and 0 imports from a PE whose import table was intact (#367).
+    These do not gate anything; they let a consumer tell "found little" from
+    "could not read it".
+    """
+    warnings: list[str] = []
+    n_funcs = int(output.get("functions_count") or 0)
+    if n_funcs <= 1:
+        warnings.append(
+            f"only {n_funcs} function(s) recovered — the loader may not have "
+            f"resolved an architecture for this binary")
+    if _pe_declares_imports(sample_path) and not output.get("imports"):
+        warnings.append(
+            "the PE declares a non-empty import directory but no imports were "
+            "extracted")
+    if output.get("imports_truncated"):
+        warnings.append(
+            f"import list truncated: {output.get('imports_total', '?')} present, "
+            f"{len(output.get('imports') or [])} reported")
+    if output.get("strings_truncated"):
+        warnings.append("strings_of_interest hit its cap and is incomplete")
+    return warnings
+
+
 def run_headless_analysis(sample_path: Path, project_dir: Path) -> bool:
     """Run Ghidra headless analyzer on the sample. Returns True on success."""
     project_name = "analysis"
@@ -144,6 +204,17 @@ def analyze_with_headless(sample_path: Path) -> dict:
         "imports": [],
         "strings_of_interest": [],
         "entry_point": "unknown",
+        # Populated below. `analysis_success` answers "did the analyser run and
+        # produce parseable output" — it always did and always will, for any
+        # input Ghidra can open. It cannot answer "is this output usable", and
+        # on 2026-08-09 a MOTIF sample returned success with 1 function and 0
+        # imports from a PE whose import directory was intact (#367).
+        #
+        # Deliberately NOT folded into analysis_success: the pipeline filters
+        # analysed files on that flag, so degrading it would silently DROP
+        # small-but-legitimate samples (a 4-function packed azorult in the MOTIF
+        # corpus is real, not broken). Warnings inform; they do not gate.
+        "analysis_warnings": [],
     }
 
     # Check if the export script produced output
@@ -162,6 +233,12 @@ def analyze_with_headless(sample_path: Path) -> dict:
             # mount point so the host-side wrapper can resolve it.
             output["project_dir"] = "/output/project"
             output["program_name"] = sample_path.name
+            # Truncation is now declared by the exporter rather than inferred
+            # from a list that happens to be exactly MAX_IMPORTS long (#370).
+            for key in ("imports_total", "imports_truncated", "strings_truncated"):
+                if key in exported:
+                    output[key] = exported[key]
+            output["analysis_warnings"] = _analysis_warnings(sample_path, output)
         except (json.JSONDecodeError, KeyError) as e:
             output["parse_error"] = str(e)
     else:
