@@ -645,3 +645,127 @@ asserts models and DB stay in sync.
 - Phase A ran Alembic alongside the legacy SQL as a rollback net; Phase B removed the
   legacy mechanism, so a fresh host now builds the schema solely via `alembic upgrade
   head` (0001 → 0002 → …). The schema's single source of truth is `api/alembic/`.
+
+---
+
+## ADR-019: Family attribution is not a capability metric for the RE stage
+
+**Status:** Decided (2026-08-10)
+
+**Context:**
+
+The eval harness reports `family_guess` against `mb_family` on every cell, and that
+column has been read as a quality signal. Measured against real corpora it is not one.
+
+Three independent measurements, all on the deployed pipeline:
+
+- **qwen scores 0/14** on family identification against MalwareBazaar labels
+  (post-#321 sweep, both depths, all 7 samples).
+- **The Claude reference scores 0/7** on the same samples. When a frontier model and a
+  35B local model both score zero, the metric is the suspect, not the models.
+- **MalwareBazaar's own labels disagree with the reference on every sample** —
+  raccoonstealer/njrat, icedid/bumblebee, emotet/smokeloader, warmcookie/orcus. There is
+  no agreement anywhere to anchor on.
+
+**Checked against the published literature** (2026-08-10 — the argument above is reasoning
+from our own data and deserved an outside check). It both supports and *narrows* the
+conclusion:
+
+- The MOTIF paper measures **AVClass at 46.78%** accuracy and **AV majority voting at
+  62.10%** against its expert ground truth ([arXiv:2111.15031](https://arxiv.org/abs/2111.15031)).
+  The tooling whose output becomes MalwareBazaar-style labels is under 50% accurate. Our
+  0/14 is therefore as much a statement about the labels as about the models — and this
+  is the **strongest support for this ADR**, stronger than the packing argument.
+- Packing does degrade static classification: one AV vendor loses 19% accuracy on packed
+  files, and static approaches are broadly sensitive to packing and obfuscation.
+
+But the naive packing claim is **too strong and must not be repeated**:
+
+- Supervised classifiers *do* achieve high accuracy on packed samples — MaliCage reports
+  **91.66%** on real packed malware (97.8% with GAN augmentation).
+- One study found near-zero correlation (0.015 binary, 0.0001 family) between packing
+  prevalence and classification accuracy. "Packing destroys family ID" is not a law.
+
+The distinction that matters is **what is classified, and how**. Those results come from
+supervised models over **byte-level and structural features** — entropy, byte histograms,
+section characteristics, import tables — against a **closed set** of known families. That
+is a different task from an LLM reading **decompiled code** and naming a family from an
+**open set of 454+**, which is what this stage does. A packer stub is generic *as source
+code* while remaining statistically distinctive *as bytes*: a DNN can exploit the latter,
+a decompiler-reading model cannot.
+
+So the structural claim, correctly scoped: **the signals available to an LLM reading
+decompiled code — distinctive string constants, config markers, custom crypto constants,
+characteristic import combinations — do not survive packing**, even though byte-level
+statistical signals do. Confirmed on the MOTIF corpus (#368): of 29 samples, 14 yield no
+strings matching the interest filter, and the most opaque export 2 imports across 4
+functions.
+
+A corollary worth keeping: if family ID is ever wanted as a *product* feature rather than
+a metric, the viable route is a supervised byte-level classifier over a closed family
+set — not this stage.
+
+The same structure explains why published threat-report IOCs cannot ground this stage
+either (#314): **0 of 9** icedid samples and **0 of 2** azorult samples contained any
+literal from their own linked reports — C2 domains, drop paths, `regsvr32`, `certutil`.
+The reports describe runtime behaviour; static analysis sees the packer.
+
+Real-world family attribution uses YARA over unpacked or memory-dumped samples,
+behavioural signatures from detonation, config extraction after unpacking, and network
+IOCs. None of those are decompilation of a packer.
+
+There is also a contamination problem that cannot be engineered away. MOTIF has been
+public since 2021, its md5→family mappings are in `motif_dataset.jsonl`, and the
+underlying vendor reports are indexed web content. Any model trained on public data has
+plausibly seen them. The exploitable vector is not hashes — the model never sees one —
+but **memorised code patterns from published analyses**, which is indistinguishable from
+genuine recognition. That is equally true of a human analyst who has read the same
+writeups. "Name the family" therefore conflates analysis with recall and cannot separate
+them.
+
+**Decision:**
+
+1. **`family_guess` is not a capability metric for THIS stage.** It stays in the
+   scorecard, reframed as a **contamination probe**: near-zero is the expected result
+   for an LLM reading decompiled packed code over an open family set, and an
+   unexpectedly *high* score is more likely memorisation of published analyses than
+   analysis of the binary. Note this is a claim about the method, not about family
+   classification in general — supervised byte-level classifiers do well on the same
+   samples.
+
+2. **The RE stage is measured on grounded capability claims** — `grounded_ratio`,
+   fabrication count, and (once #314 lands) recall against detonation-confirmed
+   behaviour. Those test whether a claim is supported by the code the model was shown,
+   which is the thing static analysis can actually be held to.
+
+3. **Family attribution belongs to detonation and YARA**, not to the RE stage. Where a
+   family label is needed for reporting, it comes from CAPE signatures or MalwareBazaar
+   metadata, and is presented as provenance rather than as an RE finding.
+
+4. **Ground truth for recall comes from CAPE**, not from threat reports (#314). The
+   decisive property is that `run_arm` passes only `report["ghidra"]` to interpret, so
+   CAPE observations are independent of the model's evidence and scoring against them is
+   not circular. It is a lower bound — one execution, so evasion or a dead C2 means it
+   under-reports — usable for confirming predictions, not for penalising misses.
+
+**Consequences:**
+
+- Any future "the model got the family wrong" observation is expected behaviour, not a
+  regression. Do not tune prompts against it.
+- Comparisons between local and cloud arms on family ID measure training-data overlap,
+  not capability. Both scoring zero is the signal that the task is ill-posed here.
+- **Label-leak hazard, recorded because it is one refactor away.** `_bazaar_context()`
+  injects the family verbatim into the prompt — *"MalwareBazaar identifies this sample as
+  'X'. Use this as your starting hypothesis"* — whenever `bazaar_family` is present in
+  the payload. It does not fire in eval runs only because `run_arm` passes
+  `report["ghidra"]` while `bazaar_family` sits at report top level. Passing the whole
+  report would silently turn the benchmark into an answer key. Verified 2026-08-10 by
+  rendering the prompt with a marker in every field: `filename`, `program_name` and
+  `project_dir` do **not** reach the model; `bazaar_family` does.
+- The production .NET and PowerShell paths *do* receive that hint (via `_llm_context` in
+  `build_dotnet_init` / `build_ps_init`) while the PE path does not. That asymmetry is
+  intentional-by-accident and worth revisiting if those paths are ever benchmarked.
+- Unpacking is the higher-leverage fix. CAPE already dumps unpacked payloads to
+  `/opt/CAPEv2/storage/analyses/<task>/dropped`, and the investigate tools already read
+  them. Running Ghidra over those rather than the packed original attacks the root cause
+  of both this ADR and #314.
