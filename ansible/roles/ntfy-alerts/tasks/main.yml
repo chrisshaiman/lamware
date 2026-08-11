@@ -19,15 +19,27 @@
     src: ntfy_notify.py.j2
     dest: "{{ ntfy_install_dir }}/ntfy_notify.py"
     owner: pipeline
-    group: pipeline
+    # group lamware, matching the DIRECTORY, not pipeline (#347). auto-feeder
+    # runs as its own user and is in lamware; with group pipeline it could
+    # traverse the directory and not read the module. It has been importing
+    # successfully only because a stale, group-readable .pyc happened to be
+    # valid — CPython validates the cache by stat()ing the source and then
+    # loads the bytecode without opening it. The next redeploy invalidates
+    # that cache, and the import raises PermissionError, which is an OSError
+    # and NOT caught by the `except ImportError` guard around it.
+    group: lamware
     mode: "0750"
+  # Carries ntfy_topic, which is the ONLY access control on a public ntfy
+  # relay — see #352. --diff would print it. Same reasoning as the digest
+  # below; not no_log, for the same reason.
+  diff: false
 
 - name: Deploy daily digest script
   ansible.builtin.template:
     src: daily-digest.py.j2
     dest: "{{ ntfy_install_dir }}/daily-digest.py"
     owner: pipeline
-    group: pipeline
+    group: lamware
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
   # litellm_master_key. NOT no_log: that also censors failure messages, so a
@@ -35,18 +47,79 @@
   # variable — the opaque-guard problem #238 exists to fix.
   diff: false
 
+# -------------------------------------------------------------------------
+# Digest scheduling
+#
+# Gated on ntfy_digest_enabled ALONE, not on ntfy_enabled (#351).
+#
+# ntfy_enabled is a DELIVERY setting; latest-digest.json is generated DATA that
+# /api/alerts serves to the dashboard. Coupling them meant "I do not want phone
+# notifications" silently also meant "the dashboard stops updating", with no
+# error and no staleness indicator. send_alert already no-ops when disabled, so
+# the digest still generates and the push simply does not happen.
+# -------------------------------------------------------------------------
+
 - name: Install daily digest cron job
   ansible.builtin.cron:
     name: "lamware daily digest"
     hour: "{{ ntfy_digest_hour }}"
     minute: "0"
     user: pipeline
-    job: "cd /tmp && python3 {{ ntfy_install_dir }}/daily-digest.py >> {{ ntfy_install_dir }}/digest.log 2>&1"
-  when: ntfy_enabled and ntfy_digest_enabled
+    # No `cd`: the script resolves INSTALL_DIR absolutely and every write is an
+    # absolute path, so the previous `cd /tmp` implied a dependency that does
+    # not exist (#353). Worse, it put a world-writable directory first on
+    # sys.path for anything the script imports — the same shadowing that broke
+    # an eval run in #371.
+    #
+    # No `>> digest.log` either: the script's RotatingFileHandler already owns
+    # that file. Redirecting stdout into it as well duplicated every line and
+    # raced the handler's rollover, with the shell holding an append offset
+    # into a file being renamed underneath it. stderr still goes to a separate
+    # file so a crash before logging is set up is not lost.
+    job: "python3 {{ ntfy_install_dir }}/daily-digest.py 2>> {{ ntfy_install_dir }}/digest.err"
+  when: ntfy_digest_enabled | bool
 
 - name: Remove daily digest cron if disabled
   ansible.builtin.cron:
     name: "lamware daily digest"
     user: pipeline
     state: absent
-  when: not (ntfy_enabled and ntfy_digest_enabled)
+  when: not (ntfy_digest_enabled | bool)
+
+# -------------------------------------------------------------------------
+# Orphaned schedules (#348)
+#
+# `ansible.builtin.cron` is scoped per user, so an entry installed under a
+# PREVIOUS owner is invisible to both tasks above: the role can neither remove
+# it nor report it. The digest cron was once installed for `cape`, the role
+# later moved to `pipeline`, and the cape copy kept firing every night at 20:00
+# — failing with "Permission denied" against a 0750 pipeline:pipeline script,
+# into the same log the working copy writes, since at least 2026-08-04.
+#
+# Enumerated explicitly rather than globbed: removing cron entries by pattern
+# across every user on the host is a much larger blast radius than this problem
+# justifies.
+# -------------------------------------------------------------------------
+
+- name: Remove orphaned digest cron entries from previous owners
+  ansible.builtin.cron:
+    name: "lamware daily digest"
+    user: "{{ item }}"
+    state: absent
+  loop: "{{ ntfy_digest_former_cron_users }}"
+
+- name: Assert exactly one crontab still schedules the digest
+  # The removal above only covers owners we thought to name. This checks the
+  # outcome instead of trusting the list: a job that changed hands again would
+  # otherwise be silently rescheduled twice, which is precisely how #348 hid.
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -l "daily-digest.py" /var/spool/cron/crontabs/* 2>/dev/null | wc -l
+  args:
+    executable: /bin/bash
+  register: ntfy_digest_crontab_count
+  changed_when: false
+  failed_when: >
+    (ntfy_digest_enabled | bool and ntfy_digest_crontab_count.stdout | trim | int != 1)
+    or (not (ntfy_digest_enabled | bool)
+        and ntfy_digest_crontab_count.stdout | trim | int != 0)

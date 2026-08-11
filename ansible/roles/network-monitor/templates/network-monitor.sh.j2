@@ -177,7 +177,7 @@ if [ -f "$BASELINE_FILE" ]; then
         alert_message="AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to eth0 since baseline"
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
         touch "$PAUSE_FILE"
-        python3 "/opt/ntfy-alerts/ntfy_notify.py" \
+        python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
             "NETWORK BREACH" "$alert_message" \
             --priority urgent --tags skull 2>/dev/null || true
     fi
@@ -188,7 +188,7 @@ if [ -f "$BASELINE_FILE" ]; then
         alert_message="${alert_message:+$alert_message; }AIR-GAP BREACH: $new_packets packets ACCEPTED from $BRIDGE to wg0 since baseline"
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
         touch "$PAUSE_FILE"
-        python3 "/opt/ntfy-alerts/ntfy_notify.py" \
+        python3 "{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py" \
             "NETWORK BREACH" "$alert_message" \
             --priority urgent --tags skull 2>/dev/null || true
     fi
@@ -303,7 +303,11 @@ pipeline_patterns=(
     # Feeders (auto-feeder delegates via sudo)
     'python3 /opt/sample-feeder/sample_feeder.py*'
     # Cron jobs
-    'python3 /opt/ntfy-alerts/daily-digest.py*'
+    # Templated like the alert call sites (#350): these are the ALLOWLIST, so a
+    # stale path fails in the opposite direction — the digest keeps running and
+    # starts being reported as an unexpected process, which is a false alarm on
+    # the one report a human is meant to trust.
+    'python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/daily-digest.py*'
     '/bin/sh -c *ntfy-alerts*'
     '/opt/pipeline/cleanup.sh*'
     '/bin/sh -c *pipeline*'

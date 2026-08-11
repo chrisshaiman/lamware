@@ -42,7 +42,11 @@ DB_CONFIG = {
     "port": {{ postgres_port | default(5432) }},
     "dbname": "{{ postgres_db_name | default('malware_analysis') }}",
     "user": "{{ postgres_db_user | default('pipeline') }}",
-    "password": "{{ pipeline_db_password | default('') }}",
+    {# `| mandatory`, matching litellm_master_key one line below (#353). An
+       empty default rendered clean, deployed clean, and failed at 20:00 as a
+       connection error — the guard-that-cannot-fire shape #238 exists to
+       remove. A required credential has no sensible default. #}
+    "password": "{{ pipeline_db_password | mandatory }}",
 }
 
 LITELLM_API_KEY = "{{ litellm_master_key | mandatory }}"
@@ -58,7 +62,12 @@ log.setLevel(logging.INFO)
 handler = RotatingFileHandler(str(INSTALL_DIR / "digest.log"), maxBytes=2_000_000, backupCount=3)
 handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
 log.addHandler(handler)
-log.addHandler(logging.StreamHandler(sys.stdout))
+# No StreamHandler (#353). The cron entry used to redirect stdout into
+# digest.log as well, so every line appeared twice — once timestamped by the
+# handler, once bare from the shell — and the two writers raced the handler's
+# rollover, the shell holding an append offset into a file being renamed
+# underneath it. The handler owns this file; stderr goes elsewhere so a crash
+# before logging is configured is still captured.
 
 # ---------------------------------------------------------------------------
 # Database queries
