@@ -26,6 +26,22 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "seed": seed,
         "sampling": sampling,
         "sample": sample.sha256[:12],
+        # NOT a capability metric for this stage — see ADR-019. Measured: qwen 0/14
+        # and the Claude reference 0/7 on the same samples, against labels that
+        # disagree with the reference on every one of them. The MOTIF paper puts
+        # AVClass at 46.78% and AV majority voting at 62.10%, so the label itself is
+        # under 50% reliable.
+        #
+        # Scope the claim: supervised byte-level classifiers DO reach ~91% on packed
+        # samples. What cannot work is an LLM reading DECOMPILED code over an open set
+        # of 454+ families — a packer stub is generic as source while staying
+        # distinctive as bytes.
+        #
+        # Read it as a CONTAMINATION PROBE. Near-zero is correct. An unexpectedly high
+        # score is evidence of memorised published analyses rather than analysis of the
+        # code, because analysis cannot get there from a packer stub.
+        #
+        # Do not tune prompts against this column.
         "family_guess": (analysis or {}).get("malware_family_guess"),
         "mb_family": sample.mb_family,
         "claude_family": claude_family,
