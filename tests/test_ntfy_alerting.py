@@ -218,15 +218,23 @@ def test_no_literal_ntfy_path_survives_rendering():
 
 
 def test_the_breach_alerts_specifically_are_templated():
-    """These two are the reason this matters: the call is `2>/dev/null || true`,
-    so a wrong path fails silently and the breach never reaches a phone."""
+    """These two are the reason this matters: a wrong path fails silently and
+    the breach never reaches a phone.
+
+    Since #378 the alert sites queue rather than calling ntfy directly, so the
+    path lives in the dispatcher. The invariant is unchanged — no breach alert
+    may reach ntfy via a hardcoded path — but it is now asserted in two parts:
+    the sites go through the queue, and the queue's single exit is templated.
+    """
     breach = [ln for ln in MONITOR_T.splitlines() if "NETWORK BREACH" in ln]
     assert len(breach) == 2, f"expected 2 breach alerts, found {len(breach)}"
     for ln in breach:
-        idx = MONITOR_T.index(ln)
-        call = MONITOR_T[max(0, idx - 200):idx]
-        assert "ntfy_install_dir" in call, (
-            "an AIR-GAP BREACH alert still hardcodes its ntfy path")
+        assert "queue_alert" in ln, f"breach alert bypasses the queue: {ln.strip()}"
+    dispatcher = MONITOR_T[MONITOR_T.index("# Dispatch queued alerts"):]
+    ntfy_line = [ln for ln in dispatcher.splitlines() if ln.strip().startswith("NTFY = ")]
+    assert len(ntfy_line) == 1, f"expected one NTFY path in the dispatcher: {ntfy_line}"
+    assert "ntfy_install_dir" in ntfy_line[0], (
+        "the dispatcher hardcodes the ntfy path, so every alert inherits it")
 
 
 # ---------------------------------------------------------------------------
