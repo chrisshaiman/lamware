@@ -7,9 +7,13 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     lines = [f"# RE Eval — {label}\n", "## Summary (per arm)\n"]
     # n_with_claims/total_claims sit next to the ratio on purpose: a ratio over
     # zero claims is not a good score, it is an absent one.
+    # parse_failures sits beside completed_rate for the same reason
+    # n_with_claims sits beside the ratio: a completed_rate of 1.0 that hides
+    # two unparseable answers is not a good score, it is a misleading one
+    # (#380). The 29-sample MOTIF sweep reported exactly that.
     cols = ["n", "n_with_claims", "total_claims", "mean_grounded_ratio",
-            "total_fabricated", "completed_rate", "mean_wall_seconds",
-            "total_cost_usd"]
+            "total_fabricated", "completed_rate", "parse_failures",
+            "mean_wall_seconds", "total_cost_usd"]
     lines.append("| arm | " + " | ".join(cols) + " |")
     lines.append("|" + "---|" * (len(cols) + 1))
     for arm, s in summary.items():
@@ -19,7 +23,8 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     # reproducible, and that has to be visible on the same row as its score
     # rather than inferred from the arm name.
     cell_cols = ["arm", "seed", "sample", "family_guess", "mb_family", "claude_family",
-                 "grounded", "total", "fabricated", "completed", "tool_calls_used",
+                 "grounded", "total", "fabricated", "completed", "parse_failed",
+                 "tool_calls_used",
                  "tool_call_error_rate", "wall_seconds", "cost_usd", "error"]
     lines.append("| " + " | ".join(cell_cols) + " |")
     lines.append("|" + "---|" * len(cell_cols))

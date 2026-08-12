@@ -48,6 +48,9 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "grounded": g["grounded"], "total": g["total"],
         "fabricated": g["fabricated"], "grounded_ratio": g["grounded_ratio"],
         "completed": tool_metrics.get("completed"),
+        # Reported separately because "finished, but the answer was unparseable"
+        # is neither success nor error, and folding it into either hides it.
+        "parse_failed": bool(tool_metrics.get("parse_failed")),
         "tool_calls_used": tool_metrics.get("tool_calls_used"),
         "tool_call_error_rate": tool_metrics.get("tool_call_error_rate"),
         "wall_seconds": wall_seconds, "cost_usd": cost_usd,
@@ -83,6 +86,7 @@ def aggregate(cells: list[dict]) -> dict:
             ),
             "total_fabricated": sum(len(c["fabricated"]) for c in cs),
             "completed_rate": round(sum(1 for c in cs if c["completed"]) / n, 3),
+            "parse_failures": sum(1 for c in cs if c.get("parse_failed")),
             "mean_wall_seconds": round(sum(c["wall_seconds"] for c in cs) / n, 1),
             "total_cost_usd": round(sum(c["cost_usd"] for c in cs), 4),
         }

@@ -32,12 +32,35 @@ def build_re_configs(base_config: dict, models: list[str]) -> list[dict]:
     return configs
 
 
+def analysis_completed(arm_result: dict) -> bool:
+    """Did this run produce a usable, structured analysis?
+
+    THE single definition. `lamware_eval.rebuild` re-scores persisted cells
+    offline and previously carried its own copy that checked `parse_note` while
+    this one did not — so re-scoring a sweep produced a different
+    completed_rate than the sweep itself (#380).
+
+    `parse_note` is the case that matters and the one the live path missed. When
+    the model's final response is not valid JSON the raw text is preserved in
+    `narrative` and a note is set: `enabled` is still True, there is no `error`,
+    and `analysis` is a non-empty dict — so every other condition holds and the
+    cell counted as a success. In the 29-sample MOTIF sweep that reported
+    completed_rate 1.0 while the two largest samples returned nothing usable.
+    """
+    analysis = arm_result.get("analysis") or {}
+    err = arm_result.get("error") or analysis.get("error")
+    return (arm_result.get("enabled") is True
+            and not err
+            and bool(analysis)
+            and not analysis.get("parse_note"))
+
+
 def extract_metrics(arm_result: dict) -> dict:
     """Mechanical reliability metrics for one arm. Tool-call errors (the
     router translation-fidelity signal) come from the audit tool_call_log file."""
     analysis = arm_result.get("analysis", {}) or {}
     err = arm_result.get("error") or analysis.get("error")
-    completed = arm_result.get("enabled") is True and not err and bool(analysis)
+    completed = analysis_completed(arm_result)
 
     logged = errors = 0
     audit_path = (arm_result.get("audit") or {}).get("tool_call_log")
@@ -48,6 +71,10 @@ def extract_metrics(arm_result: dict) -> dict:
 
     return {
         "completed": completed,
+        # A distinct outcome from both success and error: the run finished, the
+        # model answered, and the answer could not be parsed. Folding it into
+        # either loses the signal (#380).
+        "parse_failed": bool(analysis.get("parse_note")),
         "tool_calls_used": arm_result.get("tool_calls_used", 0),
         "tool_calls_logged": logged,
         "tool_call_errors": errors,
