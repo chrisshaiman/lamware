@@ -18,7 +18,11 @@ import json
 import subprocess
 from pathlib import Path
 
-from lamware_shared.cape_payloads import CAPE_STORAGE, find_pe_payloads
+from lamware_shared.cape_payloads import (
+    CAPE_STORAGE,
+    PayloadAccessError,
+    find_pe_payloads,
+)
 
 from stages.volatility import extract_shellcode_artifacts
 
@@ -34,17 +38,32 @@ GHIDRA_TRIGGERS = [
 ]
 
 
-def get_dropped_pe_files(cape_data: dict,
-                         storage: Path = CAPE_STORAGE) -> list[Path]:
-    """Find PE files Cape extracted during detonation.
+def discover_pe_files(cape_data: dict,
+                      storage: Path = CAPE_STORAGE) -> tuple[list[Path], str | None]:
+    """Find PE files Cape extracted, and say so if we could not look.
 
     Looks across every Cape extraction directory, not just ``dropped/`` —
-    which this deployment never writes to, so this function returned an empty
-    list for every analysis until #377. Ordered so the caller's ``[:5]`` cap
-    keeps Cape's unpacked extractions ahead of raw process dumps.
+    which this deployment never writes to, so this returned an empty list for
+    every analysis until #377. Ordered so the caller's ``[:5]`` cap keeps
+    Cape's unpacked extractions ahead of raw process dumps.
+
+    Returns ``(files, access_error)``. An unreadable Cape storage tree yields
+    ``([], "<why>")`` rather than raising: one sample's permissions must not
+    abort the whole pipeline run, since run-pipeline wraps neither call site.
+    But the reason travels back to the report — an empty list on its own would
+    read as "the sample dropped nothing", which is the lie #377 was about.
     """
     task_id = cape_data.get("id") or cape_data.get("task_id")
-    return [p.path for p in find_pe_payloads(task_id, storage=storage)]
+    try:
+        return [p.path for p in find_pe_payloads(task_id, storage=storage)], None
+    except PayloadAccessError as exc:
+        return [], str(exc)
+
+
+def get_dropped_pe_files(cape_data: dict,
+                         storage: Path = CAPE_STORAGE) -> list[Path]:
+    """PE files Cape extracted, for callers that only need the list."""
+    return discover_pe_files(cape_data, storage)[0]
 
 
 def get_original_sample_path(cape_data: dict,
@@ -54,7 +73,14 @@ def get_original_sample_path(cape_data: dict,
     if not task_id:
         return None
     binary_path = storage / str(task_id) / "binary"
-    if not binary_path.exists():
+    # exists() re-raises EACCES rather than returning False, so an unreadable
+    # Cape storage tree crashes here instead of falling through to the
+    # pipeline's own copy of the sample. The open() below already handles the
+    # unreadable case; this check only needs to skip a genuinely absent file.
+    try:
+        if not binary_path.exists():
+            return None
+    except OSError:
         return None
     # Check if it's a PE
     try:
@@ -278,7 +304,7 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                shellcode_candidates: list[dict] | None = None,
                storage: Path = CAPE_STORAGE) -> dict:
     """Run Ghidra headless on dropped PEs and/or the original sample."""
-    pe_files = get_dropped_pe_files(cape_data, storage)
+    pe_files, access_error = discover_pe_files(cape_data, storage)
     original_pe = get_original_sample_path(cape_data, storage)
 
     # If no dropped PEs, analyze the original sample
@@ -288,6 +314,12 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     elif pe_files:
         trigger_reason = "dropped_pe_with_signatures"
     else:
+        # "no PE files found" is a claim about the sample. If Cape's storage
+        # was unreadable it is a claim about us, and saying the first when the
+        # second is true is how a broken feature reads as a clean result.
+        if access_error:
+            return {"triggered": True, "error": "Cape payloads unreadable",
+                    "payload_access_error": access_error}
         return {"triggered": True, "error": "no PE files found"}
 
     sigs = get_cape_signatures_fn(cape_data)
@@ -299,6 +331,10 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         "trigger_signatures": trigger_sigs,
         "analyzed_files": [],
     }
+    if access_error:
+        # Reached the original-sample fallback, but only because we could not
+        # look at the extracted payloads — the report must not imply we did.
+        result["payload_access_error"] = access_error
 
     # Analyze up to 5 dropped PEs (avoid spending hours on prolific droppers)
     for pe_path in pe_files[:5]:

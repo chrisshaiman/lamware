@@ -15,7 +15,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from lamware_shared.cape_payloads import Payload, find_payloads
+from lamware_shared.cape_payloads import Payload, PayloadAccessError, find_payloads
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -704,7 +704,18 @@ def _resolve_payloads(report: dict) -> tuple[list[Payload] | None, dict | None]:
     task_id = _cape_task_id(report)
     if not task_id:
         return None, {"error": "No Cape task ID in report — sample may not have been detonated"}
-    payloads = find_payloads(task_id, storage=CAPE_STORAGE)
+    try:
+        payloads = find_payloads(task_id, storage=CAPE_STORAGE)
+    except PayloadAccessError as exc:
+        # Distinct from "extracted nothing": the agent must not conclude the
+        # sample dropped no payloads when the truth is that we could not look.
+        log.error("Cape payload access denied for task %s: %s", task_id, exc)
+        return None, {"error": (
+            "Cape's payload storage is not readable by the API service user, so "
+            "whether this sample extracted payloads is unknown — this is a "
+            "deployment permission problem, not a property of the sample. "
+            "Do not treat it as evidence of nothing being dropped."
+        )}
     if not payloads:
         return None, {"error": "Cape extracted no payloads during detonation of this sample"}
     return payloads, None
@@ -834,9 +845,17 @@ def _run_python(args: dict, report: dict) -> dict:
     # maps to a fixed /data inside the container, so it cannot be repeated, and
     # payloads are spread across CAPE/, files/ and procdump/ (#377). The task
     # directory is still inside run-sandbox's allowlist, and read-only.
+    # is_dir() re-raises EACCES rather than returning False, so an unreadable
+    # storage tree would take down the whole tool instead of just skipping the
+    # mount; the sandbox is still useful without it.
     task_id = _cape_task_id(report)
     task_dir = CAPE_STORAGE / task_id if task_id else None
-    if task_dir is not None and task_dir.is_dir():
+    try:
+        mountable = task_dir is not None and task_dir.is_dir()
+    except OSError as exc:
+        log.warning("Cannot stat Cape storage for task %s: %s", task_id, exc)
+        mountable = False
+    if mountable:
         cmd += ["--data", str(task_dir)]
 
     # Outer backstop = the container's own timeout + 10s margin. The container

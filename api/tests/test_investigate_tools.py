@@ -13,6 +13,7 @@ stack or a DB connection.
 """
 
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -578,3 +579,35 @@ def test_undetonated_sample_is_distinguished_from_empty_extraction(cape_storage)
 
     assert "error" in result
     assert "task ID" in result["error"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode bits")
+def test_unreadable_storage_is_not_reported_as_no_payloads(cape_storage):
+    """The agent must not conclude the sample dropped nothing (#385).
+
+    An unreadable storage tree and an empty extraction are different facts.
+    Collapsing them is what let #377 hide: the investigation agent has been
+    told "no dropped payloads" for every analysis ever run.
+    """
+    _write_payload(cape_storage / "77" / "CAPE", "d" * 64)
+    (cape_storage / "77").chmod(0o000)
+    try:
+        result = _get_cape_payloads({}, REPORT)
+        read = _read_payload({"payload_index": 0}, REPORT)
+    finally:
+        (cape_storage / "77").chmod(0o755)
+
+    for r in (result, read):
+        assert "error" in r
+        assert "not readable" in r["error"], r["error"]
+        assert "extracted no payloads" not in r["error"]
+
+
+def test_empty_extraction_keeps_its_own_message(cape_storage):
+    """Positive control: the two errors stay distinguishable."""
+    (cape_storage / "77").mkdir(parents=True)
+
+    result = _get_cape_payloads({}, REPORT)
+
+    assert "extracted no payloads" in result["error"]
+    assert "not readable" not in result["error"]

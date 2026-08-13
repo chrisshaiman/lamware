@@ -45,6 +45,16 @@ MAX_ANALYSABLE_BYTES = 32 * 1024 * 1024
 _SHA256_NAME = re.compile(r"^[0-9a-f]{64}$")
 
 
+class PayloadAccessError(OSError):
+    """Cape's storage is present but this process cannot read it.
+
+    Deliberately NOT folded into "no payloads found". A caller that reports
+    the two identically tells the operator the sample extracted nothing, when
+    the truth is that nobody was able to look — which is the failure #377 was
+    about in the first place. "I cannot tell" has to be its own answer.
+    """
+
+
 class Payload(NamedTuple):
     """One file CAPE extracted, and which directory it came from."""
 
@@ -59,12 +69,31 @@ def payload_dirs(task_id: str | int | None,
 
     Returns ``[]`` for a missing task ID or a task with no payload directories
     at all — an empty list is "nothing was extracted", not an error.
+
+    Raises :class:`PayloadAccessError` if Cape's storage cannot be read. Note
+    that ``Path.is_dir()`` does not swallow ``EACCES`` (its ``_ignore_error``
+    covers ENOENT/ENOTDIR/EBADF/ELOOP only), so this is a real condition and
+    not a theoretical one: on a deployment where the service user cannot
+    traverse ``storage/``, every call lands here.
     """
     if task_id is None or task_id == "":
         return []
     base = storage / str(task_id)
-    return [d for name in PAYLOAD_SUBDIRS
-            if (d := base / name).is_dir()]
+    dirs: list[Path] = []
+    for name in PAYLOAD_SUBDIRS:
+        candidate = base / name
+        try:
+            if candidate.is_dir():
+                dirs.append(candidate)
+        except PermissionError as exc:
+            raise PayloadAccessError(
+                f"Cannot read Cape storage at {candidate} — "
+                f"payload discovery is blocked by filesystem permissions, "
+                f"so whether this task extracted anything is unknown"
+            ) from exc
+        except OSError:
+            continue
+    return dirs
 
 
 def find_payloads(task_id: str | int | None,
@@ -83,6 +112,9 @@ def find_payloads(task_id: str | int | None,
     appear in two directories. Those are deduplicated, keeping the
     higher-priority copy. Names that are not hashes are never deduplicated:
     only content-addressed names prove two paths hold the same bytes.
+
+    Propagates :class:`PayloadAccessError` rather than returning ``[]``, so an
+    unreadable storage tree cannot masquerade as an empty one.
     """
     found: list[Payload] = []
     seen_hashes: set[str] = set()
