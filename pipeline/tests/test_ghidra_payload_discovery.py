@@ -110,3 +110,71 @@ def test_no_payloads_and_no_pe_sample_does_not_trigger(tmp_path):
         lambda _cape: ["packed_binary"],
         storage=tmp_path,
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# Unreadable Cape storage (#385)
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+
+import pytest  # noqa: E402
+from stages.ghidra import discover_pe_files, run_ghidra  # noqa: E402
+
+needs_unprivileged = pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root ignores mode bits; this test cannot exercise EACCES as root",
+)
+
+
+@needs_unprivileged
+def test_access_error_does_not_abort_the_pipeline(tmp_path):
+    """run-pipeline wraps neither call site, so raising kills the whole run."""
+    write_pe(tmp_path / "900" / "CAPE", name_for("hidden"))
+    (tmp_path / "900").chmod(0o000)
+    try:
+        files, err = discover_pe_files({"id": 900}, storage=tmp_path)
+    finally:
+        (tmp_path / "900").chmod(0o755)
+
+    assert files == []
+    assert err is not None and "permission" in err.lower()
+
+
+@needs_unprivileged
+def test_report_says_unreadable_not_nothing_found(tmp_path):
+    """"no PE files found" is a claim about the sample, not about our access."""
+    write_pe(tmp_path / "900" / "CAPE", name_for("hidden"))
+    (tmp_path / "900").chmod(0o000)
+    try:
+        result = run_ghidra(
+            {"id": 900, "status": "reported"},
+            tmp_path / "out",
+            tmp_path / "sample.bin",
+            ghidra_cmd=str(tmp_path / "run-ghidra"),
+            get_cape_signatures_fn=lambda _c: ["packed_binary"],
+            storage=tmp_path,
+        )
+    finally:
+        (tmp_path / "900").chmod(0o755)
+
+    assert result.get("payload_access_error"), (
+        f"report must record why nothing was found, got {result!r}"
+    )
+    assert result.get("error") != "no PE files found"
+
+
+def test_readable_but_empty_still_reports_nothing_found(tmp_path):
+    """Positive control: a real empty extraction keeps the honest message."""
+    (tmp_path / "900").mkdir()
+    result = run_ghidra(
+        {"id": 900, "status": "reported"},
+        tmp_path / "out",
+        tmp_path / "sample.bin",
+        ghidra_cmd=str(tmp_path / "run-ghidra"),
+        get_cape_signatures_fn=lambda _c: ["packed_binary"],
+        storage=tmp_path,
+    )
+
+    assert result.get("error") == "no PE files found"
+    assert "payload_access_error" not in result

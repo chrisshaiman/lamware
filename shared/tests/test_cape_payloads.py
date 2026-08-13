@@ -10,11 +10,13 @@ could not do because they never described where CAPE actually writes.
 """
 
 import hashlib
+import os
 
 import pytest
 from lamware_shared.cape_payloads import (
     MIN_PAYLOAD_BYTES,
     PAYLOAD_SUBDIRS,
+    PayloadAccessError,
     find_payloads,
     find_pe_payloads,
     payload_dirs,
@@ -172,6 +174,7 @@ def test_task_with_no_extraction_dirs_is_empty(task):
     assert find_payloads(tid, storage=storage) == []
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode bits")
 def test_unreadable_payload_does_not_abort_the_scan(task):
     """One bad file must not hide the rest of the extraction."""
     storage, tid = task
@@ -184,3 +187,56 @@ def test_unreadable_payload_does_not_abort_the_scan(task):
         bad.chmod(0o644)
 
     assert [p.path.name for p in found] == [sha_name("good")]
+
+
+# ---------------------------------------------------------------------------
+# Unreadable storage must not look like an empty extraction (#385)
+# ---------------------------------------------------------------------------
+
+# chmod(0o000) does not stop root, so as root these tests would pass without
+# ever exercising the EACCES path — a green result proving nothing. Skip
+# loudly instead of passing quietly.
+needs_unprivileged = pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root ignores mode bits; this test cannot exercise EACCES as root",
+)
+
+
+@needs_unprivileged
+def test_unreadable_storage_raises_instead_of_reporting_empty(task):
+    """The whole point: "I could not look" must not render as "nothing there".
+
+    On the real host /opt/CAPEv2/storage was mode 2750 owned cape:cape with an
+    empty cape group, so no service user could traverse it. Path.is_dir()
+    re-raises EACCES (its _ignore_error covers ENOENT/ENOTDIR/EBADF/ELOOP
+    only), which is what makes this reachable rather than theoretical.
+    """
+    storage, tid = task
+    write(storage / tid / "CAPE", sha_name("hidden"))
+    (storage / tid).chmod(0o000)
+    try:
+        with pytest.raises(PayloadAccessError) as caught:
+            find_payloads(tid, storage=storage)
+    finally:
+        (storage / tid).chmod(0o755)
+
+    assert "permission" in str(caught.value).lower()
+
+
+@needs_unprivileged
+def test_access_error_is_not_swallowed_by_find_pe_payloads(task):
+    """The PE filter must not convert an access failure into an empty list."""
+    storage, tid = task
+    write(storage / tid / "CAPE", sha_name("hidden"))
+    (storage / tid).chmod(0o000)
+    try:
+        with pytest.raises(PayloadAccessError):
+            find_pe_payloads(tid, storage=storage)
+    finally:
+        (storage / tid).chmod(0o755)
+
+
+def test_a_genuinely_absent_task_still_returns_empty(task):
+    """Positive control: not every failure is an access error."""
+    storage, _ = task
+    assert find_payloads("no-such-task", storage=storage) == []

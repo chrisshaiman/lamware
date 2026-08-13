@@ -491,6 +491,58 @@
     - "{{ cape_install_dir }}/storage"
     - "{{ cape_install_dir }}/storage/analyses"
     - "{{ cape_install_dir }}/storage/binaries"
+  tags: [cape-storage-perms]
+
+# The group grant above is necessary but not sufficient, and on this host it
+# had silently reverted: storage/ was found as cape:cape mode 2750, so the
+# group had no members and NOTHING below it was reachable — including
+# analyses/, which the hourly maintenance job dutifully keeps at cape:lamware
+# g+rX. A grant on a child is worthless if the parent cannot be traversed, and
+# every check of the child passes while the feature is dead (#385).
+#
+# An ACL is used rather than relying on the chgrp alone because it survives
+# whatever reset the group: CAPE's own installer and package upgrades chown
+# their tree, and the maintenance cron only repairs analyses/, never storage/
+# itself. rx, not rwx — the pipeline and API read detonation output, they do
+# not write it.
+- name: Install acl (setfacl for the CAPE storage traversal grant)
+  ansible.builtin.apt:
+    name: acl
+    state: present
+  tags: [cape-storage-perms]
+
+- name: Grant the lamware group traversal of CAPE storage
+  ansible.posix.acl:
+    path: "{{ cape_install_dir }}/storage"
+    entity: lamware
+    etype: group
+    permissions: rx
+    state: present
+  tags: [cape-storage-perms]
+
+- name: Verify a lamware-group service user can actually reach a payload directory
+  # Asserts the thing the grant is FOR, as a real member of the group, rather
+  # than re-reading the mode we just set. A permissions task that only checks
+  # its own writes is the failure mode this whole issue is about.
+  become: true
+  become_user: pipeline
+  ansible.builtin.shell: |
+    set -o pipefail
+    d=$(find {{ cape_install_dir }}/storage/analyses -maxdepth 2 \
+          -type d \( -name CAPE -o -name files -o -name procdump \) 2>/dev/null | head -1)
+    if [ -z "$d" ]; then echo "SKIP: no payload directories on this host yet"; exit 0; fi
+    ls -1 "$d" >/dev/null || { echo "FAIL: cannot list $d as pipeline"; exit 1; }
+    echo "OK: pipeline can read $d"
+  args:
+    executable: /bin/bash
+  register: _cape_storage_reachable
+  changed_when: false
+  tags: [cape-storage-perms]
+
+- name: Show the CAPE storage reachability result
+  ansible.builtin.debug:
+    msg: "{{ _cape_storage_reachable.stdout }}"
+  tags: [cape-storage-perms]
 
 - name: Schedule CAPE storage maintenance (hourly)
   ansible.builtin.cron:
