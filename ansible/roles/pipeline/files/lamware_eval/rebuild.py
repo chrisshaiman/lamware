@@ -10,6 +10,8 @@ zeroed 5 of 7 local cells in a 2-hour sweep; this recovers that in seconds.
 import json
 from pathlib import Path
 
+from llm_ab_re import analysis_completed
+
 from lamware_eval.corpus import load_corpus
 from lamware_eval.metrics import aggregate, compose_cell
 from lamware_eval.runner import _RATES, tool_output_text
@@ -48,7 +50,10 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     arm_dir.name, sample, analysis, source, claude_family,
                     res.get("duration_seconds") or 0.0,
                     0.0 if local else _cost(model, usage),
-                    {"completed": bool(analysis) and not analysis.get("parse_note"),
+                    # Shared with the live path so a re-score cannot disagree
+                    # with the sweep that produced the cell (#380).
+                    {"completed": analysis_completed(res),
+                     "parse_failed": bool(analysis.get("parse_note")),
                      "tool_calls_used": res.get("tool_calls_used"),
                      "tool_call_error_rate": 0.0},
                     analysis.get("parse_note")))
