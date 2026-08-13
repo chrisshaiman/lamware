@@ -786,6 +786,35 @@ increase `communicator_timeout` in the pkr.hcl file. Default is 45m.
 | Terraform OVH change | `make infra-ovh` |
 | Windows guest image change | Packer build + SCP + `make configure` + re-snapshot |
 | Secret rotation | `ansible-vault edit ansible/vars/secrets.yml` + `make configure` |
+| CAPE storage unreadable by pipeline/API | `make deploy TAGS=cape-storage-perms` |
+
+**`TAGS` defaults to `api,frontend`.** A bare `make deploy` therefore skips
+almost everything, including the pipeline and the CAPE storage grant. Pass the
+roles you mean.
+
+### `cape-storage-perms`
+
+A narrow tag on the `cape` role covering only the group/ACL grant that lets
+`pipeline` and `lamware-api` traverse `/opt/CAPEv2/storage` to read detonation
+output. Split out so the grant can be reapplied without re-running the whole
+CAPE role against a live install.
+
+Reapply it whenever payload discovery starts reporting nothing: CAPE's own
+installer and package upgrades chown their tree, and the hourly maintenance
+cron repairs `analyses/` but never `storage/` itself, so the grant can revert
+silently (#385). The symptom is not an error — it is a `PermissionError` from
+the pipeline, or `get_cape_payloads` reporting that storage is unreadable.
+
+Confirm it took **as a group member**, not by re-reading the mode:
+
+```bash
+sudo -u pipeline /opt/pipeline/venv/bin/python -c \
+  "from lamware_shared.cape_payloads import find_pe_payloads; print(len(find_pe_payloads(<task_id>)))"
+```
+
+A count means the grant is live. `PayloadAccessError` means it is not, and a
+`0` means that task genuinely extracted no PE payloads — the three are
+deliberately distinguishable.
 
 ---
 

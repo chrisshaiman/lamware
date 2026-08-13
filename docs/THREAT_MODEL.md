@@ -103,6 +103,14 @@ pipeline user or host.
   privilege escalation.
 - Containers are rootless Podman under a dedicated `pipeline` service user,
   separate from `cape`, the API user, and root.
+- That separation is a *privilege* boundary, not a data one. `pipeline` and
+  `lamware-api` are members of the `lamware` group, which holds **read** access
+  to CAPE's detonation output — extracted payloads, pcaps, process dumps. The
+  analysis stages and the investigation agent exist to read that output, so
+  this is deliberate; the grant is `rx` on `/opt/CAPEv2/storage` and neither
+  user can write into CAPE's tree or act as `cape` (#385). A reader should not
+  infer from "separate service users" that a compromised pipeline process
+  cannot see other samples' results — it can.
 - Tool arguments the LLM requests are validated against a regex whitelist
   (`shared/lamware_shared/tool_validators.py`) before any tool runs — **for the six
   Ghidra tools it covers**. `validate_ghidra_args()` returns "valid" for any tool
@@ -192,6 +200,12 @@ is known.
   input; the container flags contain a compromise to a `--network=none`,
   capability-stripped, rootless namespace, but a container-escape 0-day chained
   with a tool 0-day is out of the model's protection.
+- **Detonation output is readable across samples.** A compromised `pipeline` or
+  `lamware-api` process can read every analysis in CAPE storage, not just the
+  one it is working on — payloads, pcaps, memory dumps. Per-analysis isolation
+  of results is not modeled: the pipeline correlates across samples by design,
+  and the investigation agent answers "have we seen this before". Write access
+  is withheld, so results cannot be forged through this path.
 - **The control plane trusts its operators.** Any authenticated WireGuard peer
   with API access is inside the trust boundary. There is no defense against a
   malicious or compromised operator account beyond Keycloak authentication.
