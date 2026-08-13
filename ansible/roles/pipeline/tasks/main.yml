@@ -487,7 +487,8 @@
       {{ pipeline_install_dir }}/venv/bin/python -c
       "import lamware_shared, lamware_pipeline, psycopg2, weasyprint, requests, markdown;
       from lamware_pipeline.config import PipelineConfig;
-      from lamware_shared.tool_validators import validate_ghidra_args"
+      from lamware_shared.tool_validators import validate_ghidra_args;
+      from lamware_shared.cape_payloads import find_pe_payloads"
   changed_when: false
 
 - name: Deploy run-pipeline.py

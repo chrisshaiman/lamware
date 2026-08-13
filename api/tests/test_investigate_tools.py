@@ -112,6 +112,8 @@ _cape_task_id = _ns["_cape_task_id"]
 _get_api_traces = _ns["_get_api_traces"]
 _get_pcap_summary = _ns["_get_pcap_summary"]
 execute_tool = _ns["execute_tool"]
+_get_cape_payloads = _ns["_get_cape_payloads"]
+_read_payload = _ns["_read_payload"]
 _GHIDRA_TOOLS = _ns["_GHIDRA_TOOLS"]
 GHIDRA_ARG_VALIDATORS = _tv_ns["GHIDRA_ARG_VALIDATORS"]
 _ns_ghidra_tool_orig = _ns["_ghidra_tool"]
@@ -496,3 +498,83 @@ def test_injection_args_rejected_before_dispatch(tool_name, args):
 def test_ghidra_validators_match_registry():
     """Every Ghidra tool has an arg validator (drift guard against the real registry)."""
     assert set(GHIDRA_ARG_VALIDATORS) == _GHIDRA_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# Cape payload tools (#377)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cape_storage(tmp_path, monkeypatch):
+    """Point the payload tools at a throwaway storage tree."""
+    monkeypatch.setitem(_ns, "CAPE_STORAGE", tmp_path)
+    return tmp_path
+
+
+def _write_payload(directory, name, size=4096):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_bytes(b"MZ\x90\x00" + b"\x00" * (size - 4))
+
+
+REPORT = {"cape": {"id": 77}}
+
+
+def test_payloads_found_outside_dropped(cape_storage):
+    """dropped/ is empty on this deployment; the payloads are elsewhere."""
+    _write_payload(cape_storage / "77" / "CAPE", "a" * 64)
+    _write_payload(cape_storage / "77" / "procdump", "b" * 64)
+
+    result = _get_cape_payloads({}, REPORT)
+
+    assert result["count"] == 2, f"expected payloads, got {result!r}"
+    assert {p["source_dir"] for p in result["payloads"]} == {"CAPE", "procdump"}
+
+
+def test_listed_index_resolves_to_the_listed_file(cape_storage):
+    """The desync bug: listing enumerated before filtering, reading after.
+
+    A subdirectory alongside the payloads shifted every subsequent index, so
+    read_payload(n) returned a different file than the one get_cape_payloads
+    labelled n — with no error to reveal it.
+    """
+    files_dir = cape_storage / "77" / "files"
+    (files_dir / "subdir").mkdir(parents=True)
+    for i in range(4):
+        _write_payload(files_dir, f"{i}" * 64, size=4096 + i)
+
+    listed = _get_cape_payloads({}, REPORT)["payloads"]
+
+    for entry in listed:
+        got = _read_payload({"payload_index": entry["index"]}, REPORT)
+        assert got["filename"] == entry["filename"], (
+            f"index {entry['index']} listed as {entry['filename']} "
+            f"but read back {got['filename']}"
+        )
+        assert got["size"] == entry["size"]
+
+
+def test_payload_index_out_of_range_reports_the_real_count(cape_storage):
+    _write_payload(cape_storage / "77" / "CAPE", "c" * 64)
+
+    result = _read_payload({"payload_index": 5}, REPORT)
+
+    assert "error" in result
+    assert "1 payloads available" in result["error"]
+
+
+def test_no_extraction_is_an_explicit_result_not_a_missing_directory(cape_storage):
+    """The old message blamed a missing dropped/ dir, which was always missing."""
+    (cape_storage / "77").mkdir(parents=True)
+
+    result = _get_cape_payloads({}, REPORT)
+
+    assert "error" in result
+    assert "dropped" not in result["error"].lower()
+
+
+def test_undetonated_sample_is_distinguished_from_empty_extraction(cape_storage):
+    result = _get_cape_payloads({}, {"cape": {}})
+
+    assert "error" in result
+    assert "task ID" in result["error"]
