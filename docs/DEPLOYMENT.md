@@ -799,11 +799,15 @@ A narrow tag on the `cape` role covering only the group/ACL grant that lets
 output. Split out so the grant can be reapplied without re-running the whole
 CAPE role against a live install.
 
-Reapply it whenever payload discovery starts reporting nothing: CAPE's own
-installer and package upgrades chown their tree, and the hourly maintenance
-cron repairs `analyses/` but never `storage/` itself, so the grant can revert
-silently (#385). The symptom is not an error — it is a `PermissionError` from
-the pipeline, or `get_cape_payloads` reporting that storage is unreadable.
+You should not need to watch for this: `network-monitor.sh` probes it every 5
+minutes as the `pipeline` user and pushes an ntfy alert if the grant reverts,
+recording `cape_storage_status` in `status.json`. Reapply the tag when that
+fires. CAPE's own startup errors instruct operators to `chown cape:cape` its
+tree, which is the most likely way the grant gets undone.
+
+`cape_storage_status` has three values, deliberately distinct: `ok`, `empty`
+(nothing detonated yet — not an alert), and `alert` (payload directories exist
+but the pipeline user cannot see them).
 
 Confirm it took **as a group member**, not by re-reading the mode:
 

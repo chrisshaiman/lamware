@@ -520,6 +520,34 @@
     state: present
   tags: [cape-storage-perms]
 
+# Inheritance, not repair. The hourly maintenance job used to chgrp -R and
+# chmod -R g+rX the whole of analyses/, which meant a sample detonated at 09:16
+# had unreadable payloads until 10:15 — and the pipeline reads them minutes
+# after detonation, so that window was being hit. A default ACL applies to
+# every directory CAPE creates, at creation, and removes an O(corpus) walk that
+# ran every hour forever.
+- name: Make the lamware grant inherit into new analysis directories
+  ansible.posix.acl:
+    path: "{{ cape_install_dir }}/storage/analyses"
+    entity: lamware
+    etype: group
+    permissions: rx
+    default: true
+    state: present
+  tags: [cape-storage-perms]
+
+# The access ACL covers what already exists; `default` only affects directories
+# created from now on.
+- name: Apply the lamware grant to existing analysis directories
+  ansible.posix.acl:
+    path: "{{ cape_install_dir }}/storage/analyses"
+    entity: lamware
+    etype: group
+    permissions: rx
+    recursive: true
+    state: present
+  tags: [cape-storage-perms]
+
 - name: Verify a lamware-group service user can actually reach a payload directory
   # Asserts the thing the grant is FOR, as a real member of the group, rather
   # than re-reading the mode we just set. A permissions task that only checks
@@ -544,13 +572,24 @@
     msg: "{{ _cape_storage_reachable.stdout }}"
   tags: [cape-storage-perms]
 
+# Orphaned by a rename: ansible.builtin.cron keys on `name`, so renaming this
+# task to cape-storage-maintenance left the old entry in place. Both were
+# running at 15 * * * *, doing the same memory.dmp deletion twice an hour.
+- name: Remove the superseded cape-memory-dump-cleanup cron entry
+  ansible.builtin.cron:
+    name: "cape-memory-dump-cleanup"
+    user: "{{ cape_user }}"
+    state: absent
+
 - name: Schedule CAPE storage maintenance (hourly)
+  # The chgrp -R / chmod -R g+rX pair that used to live here is gone: the
+  # default ACL on analyses/ grants the same access at directory-creation time,
+  # so the hourly repair walk was both redundant and up to an hour late. What
+  # remains is retention, which is genuinely periodic work.
   ansible.builtin.cron:
     name: "cape-storage-maintenance"
     user: "{{ cape_user }}"
     minute: "15"
     job: >-
       find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mmin +60 -delete;
-      find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mmin +60 -exec rm -rf {} +;
-      chgrp -R lamware {{ cape_install_dir }}/storage/analyses 2>/dev/null;
-      chmod -R g+rX {{ cape_install_dir }}/storage/analyses 2>/dev/null
+      find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mmin +60 -exec rm -rf {} +

@@ -103,30 +103,45 @@ record of what the sample did, not of what a later process claimed.
 Adding the users to group `cape` would also hand them everything else `cape`
 owns, well beyond the analysis tree.
 
-**Implementation:** `roles/cape/tasks/main.yml`, tagged `cape-storage-perms`:
+**Implementation:** three ACLs in `roles/cape/tasks/main.yml`, tagged
+`cape-storage-perms` so the grant can be reapplied on its own:
 
-```yaml
-- name: Grant the lamware group traversal of CAPE storage
-  ansible.posix.acl:
-    path: "{{ cape_install_dir }}/storage"
-    entity: lamware
-    etype: group
-    permissions: rx
-    state: present
-```
+| path | ACL | purpose |
+|---|---|---|
+| `storage` | `g:lamware:rx` | traversal — without it nothing below is reachable |
+| `storage/analyses` | `g:lamware:rx` **default** | new analysis dirs inherit at creation |
+| `storage/analyses` | `g:lamware:rx` recursive | the existing corpus, which `default` does not touch |
 
-An ACL rather than the group ownership alone, because the ownership does not
-stay put: the role sets `storage/` to `cape:lamware` and the host was found at
-`cape:cape` with the role's own mode, and the hourly maintenance cron repairs
-only `analyses/`. When that reverted, **no service user could traverse
-`storage/` at all**, so the correctly-granted permissions on every directory
-beneath it were unreachable and two features returned "nothing found" for
-every analysis ever run (#385).
+An ACL rather than group ownership alone, because the ownership does not stay
+put — the role sets `storage/` to `cape:lamware` and the host was found at
+`cape:cape` with the role's own mode. **ACL entries survive `chown`/`chgrp`**,
+and CAPE's own startup errors instruct operators to run `chown cape:cape` on
+its tree, so upstream's documented remedy actively fights group ownership.
 
-That is the trap worth remembering: a grant on a child is worthless if the
-parent cannot be traversed, and every check of the child still passes. Verify
-by reading a payload directory **as a member of the group**, which the role's
-verify step does — not by re-reading the mode you just set.
+An ACL is not self-defending: `chmod` recalculates the ACL mask, so a
+sufficiently restrictive `chmod` can disable the group entry while leaving the
+ACL present. That is why the grant is **monitored** rather than merely set —
+see below.
+
+The `default` ACL replaced an hourly `chgrp -R` + `chmod -R g+rX` cron over
+`analyses/`. Repair-on-a-timer meant a sample detonated at 09:16 had
+unreadable payloads until 10:15, and the pipeline reads them minutes after
+detonation; inheritance grants access at creation and removes an O(corpus)
+walk that ran every hour forever.
+
+**Why this is monitored, not just configured:** when the grant reverted, **no
+service user could traverse `storage/` at all**, so the correctly-granted
+permissions on every directory beneath it were unreachable — and nothing
+noticed, because a blocked read is indistinguishable from a sample that
+dropped nothing. Two shipped features returned "nothing found" for every
+analysis ever run (#385).
+
+The trap worth remembering: a grant on a child is worthless if the parent
+cannot be traversed, and every check of the child still passes. So both the
+role's verify step and `network-monitor.sh` assert the grant by **listing a
+real payload directory as a real member of the group** — never by re-reading
+the mode, which was 2750 throughout and was never what changed. A revert now
+raises `cape_storage_status: alert` and pushes an ntfy notification.
 
 ---
 
