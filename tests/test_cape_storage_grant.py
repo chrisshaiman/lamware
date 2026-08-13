@@ -98,6 +98,56 @@ def test_grant_tasks_are_tagged_for_surgical_reapply():
         assert "cape-storage-perms" in (task.get("tags") or []), task.get("name")
 
 
+# The tag DEPLOYMENT.md tells operators to run. A task outside it does not
+# exist as far as that command is concerned.
+FEATURE_TAG = "cape-storage-perms"
+
+# Every task this feature owns, by name fragment. Correct task content is
+# worthless if the documented deploy cannot reach the task — which is exactly
+# what happened: both cron tasks were written correctly, left untagged, and
+# `make deploy TAGS=cape-storage-perms,...` skipped them. The duplicate cron
+# kept running and the chgrp repair stayed in place, while every assertion
+# about their YAML passed.
+FEATURE_TASKS = (
+    "Set CAPE storage directories to lamware group",
+    "Install acl",
+    "Grant the lamware group traversal",
+    "Make the lamware grant inherit",
+    "Apply the lamware grant to existing",
+    "Verify a lamware-group service user",
+    "Remove the superseded cape-memory-dump-cleanup",
+    "Schedule CAPE storage maintenance",
+)
+
+
+def _reachable_under(tag: str) -> set[str]:
+    """Task names Ansible would run for `--tags <tag>`."""
+    return {t["name"] for t in CAPE_TASKS if tag in (t.get("tags") or [])}
+
+
+def test_every_feature_task_is_reachable_by_the_documented_deploy():
+    reachable = _reachable_under(FEATURE_TAG)
+    missing = [
+        frag for frag in FEATURE_TASKS
+        if not any(frag.lower() in name.lower() for name in reachable)
+    ]
+    assert not missing, (
+        f"tasks not reachable under --tags {FEATURE_TAG}: {missing}. "
+        f"They will be silently skipped by the deploy the docs prescribe."
+    )
+
+
+def test_the_reachability_helper_discriminates():
+    """Positive control: the helper must not report everything as reachable."""
+    reachable = _reachable_under(FEATURE_TAG)
+    all_names = {t["name"] for t in CAPE_TASKS}
+
+    assert reachable, "helper found no tagged tasks at all"
+    assert reachable < all_names, (
+        "helper reports every task as reachable — it is not filtering on tags"
+    )
+
+
 def test_reachability_is_verified_as_a_group_member():
     """The verify step must exercise the grant, not re-read the mode it set.
 
