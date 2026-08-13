@@ -407,6 +407,52 @@ if [ -n "$api_unexpected" ]; then
 fi
 
 # -------------------------------------------------------------------------
+# CAPE storage reachability (#385)
+#
+# The pipeline and the investigation agent read Cape's extracted payloads
+# through the lamware group. That grant reverted once already — storage/ was
+# found cape:cape with an empty cape group — and nothing noticed, because a
+# blocked read is indistinguishable from a sample that dropped nothing. Two
+# shipped features returned "nothing found" for every analysis ever run.
+#
+# This asserts the thing the grant is FOR: can a real member of the group list
+# a real payload directory? Reading the mode back would pass against exactly
+# the state that was broken, since the mode was never what changed.
+# -------------------------------------------------------------------------
+
+CAPE_ANALYSES="{{ network_monitor_cape_analyses_dir | default('/opt/CAPEv2/storage/analyses') }}"
+cape_storage_status="ok"
+cape_storage_problem=""
+
+# Newest first: an old analysis can be pruned mid-check, and a corpus-wide
+# scan every 5 minutes is not free.
+probe_dir=$(su -s /bin/bash -c \
+    "ls -1dt '$CAPE_ANALYSES'/*/CAPE '$CAPE_ANALYSES'/*/files '$CAPE_ANALYSES'/*/procdump 2>/dev/null | head -1" \
+    pipeline 2>/dev/null)
+
+if [ -z "$probe_dir" ]; then
+    # Either nothing has been detonated yet, or we cannot traverse at all.
+    # Distinguish the two as root, which is never blocked by the group.
+    if [ -n "$(ls -1dt "$CAPE_ANALYSES"/*/CAPE "$CAPE_ANALYSES"/*/files \
+                       "$CAPE_ANALYSES"/*/procdump 2>/dev/null | head -1)" ]; then
+        cape_storage_status="alert"
+        cape_storage_problem="payload directories exist but the pipeline user cannot see them — the lamware group grant on $CAPE_ANALYSES has reverted"
+    else
+        cape_storage_status="empty"
+    fi
+elif ! su -s /bin/bash -c "ls -1 '$probe_dir' >/dev/null 2>&1" pipeline 2>/dev/null; then
+    cape_storage_status="alert"
+    cape_storage_problem="pipeline user cannot list $probe_dir — payload discovery is blocked"
+fi
+
+if [ "$cape_storage_status" = "alert" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: CAPE storage unreadable: $cape_storage_problem"
+    queue_alert cape_storage "CAPE STORAGE UNREADABLE" \
+        "$cape_storage_problem. Payload discovery and the investigation agent are returning nothing. Fix: make deploy TAGS=cape-storage-perms" \
+        --priority high --tags warning
+fi
+
+# -------------------------------------------------------------------------
 # Save baseline (first run) and status (every run)
 # -------------------------------------------------------------------------
 
@@ -503,6 +549,8 @@ status = {
     'pipeline_unexpected_processes': '$pipeline_unexpected'.split(' | ') if '$pipeline_unexpected' else [],
     'api_process_status': '$api_process_status',
     'api_unexpected_processes': '$api_unexpected'.split(' | ') if '$api_unexpected' else [],
+    'cape_storage_status': '$cape_storage_status',
+    'cape_storage_problem': '''$cape_storage_problem''' or None,
     'alert_message': '$alert_message' if '$status' == 'alert' else None,
 }
 with open('$STATUS_FILE', 'w') as f:
