@@ -580,6 +580,7 @@
     name: "cape-memory-dump-cleanup"
     user: "{{ cape_user }}"
     state: absent
+  tags: [cape-storage-perms]
 
 - name: Schedule CAPE storage maintenance (hourly)
   # The chgrp -R / chmod -R g+rX pair that used to live here is gone: the
@@ -593,3 +594,4 @@
     job: >-
       find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mmin +60 -delete;
       find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mmin +60 -exec rm -rf {} +
+  tags: [cape-storage-perms]
