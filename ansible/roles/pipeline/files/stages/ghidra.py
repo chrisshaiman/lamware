@@ -18,6 +18,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from lamware_shared.cape_payloads import CAPE_STORAGE, find_pe_payloads
+
 from stages.volatility import extract_shellcode_artifacts
 
 # Cape signatures that indicate dropped/unpacked payloads worth analyzing
@@ -32,34 +34,26 @@ GHIDRA_TRIGGERS = [
 ]
 
 
-def get_dropped_pe_files(cape_data: dict) -> list[Path]:
-    """Find PE files dropped during Cape analysis."""
+def get_dropped_pe_files(cape_data: dict,
+                         storage: Path = CAPE_STORAGE) -> list[Path]:
+    """Find PE files Cape extracted during detonation.
+
+    Looks across every Cape extraction directory, not just ``dropped/`` —
+    which this deployment never writes to, so this function returned an empty
+    list for every analysis until #377. Ordered so the caller's ``[:5]`` cap
+    keeps Cape's unpacked extractions ahead of raw process dumps.
+    """
     task_id = cape_data.get("id") or cape_data.get("task_id")
-    if not task_id:
-        return []
-    dropped_dir = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/dropped")
-    if not dropped_dir.exists():
-        return []
-    pe_files = []
-    for f in dropped_dir.iterdir():
-        if f.is_file() and f.stat().st_size > 1024:  # skip tiny files
-            # Check for PE magic bytes (MZ header)
-            try:
-                with f.open("rb") as fh:
-                    magic = fh.read(2)
-                if magic == b"MZ":
-                    pe_files.append(f)
-            except (OSError, PermissionError):
-                continue
-    return pe_files
+    return [p.path for p in find_pe_payloads(task_id, storage=storage)]
 
 
-def get_original_sample_path(cape_data: dict) -> Path | None:
+def get_original_sample_path(cape_data: dict,
+                             storage: Path = CAPE_STORAGE) -> Path | None:
     """Get the original submitted sample from Cape's storage."""
     task_id = cape_data.get("id") or cape_data.get("task_id")
     if not task_id:
         return None
-    binary_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/binary")
+    binary_path = storage / str(task_id) / "binary"
     if not binary_path.exists():
         return None
     # Check if it's a PE
@@ -95,7 +89,8 @@ def _is_ghidra_compatible_binary(sample_path: Path) -> bool:
 
 
 def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
-                      get_cape_signatures_fn) -> bool:
+                      get_cape_signatures_fn,
+                      storage: Path = CAPE_STORAGE) -> bool:
     """Check if Ghidra analysis should run.
 
     Triggers when:
@@ -114,8 +109,8 @@ def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
 
     sigs = get_cape_signatures_fn(cape_data)
     has_trigger = any(sig in GHIDRA_TRIGGERS for sig in sigs)
-    has_dropped_pes = len(get_dropped_pe_files(cape_data)) > 0
-    original_is_pe = get_original_sample_path(cape_data) is not None
+    has_dropped_pes = len(get_dropped_pe_files(cape_data, storage)) > 0
+    original_is_pe = get_original_sample_path(cape_data, storage) is not None
 
     # Also check the submitted sample directly (CAPE storage may have corrupt binary)
     if not original_is_pe:
@@ -280,10 +275,11 @@ def propagate_project_dir(analyzed_files: list[dict],
 
 def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                ghidra_cmd: str, get_cape_signatures_fn,
-               shellcode_candidates: list[dict] | None = None) -> dict:
+               shellcode_candidates: list[dict] | None = None,
+               storage: Path = CAPE_STORAGE) -> dict:
     """Run Ghidra headless on dropped PEs and/or the original sample."""
-    pe_files = get_dropped_pe_files(cape_data)
-    original_pe = get_original_sample_path(cape_data)
+    pe_files = get_dropped_pe_files(cape_data, storage)
+    original_pe = get_original_sample_path(cape_data, storage)
 
     # If no dropped PEs, analyze the original sample
     if not pe_files and original_pe:

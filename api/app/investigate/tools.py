@@ -15,6 +15,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from lamware_shared.cape_payloads import Payload, find_payloads
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -231,7 +232,10 @@ TOOL_DEFINITIONS = [
         "description": (
             "List payloads dropped/extracted by Cape during dynamic analysis of "
             "this sample. Returns the indices read_payload expects — call this "
-            "first if you do not already know a payload_index."
+            "first if you do not already know a payload_index. Each entry names "
+            "its source_dir: CAPE (payloads Cape's extractors unpacked — usually "
+            "the most informative), files (written to disk by the sample), or "
+            "procdump (process memory dumps)."
         ),
         "input_schema": {
             "type": "object",
@@ -689,46 +693,52 @@ def _cape_task_id(report: dict) -> str | None:
     return str(tid) if tid else None
 
 
-def _resolve_dropped(report: dict) -> tuple[Path | None, dict | None]:
-    """Return (dropped_dir, None) on success, (None, error_dict) on failure."""
+def _resolve_payloads(report: dict) -> tuple[list[Payload] | None, dict | None]:
+    """Return (payloads, None) on success, (None, error_dict) on failure.
+
+    Both payload tools resolve through here, so the index get_cape_payloads
+    hands out is the index read_payload resolves. They previously built their
+    own lists — one enumerated before filtering out directories, the other
+    after, so the two disagreed whenever a non-file entry was present.
+    """
     task_id = _cape_task_id(report)
     if not task_id:
         return None, {"error": "No Cape task ID in report — sample may not have been detonated"}
-    dropped = CAPE_STORAGE / task_id / "dropped"
-    if not dropped.is_dir():
-        return None, {"error": "No dropped payloads directory for this analysis"}
-    return dropped, None
+    payloads = find_payloads(task_id, storage=CAPE_STORAGE)
+    if not payloads:
+        return None, {"error": "Cape extracted no payloads during detonation of this sample"}
+    return payloads, None
 
 
 def _get_cape_payloads(args: dict, report: dict) -> dict:
-    dropped, err = _resolve_dropped(report)
+    payloads, err = _resolve_payloads(report)
     if err:
         return err
-    task_id = _cape_task_id(report)
-    payloads = [
-        {"index": i, "filename": f.name, "size": f.stat().st_size}
-        for i, f in enumerate(sorted(dropped.iterdir()))
-        if f.is_file()
-    ]
-    return {"payloads": payloads, "count": len(payloads), "task_id": task_id}
+    return {
+        "payloads": [
+            {"index": i, "filename": p.path.name, "size": p.size, "source_dir": p.source}
+            for i, p in enumerate(payloads)
+        ],
+        "count": len(payloads),
+        "task_id": _cape_task_id(report),
+    }
 
 
 def _read_payload(args: dict, report: dict) -> dict:
-    dropped, err = _resolve_dropped(report)
+    payloads, err = _resolve_payloads(report)
     if err:
         return err
 
-    files = sorted(f for f in dropped.iterdir() if f.is_file())
     idx = args["payload_index"]
-    if idx < 0 or idx >= len(files):
+    if idx < 0 or idx >= len(payloads):
         return {
             "error": (
                 f"payload_index {idx} out of range — "
-                f"{len(files)} payloads available (0–{len(files) - 1})"
+                f"{len(payloads)} payloads available (0–{len(payloads) - 1})"
             )
         }
 
-    target = files[idx]
+    target = payloads[idx].path
     data = target.read_bytes()
     preview = data[:4096]
     return {
@@ -819,10 +829,15 @@ def _run_python(args: dict, report: dict) -> dict:
     # are split into a proper argv list rather than treated as a single executable name.
     cmd = shlex.split(settings.sandbox_cmd)
 
-    # Mount dropped payloads if available — a missing dropped dir is not an error
-    dropped, _ = _resolve_dropped(report)
-    if dropped is not None:
-        cmd += ["--data", str(dropped)]
+    # Mount Cape's extracted payloads if available — nothing extracted is not an
+    # error. The whole task directory goes in, not one payload subdir: --data
+    # maps to a fixed /data inside the container, so it cannot be repeated, and
+    # payloads are spread across CAPE/, files/ and procdump/ (#377). The task
+    # directory is still inside run-sandbox's allowlist, and read-only.
+    task_id = _cape_task_id(report)
+    task_dir = CAPE_STORAGE / task_id if task_id else None
+    if task_dir is not None and task_dir.is_dir():
+        cmd += ["--data", str(task_dir)]
 
     # Outer backstop = the container's own timeout + 10s margin. The container
     # (run-sandbox, python_sandbox_container_timeout) is the authoritative limit;

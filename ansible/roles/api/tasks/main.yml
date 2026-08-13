@@ -134,8 +134,8 @@
   become: true
   become_user: "{{ api_user }}"
 
-- name: Verify the api service user can import the shared validator
-  # Imports the actual submodule the app uses, AS the service user, against the
+- name: Verify the api service user can import the shared submodules
+  # Imports the actual submodules the app uses, AS the service user, against the
   # api venv — so a bad/unreadable install fails the deploy instead of silently
   # 502'ing after restart. (The pipeline role's verify only imports the top
   # package as root, which missed this.)
@@ -143,7 +143,8 @@
   become_user: "{{ api_user }}"
   ansible.builtin.command: >
     {{ api_install_dir }}/venv/bin/python
-    -c "from lamware_shared.tool_validators import validate_ghidra_args"
+    -c "from lamware_shared.tool_validators import validate_ghidra_args;
+    from lamware_shared.cape_payloads import find_payloads"
   changed_when: false
 
 - name: Deploy lamware-api environment file
