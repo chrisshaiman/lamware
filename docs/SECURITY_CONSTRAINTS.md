@@ -85,6 +85,51 @@ prevents accidental commits of the unencrypted file.
 
 ---
 
+## Analysis service users read CAPE storage; they never write it
+
+**Rule:** `pipeline` and `lamware-api` reach CAPE's detonation output through
+the `lamware` group, granted **`rx` only** on `/opt/CAPEv2/storage`. Never
+`rwx`, never by adding those users to the `cape` group, and never by
+loosening `other`. `cape` remains the sole writer of its own tree.
+
+**Why:** The analysis stages and the investigation agent have to read extracted
+payloads — that is the point of #377 and the ground truth #314 needs. Write
+access buys nothing and costs the property that makes detonation output
+trustworthy as evidence: if a compromised pipeline process could write into
+CAPE storage, it could plant a payload and every downstream conclusion drawn
+from "CAPE extracted this" would be forgeable. Read-only keeps the output a
+record of what the sample did, not of what a later process claimed.
+
+Adding the users to group `cape` would also hand them everything else `cape`
+owns, well beyond the analysis tree.
+
+**Implementation:** `roles/cape/tasks/main.yml`, tagged `cape-storage-perms`:
+
+```yaml
+- name: Grant the lamware group traversal of CAPE storage
+  ansible.posix.acl:
+    path: "{{ cape_install_dir }}/storage"
+    entity: lamware
+    etype: group
+    permissions: rx
+    state: present
+```
+
+An ACL rather than the group ownership alone, because the ownership does not
+stay put: the role sets `storage/` to `cape:lamware` and the host was found at
+`cape:cape` with the role's own mode, and the hourly maintenance cron repairs
+only `analyses/`. When that reverted, **no service user could traverse
+`storage/` at all**, so the correctly-granted permissions on every directory
+beneath it were unreachable and two features returned "nothing found" for
+every analysis ever run (#385).
+
+That is the trap worth remembering: a grant on a child is worthless if the
+parent cannot be traversed, and every check of the child still passes. Verify
+by reading a payload directory **as a member of the group**, which the role's
+verify step does — not by re-reading the mode you just set.
+
+---
+
 ## OVH robot firewall: whitelist before OS boots
 
 **Rule:** OVH's hardware firewall (robot firewall) must be configured with admin
