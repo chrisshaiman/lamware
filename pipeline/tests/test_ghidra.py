@@ -30,7 +30,12 @@ def test_normalizes_container_path_to_host_path():
     assert analyzed[0]["project_dir"] != CONTAINER_PROJECT
 
 
-def test_picks_first_successful_analysis():
+def test_skips_failed_analyses():
+    # Was test_picks_first_successful_analysis. Selection is by function count
+    # now, not list position — the first success could be a 15-function PE-load
+    # of a payload the shellcode loader decompiled into 127 (#390). This still
+    # guards what it always really guarded: a failed record is never chosen and
+    # is left unmodified.
     output_dir = Path("/opt/pipeline/reports/xyz")
     analyzed = [
         {"analysis_success": False, "project_dir": CONTAINER_PROJECT, "program_name": "bad"},
