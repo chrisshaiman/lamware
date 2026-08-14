@@ -57,6 +57,43 @@ while [[ $# -gt 0 ]]; do
             VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
             shift 2
             ;;
+        --data-as)
+            # NAME=PATH, mounted read-only at /data/NAME. Exists because --data
+            # maps to a fixed /data and so cannot be repeated, which forced the
+            # caller to mount the whole 76MB task directory — pcaps, memory
+            # dumps, evtx, the full Cape report — into the container where
+            # LLM-authored code runs, when all it needed was the payloads
+            # (#392). Passing CAPE/files/procdump as the names keeps the
+            # in-container paths identical to that mount.
+            AS_NAME="${2%%=*}"
+            AS_PATH="${2#*=}"
+            if [ -z "$AS_NAME" ] || [ "$AS_NAME" = "$2" ]; then
+                echo "Error: --data-as expects NAME=PATH, got: $2" >&2
+                exit 1
+            fi
+            # The name becomes a path component inside the container; keep it a
+            # bare word so it cannot escape /data or inject mount options.
+            case "$AS_NAME" in
+                *[!A-Za-z0-9_-]*)
+                    echo "Error: --data-as name must be alphanumeric: $AS_NAME" >&2
+                    exit 1
+                    ;;
+            esac
+            AS_PATH="$(realpath "$AS_PATH")"
+            if [ ! -d "$AS_PATH" ]; then
+                echo "Error: data directory not found: $AS_PATH" >&2
+                exit 1
+            fi
+            case "$AS_PATH" in
+                {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}/*)  ;;
+                *)
+                    echo "Error: --data-as must be under {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}" >&2
+                    exit 1
+                    ;;
+            esac
+            VOLUME_ARGS+=(-v "$AS_PATH:/data/$AS_NAME:ro")
+            shift 2
+            ;;
         *)
             shift
             ;;

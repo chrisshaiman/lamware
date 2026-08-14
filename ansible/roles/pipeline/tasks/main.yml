@@ -586,6 +586,62 @@
     mode: "0640"
     force: false
 
+# -------------------------------------------------------------------------
+# MOTIF corpus permissions (#392)
+#
+# The corpus is malware. It is NOT shipped by Ansible and never will be — the
+# repo is public and MOTIF is under the Booz Allen Public License, internal use
+# only. What Ansible owns is the MODE, because nothing did: the tree was built
+# by an ad-hoc script under a default umask and landed 755, leaving 29 live
+# samples readable by every local account (verified: `nobody` could read one).
+#
+# state: directory on an existing path only sets ownership and mode; it does
+# not create content. The tasks are skipped when the corpus is absent, so a
+# host that has never built one is unaffected.
+# -------------------------------------------------------------------------
+
+- name: Check whether a MOTIF corpus exists on this host
+  ansible.builtin.stat:
+    path: "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
+  register: _motif_samples
+  tags: [motif-perms]
+
+- name: Restrict the MOTIF corpus directories to the lamware group
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "2750"
+  loop:
+    - "{{ motif_corpus_dir | default('/opt/motif/corpus') }}"
+    - "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
+  when: _motif_samples.stat.exists
+  tags: [motif-perms]
+
+- name: Enumerate the MOTIF sample files
+  ansible.builtin.find:
+    paths: "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
+    file_type: file
+  register: _motif_sample_files
+  when: _motif_samples.stat.exists
+  tags: [motif-perms]
+
+- name: Restrict the MOTIF sample files
+  # Belt and braces with the directory mode above. The directory alone gating
+  # access is the arrangement that failed in #385 — storage/ reverted and every
+  # correct permission beneath it became unreachable without a sound.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: pipeline
+    group: lamware
+    mode: "0640"
+  loop: "{{ _motif_sample_files.files | default([]) | map(attribute='path') | list }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  when: _motif_samples.stat.exists
+  tags: [motif-perms]
+
 - name: Deploy pipeline DB helper modules (config-driven, no secret)
   # Plain Python now — DB conn from config.json, password from pipeline.env at runtime.
   ansible.builtin.copy:

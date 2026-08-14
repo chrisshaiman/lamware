@@ -15,7 +15,12 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from lamware_shared.cape_payloads import Payload, PayloadAccessError, find_payloads
+from lamware_shared.cape_payloads import (
+    Payload,
+    PayloadAccessError,
+    find_payloads,
+    payload_dirs,
+)
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -845,18 +850,22 @@ def _run_python(args: dict, report: dict) -> dict:
     # maps to a fixed /data inside the container, so it cannot be repeated, and
     # payloads are spread across CAPE/, files/ and procdump/ (#377). The task
     # directory is still inside run-sandbox's allowlist, and read-only.
-    # is_dir() re-raises EACCES rather than returning False, so an unreadable
-    # storage tree would take down the whole tool instead of just skipping the
-    # mount; the sandbox is still useful without it.
+    # Mount ONLY the payload directories, each at /data/<name>. The whole task
+    # directory used to go in — 76MB of pcaps, memory dumps, evtx and the full
+    # Cape report — into the container where LLM-authored code runs, when the
+    # sandbox exists to work on payloads (#392). The names match the source
+    # directories, so in-container paths are unchanged from that mount.
+    #
+    # payload_dirs raises on an unreadable storage tree; that must not take down
+    # the whole tool, since the sandbox is still useful without a data mount.
     task_id = _cape_task_id(report)
-    task_dir = CAPE_STORAGE / task_id if task_id else None
     try:
-        mountable = task_dir is not None and task_dir.is_dir()
-    except OSError as exc:
-        log.warning("Cannot stat Cape storage for task %s: %s", task_id, exc)
-        mountable = False
-    if mountable:
-        cmd += ["--data", str(task_dir)]
+        data_dirs = payload_dirs(task_id, storage=CAPE_STORAGE) if task_id else []
+    except (PayloadAccessError, OSError) as exc:
+        log.warning("Cannot read Cape payload dirs for task %s: %s", task_id, exc)
+        data_dirs = []
+    for d in data_dirs:
+        cmd += ["--data-as", f"{d.name}={d}"]
 
     # Outer backstop = the container's own timeout + 10s margin. The container
     # (run-sandbox, python_sandbox_container_timeout) is the authoritative limit;

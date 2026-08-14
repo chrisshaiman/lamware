@@ -548,6 +548,24 @@
     state: present
   tags: [cape-storage-perms]
 
+# The 929 sample files in binaries/ sit at 0644. Nothing can reach them today —
+# the directory is 2750 cape:lamware — but that is exactly the arrangement that
+# failed in #385, where storage/'s group reverted and every correct permission
+# beneath it silently stopped applying. If binaries/ reverts the same way, every
+# malware sample on the host becomes world-readable in one step (#392).
+#
+# find -exec rather than the file module: 929 individual tasks is minutes of
+# deploy time to change nothing on every subsequent run.
+- name: Remove world-read from CAPE sample binaries
+  ansible.builtin.command:
+    cmd: >-
+      find {{ cape_install_dir }}/storage/binaries -maxdepth 1 -type f
+      -perm /o=rwx -exec chmod o-rwx {} +
+  register: _cape_binaries_chmod
+  changed_when: false
+  failed_when: _cape_binaries_chmod.rc not in [0, 1]
+  tags: [cape-storage-perms]
+
 - name: Verify a lamware-group service user can actually reach a payload directory
   # Asserts the thing the grant is FOR, as a real member of the group, rather
   # than re-reading the mode we just set. A permissions task that only checks

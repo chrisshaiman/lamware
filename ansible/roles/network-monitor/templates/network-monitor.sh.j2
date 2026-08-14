@@ -445,6 +445,38 @@ elif ! su -s /bin/bash -c "ls -1 '$probe_dir' >/dev/null 2>&1" pipeline 2>/dev/n
     cape_storage_problem="pipeline user cannot list $probe_dir — payload discovery is blocked"
 fi
 
+# -------------------------------------------------------------------------
+# World-readable malware (#392)
+#
+# Both sample stores rely on a directory mode to gate access. That is the
+# arrangement that failed in #385 — storage/'s group reverted and nothing
+# noticed for weeks. Assert the property that actually matters (can a process
+# outside the lamware group read a sample?) rather than re-reading a mode.
+# -------------------------------------------------------------------------
+
+exposed_samples=0
+exposed_where=""
+for store in {{ cape_install_dir | default('/opt/CAPEv2') }}/storage/binaries \
+             {{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples; do
+    [ -d "$store" ] || continue
+    # A sample is exposed only if the file grants other-read AND every parent
+    # is traversable by other — checked by actually reading one as `nobody`.
+    n=$(find "$store" -maxdepth 1 -type f -perm -o=r 2>/dev/null | wc -l)
+    [ "$n" -eq 0 ] && continue
+    probe=$(find "$store" -maxdepth 1 -type f -perm -o=r 2>/dev/null | head -1)
+    if su -s /bin/bash -c "head -c 1 '$probe' >/dev/null 2>&1" nobody 2>/dev/null; then
+        exposed_samples=$((exposed_samples + n))
+        exposed_where="${exposed_where:+$exposed_where, }$store ($n files)"
+    fi
+done
+
+if [ "$exposed_samples" -gt 0 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: world-readable malware samples: $exposed_where"
+    queue_alert sample_exposure "MALWARE SAMPLES WORLD-READABLE" \
+        "$exposed_samples sample files can be read by any local account: $exposed_where. Fix: make deploy TAGS=cape-storage-perms,motif-perms" \
+        --priority urgent --tags skull
+fi
+
 if [ "$cape_storage_status" = "alert" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: CAPE storage unreadable: $cape_storage_problem"
     queue_alert cape_storage "CAPE STORAGE UNREADABLE" \
@@ -551,6 +583,8 @@ status = {
     'api_unexpected_processes': '$api_unexpected'.split(' | ') if '$api_unexpected' else [],
     'cape_storage_status': '$cape_storage_status',
     'cape_storage_problem': '''$cape_storage_problem''' or None,
+    'exposed_sample_count': $exposed_samples,
+    'exposed_sample_stores': '''$exposed_where''' or None,
     'alert_message': '$alert_message' if '$status' == 'alert' else None,
 }
 with open('$STATUS_FILE', 'w') as f:
