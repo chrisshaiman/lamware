@@ -165,6 +165,11 @@ def run_ghidra_on_file(pe_path: Path, output_dir: Path,
         if result.returncode != 0:
             return {"error": result.stderr[:200], "filename": pe_path.name}
         output = json.loads(result.stdout)
+        # Where this analysis's project ACTUALLY lives on the host. run-ghidra
+        # reports the container path ("/output/project") on every result, and
+        # the two loaders write to different host directories — so the caller
+        # cannot reconstruct it from output_dir alone (#390).
+        output["host_output_dir"] = str(output_dir)
         return output
     except subprocess.TimeoutExpired:
         return {"error": "timeout (600s)", "filename": pe_path.name}
@@ -268,6 +273,9 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
         analysis["source_pid"] = candidate.get("source_pid")
     if artifacts:
         analysis["shellcode_artifacts"] = artifacts
+    # This loader writes to a per-candidate subdirectory, NOT output_dir. See
+    # the note in run_ghidra_on_file (#390).
+    analysis["host_output_dir"] = str(sc_output)
 
     return analysis
 
@@ -289,14 +297,90 @@ def propagate_project_dir(analyzed_files: list[dict],
     otherwise inherit "/output/project" and fail every tool call with
     "realpath: No such file or directory".
 
+    Two things this must not do, both of which it used to (#390):
+
+    **Assume every project lives at ``output_dir/project``.** The two loaders
+    write to different places — ``run_ghidra_on_file`` to ``output_dir``,
+    ``run_ghidra_shellcode`` to ``output_dir/shellcode_<pid>_<addr>``. Pointing
+    a shellcode analysis at ``output_dir/project`` names a project that holds a
+    different program, or none. On latrodectus that project was **empty**, and
+    all 5 of the interpret stage's Ghidra tool calls failed with "GhidraTool
+    .java did not emit TOOL_RESULT". The model had no decompiler access at all
+    and nobody could tell from the report.
+
+    **Take the first success as the best one.** List position is not a quality
+    signal. When CAPE payloads reach both loaders, the PE-loaded copy is
+    appended first — 15 functions on a payload the raw loader decompiled into
+    127. Selection is by function count instead.
+
     Returns (None, None) if no successful analysis produced a project.
     """
+    def _host_project(af: dict) -> str | None:
+        # Prefer the recorded host directory. Fall back to output_dir for
+        # results predating it, which can only have come from the PE loader.
+        base = af.get("host_output_dir")
+        return str(Path(base) / "project") if base else str(output_dir / "project")
+
+    usable = [af for af in analyzed_files
+              if af.get("analysis_success") and af.get("project_dir")]
+    if not usable:
+        return None, None
+
+    best = max(usable, key=lambda af: (af.get("functions_count") or 0,
+                                       len(af.get("imports") or [])))
+    host_project = _host_project(best)
+    best["project_dir"] = host_project
+
+    # Other SUCCESSFUL analyses keep a container path the host cannot resolve.
+    # Rewrite those too — a consumer picking a non-canonical entry should get a
+    # real path, not "/output/project". Failed records are deliberately left
+    # alone: nothing reads their project, and preserving them unmodified is an
+    # existing contract (test_ghidra.py).
     for af in analyzed_files:
-        if af.get("analysis_success") and af.get("project_dir"):
-            host_project = str(output_dir / "project")
-            af["project_dir"] = host_project
-            return host_project, af.get("program_name", "")
-    return None, None
+        if af is not best and af.get("analysis_success") and af.get("project_dir"):
+            af["project_dir"] = _host_project(af)
+
+    return host_project, best.get("program_name", "")
+
+
+def _drop_already_queued(pe_files: list[Path],
+                         shellcode_candidates: list[dict] | None
+                         ) -> tuple[list[Path], list[str]]:
+    """Remove payloads the shellcode loader is already going to analyse.
+
+    Only candidates that will actually reach Ghidra count: one carrying
+    ``analyze_with_ghidra: False`` (under 1KB) gets artifact extraction only,
+    so dropping its PE copy would lose the file entirely.
+
+    Returns (kept, skipped_names) — the caller records the skips, because a
+    payload silently vanishing from the analysis list is the failure mode this
+    whole area keeps reproducing.
+    """
+    if not shellcode_candidates:
+        return pe_files, []
+
+    queued = set()
+    for c in shellcode_candidates:
+        if c.get("analyze_with_ghidra") is False:
+            continue
+        path = c.get("path")
+        if path:
+            try:
+                queued.add(Path(path).resolve())
+            except OSError:
+                queued.add(Path(path))
+
+    kept, skipped = [], []
+    for p in pe_files:
+        try:
+            resolved = p.resolve()
+        except OSError:
+            resolved = p
+        if resolved in queued:
+            skipped.append(p.name)
+        else:
+            kept.append(p)
+    return kept, skipped
 
 
 def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
@@ -307,12 +391,32 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     pe_files, access_error = discover_pe_files(cape_data, storage)
     original_pe = get_original_sample_path(cape_data, storage)
 
+    # Cape's own extracted payloads already reach Ghidra as shellcode
+    # candidates (run-pipeline collects cape.large_payloads with
+    # source: cape_payload), and that loader handles them far better: on
+    # latrodectus, 127 and 124 functions where the PE loader managed 15 and 1.
+    # These are memory images, not on-disk files — memory-aligned sections that
+    # Ghidra's PE loader misparses. Analysing them twice wasted a decompiler
+    # run per payload and, worse, let the poor copy win propagate_project_dir
+    # by being appended first (#390).
+    pe_files, skipped = _drop_already_queued(pe_files, shellcode_candidates)
+
+    will_analyse_shellcode = any(
+        c.get("analyze_with_ghidra") is not False
+        for c in (shellcode_candidates or [])
+    )
+
     # If no dropped PEs, analyze the original sample
     if not pe_files and original_pe:
         pe_files = [original_pe]
         trigger_reason = "original_sample_is_pe"
     elif pe_files:
         trigger_reason = "dropped_pe_with_signatures"
+    elif will_analyse_shellcode:
+        # Everything was deduped into the shellcode loader, which is the point.
+        # Returning "no PE files found" here would abandon the payloads that
+        # are about to be analysed properly.
+        trigger_reason = "cape_payloads_via_shellcode_loader"
     else:
         # "no PE files found" is a claim about the sample. If Cape's storage
         # was unreadable it is a claim about us, and saying the first when the
@@ -335,6 +439,14 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         # Reached the original-sample fallback, but only because we could not
         # look at the extracted payloads — the report must not imply we did.
         result["payload_access_error"] = access_error
+    if skipped:
+        # Say what was not analysed here and why, so a shorter analyzed_files
+        # list is legible instead of looking like the payloads went missing.
+        result["pe_load_skipped"] = skipped
+        result["pe_load_skipped_reason"] = (
+            "already queued for the shellcode loader, which handles Cape's "
+            "memory-dumped payloads better than the PE loader (#390)"
+        )
 
     # Analyze up to 5 dropped PEs (avoid spending hours on prolific droppers)
     for pe_path in pe_files[:5]:
