@@ -195,4 +195,5 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
                         extract_metrics(res), err,
                         seed=arm.seed,
-                        sampling=_server_sampling() if arm.re_backend == "local" else None)
+                        sampling=_server_sampling() if arm.re_backend == "local" else None,
+                        ghidra_warnings=gr.get("analysis_warnings"))

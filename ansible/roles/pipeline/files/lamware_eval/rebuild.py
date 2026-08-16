@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from llm_ab_re import TOOL_LAYER_BROKEN_THRESHOLD, analysis_completed, is_tool_error
+from stages.ghidra import collect_analysis_warnings
 
 from lamware_eval.corpus import load_corpus
 from lamware_eval.metrics import aggregate, compose_cell
@@ -46,6 +47,19 @@ def _tool_call_metrics(arm_dir: Path) -> dict:
     return {"tool_calls_logged": len(log), "tool_call_errors": errors,
             "tool_call_error_rate": rate,
             "tool_layer_broken": rate >= TOOL_LAYER_BROKEN_THRESHOLD}
+
+
+def _ghidra_warnings(gr: dict) -> list[str]:
+    """Top-level warnings if the report has them, else lifted from the files.
+
+    Reports written before #367 carry `analysis_warnings` only on each analysed
+    file, so a re-score of an existing corpus would show zero without this —
+    and the whole point is that the old sweeps had warnings nobody ever saw.
+    """
+    top = gr.get("analysis_warnings")
+    if top:
+        return list(top)
+    return collect_analysis_warnings(gr.get("analyzed_files") or [])
 
 
 def _cost(model: str, usage: dict) -> float:
@@ -89,7 +103,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                      "parse_failed": bool(analysis.get("parse_note")),
                      "tool_calls_used": res.get("tool_calls_used"),
                      **_tool_call_metrics(arm_dir)},
-                    analysis.get("parse_note")))
+                    analysis.get("parse_note"),
+                    ghidra_warnings=_ghidra_warnings(gr)))
     return render_scorecard(label, cells, aggregate(cells)), cells
 
 

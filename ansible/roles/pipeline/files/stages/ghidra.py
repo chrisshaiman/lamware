@@ -473,4 +473,27 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         result["project_dir"] = project_dir
         result["program_name"] = program_name
 
+    result["analysis_warnings"] = collect_analysis_warnings(result["analyzed_files"])
+
     return result
+
+
+def collect_analysis_warnings(analyzed_files: list[dict]) -> list[str]:
+    """Lift per-file analysis warnings to the top of the ghidra result (#367).
+
+    run-ghidra has emitted `analysis_warnings` on each analysed file since
+    #372 — "only 1 function(s) recovered", "the PE declares a non-empty import
+    directory but no imports were extracted" — and **nothing has ever read
+    them**. They were produced, written to the report, and never surfaced, so
+    the state they exist to describe stayed exactly as invisible as before.
+
+    Prefixed with the program name because the interesting case is one file of
+    several failing: the 124-function payload and the 1-function one sit in the
+    same list, and an unattributed warning cannot tell you which is which.
+    """
+    out: list[str] = []
+    for af in analyzed_files:
+        name = af.get("program_name") or af.get("filename") or "?"
+        for w in af.get("analysis_warnings") or []:
+            out.append(f"{name}: {w}")
+    return out
