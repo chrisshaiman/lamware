@@ -28,7 +28,7 @@ import requests
 
 # Add ntfy module to path
 sys.path.insert(0, "{{ ntfy_install_dir }}")
-from ntfy_notify import send_alert
+from ntfy_notify import defang_ioc, send_alert
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -272,7 +272,15 @@ def generate_highlights(stats: dict) -> str:
             context_parts.append(f"Family trending (week over week): {'; '.join(trending)}")
 
     if stats["shared_iocs"]:
-        shared = [f"{ioc['type']}:{ioc['value']} (seen in {ioc['count']} samples)" for ioc in stats["shared_iocs"][:5]]
+        # Defanged BEFORE the model sees them, not just before sending. The
+        # prompt below asks the model to name IOCs, so a fanged value in the
+        # context comes back fanged in the highlights — and send_alert's
+        # backstop would then be the only thing between a live C2 URL and a
+        # lock screen. Typed defanging, since the type is right there in the
+        # row: no guessing at what is a hostname (#352).
+        shared = [f"{ioc['type']}:{defang_ioc(str(ioc['value']), ioc['type'])} "
+                  f"(seen in {ioc['count']} samples)"
+                  for ioc in stats["shared_iocs"][:5]]
         context_parts.append(f"Shared IOCs (today's samples matching previous): {'; '.join(shared)}")
 
     if stats["top_techniques"]:
