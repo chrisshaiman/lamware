@@ -25,7 +25,11 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     cell_cols = ["arm", "seed", "sample", "family_guess", "mb_family", "claude_family",
                  "grounded", "total", "fabricated", "completed", "parse_failed",
                  "tool_calls_used",
-                 "tool_call_error_rate", "wall_seconds", "cost_usd", "error"]
+                 # tool_layer_broken sits next to the rate because the rate alone
+                 # is easy to skim past: 1.0 there means the cell measured the
+                 # infrastructure, not the model, and is out of the aggregates.
+                 "tool_call_error_rate", "tool_layer_broken",
+                 "wall_seconds", "cost_usd", "error"]
     lines.append("| " + " | ".join(cell_cols) + " |")
     lines.append("|" + "---|" * len(cell_cols))
     for c in cells:

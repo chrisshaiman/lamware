@@ -10,12 +10,42 @@ zeroed 5 of 7 local cells in a 2-hour sweep; this recovers that in seconds.
 import json
 from pathlib import Path
 
-from llm_ab_re import analysis_completed
+from llm_ab_re import TOOL_LAYER_BROKEN_THRESHOLD, analysis_completed, is_tool_error
 
 from lamware_eval.corpus import load_corpus
 from lamware_eval.metrics import aggregate, compose_cell
 from lamware_eval.runner import _RATES, tool_output_text
 from lamware_eval.scorecard import render_scorecard
+
+
+def _tool_call_metrics(arm_dir: Path) -> dict:
+    """Recompute the tool-call figures from the persisted audit log.
+
+    Uses the same `is_tool_error` the live path uses, for the reason #380
+    established: two copies of a definition drift, and the offline re-scorer
+    then disagrees with the sweep it is re-scoring.
+    """
+    # audit_filename() writes tool_calls.json for the main pass and
+    # tool_calls_<analysis_type>.json for the others. The eval harness only ever
+    # produces the plain one; prefer it, and fall back rather than assume.
+    audit_dir = arm_dir / "llm_audit"
+    candidates = [audit_dir / "tool_calls.json", *sorted(audit_dir.glob("tool_calls_*.json"))]
+    log: list[dict] = []
+    for p in candidates:
+        if p.exists():
+            try:
+                log = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                log = []
+            break
+    if not log:
+        return {"tool_calls_logged": 0, "tool_call_errors": 0,
+                "tool_call_error_rate": 0.0, "tool_layer_broken": False}
+    errors = sum(1 for e in log if is_tool_error(e))
+    rate = round(errors / len(log), 3)
+    return {"tool_calls_logged": len(log), "tool_call_errors": errors,
+            "tool_call_error_rate": rate,
+            "tool_layer_broken": rate >= TOOL_LAYER_BROKEN_THRESHOLD}
 
 
 def _cost(model: str, usage: dict) -> float:
@@ -51,11 +81,14 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     res.get("duration_seconds") or 0.0,
                     0.0 if local else _cost(model, usage),
                     # Shared with the live path so a re-score cannot disagree
-                    # with the sweep that produced the cell (#380).
+                    # with the sweep that produced the cell (#380). The tool
+                    # figures were hardcoded to 0.0 here, which meant a re-score
+                    # reported a clean tool layer no matter what the audit log
+                    # said — the same defect in a second place (#316).
                     {"completed": analysis_completed(res),
                      "parse_failed": bool(analysis.get("parse_note")),
                      "tool_calls_used": res.get("tool_calls_used"),
-                     "tool_call_error_rate": 0.0},
+                     **_tool_call_metrics(arm_dir)},
                     analysis.get("parse_note")))
     return render_scorecard(label, cells, aggregate(cells)), cells
 

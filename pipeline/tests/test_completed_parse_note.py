@@ -20,6 +20,7 @@ It also existed twice: `rebuild.py` re-scores persisted cells offline and
 carried its own copy that DID check `parse_note`, so re-scoring a sweep gave a
 different answer than the sweep. Both copies are now one function.
 """
+import ast
 import json
 from pathlib import Path
 
@@ -98,7 +99,13 @@ def test_rebuild_uses_the_shared_definition_not_its_own_copy():
     """Cross-copy drift guard. rebuild.py's private copy checked parse_note
     while the live path did not, so re-scoring a sweep disagreed with it."""
     src = (FILES / "lamware_eval" / "rebuild.py").read_text(encoding="utf-8")
-    assert "from llm_ab_re import analysis_completed" in src
+    # Matched by parse rather than by exact line: the import grew a second name
+    # in #316 and a literal-string assertion failed on correct code.
+    imported = [n.name for node in ast.walk(ast.parse(src))
+                if isinstance(node, ast.ImportFrom) and node.module == "llm_ab_re"
+                for n in node.names]
+    assert "analysis_completed" in imported, (
+        f"rebuild.py does not import the shared definition; imports {imported}")
     assert "analysis_completed(res)" in src
     assert 'not analysis.get("parse_note")' not in src.split("def rebuild")[1], (
         "rebuild.py has re-grown its own copy of the completed definition")

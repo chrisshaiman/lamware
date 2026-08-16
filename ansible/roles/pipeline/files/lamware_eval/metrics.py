@@ -53,6 +53,11 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "parse_failed": bool(tool_metrics.get("parse_failed")),
         "tool_calls_used": tool_metrics.get("tool_calls_used"),
         "tool_call_error_rate": tool_metrics.get("tool_call_error_rate"),
+        "tool_call_errors": tool_metrics.get("tool_call_errors"),
+        # The tool layer was dead for this cell, so it measured infrastructure,
+        # not the model. Kept out of the arm aggregates below rather than
+        # scored as an ordinary zero-claim result (#316).
+        "tool_layer_broken": bool(tool_metrics.get("tool_layer_broken")),
         "wall_seconds": wall_seconds, "cost_usd": cost_usd,
         "error": error,
     }
@@ -68,6 +73,13 @@ def aggregate(cells: list[dict]) -> dict:
     2026-07-25, where qwen@10 emitted 0 IOCs on IcedID and scored a 'perfect'
     1.0 against an Opus 4.6 baseline that made 15 real claims. mean_grounded_ratio
     therefore covers only cells with claims, and is None when there are none.
+
+    Cells whose tool layer was broken are excluded from every capability figure
+    and counted separately (#316). Such a cell never measured the model: on
+    2026-07-25 latrodectus/qwen@10 had 8 of 8 tool calls fail and still
+    contributed a 0/0 to both arms of a depth A/B, as though depth had been
+    fairly tested on it. `n` is what was attempted, `n_valid` what could be
+    measured, and `n_valid` is the denominator for the rates below.
     """
     by_arm: dict[str, list[dict]] = defaultdict(list)
     for c in cells:
@@ -75,18 +87,28 @@ def aggregate(cells: list[dict]) -> dict:
     out = {}
     for arm, cs in by_arm.items():
         n = len(cs)
-        scored = [c for c in cs if (c.get("total") or 0) > 0]
+        broken = [c for c in cs if c.get("tool_layer_broken")]
+        valid = [c for c in cs if not c.get("tool_layer_broken")]
+        n_valid = len(valid)
+        scored = [c for c in valid if (c.get("total") or 0) > 0]
         out[arm] = {
             "n": n,
+            "n_valid": n_valid,
+            "tool_layer_broken": len(broken),
             "n_with_claims": len(scored),
-            "total_claims": sum(c.get("total") or 0 for c in cs),
+            "total_claims": sum(c.get("total") or 0 for c in valid),
             "mean_grounded_ratio": (
                 round(sum(c["grounded_ratio"] for c in scored) / len(scored), 3)
                 if scored else None
             ),
-            "total_fabricated": sum(len(c["fabricated"]) for c in cs),
-            "completed_rate": round(sum(1 for c in cs if c["completed"]) / n, 3),
-            "parse_failures": sum(1 for c in cs if c.get("parse_failed")),
+            "total_fabricated": sum(len(c["fabricated"]) for c in valid),
+            "completed_rate": (
+                round(sum(1 for c in valid if c["completed"]) / n_valid, 3)
+                if n_valid else None
+            ),
+            "parse_failures": sum(1 for c in valid if c.get("parse_failed")),
+            # Wall and cost cover EVERY cell, broken included: a cell that burned
+            # an hour failing still cost an hour.
             "mean_wall_seconds": round(sum(c["wall_seconds"] for c in cs) / n, 1),
             "total_cost_usd": round(sum(c["cost_usd"] for c in cs), 4),
         }
