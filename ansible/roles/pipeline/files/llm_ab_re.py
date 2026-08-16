@@ -55,6 +55,32 @@ def analysis_completed(arm_result: dict) -> bool:
             and not analysis.get("parse_note"))
 
 
+# At or above this share of failed tool calls, the cell measured nothing about
+# the model and everything about the infrastructure. Chosen from the corpus:
+# claim-bearing cells run at 5 errors in 444 calls (1.1%), and the one cell with
+# a genuinely dead tool layer was 5 of 5 (100%). Nothing observed lands between.
+TOOL_LAYER_BROKEN_THRESHOLD = 0.5
+
+
+def is_tool_error(entry: dict) -> bool:
+    """Did this logged tool call fail to produce a usable result?
+
+    Two shapes reach the log, and only the first was ever counted (#316):
+
+        {"tool": …, "args": …, "error": "…"}             validation refused it
+        {"tool": …, "args": …, "result": {"error": "…"}}  it ran and failed
+
+    The second is the one that matters. `run_ghidra_tool` returns `{"error": …}`
+    for a non-zero exit, a timeout, or unparseable output, and every one of
+    those scored as a success because the CALL completed — which is how a cell
+    with 8 of 8 tool calls failing reported `tool_call_error_rate: 0.0`.
+    """
+    if entry.get("error"):
+        return True
+    result = entry.get("result")
+    return isinstance(result, dict) and bool(result.get("error"))
+
+
 def extract_metrics(arm_result: dict) -> dict:
     """Mechanical reliability metrics for one arm. Tool-call errors (the
     router translation-fidelity signal) come from the audit tool_call_log file."""
@@ -67,10 +93,15 @@ def extract_metrics(arm_result: dict) -> dict:
     if audit_path and Path(audit_path).exists():
         log = json.loads(Path(audit_path).read_text())
         logged = len(log)
-        errors = sum(1 for e in log if "error" in e)
+        errors = sum(1 for e in log if is_tool_error(e))
 
+    error_rate = round(errors / logged, 3) if logged else 0.0
     return {
         "completed": completed,
+        # A cell whose tool layer was dead says nothing about the model. Scored
+        # as an ordinary zero-claim result, it contributed a misleading 0/0 to
+        # both arms of an A/B as though depth had been fairly tested on it.
+        "tool_layer_broken": bool(logged) and error_rate >= TOOL_LAYER_BROKEN_THRESHOLD,
         # A distinct outcome from both success and error: the run finished, the
         # model answered, and the answer could not be parsed. Folding it into
         # either loses the signal (#380).
@@ -78,7 +109,7 @@ def extract_metrics(arm_result: dict) -> dict:
         "tool_calls_used": arm_result.get("tool_calls_used", 0),
         "tool_calls_logged": logged,
         "tool_call_errors": errors,
-        "tool_call_error_rate": round(errors / logged, 3) if logged else 0.0,
+        "tool_call_error_rate": error_rate,
         "duration_seconds": arm_result.get("duration_seconds"),
         "model_final": arm_result.get("model_final", ""),
         "family": analysis.get("family") or analysis.get("family_guess", ""),

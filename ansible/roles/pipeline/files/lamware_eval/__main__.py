@@ -19,7 +19,11 @@ def _failed_cell(arm_name: str, sample, err: str, seed: int | None = None) -> di
             "sample": sample.sha256[:12], "family_guess": None,
             "mb_family": sample.mb_family, "claude_family": None, "grounded": 0,
             "total": 0, "fabricated": [], "grounded_ratio": 1.0, "completed": False,
-            "tool_calls_used": 0, "tool_call_error_rate": 0.0, "wall_seconds": 0.0,
+            # An arm that errored before running made no tool calls, so its tool
+            # layer is unknown rather than broken — it must not be filtered out
+            # of the aggregates as though infrastructure were the cause.
+            "tool_calls_used": 0, "tool_call_error_rate": 0.0,
+            "tool_call_errors": 0, "tool_layer_broken": False, "wall_seconds": 0.0,
             "cost_usd": 0.0, "error": err}
 
 
