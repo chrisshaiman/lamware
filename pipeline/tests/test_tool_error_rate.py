@@ -21,6 +21,7 @@ is precisely how this survived". `test_the_original_bug_is_detected` is that
 test; it is written from the real log shape, not an invented one.
 """
 import json
+from pathlib import Path
 
 import pytest
 from lamware_eval.metrics import aggregate
@@ -179,3 +180,51 @@ def test_an_all_broken_arm_reports_no_capability():
     assert agg["mean_grounded_ratio"] is None
     assert agg["completed_rate"] is None
     assert agg["tool_layer_broken"] == 2
+
+
+# --- it reaches the scorecard ------------------------------------------------
+
+def _scorecard_src() -> str:
+    return (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+            / "files" / "lamware_eval" / "scorecard.py").read_text(encoding="utf-8")
+
+
+def _col_list(marker: str) -> set[str]:
+    body = _scorecard_src().split(marker, 1)[1].split("]", 1)[0]
+    return {c.strip().strip('"') for c in body.split(",") if c.strip()}
+
+
+def _summary_cols() -> set[str]:
+    return _col_list("cols = [")
+
+
+def test_the_column_readers_work():
+    """Guards the guards below — both parse a literal list out of source."""
+    assert "n" in _summary_cols() and "total_cost_usd" in _summary_cols()
+    assert "sample" in _col_list("cell_cols = [")
+
+
+def test_the_summary_table_shows_the_exclusion():
+    """A number nobody can see is not a fix.
+
+    The first cut of #316 computed n_valid and tool_layer_broken, rendered them
+    in the per-cell table, and left them out of the summary `cols` — so the
+    summary reported rates over a denominator it never showed.
+    """
+    assert "n_valid" in _summary_cols(), "summary hides the denominator its rates use"
+    assert "tool_layer_broken" in _summary_cols(), "summary hides why n_valid < n"
+    assert "tool_layer_broken" in _col_list("cell_cols = ["), (
+        "per-cell table omits tool_layer_broken")
+
+
+def test_every_aggregate_key_is_rendered():
+    """Drift guard: a new aggregate field must be shown, or this fails.
+
+    Catches the general form of the bug above — computing a summary figure and
+    never displaying it — for whatever gets added next.
+    """
+    produced = set(aggregate([_cell(total=1, grounded=1)])["qwen@10"])
+
+    assert not (produced - _summary_cols()), (
+        f"aggregate produces fields the scorecard never shows: "
+        f"{sorted(produced - _summary_cols())}")
