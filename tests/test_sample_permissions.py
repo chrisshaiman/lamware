@@ -69,7 +69,7 @@ def test_motif_tasks_are_skipped_when_no_corpus_exists():
                  "Restrict the MOTIF sample files",
                  "Enumerate the MOTIF sample files"):
         t = _named(PIPELINE_TASKS, frag)[0]
-        assert "_motif_samples.stat.exists" in str(t.get("when")), t.get("name")
+        assert "_pipeline_motif_samples.stat.exists" in str(t.get("when")), t.get("name")
 
 
 def test_the_enumerate_task_registers_what_the_restrict_task_loops_over():

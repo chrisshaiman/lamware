@@ -603,7 +603,7 @@
 - name: Check whether a MOTIF corpus exists on this host
   ansible.builtin.stat:
     path: "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
-  register: _motif_samples
+  register: _pipeline_motif_samples
   tags: [motif-perms]
 
 - name: Restrict the MOTIF corpus directories to the lamware group
@@ -616,15 +616,15 @@
   loop:
     - "{{ motif_corpus_dir | default('/opt/motif/corpus') }}"
     - "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
-  when: _motif_samples.stat.exists
+  when: _pipeline_motif_samples.stat.exists
   tags: [motif-perms]
 
 - name: Enumerate the MOTIF sample files
   ansible.builtin.find:
     paths: "{{ motif_corpus_dir | default('/opt/motif/corpus') }}/samples"
     file_type: file
-  register: _motif_sample_files
-  when: _motif_samples.stat.exists
+  register: _pipeline_motif_sample_files
+  when: _pipeline_motif_samples.stat.exists
   tags: [motif-perms]
 
 - name: Restrict the MOTIF sample files
@@ -636,10 +636,10 @@
     owner: pipeline
     group: lamware
     mode: "0640"
-  loop: "{{ _motif_sample_files.files | default([]) | map(attribute='path') | list }}"
+  loop: "{{ _pipeline_motif_sample_files.files | default([]) | map(attribute='path') | list }}"
   loop_control:
     label: "{{ item | basename }}"
-  when: _motif_samples.stat.exists
+  when: _pipeline_motif_samples.stat.exists
   tags: [motif-perms]
 
 - name: Deploy pipeline DB helper modules (config-driven, no secret)
