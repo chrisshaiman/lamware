@@ -11,7 +11,12 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     # n_with_claims sits beside the ratio: a completed_rate of 1.0 that hides
     # two unparseable answers is not a good score, it is a misleading one
     # (#380). The 29-sample MOTIF sweep reported exactly that.
-    cols = ["n", "n_with_claims", "total_claims", "mean_grounded_ratio",
+    # n_valid and tool_layer_broken sit immediately after n, because every rate
+    # to their right is computed over n_valid rather than n. Without them the
+    # summary silently reports a smaller denominator than the row's own `n`
+    # (#316) — the same "a number nobody can see is not a fix" trap as #380.
+    cols = ["n", "n_valid", "tool_layer_broken",
+            "n_with_claims", "total_claims", "mean_grounded_ratio",
             "total_fabricated", "completed_rate", "parse_failures",
             "mean_wall_seconds", "total_cost_usd"]
     lines.append("| arm | " + " | ".join(cols) + " |")
