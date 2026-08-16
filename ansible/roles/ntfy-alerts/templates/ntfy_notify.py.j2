@@ -13,12 +13,17 @@ License: Apache 2.0
 """
 import argparse
 import logging
+import re
 import sys
 
 import requests
 
 NTFY_URL = "{{ ntfy_url }}"
 NTFY_TOPIC = "{{ ntfy_topic }}"
+# Bearer token for a protected topic. Empty = unauthenticated, which is what
+# ntfy.sh gives you: the topic string is then the entire access control, and
+# topics are a routing key, not a secret (#352).
+NTFY_TOKEN = "{{ ntfy_token | default('') }}"
 {# `| bool` is load-bearing (#349). Bare Jinja truthiness tests the STRING:
    `-e ntfy_enabled=false` on the command line arrives as "false", which is
    non-empty and therefore true, so asking for alerts off rendered them ON.
@@ -26,6 +31,46 @@ NTFY_TOPIC = "{{ ntfy_topic }}"
 NTFY_ENABLED = {% if ntfy_enabled | bool %}True{% else %}False{% endif %}
 
 log = logging.getLogger("ntfy")
+
+# Scheme-prefixed URLs and bare IPv4. Deliberately NOT bare hostnames: `.py`
+# and `.sh` are real ccTLDs, so a general hostname pattern would defang
+# `daily-digest.py` and `ntfy.sh` in ordinary prose and make the channel look
+# broken. Callers holding a value they KNOW is a hostname use defang_ioc().
+_URL_RE = re.compile(r"\b(https?)://(\S+)", re.IGNORECASE)
+_IPV4_RE = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
+
+
+def defang_ioc(value: str, ioc_type: str = "") -> str:
+    """Defang a value already known to be a network indicator.
+
+    Used where the type is known — the digest reads `ioc_type` straight from
+    the database — so no guessing is involved and hostnames are covered.
+    """
+    if not value:
+        return value
+    out = defang_text(value)
+    net = ("domain", "host", "url", "ipv4", "ipv6", "addr")
+    if any(k in (ioc_type or "").lower() for k in net) or not ioc_type:
+        out = out.replace(".", "[.]") if "[.]" not in out else out
+    return out
+
+
+def defang_text(text: str) -> str:
+    """Make indicators non-clickable before they reach a phone (#352).
+
+    A notification body is rendered by the OS, and Android linkifies URLs and
+    bare IPs. An undefanged C2 URL on a lock screen is one mis-tap away from an
+    outbound connection to attacker infrastructure from a personal device — no
+    sandbox, no proxy, attributable. Defanging happens here, at the single
+    choke point every alert passes through, so no caller can forget.
+    """
+    if not text:
+        return text
+    text = _IPV4_RE.sub(lambda m: "[.]".join(m.groups()), text)
+    return _URL_RE.sub(
+        lambda m: f"hxxp{'s' if m.group(1).lower() == 'https' else ''}://"
+                  f"{m.group(2).replace('.', '[.]')}",
+        text)
 
 
 def send_alert(title: str, message: str, priority: str = "default",
@@ -45,6 +90,11 @@ def send_alert(title: str, message: str, priority: str = "default",
     if not NTFY_ENABLED or not NTFY_TOPIC:
         return False
 
+    # Defang here rather than at each call site: this is the only path to a
+    # phone, so a caller that forgets cannot produce a tappable indicator.
+    title = defang_text(title)
+    message = defang_text(message)
+
     # Replace non-ASCII characters in headers (HTTP/1.1 requires latin-1 headers)
     safe_title = title.encode("ascii", errors="replace").decode("ascii")
 
@@ -55,7 +105,11 @@ def send_alert(title: str, message: str, priority: str = "default",
     if tags:
         headers["Tags"] = tags
     if click:
+        # NOT defanged: this is the dashboard link we WANT tappable, and it is
+        # operator-supplied rather than sample-derived.
         headers["Click"] = click
+    if NTFY_TOKEN:
+        headers["Authorization"] = f"Bearer {NTFY_TOKEN}"
 
     try:
         resp = requests.post(

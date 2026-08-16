@@ -4,6 +4,12 @@
 ntfy_enabled: false
 ntfy_url: "https://ntfy.sh"
 ntfy_topic: ""  # set in Ansible Vault
+# Bearer token for a protected topic; empty means the topic string is the only
+# access control there is. On the public ntfy.sh a topic is a routing key, not a
+# secret — anyone who learns or guesses it subscribes to a live feed of what
+# this sandbox is analysing (#352). Set it in Ansible Vault alongside
+# ntfy_topic, or point ntfy_url at a self-hosted instance.
+ntfy_token: ""  # set in Ansible Vault
 ntfy_install_dir: /opt/ntfy-alerts
 ntfy_digest_hour: 20  # 8pm local time
 ntfy_digest_enabled: true
