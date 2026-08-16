@@ -611,3 +611,80 @@ def test_empty_extraction_keeps_its_own_message(cape_storage):
 
     assert "extracted no payloads" in result["error"]
     assert "not readable" not in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Sandbox data mount (#392)
+# ---------------------------------------------------------------------------
+
+
+def _run_python_cmd(cape_storage, report=REPORT):
+    """Capture the argv _run_python would exec, without running it."""
+    captured = {}
+
+    class _Result:
+        stdout, stderr, returncode = "", "", 0
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return _Result()
+
+    orig = _ns["subprocess"].run
+    _ns["subprocess"].run = fake_run
+    try:
+        _ns["_run_python"]({"script": "print(1)"}, report)
+    finally:
+        _ns["subprocess"].run = orig
+    return captured.get("cmd", [])
+
+
+def test_sandbox_mounts_payload_dirs_not_the_whole_task(cape_storage):
+    """76MB of pcaps, memory dumps and reports used to go into the container.
+
+    The sandbox exists to work on payloads; #383 widened it to the entire task
+    directory as a side effect of fixing #377.
+    """
+    _write_payload(cape_storage / "77" / "CAPE", "a" * 64)
+    _write_payload(cape_storage / "77" / "files", "b" * 64)
+    (cape_storage / "77" / "dump.pcap").write_bytes(b"\xd4\xc3\xb2\xa1" + b"\x00" * 512)
+
+    cmd = _run_python_cmd(cape_storage)
+
+    mounts = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--data-as"]
+    assert sorted(m.split("=")[0] for m in mounts) == ["CAPE", "files"], mounts
+    assert "--data" not in cmd, "still mounting the whole task directory"
+    assert not any(str(cape_storage / "77") == m.split("=", 1)[1] for m in mounts)
+
+
+def test_sandbox_mount_names_match_the_source_directories(cape_storage):
+    """In-container paths stay /data/CAPE etc., as with the task-dir mount."""
+    _write_payload(cape_storage / "77" / "procdump", "c" * 64)
+
+    cmd = _run_python_cmd(cape_storage)
+    name, path = cmd[cmd.index("--data-as") + 1].split("=", 1)
+
+    assert name == "procdump"
+    assert path == str(cape_storage / "77" / "procdump")
+
+
+def test_sandbox_runs_without_a_data_mount_when_nothing_extracted(cape_storage):
+    """No payloads is not an error — the sandbox is still useful."""
+    (cape_storage / "77").mkdir(parents=True)
+
+    cmd = _run_python_cmd(cape_storage)
+
+    assert "--data-as" not in cmd
+    assert cmd, "the tool should still run"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode bits")
+def test_unreadable_storage_does_not_take_down_the_sandbox(cape_storage):
+    _write_payload(cape_storage / "77" / "CAPE", "d" * 64)
+    (cape_storage / "77").chmod(0o000)
+    try:
+        cmd = _run_python_cmd(cape_storage)
+    finally:
+        (cape_storage / "77").chmod(0o755)
+
+    assert "--data-as" not in cmd
+    assert cmd, "an unreadable storage tree must not kill run_python"

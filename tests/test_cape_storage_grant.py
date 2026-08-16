@@ -209,8 +209,17 @@ def test_only_one_cron_still_deletes_memory_dumps():
 
 
 def _probe_block() -> str:
+    """Just the CAPE-reachability probe, not whatever follows it.
+
+    The lower bound was "Save baseline", which swept in the #392 world-readable
+    sample check and its own `su ... nobody` read — making the count assertion
+    below fail against correct code. Bound it at the next section header.
+    """
     body = MONITOR_T.split("CAPE storage reachability")[1]
-    return body.split("Save baseline")[0]
+    for terminator in ("World-readable malware", "Save baseline"):
+        if terminator in body:
+            return body.split(terminator)[0]
+    return body
 
 
 def test_the_probe_block_locator_works():
@@ -218,6 +227,7 @@ def test_the_probe_block_locator_works():
     block = _probe_block()
     assert 'cape_storage_status="ok"' in block
     assert "api_process_status" not in block, "split leaked into the previous check"
+    assert "exposed_samples" not in block, "split leaked into the #392 check"
 
 
 def test_every_probe_command_drops_to_the_pipeline_user():

@@ -73,8 +73,8 @@ def test_every_alert_key_is_unique():
     keys = re.findall(r"queue_alert ([a-z_]+)", SRC)
     # Count is a drift guard: a new alert site should make someone confirm its
     # key is distinct, since a collision silently suppresses the older alert.
-    # 8 through #379; cape_storage added by #385.
-    assert len(keys) == 9, f"expected 9 alert sites, found {len(keys)}: {keys}"
+    # 8 through #379; cape_storage added by #385; sample_exposure by #392.
+    assert len(keys) == 10, f"expected 10 alert sites, found {len(keys)}: {keys}"
     assert len(set(keys)) == len(keys), f"duplicate alert keys: {keys}"
 
 
