@@ -59,7 +59,8 @@ def _ghidra_warnings(gr: dict) -> list[str]:
     top = gr.get("analysis_warnings")
     if top:
         return list(top)
-    return collect_analysis_warnings(gr.get("analyzed_files") or [])
+    return collect_analysis_warnings(gr.get("analyzed_files") or [],
+                                     derive_when_absent=True)
 
 
 def _cost(model: str, usage: dict) -> float:

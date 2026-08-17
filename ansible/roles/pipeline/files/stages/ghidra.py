@@ -478,7 +478,38 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     return result
 
 
-def collect_analysis_warnings(analyzed_files: list[dict]) -> list[str]:
+# Mirrors `_analysis_warnings` in run-ghidra.py.j2. That function is the
+# authority — it runs at analysis time with the sample bytes in hand, so it can
+# also check the PE import directory. This side only ever sees stored counts.
+# test_analysis_warnings_surface asserts the threshold here still matches the
+# template's, because two copies of a rule drift (#380).
+LOW_FUNCTION_THRESHOLD = 1
+_DERIVED_SUFFIX = " [derived at re-score: this report predates the detector]"
+
+
+def derive_analysis_warnings(analyzed_file: dict) -> list[str]:
+    """Warnings inferable from a stored result, for reports written before #372.
+
+    Every eval-corpus report predates the detector, so six analysed files sit at
+    `analysis_success: True` with one function recovered and no warning against
+    them — the exact state #367 is about, reading as clean. Re-scoring can
+    recover the count-based half of the rule from data already on disk.
+
+    Marked as derived rather than passed off as the analyser's own output: a
+    warning the detector never emitted is a different claim, and collapsing the
+    two would be its own small lie.
+    """
+    if not analyzed_file.get("analysis_success"):
+        return []
+    n = int(analyzed_file.get("functions_count") or 0)
+    if n > LOW_FUNCTION_THRESHOLD:
+        return []
+    return [f"only {n} function(s) recovered — the loader may not have "
+            f"resolved an architecture for this binary{_DERIVED_SUFFIX}"]
+
+
+def collect_analysis_warnings(analyzed_files: list[dict],
+                              derive_when_absent: bool = False) -> list[str]:
     """Lift per-file analysis warnings to the top of the ghidra result (#367).
 
     run-ghidra has emitted `analysis_warnings` on each analysed file since
@@ -490,10 +521,18 @@ def collect_analysis_warnings(analyzed_files: list[dict]) -> list[str]:
     Prefixed with the program name because the interesting case is one file of
     several failing: the 124-function payload and the 1-function one sit in the
     same list, and an unattributed warning cannot tell you which is which.
+
+    `derive_when_absent` is for the offline re-scorer only. The live path leaves
+    it False: at analysis time the detector has already run, so deriving would
+    second-guess it — and an EMPTY analysis_warnings list is a real answer
+    ("checked, nothing wrong"), not a missing one.
     """
     out: list[str] = []
     for af in analyzed_files:
         name = af.get("program_name") or af.get("filename") or "?"
-        for w in af.get("analysis_warnings") or []:
+        warnings = af.get("analysis_warnings")
+        if warnings is None and derive_when_absent:
+            warnings = derive_analysis_warnings(af)
+        for w in warnings or []:
             out.append(f"{name}: {w}")
     return out
