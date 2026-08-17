@@ -138,7 +138,13 @@ def cap_tool_result(result: dict, cap: int = TOOL_RESULT_CHAR_CAP) -> dict:
         # Short strings are metadata too: "address": "0x0041b500", "status": "ok".
         # Classifying them as payload meant a tight budget could truncate the very
         # labels that make a truncated result interpretable.
-        return isinstance(value, str) and len(value) > METADATA_CHARS
+        #
+        # Measured in SERIALIZED size, like every other figure here. Using
+        # len(value) let an astral-plane string sneak past: 40 characters of
+        # "\ud835\udd7f"-style escapes is 480 JSON chars, classified as metadata,
+        # never truncated, and straight over the cap. Same mistake `size()`
+        # above documents, in the one place that had not been converted.
+        return isinstance(value, str) and size(value) > METADATA_CHARS
 
     big = {k: v for k, v in result.items() if is_payload(k, v)}
     small = {k: v for k, v in result.items() if k not in big}
