@@ -3188,7 +3188,7 @@ Technical summary: {executive}"""
             tool_results_content: list[dict[str, Any]] = []
             calls_this_turn = 0
 
-            for block in tool_use_blocks:
+            for block_idx, block in enumerate(tool_use_blocks):
                 # ---- Per-turn batch limit (#234) ----
                 # EVERY tool_use block must receive a tool_result or the next request is
                 # malformed, so surplus calls are DEFERRED rather than dropped: the model
@@ -3256,15 +3256,25 @@ Technical summary: {executive}"""
                     sys.exit(1)
 
                 if result_msg.get("type") == "force_final":
-                    # Orchestrator wants us to stop and produce final analysis
-                    tool_results_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps({
-                            "error": f"Analysis forced to conclude: {result_msg.get('reason', 'unknown')}"
-                        }),
-                        "is_error": True,
-                    })
+                    # Orchestrator wants us to stop and produce final analysis.
+                    #
+                    # This branch does not `continue` — it leaves the loop for good — so
+                    # it has to close out EVERY remaining block itself, not just the one
+                    # we are on. The blocks after this one were never dispatched, and the
+                    # assistant message already appended above still carries their
+                    # tool_use ids; an id with no tool_result makes the salvage request
+                    # itself malformed (400), which loses the very run we came here to
+                    # save. Same invariant the deferral branch above is written around.
+                    reason = result_msg.get("reason", "unknown")
+                    for pending in tool_use_blocks[block_idx:]:
+                        tool_results_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": pending.id,
+                            "content": json.dumps({
+                                "error": f"Analysis forced to conclude: {reason}"
+                            }),
+                            "is_error": True,
+                        })
                     # Add results collected so far and ask for final
                     messages.append({"role": "user", "content": tool_results_content})
                     messages.append({
