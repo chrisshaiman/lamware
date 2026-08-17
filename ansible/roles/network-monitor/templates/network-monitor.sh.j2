@@ -502,10 +502,41 @@ with open('$BASELINE_FILE', 'w') as f:
     json.dump(baseline, f, indent=2)
 "
 
-# Dispatch queued alerts, then write the status file (read by dashboard)
+# Dispatch queued alerts, then write the status file (read by dashboard).
+#
+# Free-text values reach Python through the ENVIRONMENT, never through the
+# source text. Interpolating them built the program out of strings the
+# monitored system controls: `qemu_unexpected` is raw `ps --ppid` output, one
+# line per child, so a second child put a literal newline inside a single-
+# quoted literal and python3 died of SyntaxError before running a statement.
+# That is the only dispatcher for EVERY queued alert plus the status.json
+# write, and it failed on exactly the input a QEMU breakout produces — the
+# alarm stayed silent for as long as the breakout lasted, and status.json kept
+# reporting "ok". Quoting is not sufficient here: comm names come from the
+# escaped process, so they can carry quotes and backslashes too.
+export NM_STATUS="$status"
+export NM_TIMESTAMP="$TIMESTAMP"
+export NM_RULES_PROBLEM="$rules_problem"
+export NM_QEMU_STATUS="$qemu_status"
+export NM_QEMU_UNEXPECTED="$qemu_unexpected"
+export NM_CAPE_PROCESS_STATUS="$cape_process_status"
+export NM_CAPE_UNEXPECTED="$cape_unexpected"
+export NM_PIPELINE_PROCESS_STATUS="$pipeline_process_status"
+export NM_PIPELINE_UNEXPECTED="$pipeline_unexpected"
+export NM_API_PROCESS_STATUS="$api_process_status"
+export NM_API_UNEXPECTED="$api_unexpected"
+export NM_CAPE_STORAGE_STATUS="$cape_storage_status"
+export NM_CAPE_STORAGE_PROBLEM="$cape_storage_problem"
+export NM_EXPOSED_WHERE="$exposed_where"
+export NM_ALERT_MESSAGE="$alert_message"
+
 python3 -c "
 import json, os, time, hashlib, subprocess
 NTFY = '{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py'
+
+def env(name):
+    return os.environ.get(name, '')
+
 prev = {}
 if os.path.exists('$STATUS_FILE'):
     try:
@@ -551,12 +582,12 @@ for a in queued:
 for key, was in prev_notified.items():
     if key not in notified:
         push('Resolved: ' + key,
-             'This condition is no longer present as of $TIMESTAMP.',
+             'This condition is no longer present as of ' + env('NM_TIMESTAMP') + '.',
              'low', 'white_check_mark')
 
 status = {
-    'status': '$status',
-    'last_check': '$TIMESTAMP',
+    'status': env('NM_STATUS'),
+    'last_check': env('NM_TIMESTAMP'),
     'checks_since_baseline': checks + 1,
     'notified': notified,
     'detonation_to_internet': {
@@ -570,22 +601,22 @@ status = {
         'status': 'alert' if $det_wg0_accept > 0 else 'ok',
     },
     'air_gap_rules': {
-        'enforced': not bool('''$rules_problem'''),
-        'problem': '''$rules_problem''' or None,
+        'enforced': not bool(env('NM_RULES_PROBLEM')),
+        'problem': env('NM_RULES_PROBLEM') or None,
     },
-    'qemu_status': '$qemu_status',
-    'qemu_unexpected_children': '$qemu_unexpected'.split(chr(10)) if '$qemu_unexpected' else [],
-    'cape_process_status': '$cape_process_status',
-    'cape_unexpected_processes': '$cape_unexpected'.split(' | ') if '$cape_unexpected' else [],
-    'pipeline_process_status': '$pipeline_process_status',
-    'pipeline_unexpected_processes': '$pipeline_unexpected'.split(' | ') if '$pipeline_unexpected' else [],
-    'api_process_status': '$api_process_status',
-    'api_unexpected_processes': '$api_unexpected'.split(' | ') if '$api_unexpected' else [],
-    'cape_storage_status': '$cape_storage_status',
-    'cape_storage_problem': '''$cape_storage_problem''' or None,
+    'qemu_status': env('NM_QEMU_STATUS'),
+    'qemu_unexpected_children': env('NM_QEMU_UNEXPECTED').split(chr(10)) if env('NM_QEMU_UNEXPECTED') else [],
+    'cape_process_status': env('NM_CAPE_PROCESS_STATUS'),
+    'cape_unexpected_processes': env('NM_CAPE_UNEXPECTED').split(' | ') if env('NM_CAPE_UNEXPECTED') else [],
+    'pipeline_process_status': env('NM_PIPELINE_PROCESS_STATUS'),
+    'pipeline_unexpected_processes': env('NM_PIPELINE_UNEXPECTED').split(' | ') if env('NM_PIPELINE_UNEXPECTED') else [],
+    'api_process_status': env('NM_API_PROCESS_STATUS'),
+    'api_unexpected_processes': env('NM_API_UNEXPECTED').split(' | ') if env('NM_API_UNEXPECTED') else [],
+    'cape_storage_status': env('NM_CAPE_STORAGE_STATUS'),
+    'cape_storage_problem': env('NM_CAPE_STORAGE_PROBLEM') or None,
     'exposed_sample_count': $exposed_samples,
-    'exposed_sample_stores': '''$exposed_where''' or None,
-    'alert_message': '$alert_message' if '$status' == 'alert' else None,
+    'exposed_sample_stores': env('NM_EXPOSED_WHERE') or None,
+    'alert_message': env('NM_ALERT_MESSAGE') if env('NM_STATUS') == 'alert' else None,
 }
 with open('$STATUS_FILE', 'w') as f:
     json.dump(status, f, indent=2)
