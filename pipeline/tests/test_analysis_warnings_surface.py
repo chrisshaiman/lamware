@@ -17,8 +17,17 @@ So this covers the second half: lifting the warnings to the top of the ghidra
 result and putting a count in the scorecard, so "the analyser could not read
 this sample" stops being identical to "the model had nothing to say" (#315).
 """
+from pathlib import Path
+
 from lamware_eval.metrics import aggregate, compose_cell
-from stages.ghidra import collect_analysis_warnings
+from stages.ghidra import (
+    LOW_FUNCTION_THRESHOLD,
+    collect_analysis_warnings,
+    derive_analysis_warnings,
+)
+
+TEMPLATE = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "ghidra"
+            / "templates" / "run-ghidra.py.j2").read_text(encoding="utf-8")
 
 
 def analysed(name="sample.exe", warnings=None, functions=617):
@@ -183,3 +192,111 @@ def test_run_ghidra_reports_no_warnings_for_a_clean_run(tmp_path, monkeypatch):
                             storage=tmp_path)
 
     assert result["analysis_warnings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Deriving warnings for reports that predate the detector
+# ---------------------------------------------------------------------------
+
+
+
+def test_the_threshold_matches_the_detector_in_the_template():
+    """Cross-copy drift guard.
+
+    run-ghidra.py.j2 runs in a container and cannot be imported, so the
+    count-based rule necessarily exists twice. #380 is what happens when two
+    copies of a rule drift, so pin them together.
+    """
+    assert f"n_funcs <= {LOW_FUNCTION_THRESHOLD}:" in TEMPLATE, (
+        f"template threshold no longer matches LOW_FUNCTION_THRESHOLD="
+        f"{LOW_FUNCTION_THRESHOLD}")
+
+
+def test_the_derived_message_matches_the_detectors_wording():
+    """Same finding should read the same way, however it was produced.
+
+    Compared as fragments because the template splits the message across two
+    adjacent f-strings; reconstructing that by stripping quotes and newlines
+    was fragile enough to fail against correct code on the first attempt.
+    """
+    derived = derive_analysis_warnings(
+        {"analysis_success": True, "functions_count": 1})[0]
+
+    for fragment in ("function(s) recovered — the loader may not have",
+                     "resolved an architecture for this binary"):
+        assert fragment in TEMPLATE, f"template no longer says {fragment!r}"
+        assert fragment in derived, f"derived message no longer says {fragment!r}"
+
+
+def test_a_legacy_low_function_file_is_derived():
+    """The 6 real files in the corpus: success, 1 function, no warning key."""
+    out = derive_analysis_warnings({"analysis_success": True, "functions_count": 1})
+
+    assert len(out) == 1
+    assert "derived at re-score" in out[0], (
+        "a derived warning must not pass as one the analyser emitted")
+
+
+def test_a_healthy_legacy_file_is_not_derived():
+    """Positive control."""
+    assert derive_analysis_warnings({"analysis_success": True, "functions_count": 617}) == []
+
+
+def test_a_failed_analysis_is_not_derived():
+    """It already reports failure; a warning would add nothing."""
+    assert derive_analysis_warnings({"analysis_success": False, "functions_count": 0}) == []
+
+
+def test_derivation_is_off_by_default():
+    """The live path must not second-guess the detector.
+
+    An EMPTY analysis_warnings list is a real answer — checked, nothing wrong —
+    and deriving over it would invent findings at analysis time.
+    """
+    legacy = [{"program_name": "old.exe", "analysis_success": True, "functions_count": 1}]
+
+    assert collect_analysis_warnings(legacy) == []
+    assert collect_analysis_warnings(legacy, derive_when_absent=True) != []
+
+
+def test_an_explicit_empty_list_is_never_overridden():
+    """The detector ran and found nothing; that is not a missing value."""
+    checked = [{"program_name": "x.exe", "analysis_success": True,
+                "functions_count": 1, "analysis_warnings": []}]
+
+    assert collect_analysis_warnings(checked, derive_when_absent=True) == []
+
+
+def test_rebuild_actually_derives_for_legacy_reports():
+    """Wiring, not presence — again.
+
+    The derivation existed and rebuild called the collector WITHOUT
+    derive_when_absent, so every legacy report still scored zero. Mutating that
+    argument away left the whole suite green until this test existed, which is
+    the same gap the detector itself had in #372.
+    """
+    from lamware_eval.rebuild import _ghidra_warnings
+
+    legacy = {"analyzed_files": [
+        {"program_name": "old.exe", "analysis_success": True, "functions_count": 1}]}
+
+    out = _ghidra_warnings(legacy)
+
+    assert out, "rebuild did not derive; legacy reports still score zero"
+    assert out[0].startswith("old.exe:")
+    assert "derived at re-score" in out[0]
+
+
+def test_rebuild_prefers_recorded_warnings_over_derived_ones():
+    """A report that HAS the detector's output must not be second-guessed."""
+    from lamware_eval.rebuild import _ghidra_warnings
+
+    recorded = {"analysis_warnings": ["x.exe: something the detector said"],
+                "analyzed_files": [
+                    {"program_name": "x.exe", "analysis_success": True,
+                     "functions_count": 1}]}
+
+    out = _ghidra_warnings(recorded)
+
+    assert out == ["x.exe: something the detector said"]
+    assert not any("derived" in w for w in out)
