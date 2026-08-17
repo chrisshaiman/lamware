@@ -11,7 +11,8 @@ from lamware_eval.corpus import CorpusSample
 def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_text: str,
                  claude_family: str | None, wall_seconds: float, cost_usd: float,
                  tool_metrics: dict, error: str | None,
-                 seed: int | None = None, sampling: dict | None = None) -> dict:
+                 seed: int | None = None, sampling: dict | None = None,
+                 ghidra_warnings: list[str] | None = None) -> dict:
     """Compose one scorecard cell.
 
     `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
@@ -19,6 +20,12 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
     applied. Both are recorded per cell rather than once per sweep because the
     server can be restarted mid-sweep, and a result whose sampling config is only
     known by recollection is not a result anyone can reproduce.
+
+    `ghidra_warnings` are the ways the static analysis contradicted its input —
+    a PE whose import directory is intact yielding zero imports, one function
+    recovered from a 150KB binary (#367). A cell built on an analysis that read
+    nothing is not a cell where the model had nothing to say, and without this
+    the two are identical in the scorecard.
     """
     g = grounding_scorecard(analysis or {}, source_text)
     return {
@@ -58,6 +65,10 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # not the model. Kept out of the arm aggregates below rather than
         # scored as an ordinary zero-claim result (#316).
         "tool_layer_broken": bool(tool_metrics.get("tool_layer_broken")),
+        # Count in the table, full text in the cell dict — a scorecard column
+        # has to stay skimmable, but the reason must survive for whoever asks.
+        "ghidra_warnings": len(ghidra_warnings or []),
+        "ghidra_warning_detail": list(ghidra_warnings or []),
         "wall_seconds": wall_seconds, "cost_usd": cost_usd,
         "error": error,
     }
@@ -107,6 +118,9 @@ def aggregate(cells: list[dict]) -> dict:
                 if n_valid else None
             ),
             "parse_failures": sum(1 for c in valid if c.get("parse_failed")),
+            # Over ALL cells: a broken tool layer does not make the static
+            # analysis behind it any less broken, and both are worth knowing.
+            "cells_with_ghidra_warnings": sum(1 for c in cs if c.get("ghidra_warnings")),
             # Wall and cost cover EVERY cell, broken included: a cell that burned
             # an hour failing still cost an hour.
             "mean_wall_seconds": round(sum(c["wall_seconds"] for c in cs) / n, 1),

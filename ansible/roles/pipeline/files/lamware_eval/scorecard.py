@@ -18,6 +18,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
     cols = ["n", "n_valid", "tool_layer_broken",
             "n_with_claims", "total_claims", "mean_grounded_ratio",
             "total_fabricated", "completed_rate", "parse_failures",
+            "cells_with_ghidra_warnings",
             "mean_wall_seconds", "total_cost_usd"]
     lines.append("| arm | " + " | ".join(cols) + " |")
     lines.append("|" + "---|" * (len(cols) + 1))
@@ -34,6 +35,10 @@ def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
                  # is easy to skim past: 1.0 there means the cell measured the
                  # infrastructure, not the model, and is out of the aggregates.
                  "tool_call_error_rate", "tool_layer_broken",
+                 # The static analysis that fed this cell, contradicting itself:
+                 # a 150KB PE yielding 1 function reads as a quiet model unless
+                 # this column says otherwise (#367).
+                 "ghidra_warnings",
                  "wall_seconds", "cost_usd", "error"]
     lines.append("| " + " | ".join(cell_cols) + " |")
     lines.append("|" + "---|" * len(cell_cols))
