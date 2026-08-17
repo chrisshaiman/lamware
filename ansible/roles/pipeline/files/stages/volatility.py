@@ -344,8 +344,13 @@ def run_targeted_malfind_dump(dump_path: Path, target_pids: set[int],
     malfind_dump_dir = output_dir / "malfind_dumps"
     malfind_dump_dir.mkdir(parents=True, exist_ok=True)
 
-    pid_str = ",".join(str(p) for p in sorted(target_pids))
-    print(f"    Running targeted malfind --dump for PIDs: {pid_str}")
+    # One argv token per PID. Volatility declares malfind's `pid` as a
+    # ListRequirement(element_type=int), which its CLI maps to argparse
+    # `nargs="*"` with `type=lambda x: int(x, 0)` — so a comma-joined
+    # "1236,2104" fails conversion and vol exits 2 before doing any work.
+    # A single PID happened to survive that, which is what hid this.
+    pid_list = [str(p) for p in sorted(target_pids)]
+    print(f"    Running targeted malfind --dump for PIDs: {', '.join(pid_list)}")
 
     try:
         result = subprocess.run(
@@ -354,7 +359,7 @@ def run_targeted_malfind_dump(dump_path: Path, target_pids: set[int],
                 str(dump_path),
                 "windows.malfind",
                 str(output_dir),
-                "--pid", pid_str,
+                "--pid", *pid_list,
                 "--dump",
             ],
             capture_output=True,
