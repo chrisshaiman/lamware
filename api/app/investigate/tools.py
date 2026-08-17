@@ -244,8 +244,8 @@ TOOL_DEFINITIONS = [
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"analysis_id": {"type": "integer"}},
-            "required": ["analysis_id"],
+            "properties": {},
+            "required": [],
         },
     },
     {
@@ -258,40 +258,38 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "analysis_id": {"type": "integer"},
                 "payload_index": {
                     "type": "integer",
                     "description": "Index from get_cape_payloads",
                 },
             },
-            "required": ["analysis_id", "payload_index"],
+            "required": ["payload_index"],
         },
     },
     {
         "name": "get_pcap_summary",
         "description": (
-            "Get Zeek/Suricata PCAP analysis results for an analysis."
+            "Get Zeek/Suricata PCAP analysis results for the CURRENT analysis."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"analysis_id": {"type": "integer"}},
-            "required": ["analysis_id"],
+            "properties": {},
+            "required": [],
         },
     },
     {
         "name": "get_api_traces",
         "description": (
-            "Get Cape API call traces for an analysis, optionally filtered by "
-            "process name or API name substring."
+            "Get Cape API call traces for the CURRENT analysis, optionally "
+            "filtered by process name or API name substring."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "analysis_id": {"type": "integer"},
                 "process": {"type": "string"},
                 "api_filter": {"type": "string"},
             },
-            "required": ["analysis_id"],
+            "required": [],
         },
     },
     {
@@ -375,6 +373,16 @@ _GHIDRA_TOOLS = {
     "get_data_at",
 }
 
+# Tools answered from the session's own report/CAPE task rather than the DB.
+# The database tools take an analysis_id and honour it; these structurally
+# cannot, so they no longer advertise one — see execute_tool.
+_CURRENT_ANALYSIS_TOOLS = {
+    "get_cape_payloads",
+    "read_payload",
+    "get_pcap_summary",
+    "get_api_traces",
+}
+
 
 def execute_tool(
     tool_name: str,
@@ -405,6 +413,23 @@ def execute_tool(
         }
         if tool_name in db_tools:
             return db_tools[tool_name](args, session)
+
+        # These four answer from `report`, which the router loaded for THIS
+        # session's analysis, and from that analysis's CAPE task id. They cannot
+        # serve another analysis, so their schemas no longer accept an id. Any
+        # model still sending one — from an older transcript, or copied out of a
+        # search_* result — is refused rather than quietly handed the session's
+        # own data under someone else's id, which is how a false cross-analysis
+        # correlation gets made.
+        if tool_name in _CURRENT_ANALYSIS_TOOLS:
+            requested = args.get("analysis_id")
+            if requested is not None and requested != analysis_id:
+                return {"error": (
+                    f"{tool_name} only serves the current analysis ({analysis_id}); "
+                    f"it cannot fetch analysis {requested}. Use the database tools "
+                    f"(get_iocs, get_network_events, get_signatures, "
+                    f"get_capabilities, get_sample_lineage) for other analyses."
+                )}
 
         if tool_name == "get_cape_payloads":
             return _get_cape_payloads(args, report)
