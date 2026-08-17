@@ -1283,8 +1283,16 @@ def strip_control_chars(s: str) -> str:
 #
 # Matched loosely on purpose: hyphen count, surrounding whitespace and case all
 # vary in a near-miss that a model may still read as a closing marker.
+#
+# BOTH fence shapes, because the file uses both. Most builders fence with the
+# dash form, but build_office_message and build_powershell_message use the XML
+# tag form (<UNTRUSTED_CODE> / </UNTRUSTED_CODE>). A dash-anchored pattern could
+# not match the tag form even in principle, so those two paths had no working
+# defence at all — and dropping neutralize_delimiters into them without widening
+# this first would have been a silent no-op.
 _DELIMITER_RE = re.compile(
-    r"-{2,}\s*(?:END_)?UNTRUSTED_(?:DATA|CODE)\s*-{2,}", re.IGNORECASE)
+    r"(?:-{2,}\s*|<\s*/?\s*)(?:END_)?UNTRUSTED_(?:DATA|CODE)(?:\s*-{2,}|\s*/?\s*>)",
+    re.IGNORECASE)
 
 
 def neutralize_delimiters(s: str) -> str:
@@ -1404,7 +1412,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
                 pseudocode = fn.get("pseudocode", "")
                 parts.append(f"### {name} ({address})")
                 parts.append("---UNTRUSTED_CODE---")
-                parts.append(f"```c\n{pseudocode}\n```")
+                parts.append(f"```c\n{neutralize_delimiters(pseudocode)}\n```")
                 parts.append("---END_UNTRUSTED_CODE---")
                 parts.append("")
 
@@ -1478,7 +1486,7 @@ def build_dotnet_message(dotnet_data: dict[str, Any], config: dict[str, Any]) ->
     if source:
         parts.append("## Decompiled C# Source Code")
         parts.append("---UNTRUSTED_CODE---")
-        parts.append(f"```csharp\n{source}\n```")
+        parts.append(f"```csharp\n{neutralize_delimiters(source)}\n```")
         parts.append("---END_UNTRUSTED_CODE---")
         parts.append("")
 
@@ -1635,7 +1643,7 @@ def build_pyinstaller_message(py_data: dict[str, Any], config: dict[str, Any]) -
     if source:
         parts.append("## Decompiled Python Source Code")
         parts.append("---UNTRUSTED_CODE---")
-        parts.append(f"```python\n{source}\n```")
+        parts.append(f"```python\n{neutralize_delimiters(source)}\n```")
         parts.append("---END_UNTRUSTED_CODE---")
         parts.append("")
 
@@ -1698,7 +1706,7 @@ def build_java_message(java_data: dict[str, Any], config: dict[str, Any]) -> str
     if source:
         parts.append("## Decompiled Java Source Code")
         parts.append("---UNTRUSTED_CODE---")
-        parts.append(f"```java\n{source}\n```")
+        parts.append(f"```java\n{neutralize_delimiters(source)}\n```")
         parts.append("---END_UNTRUSTED_CODE---")
         parts.append("")
 
@@ -1787,7 +1795,7 @@ def build_office_message(office_data: dict[str, Any], config: dict[str, Any]) ->
     if vba_source:
         parts.append(f"\n### VBA Macro Source Code ({len(vba_source)} chars)")
         parts.append("<UNTRUSTED_CODE>")
-        parts.append(vba_source[:50000])
+        parts.append(neutralize_delimiters(vba_source[:50000]))
         parts.append("</UNTRUSTED_CODE>")
 
     return "\n".join(parts)
@@ -1845,7 +1853,7 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
         for i, layer in enumerate(layers[:-1]):
             parts.append(f"\n#### Layer {i + 1} ({len(layer)} chars)")
             parts.append("<UNTRUSTED_CODE>")
-            parts.append(layer[:20000])
+            parts.append(neutralize_delimiters(layer[:20000]))
             parts.append("</UNTRUSTED_CODE>")
 
     # Final decoded payload
@@ -1853,7 +1861,7 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
     if final:
         parts.append(f"\n### Final Decoded Payload ({len(final)} chars)")
         parts.append("<UNTRUSTED_CODE>")
-        parts.append(final[:50000])
+        parts.append(neutralize_delimiters(final[:50000]))
         parts.append("</UNTRUSTED_CODE>")
 
     # Original script
@@ -1861,7 +1869,7 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
     if original and original != final:
         parts.append(f"\n### Original Obfuscated Script ({len(original)} chars)")
         parts.append("<UNTRUSTED_CODE>")
-        parts.append(original[:30000])
+        parts.append(neutralize_delimiters(original[:30000]))
         parts.append("</UNTRUSTED_CODE>")
 
     return "\n".join(parts)
