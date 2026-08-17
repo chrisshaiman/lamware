@@ -205,6 +205,7 @@ async def run_conversation_turn(
     total_input_tokens = 0
     total_output_tokens = 0
     tool_calls_used = 0
+    errored = False
 
     async with httpx.AsyncClient(timeout=300.0) as client:
         while True:
@@ -259,16 +260,26 @@ async def run_conversation_turn(
                         if tc_deltas:
                             accumulator.add_delta(tc_deltas)
 
+            # Both handlers BREAK rather than return. The router persists the
+            # assistant message and the session's token/cost columns only in its
+            # `done` branch, so returning here threw away everything the earlier
+            # rounds had already produced: the prose the analyst watched stream,
+            # and the tokens they were billed for. Breaking falls through to the
+            # cost computation and the `done` yield below, which is also what
+            # puts the partial answer into the next turn's rebuilt history —
+            # without it the transcript holds two consecutive user messages.
             except httpx.HTTPStatusError as exc:
                 log.error("LiteLLM HTTP error: %s", exc)
                 yield {"event": "error", "data": {"message": f"LLM API error: {exc.response.status_code}"}}
-                return
+                errored = True
+                break
             except httpx.RequestError as exc:
                 # Full detail (which can include the internal proxy URL) goes to
                 # the server log only; the client gets a generic message.
                 log.error("LiteLLM request error: %s", exc)
                 yield {"event": "error", "data": {"message": "LLM request failed (proxy unreachable)"}}
-                return
+                errored = True
+                break
 
             # --- Decide what to do with the response ---
             tool_blocks = accumulator.blocks()
@@ -389,5 +400,9 @@ async def run_conversation_turn(
             "output_tokens": total_output_tokens,
             "cost": round(cost, 6),
             "tool_calls_used": tool_calls_used,
+            # A turn that ended on an upstream failure still reports `done` so its
+            # work is persisted, so `done` alone no longer means "the model
+            # finished". Callers that care about completeness read this.
+            "partial": errored,
         },
     }
