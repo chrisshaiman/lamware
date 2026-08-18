@@ -3233,10 +3233,14 @@ Technical summary: {executive}"""
                     continue
 
                 calls_this_turn += 1
-                tool_calls_used += 1
 
-                # Check if we've hit the limit
-                if tool_calls_used > max_tool_calls:
+                # Check the budget BEFORE counting. A rejected call executes
+                # nothing, so counting it made the run report more tool calls
+                # than max_tool_calls permits — the deferral branch above
+                # already gets this right, and said so in its comment. The
+                # execution boundary is unchanged: >= here on the pre-increment
+                # value admits exactly the same calls that > did post-increment.
+                if tool_calls_used >= max_tool_calls:
                     emit_status(
                         f"Hit max tool calls ({max_tool_calls}), requesting final analysis",
                         tool_calls_used,
@@ -3249,6 +3253,8 @@ Technical summary: {executive}"""
                         "is_error": True,
                     })
                     continue
+
+                tool_calls_used += 1
 
                 # Emit tool call request to orchestrator
                 emit({
