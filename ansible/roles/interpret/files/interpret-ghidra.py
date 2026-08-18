@@ -2154,7 +2154,15 @@ def _promote_nested_analysis(result: dict[str, Any]) -> dict[str, Any]:
     but puts the actual detailed analysis as a JSON string inside the "narrative"
     field. Detect this and promote the inner analysis.
     """
-    if result.get("malware_family_guess", "").lower() not in ("unknown", ""):
+    # The "" default applies only when the key is ABSENT. The model routinely
+    # emits {"malware_family_guess": null}, which .get() returns as None, and
+    # None.lower() raises AttributeError. Every caller wraps this in
+    # `except (json.JSONDecodeError, TypeError)`, so an AttributeError escaped
+    # the whole parse chain and killed the container instead of falling through
+    # to the next extraction strategy — losing a run over a null field.
+    guess = result.get("malware_family_guess")
+    guess = guess.lower() if isinstance(guess, str) else ""
+    if guess not in ("unknown", ""):
         return result
     narrative = result.get("narrative", "")
     if not isinstance(narrative, str) or "{" not in narrative:
