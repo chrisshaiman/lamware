@@ -129,13 +129,25 @@ def is_benign_indicator(ioc_type: str, value: str, context: str = "") -> bool:
             return True
         if any(v.startswith(p) for p in BENIGN_IP_PREFIXES):
             return True
-        # Filter IPs resolved from benign domains
+        # Filter IPs resolved from benign domains.
+        #
+        # Parse the domain out and delegate to is_benign_domain, which already
+        # does this correctly (exact match, or a TRUE subdomain suffix). The
+        # previous form substring-tested the whole context — `benign in
+        # ctx_lower` — so any context that merely CONTAINED a benign name
+        # suppressed the indicator. That is attacker-controllable: a C2 at
+        # login.live.com.attacker-cdn.net, or even a coincidental
+        # notlogin.live.command-and-control.ru, had its resolved IP dropped
+        # from the IOC set silently. Same shape as the two delimiter
+        # implementations in #361 — one correct check and one weaker copy.
         if context:
+            marker = "resolved from "
             ctx_lower = context.lower()
-            if "resolved from" in ctx_lower:
-                for benign in BENIGN_DOMAINS:
-                    if benign in ctx_lower:
-                        return True
+            idx = ctx_lower.find(marker)
+            if idx != -1:
+                tail = ctx_lower[idx + len(marker):].split()
+                if tail and is_benign_domain(tail[0].strip(".,;)")):
+                    return True
     elif ioc_type == "file:name":
         if any(v.startswith(p) for p in BENIGN_FILE_PREFIXES):
             return True
