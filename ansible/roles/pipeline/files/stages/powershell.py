@@ -19,7 +19,7 @@ POWERSHELL_YARA_INDICATORS = [
 ]
 
 
-def is_powershell_script(report: dict) -> bool:
+def is_powershell_script(report: dict, sample_path: str = "") -> bool:
     """Detect submitted PowerShell scripts."""
     triage = report.get("triage", {})
     file_type = (triage.get("file_type", "") or "").lower()
@@ -32,7 +32,12 @@ def is_powershell_script(report: dict) -> bool:
 
     # File type + content indicators
     if "text" in file_type or "script" in file_type or "ascii" in file_type:
-        sample_path = report.get("_sample_path", "")
+        # Passed in, not read off the report. This branch used to look up
+        # report["_sample_path"], a key nothing in the pipeline ever writes, so
+        # the content check never ran: a PowerShell payload without a .ps1
+        # extension and without a powershell MIME type was silently never
+        # routed to the deobfuscator. Taking the path as an argument also keeps
+        # a host filesystem path out of report.json.
         if sample_path and os.path.isfile(sample_path):
             try:
                 with open(sample_path, encoding="utf-8", errors="replace") as f:

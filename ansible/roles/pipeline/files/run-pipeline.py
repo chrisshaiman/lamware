@@ -566,7 +566,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
         report["ghidra"] = {"triggered": True, "office_routed": True,
                             "analyzed_files": []}
-    elif is_powershell_script(report):
+    elif is_powershell_script(report, str(sample_path)):
         log.info("\n[Stage 4] PowerShell script detected — running deobfuscation...")
         ps_result = run_powershell_analysis(sample_path, output_dir, powershell_cmd=POWERSHELL_CMD)
         report["powershell_analysis"] = ps_result
