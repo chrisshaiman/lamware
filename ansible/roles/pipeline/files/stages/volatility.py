@@ -535,145 +535,151 @@ def run_volatility(cape_data: dict, output_dir: Path,
     if ramdisk_path:
         ramdisk_dump = copy_to_ramdisk(dump_path, ramdisk_path)
     active_dump = ramdisk_dump if ramdisk_dump else dump_path
+    # try/finally, not a trailing cleanup. The unlink used to sit inline at the
+    # end of the body, so any raise above it — or the 45-minute container
+    # timeout that kills this stage — leaked the multi-GB copy in tmpfs, which
+    # is RAM. That is the memory-exhaustion shape #200 is about, arriving by a
+    # different route.
+    try:
 
-    sigs = get_cape_signatures_fn(cape_data)
-    trigger_sigs = [s for s in sigs if s in volatility_triggers]
-    extra_plugins = determine_extra_plugins(cape_data, volatility_extra_plugins,
-                                            get_cape_signatures_fn)
-    all_plugins = volatility_standard_plugins + extra_plugins
+        sigs = get_cape_signatures_fn(cape_data)
+        trigger_sigs = [s for s in sigs if s in volatility_triggers]
+        extra_plugins = determine_extra_plugins(cape_data, volatility_extra_plugins,
+                                                get_cape_signatures_fn)
+        all_plugins = volatility_standard_plugins + extra_plugins
 
-    result = {
-        "triggered": True,
-        "trigger_signatures": trigger_sigs,
-        "plugins_run": [p.replace("windows.", "") for p in all_plugins],
-        "plugins": {},
-        "summary": {
-            "injected_processes": 0,
-            "suspicious_connections": 0,
-        },
-    }
+        result = {
+            "triggered": True,
+            "trigger_signatures": trigger_sigs,
+            "plugins_run": [p.replace("windows.", "") for p in all_plugins],
+            "plugins": {},
+            "summary": {
+                "injected_processes": 0,
+                "suspicious_connections": 0,
+            },
+        }
 
-    # Run ALL plugins in parallel — they're all read-only on the dump.
-    # Malfind post-processing (dump extraction) runs after all complete.
-    plugins_start = time.time()
-    print(f"    Running {len(all_plugins)} plugins in parallel (workers={parallel_workers})...")
-    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-        futures = {}
-        plugin_starts = {}
-        for plugin in all_plugins:
-            short_name = plugin.replace("windows.", "").replace("malware.", "")
-            plugin_starts[plugin] = time.time()
-            future = executor.submit(
-                run_single_plugin, active_dump, plugin, output_dir, volatility_cmd)
-            futures[future] = (plugin, short_name)
+        # Run ALL plugins in parallel — they're all read-only on the dump.
+        # Malfind post-processing (dump extraction) runs after all complete.
+        plugins_start = time.time()
+        print(f"    Running {len(all_plugins)} plugins in parallel (workers={parallel_workers})...")
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {}
+            plugin_starts = {}
+            for plugin in all_plugins:
+                short_name = plugin.replace("windows.", "").replace("malware.", "")
+                plugin_starts[plugin] = time.time()
+                future = executor.submit(
+                    run_single_plugin, active_dump, plugin, output_dir, volatility_cmd)
+                futures[future] = (plugin, short_name)
 
-        for future in as_completed(futures):
-            plugin, short_name = futures[future]
-            elapsed = time.time() - plugin_starts[plugin]
-            try:
-                plugin_output = future.result()
-            except Exception as e:
-                plugin_output = {"error": str(e)}
-            result["plugins"][short_name] = plugin_output
-            status = "OK" if "error" not in (plugin_output if isinstance(plugin_output, dict) else {}) else "FAILED"
-            print(f"    {plugin}... {status} ({elapsed:.0f}s)")
+            for future in as_completed(futures):
+                plugin, short_name = futures[future]
+                elapsed = time.time() - plugin_starts[plugin]
+                try:
+                    plugin_output = future.result()
+                except Exception as e:
+                    plugin_output = {"error": str(e)}
+                result["plugins"][short_name] = plugin_output
+                status = "OK" if "error" not in (plugin_output if isinstance(plugin_output, dict) else {}) else "FAILED"
+                print(f"    {plugin}... {status} ({elapsed:.0f}s)")
 
-            if short_name == "netscan" and isinstance(plugin_output, list):
-                result["summary"]["suspicious_connections"] = len(plugin_output)
+                if short_name == "netscan" and isinstance(plugin_output, list):
+                    result["summary"]["suspicious_connections"] = len(plugin_output)
 
-    # Malfind post-processing — runs after all plugins complete
-    malfind_output = result["plugins"].get("malfind")
-    if isinstance(malfind_output, list):
-        result["summary"]["injected_processes"] = len(malfind_output)
+        # Malfind post-processing — runs after all plugins complete
+        malfind_output = result["plugins"].get("malfind")
+        if isinstance(malfind_output, list):
+            result["summary"]["injected_processes"] = len(malfind_output)
 
-        if malfind_enabled:
-            if cape_has_injection_buffers:
-                print("    Cape captured injection buffers — skipping malfind dump")
-                print(f"    (malfind JSON metadata retained for report: {len(malfind_output)} regions)")
-            else:
-                print("    No Cape injection buffers — running malfind heuristic filter...")
-                selected_regions, target_pids = filter_malfind_json(
-                    malfind_output,
-                    malfind_min_size=malfind_min_size,
-                    malfind_max_size=malfind_max_size,
-                    malfind_min_score=malfind_min_score,
-                    malfind_max_candidates=malfind_max_candidates,
-                    malfind_benign_processes=malfind_benign_processes,
-                    cape_injection_pids=cape_injection_pids,
-                )
-                if target_pids and active_dump.exists():
-                    malfind_dump_dir = run_targeted_malfind_dump(
-                        active_dump, target_pids, output_dir, volatility_cmd)
-                    result["_malfind_selected"] = selected_regions
-                    result["_malfind_dump_dir"] = str(malfind_dump_dir)
+            if malfind_enabled:
+                if cape_has_injection_buffers:
+                    print("    Cape captured injection buffers — skipping malfind dump")
+                    print(f"    (malfind JSON metadata retained for report: {len(malfind_output)} regions)")
                 else:
-                    result["_malfind_selected"] = selected_regions
-                    result["_malfind_dump_dir"] = ""
+                    print("    No Cape injection buffers — running malfind heuristic filter...")
+                    selected_regions, target_pids = filter_malfind_json(
+                        malfind_output,
+                        malfind_min_size=malfind_min_size,
+                        malfind_max_size=malfind_max_size,
+                        malfind_min_score=malfind_min_score,
+                        malfind_max_candidates=malfind_max_candidates,
+                        malfind_benign_processes=malfind_benign_processes,
+                        cape_injection_pids=cape_injection_pids,
+                    )
+                    if target_pids and active_dump.exists():
+                        malfind_dump_dir = run_targeted_malfind_dump(
+                            active_dump, target_pids, output_dir, volatility_cmd)
+                        result["_malfind_selected"] = selected_regions
+                        result["_malfind_dump_dir"] = str(malfind_dump_dir)
+                    else:
+                        result["_malfind_selected"] = selected_regions
+                        result["_malfind_dump_dir"] = ""
 
-    # Dump hollowed process images — when Cape detected injection, use
-    # Volatility's pslist --dump to reconstruct PE images from the memory dump.
-    # This recovers .NET payloads that CAPE's monitor fails to dump.
-    if cape_injection_pids and active_dump.exists():
-        procdump_dir = output_dir / "vol_procdump"
-        procdump_dir.mkdir(parents=True, exist_ok=True)
-        unique_pids = sorted(set(cape_injection_pids))
-        print(f"    Dumping {len(unique_pids)} injection target process images...")
-        before_files = set(procdump_dir.iterdir())
-        for pid in unique_pids:
-            try:
-                run_single_plugin(
-                    active_dump, "windows.pslist.PsList", procdump_dir,
-                    volatility_cmd, extra_args=["--pid", str(pid), "--dump"])
-            except Exception as e:
-                print(f"      pid {pid}: error: {e}")
-        after_files = set(procdump_dir.iterdir())
-        new_files = after_files - before_files
-        if new_files:
-            print(f"    Dumped {len(new_files)} process image(s)")
-            for f in sorted(new_files):
-                print(f"      {f.name} ({f.stat().st_size} bytes)")
-        else:
-            print("    No process images dumped")
-        result["_vol_procdump_dir"] = str(procdump_dir)
+        # Dump hollowed process images — when Cape detected injection, use
+        # Volatility's pslist --dump to reconstruct PE images from the memory dump.
+        # This recovers .NET payloads that CAPE's monitor fails to dump.
+        if cape_injection_pids and active_dump.exists():
+            procdump_dir = output_dir / "vol_procdump"
+            procdump_dir.mkdir(parents=True, exist_ok=True)
+            unique_pids = sorted(set(cape_injection_pids))
+            print(f"    Dumping {len(unique_pids)} injection target process images...")
+            before_files = set(procdump_dir.iterdir())
+            for pid in unique_pids:
+                try:
+                    run_single_plugin(
+                        active_dump, "windows.pslist.PsList", procdump_dir,
+                        volatility_cmd, extra_args=["--pid", str(pid), "--dump"])
+                except Exception as e:
+                    print(f"      pid {pid}: error: {e}")
+            after_files = set(procdump_dir.iterdir())
+            new_files = after_files - before_files
+            if new_files:
+                print(f"    Dumped {len(new_files)} process image(s)")
+                for f in sorted(new_files):
+                    print(f"      {f.name} ({f.stat().st_size} bytes)")
+            else:
+                print("    No process images dumped")
+            result["_vol_procdump_dir"] = str(procdump_dir)
 
-    # Clean up ramdisk copy first (free RAM)
-    if ramdisk_dump and ramdisk_dump.exists():
-        ramdisk_dump.unlink(missing_ok=True)
-        print("    Cleaned ramdisk copy")
 
-    # Memory dump cleanup is handled by CAPE's hourly cron (cape user owns the file).
-    # Pipeline user intentionally does NOT have delete permission on CAPE storage.
+        # Memory dump cleanup is handled by CAPE's hourly cron (cape user owns the file).
+        # Pipeline user intentionally does NOT have delete permission on CAPE storage.
 
-    # Extract insights from all plugin outputs
-    result["insights"] = extract_volatility_insights(result.get("plugins", {}))
-    insights = result["insights"]
-    if insights:
-        items = []
-        if insights.get("suspicious_cmdlines"):
-            items.append(f"{len(insights['suspicious_cmdlines'])} suspicious cmdlines")
-        if insights.get("active_connections"):
-            items.append(f"{len(insights['active_connections'])} active connections")
-        if insights.get("mutex_summary"):
-            ms = insights["mutex_summary"]
-            items.append(f"{ms['unique_names']} unique mutexes ({ms['total_handles']} handles)")
-        elif insights.get("mutexes"):
-            items.append(f"{len(insights['mutexes'])} mutexes")
-        if insights.get("suspicious_dlls"):
-            items.append(f"{len(insights['suspicious_dlls'])} suspicious DLLs")
-        if insights.get("anomalous_parents"):
-            items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
-        if items:
-            print(f"    Volatility insights: {', '.join(items)}")
+        # Extract insights from all plugin outputs
+        result["insights"] = extract_volatility_insights(result.get("plugins", {}))
+        insights = result["insights"]
+        if insights:
+            items = []
+            if insights.get("suspicious_cmdlines"):
+                items.append(f"{len(insights['suspicious_cmdlines'])} suspicious cmdlines")
+            if insights.get("active_connections"):
+                items.append(f"{len(insights['active_connections'])} active connections")
+            if insights.get("mutex_summary"):
+                ms = insights["mutex_summary"]
+                items.append(f"{ms['unique_names']} unique mutexes ({ms['total_handles']} handles)")
+            elif insights.get("mutexes"):
+                items.append(f"{len(insights['mutexes'])} mutexes")
+            if insights.get("suspicious_dlls"):
+                items.append(f"{len(insights['suspicious_dlls'])} suspicious DLLs")
+            if insights.get("anomalous_parents"):
+                items.append(f"{len(insights['anomalous_parents'])} anomalous parent-child")
+            if items:
+                print(f"    Volatility insights: {', '.join(items)}")
 
-    vol_elapsed = time.time() - vol_start
-    plugins_elapsed = time.time() - plugins_start
-    result["timing"] = {
-        "total_seconds": round(vol_elapsed, 1),
-        "plugins_seconds": round(plugins_elapsed, 1),
-    }
-    print(f"    Volatility total: {vol_elapsed:.0f}s (plugins: {plugins_elapsed:.0f}s)")
+        vol_elapsed = time.time() - vol_start
+        plugins_elapsed = time.time() - plugins_start
+        result["timing"] = {
+            "total_seconds": round(vol_elapsed, 1),
+            "plugins_seconds": round(plugins_elapsed, 1),
+        }
+        print(f"    Volatility total: {vol_elapsed:.0f}s (plugins: {plugins_elapsed:.0f}s)")
 
-    return result
+        return result
+    finally:
+        if ramdisk_dump and ramdisk_dump.exists():
+            ramdisk_dump.unlink(missing_ok=True)
+            print("    Cleaned ramdisk copy")
 
 
 def extract_volatility_insights(plugins: dict) -> dict:
