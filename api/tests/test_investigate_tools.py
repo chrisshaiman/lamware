@@ -788,3 +788,71 @@ def test_the_database_tools_still_take_an_analysis_id():
         schema = next(t for t in TOOL_DEFINITIONS if t["name"] == name)["input_schema"]
         assert "analysis_id" in schema.get("required", []), (
             f"{name} must still require the analysis_id it actually uses")
+
+
+# ---------------------------------------------------------------------------
+# read_payload must not load the whole payload to preview 4KB of it
+# ---------------------------------------------------------------------------
+#
+# `data = target.read_bytes()` pulled the entire payload into the API process
+# and then sliced `data[:4096]`. The only other thing the full read contributed
+# was `len(data)`, which stat() already knows.
+#
+# These payloads are Cape's extracted artefacts — procdumps and memory-dumped
+# images run to hundreds of MB, and which ones exist is decided by the analysed
+# sample, not by us. One tool call could make the API process resident in a
+# multi-hundred-MB buffer to return 8KB of hex, and the investigation agent is
+# free to call it repeatedly.
+
+
+def test_read_payload_reads_only_the_preview(cape_storage, monkeypatch):
+    """THE bug. Assert on the bytes actually requested — a whole-file read
+    returns an identical result, so the return value cannot show this."""
+    _write_payload(cape_storage / "77" / "CAPE", "big.bin", size=512 * 1024)
+
+    real_open = Path.open
+    read_sizes = []
+
+    class _CountingFile:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def read(self, n=-1):
+            read_sizes.append(n)
+            return self._fh.read(n)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._fh.close()
+            return False
+
+    monkeypatch.setattr(Path, "open", lambda self, *a, **k: _CountingFile(real_open(self, *a, **k)))
+    result = _read_payload({"payload_index": 0}, REPORT)
+
+    assert result.get("hex_preview"), result
+    assert read_sizes, "the payload was not read through Path.open at all"
+    assert all(n == 4096 for n in read_sizes), (
+        f"read_payload pulled more than the preview into memory: {read_sizes}")
+
+
+def test_read_payload_still_reports_the_full_size(cape_storage):
+    """size and truncated describe the payload, not the preview — that is what
+    the discarded full read was providing."""
+    _write_payload(cape_storage / "77" / "CAPE", "big.bin", size=512 * 1024)
+    result = _read_payload({"payload_index": 0}, REPORT)
+    assert result["size"] == 512 * 1024
+    assert result["truncated"] is True
+    assert len(bytes.fromhex(result["hex_preview"])) == 4096
+
+
+def test_a_payload_under_the_preview_size_is_not_marked_truncated(cape_storage):
+    """The boundary the old `len(data) > 4096` covered. Sized above
+    MIN_PAYLOAD_BYTES (1024) so find_payloads still yields it — below that it is
+    not a payload at all and the tool never sees it."""
+    _write_payload(cape_storage / "77" / "CAPE", "small.bin", size=2000)
+    result = _read_payload({"payload_index": 0}, REPORT)
+    assert result["truncated"] is False
+    assert result["size"] == 2000
+    assert len(bytes.fromhex(result["hex_preview"])) == 2000
