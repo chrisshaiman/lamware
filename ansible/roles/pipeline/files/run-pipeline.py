@@ -462,7 +462,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 malfind_benign_processes=MALFIND_BENIGN_PROCESSES,
                 get_cape_signatures_fn=get_cape_signatures,
                 cape_injection_pids=cape_injection_pids,
-                cape_has_injection_buffers=len(cape_injection_candidates) > 0,
+                # Only genuine injection buffers, not Cape's extracted payloads.
+                # This list holds both — "cape_injection" entries from
+                # injection_buffers and "cape_payload" entries from
+                # large_payloads — so len() > 0 set the flag for any sample that
+                # merely dropped a payload, suppressing the malfind fallback for
+                # samples that had no injection buffers at all.
+                cape_has_injection_buffers=any(
+                    c.get("source") == "cape_injection"
+                    for c in cape_injection_candidates),
                 ramdisk_path=VOLATILITY_RAMDISK,
                 parallel_workers=VOLATILITY_PARALLEL_WORKERS,
             )
