@@ -237,12 +237,30 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         if not sha256:
             sha256 = report.get("task_id", "unknown")
 
+        # The conflict path has to write the triage columns, not just touch
+        # last_seen. create_analysis_row() (pipeline_status.py) inserts this row
+        # at the START of the run with only (sha256, filename) — triage has not
+        # run yet — so by the time ingest_to_db arrives every sample is an
+        # ON CONFLICT, and file_type/file_mime/entropy/ssdeep were dropped on
+        # the floor for EVERY run rather than merely on a re-ingest. ssdeep
+        # stayed empty forever, and select_ssdeep_edges filters on
+        # `ssdeep IS NOT NULL AND ssdeep <> ''`, so no ssdeep_similar edge could
+        # ever be built.
+        #
+        # NULLIF before COALESCE because these arrive as "" rather than NULL:
+        # a plain COALESCE(EXCLUDED.x, samples.x) never falls back, so a later
+        # run with an empty value would overwrite a good stored one. That was
+        # already true of the filename line below.
         cur.execute("""
             INSERT INTO samples (sha256, filename, file_type, file_mime, entropy, ssdeep)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (sha256) DO UPDATE SET
                 last_seen = NOW(),
-                filename = COALESCE(EXCLUDED.filename, samples.filename)
+                filename  = COALESCE(NULLIF(EXCLUDED.filename, ''), samples.filename),
+                file_type = COALESCE(NULLIF(EXCLUDED.file_type, ''), samples.file_type),
+                file_mime = COALESCE(NULLIF(EXCLUDED.file_mime, ''), samples.file_mime),
+                entropy   = COALESCE(EXCLUDED.entropy, samples.entropy),
+                ssdeep    = COALESCE(NULLIF(EXCLUDED.ssdeep, ''), samples.ssdeep)
             RETURNING id
         """, (
             sha256,
