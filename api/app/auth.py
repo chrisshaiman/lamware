@@ -9,6 +9,7 @@
 import logging
 from dataclasses import dataclass, field
 
+import httpx
 import jwt
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,8 +27,6 @@ _jwks_url: str = ""
 
 async def fetch_jwks() -> None:
     """Fetch JWKS from Keycloak and populate the cache. Call on startup."""
-    import httpx
-
     global _jwks_url
     _jwks_url = (
         f"{settings.keycloak_url}/realms/{settings.keycloak_realm}"
@@ -49,8 +48,21 @@ async def fetch_jwks() -> None:
 
 
 async def _refresh_jwks_for_kid(kid: str) -> bool:
-    """Re-fetch JWKS if a token has an unknown kid. Returns True if found."""
-    await fetch_jwks()
+    """Re-fetch JWKS if a token has an unknown kid. Returns True if found.
+
+    Transport and HTTP errors are swallowed into False rather than propagated.
+    This runs for any token carrying an unknown kid, i.e. it is reachable by an
+    UNAUTHENTICATED caller, and fetch_jwks() calls raise_for_status(). Letting
+    httpx's exception escape turned a Keycloak 5xx or an unreachable Keycloak
+    into an HTTP 500 for what is really a failed authentication — bypassing the
+    401 below and, with it, _log_failed_auth. An auth path must fail closed and
+    on the record.
+    """
+    try:
+        await fetch_jwks()
+    except httpx.HTTPError as exc:
+        log.error("JWKS refresh failed for kid %s: %s", kid, exc)
+        return False
     return kid in _jwks_cache
 
 
