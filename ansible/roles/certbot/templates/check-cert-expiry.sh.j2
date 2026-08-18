@@ -13,13 +13,29 @@ DOMAIN="{{ certbot_domain }}"
 CERT_PATH="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
 WARN_DAYS="{{ certbot_expiry_warn_days }}"
 NTFY_URL="{{ ntfy_url }}/{{ ntfy_topic }}"
+NTFY_TOKEN="{{ ntfy_token | default('') }}"
+
+# Authenticate the publish. The main alert path gained a bearer token in #352
+# (2c9b89f); these call sites were left as bare curl, so on a token-protected
+# topic every TLS-expiry alert was rejected and discarded — curl -s swallows
+# the 403, and the script exits 0. A notification channel reporting healthy
+# while delivering nothing, which is the shape of #336 and #343.
+notify() {
+    local title="$1" priority="$2" tags="$3" body="$4"
+    local auth=()
+    if [[ -n "$NTFY_TOKEN" ]]; then
+        auth=(-H "Authorization: Bearer $NTFY_TOKEN")
+    fi
+    curl -sS --fail-with-body "${auth[@]}" \
+         -H "Title: $title" \
+         -H "Priority: $priority" \
+         -H "Tags: $tags" \
+         -d "$body" \
+         "$NTFY_URL" || echo "WARNING: ntfy publish failed for: $title" >&2
+}
 
 if [[ ! -f "$CERT_PATH" ]]; then
-    curl -s -H "Title: lamware TLS cert missing" \
-         -H "Priority: urgent" \
-         -H "Tags: rotating_light" \
-         -d "Certificate file not found: ${CERT_PATH}" \
-         "$NTFY_URL"
+    notify "lamware TLS cert missing" "urgent" "rotating_light" "Certificate file not found: ${CERT_PATH}"
     exit 1
 fi
 
@@ -30,15 +46,7 @@ NOW_EPOCH=$(date +%s)
 DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
 
 if [[ "$DAYS_LEFT" -le 0 ]]; then
-    curl -s -H "Title: lamware TLS cert EXPIRED" \
-         -H "Priority: urgent" \
-         -H "Tags: rotating_light" \
-         -d "Certificate for ${DOMAIN} expired ${DAYS_LEFT#-} days ago. Run: certbot renew" \
-         "$NTFY_URL"
+    notify "lamware TLS cert EXPIRED" "urgent" "rotating_light" "Certificate for ${DOMAIN} expired ${DAYS_LEFT#-} days ago. Run: certbot renew"
 elif [[ "$DAYS_LEFT" -le "$WARN_DAYS" ]]; then
-    curl -s -H "Title: lamware TLS cert expiring soon" \
-         -H "Priority: high" \
-         -H "Tags: warning" \
-         -d "Certificate for ${DOMAIN} expires in ${DAYS_LEFT} days (${EXPIRY_DATE}). Renewal should happen automatically — check certbot.timer." \
-         "$NTFY_URL"
+    notify "lamware TLS cert expiring soon" "high" "warning" "Certificate for ${DOMAIN} expires in ${DAYS_LEFT} days (${EXPIRY_DATE}). Renewal should happen automatically — check certbot.timer."
 fi

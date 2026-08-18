@@ -8,6 +8,29 @@ from grounding_check import grounding_scorecard
 from lamware_eval.corpus import CorpusSample
 
 
+def cell_error(res: dict, analysis: dict) -> str | None:
+    """The reason a cell failed, composed identically for live and re-scored runs.
+
+    Shared because the two paths disagreed. The live sweep built this from the
+    run's actual error and appended the container's stderr tail; the offline
+    re-scorer passed `analysis["parse_note"]` instead — a different field
+    entirely. So a re-score of a cell that died on a container OOM reported
+    "recovered JSON from a markdown fence", and one that timed out with no parse
+    note reported nothing at all, blanking the failure column in the scorecard.
+
+    `parse_note` is already carried as the `parse_failed` metric, so passing it
+    here also double-reported it in the wrong place.
+
+    Same principle as the tool metrics in #380: a re-score must not disagree with
+    the sweep that produced the cell.
+    """
+    err = res.get("error") or analysis.get("error")
+    stderr_tail = (res.get("container_stderr") or "").strip()
+    if err and stderr_tail:
+        err = f"{err} | container stderr: {stderr_tail[-1500:]}"
+    return err
+
+
 def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_text: str,
                  claude_family: str | None, wall_seconds: float, cost_usd: float,
                  tool_metrics: dict, error: str | None,

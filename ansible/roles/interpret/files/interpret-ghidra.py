@@ -2154,7 +2154,15 @@ def _promote_nested_analysis(result: dict[str, Any]) -> dict[str, Any]:
     but puts the actual detailed analysis as a JSON string inside the "narrative"
     field. Detect this and promote the inner analysis.
     """
-    if result.get("malware_family_guess", "").lower() not in ("unknown", ""):
+    # The "" default applies only when the key is ABSENT. The model routinely
+    # emits {"malware_family_guess": null}, which .get() returns as None, and
+    # None.lower() raises AttributeError. Every caller wraps this in
+    # `except (json.JSONDecodeError, TypeError)`, so an AttributeError escaped
+    # the whole parse chain and killed the container instead of falling through
+    # to the next extraction strategy — losing a run over a null field.
+    guess = result.get("malware_family_guess")
+    guess = guess.lower() if isinstance(guess, str) else ""
+    if guess not in ("unknown", ""):
         return result
     narrative = result.get("narrative", "")
     if not isinstance(narrative, str) or "{" not in narrative:
@@ -3225,10 +3233,14 @@ Technical summary: {executive}"""
                     continue
 
                 calls_this_turn += 1
-                tool_calls_used += 1
 
-                # Check if we've hit the limit
-                if tool_calls_used > max_tool_calls:
+                # Check the budget BEFORE counting. A rejected call executes
+                # nothing, so counting it made the run report more tool calls
+                # than max_tool_calls permits — the deferral branch above
+                # already gets this right, and said so in its comment. The
+                # execution boundary is unchanged: >= here on the pre-increment
+                # value admits exactly the same calls that > did post-increment.
+                if tool_calls_used >= max_tool_calls:
                     emit_status(
                         f"Hit max tool calls ({max_tool_calls}), requesting final analysis",
                         tool_calls_used,
@@ -3241,6 +3253,8 @@ Technical summary: {executive}"""
                         "is_error": True,
                     })
                     continue
+
+                tool_calls_used += 1
 
                 # Emit tool call request to orchestrator
                 emit({

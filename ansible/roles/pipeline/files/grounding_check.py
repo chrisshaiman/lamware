@@ -365,6 +365,33 @@ _NAMED_CONSTANTS: dict[str, str] = {
 
 _HEX_IN_TEXT = re.compile(r"0x([0-9a-fA-F]+)")
 
+# Separator allowed between a named constant and a value ASSERTED of it. Only
+# punctuation, whitespace and a short list of copulas — deliberately not
+# arbitrary words, because "at 0x401230 requests PAGE_EXECUTE_READWRITE" states
+# an address and a protection, not an equality between them.
+_ASSERTS = r"[\s:=,;()\[\]—–-]*(?:is|was|are|were|=|i\.e\.|means)?[\s:=,;()\[\]—–-]*"
+
+
+def _values_asserted_of(text: str, name: str) -> set[str]:
+    """Hex values the text actually claims ARE `name`, normalised like the table.
+
+    Scoped to the constant. This used to collect every hex value anywhere in the
+    text and require the constant's value to be among them, so a correct claim
+    that happened to mention an address was reported as a misattribution:
+    "VirtualAlloc at 0x00401230 requests PAGE_EXECUTE_READWRITE" was flagged as
+    "PAGE_EXECUTE_READWRITE is 0x40, not 0x401230". That phrasing — name the
+    protection, cite the call site — is how RE prose is normally written, and
+    this is the checker that measures hallucination, so the false positives
+    landed as invented hallucinations against correct analyses.
+    """
+    escaped = re.escape(name)
+    found: set[str] = set()
+    for pattern in (rf"0x([0-9a-fA-F]+){_ASSERTS}{escaped}",     # 0x20 (PAGE_EXECUTE_READ)
+                    rf"{escaped}{_ASSERTS}0x([0-9a-fA-F]+)"):    # PAGE_EXECUTE_READ is 0x20
+        for raw in re.findall(pattern, text, re.IGNORECASE):
+            found.add(raw.lstrip("0").lower() or "0")
+    return found
+
 
 def constant_misattributions(text: str) -> list[str]:
     """Constants in `text` whose stated meaning contradicts a known-unambiguous one.
@@ -400,7 +427,7 @@ def constant_misattributions(text: str) -> list[str]:
                if not any(n != other and n in other for other in present)]
     for name in present:
         expected = _NAMED_CONSTANTS[name]
-        cited = {h.lstrip("0").lower() or "0" for h in _HEX_IN_TEXT.findall(text)}
+        cited = _values_asserted_of(text, name)
         if cited and expected not in cited:
             out.append(f"{name.upper()} is 0x{expected.upper()}, not "
                        f"0x{sorted(cited)[0].upper()}")

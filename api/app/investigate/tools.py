@@ -780,13 +780,18 @@ def _read_payload(args: dict, report: dict) -> dict:
         }
 
     target = payloads[idx].path
-    data = target.read_bytes()
-    preview = data[:4096]
+    # stat + a bounded read. read_bytes() pulled the entire payload into the API
+    # process to hand back 4KB of it; procdumps and memory-dumped payloads are
+    # routinely hundreds of MB, and the only thing the full read contributed was
+    # len(data), which stat() already knows.
+    size = target.stat().st_size
+    with target.open("rb") as fh:
+        preview = fh.read(4096)
     return {
         "filename": target.name,
-        "size": len(data),
+        "size": size,
         "hex_preview": preview.hex(),
-        "truncated": len(data) > 4096,
+        "truncated": size > 4096,
     }
 
 
