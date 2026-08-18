@@ -223,16 +223,25 @@ def rule_cmdline_spoofing(report: dict) -> list[dict]:
     if not isinstance(cmdline, list):
         return findings
 
+    # PIDs are keyed as STRINGS on both sides. Volatility's json renderer gives
+    # ints, and stages/cape.py builds process_cmdlines from int process_id — but
+    # json.dump turns dict keys into strings, so on the replay path (run_replay
+    # reloads report.json) the CAPE side comes back string-keyed with no
+    # coercion. The lookup missed on every process and the rule returned [] no
+    # matter how badly a command line was spoofed. Replay is not read-only:
+    # write_report() rewrites the same report.json, so a re-run erased the
+    # original critical finding from the canonical artifact, and the degraded
+    # report is what then feeds db_ingest and the PDF.
     vol_cmdlines = {}
     for entry in cmdline:
         pid = entry.get("PID", 0)
         args = entry.get("Args", "")
         if pid and args:
-            vol_cmdlines[pid] = args
+            vol_cmdlines[str(pid)] = args
 
     cape_cmdlines = cape.get("process_cmdlines", {})
     for pid, cape_cmd in cape_cmdlines.items():
-        vol_cmd = vol_cmdlines.get(pid, "")
+        vol_cmd = vol_cmdlines.get(str(pid), "")
         if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
             if vol_cmd.strip().lower() != cape_cmd.strip().lower():
                 if _is_benign_cmdline_difference(cape_cmd, vol_cmd):

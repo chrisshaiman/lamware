@@ -688,3 +688,103 @@ def test_unreadable_storage_does_not_take_down_the_sandbox(cape_storage):
 
     assert "--data-as" not in cmd
     assert cmd, "an unreadable storage tree must not kill run_python"
+
+
+# ---------------------------------------------------------------------------
+# The four report-backed tools must not accept an analysis_id they cannot honour
+# ---------------------------------------------------------------------------
+#
+# get_cape_payloads, read_payload, get_pcap_summary and get_api_traces declared
+# analysis_id as a REQUIRED argument, the validator enforced it was present and
+# an integer — and then nothing read it. execute_tool dispatches all four as
+# f(args, report), and report is the session's own analysis, loaded once by the
+# router. So any id the model supplied was accepted, discarded, and answered
+# with a different analysis's data, with no id in the payload to reveal the
+# substitution and the transcript UI labelling the row with the id it did not
+# come from.
+#
+# Not a uniform convention either: the DB tools in the same file take an
+# analysis_id and honour it (params={"aid": args["analysis_id"]}). Same argument
+# name, two different contracts, which is exactly what invites the model to
+# trust it.
+#
+# Worse in practice because the system prompt never tells the model its own
+# analysis id — _build_context_block selects a.id and drops it — so every id
+# reaching these tools is guessed or copied from a search_* result. Surfacing
+# the id is #155; refusing to answer the wrong one is this.
+
+_CURRENT_ANALYSIS_TOOLS = _ns["_CURRENT_ANALYSIS_TOOLS"]
+
+_REPORT = {
+    "pcap_analysis": {"c2": ["10.0.0.827"], "flows": 827},
+    "cape": {"behavior": {"processes": [
+        {"process_name": "sample827.exe", "process_id": 827,
+         "calls": [{"api": "CreateRemoteThread", "arguments": {}}]},
+    ]}},
+}
+
+
+def test_the_four_current_analysis_tools_are_named():
+    """Drift guard: a fifth report-backed tool added without joining this set
+    would silently regain the substitution behaviour."""
+    assert _CURRENT_ANALYSIS_TOOLS == {
+        "get_cape_payloads", "read_payload", "get_pcap_summary", "get_api_traces"}
+
+
+@pytest.mark.parametrize("tool_name", sorted(_CURRENT_ANALYSIS_TOOLS))
+def test_they_no_longer_require_an_analysis_id(tool_name):
+    """THE bug, at the schema. Requiring an argument the implementation ignores
+    is what told the model these tools could fetch another analysis."""
+    schema = next(t for t in TOOL_DEFINITIONS if t["name"] == tool_name)["input_schema"]
+    assert "analysis_id" not in schema.get("properties", {}), (
+        f"{tool_name} still advertises analysis_id, which it cannot honour")
+    assert "analysis_id" not in schema.get("required", []), (
+        f"{tool_name} still REQUIRES analysis_id")
+
+
+@pytest.mark.parametrize("tool_name", sorted(_CURRENT_ANALYSIS_TOOLS))
+def test_a_mismatched_analysis_id_is_refused_not_substituted(tool_name):
+    """Fail closed. Answering with the session's data under another analysis's
+    id is what manufactures a false cross-analysis correlation."""
+    result = execute_tool(
+        tool_name,
+        {"analysis_id": 412, "payload_index": 0},
+        session=None,
+        report=_REPORT,
+        analysis_id=827,
+    )
+    assert "error" in result, (
+        f"{tool_name} answered for analysis 412 during a session on 827: {result!r}")
+    assert "827" in result["error"] and "412" in result["error"], (
+        "the error should name both ids so the model can correct itself")
+
+
+@pytest.mark.parametrize("tool_name", sorted(_CURRENT_ANALYSIS_TOOLS))
+def test_the_matching_analysis_id_is_still_served(tool_name):
+    """A model that passes the correct id — or an older transcript replaying one
+    — must not be broken by the guard."""
+    result = execute_tool(
+        tool_name,
+        {"analysis_id": 827, "payload_index": 0},
+        session=None,
+        report=_REPORT,
+        analysis_id=827,
+    )
+    assert "only serves the current analysis" not in str(result.get("error", "")), result
+
+
+def test_omitting_the_id_entirely_is_the_normal_path():
+    """What the new schema asks for. The guard must not turn absence into an error."""
+    result = execute_tool(
+        "get_pcap_summary", {}, session=None, report=_REPORT, analysis_id=827)
+    assert "error" not in result, result
+    assert result["pcap_analysis"]["flows"] == 827
+
+
+def test_the_database_tools_still_take_an_analysis_id():
+    """The contrast that made this confusing is legitimate — the DB tools DO
+    honour the argument, so removing it there would be a real regression."""
+    for name in ("get_network_events", "get_signatures", "get_iocs"):
+        schema = next(t for t in TOOL_DEFINITIONS if t["name"] == name)["input_schema"]
+        assert "analysis_id" in schema.get("required", []), (
+            f"{name} must still require the analysis_id it actually uses")

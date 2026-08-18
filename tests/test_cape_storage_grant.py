@@ -275,8 +275,15 @@ def test_monitor_queues_an_alert_rather_than_pushing_directly():
 
 
 def test_status_file_records_the_result():
-    """The dashboard and any later audit need the state, not just a push."""
-    assert "'cape_storage_status': '$cape_storage_status'" in MONITOR_T
+    """The dashboard and any later audit need the state, not just a push.
+
+    The status dict reads its strings from the environment rather than
+    interpolating them into the Python source — see test_network_monitor_dispatch.py
+    for why. This asserts the field is still recorded and still wired to the
+    shell variable that produces it, without pinning the transport.
+    """
+    assert "'cape_storage_status': env('NM_CAPE_STORAGE_STATUS')" in MONITOR_T
+    assert 'export NM_CAPE_STORAGE_STATUS="$cape_storage_status"' in MONITOR_T
     assert "'cape_storage_problem'" in MONITOR_T
 
 

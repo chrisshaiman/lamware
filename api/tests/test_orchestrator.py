@@ -679,3 +679,200 @@ def test_the_happy_path_still_returns_the_tools_result():
         assert run("search_iocs", {}, {}, 1) == sentinel
     finally:
         _ns["execute_tool"] = saved
+
+
+# ---------------------------------------------------------------------------
+# An upstream failure mid-turn must still emit `done`
+# ---------------------------------------------------------------------------
+#
+# Both stream error handlers yielded an `error` event and then RETURNED, which
+# skipped the cost computation and the `done` event. The router persists the
+# assistant message and the session's token/cost columns only inside its `done`
+# branch, so a failure on any round after the first discarded:
+#
+#   * the assistant prose already streamed to the analyst — absent from the
+#     report endpoint AND from the next turn's history, which the router rebuilds
+#     from persisted rows, leaving two consecutive `user` messages;
+#   * the tokens accumulated by the rounds that DID complete — 42,000 in /
+#     900 out recorded as 0/0/$0.00.
+#
+# The user row was already committed, so the failed turn still burned one of
+# max_turns. tool_call and tool_result rows survive (committed per-event), so it
+# is specifically the prose and the accounting that were lost.
+#
+# The handlers now `break`, falling through to the accounting and the `done`
+# yield. `done` therefore no longer means "the model finished", so it carries
+# `partial` to say which it was.
+
+
+def _client_that_fails_on_round(fail_round: int, first_round_chunks: list[dict],
+                                exc_factory):
+    """A fake httpx client that streams normally, then raises on a later round."""
+    state = {"round": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in _make_sse_lines(first_round_chunks):
+                yield line
+
+        def raise_for_status(self):
+            if state["round"] >= fail_round:
+                raise exc_factory()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            state["round"] += 1
+            return FakeResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    return FakeClient
+
+
+def _run_failing_turn(exc_factory):
+    """Round 1 streams text + a tool call and reports usage; round 2 fails."""
+    tool_args = json.dumps({"value": "192.0.2.1"})
+    round1 = [
+        {"choices": [{"delta": {"content": "Looking at the C2 config now."}}],
+         "usage": None},
+        {"choices": [{"delta": {"tool_calls": [{
+            "index": 0, "id": "call_1",
+            "function": {"name": "search_iocs", "arguments": tool_args},
+        }]}}], "usage": None},
+        {"choices": [{"finish_reason": "tool_calls"}], "usage": None},
+        {"choices": [], "usage": {"prompt_tokens": 42000, "completion_tokens": 900}},
+    ]
+    _ns["httpx"].AsyncClient = _client_that_fails_on_round(2, round1, exc_factory)
+    _mock_execute_tool.reset_mock()
+    _mock_execute_tool.return_value = {"iocs": []}
+    return asyncio.run(_collect(run_conversation_turn(
+        messages=[{"role": "user", "content": "What is the C2 IP?"}],
+        system_prompt="You are a malware analyst.",
+        model="claude-sonnet-4-6",
+        session=MagicMock(),
+        report={},
+        analysis_id=1,
+    )))
+
+
+def _http_status_error():
+    exc = _ns["httpx"].HTTPStatusError("429 Too Many Requests")
+    exc.response = types.SimpleNamespace(status_code=429)
+    return exc
+
+
+def test_an_upstream_failure_still_emits_done():
+    """THE bug. No `done` meant the router's persistence branch never ran."""
+    events = _run_failing_turn(_http_status_error)
+    types_seen = [e["event"] for e in events]
+    assert "error" in types_seen, types_seen
+    assert "done" in types_seen, (
+        f"no done event after an upstream failure, so the router persists nothing "
+        f"and the turn's work is discarded: {types_seen}")
+    assert types_seen.index("error") < types_seen.index("done"), (
+        "the error must precede done — the frontend banners on error and finalises "
+        "the exchange on done")
+
+
+def test_the_completed_rounds_tokens_are_reported():
+    """42,000 in / 900 out were recorded as 0/0/$0.00 — the session's cost
+    columns and the cost-alert banner they drive read these."""
+    events = _run_failing_turn(_http_status_error)
+    done = next(e for e in events if e["event"] == "done")
+    assert done["data"]["input_tokens"] == 42000, done["data"]
+    assert done["data"]["output_tokens"] == 900, done["data"]
+    assert done["data"]["cost"] > 0, "a billed turn reported as free"
+
+
+def test_the_streamed_text_reached_the_client_before_the_failure():
+    """What the analyst watched appear. It has to be persistable, or it is also
+    missing from the next turn's rebuilt history."""
+    events = _run_failing_turn(_http_status_error)
+    text = "".join(e["data"]["content"] for e in events if e["event"] == "token")
+    assert "Looking at the C2 config now." in text, text
+
+
+def test_done_marks_the_turn_partial():
+    """`done` no longer implies the model finished, so it must say which."""
+    events = _run_failing_turn(_http_status_error)
+    done = next(e for e in events if e["event"] == "done")
+    assert done["data"]["partial"] is True, done["data"]
+
+
+def test_a_request_error_takes_the_same_path():
+    """The RequestError handler had the identical shape — a read timeout mid-stream
+    lost partial text the same way, even in a single-round turn."""
+    events = _run_failing_turn(lambda: _ns["httpx"].RequestError("connection reset"))
+    types_seen = [e["event"] for e in events]
+    assert "done" in types_seen, types_seen
+    done = next(e for e in events if e["event"] == "done")
+    assert done["data"]["partial"] is True
+    assert done["data"]["input_tokens"] == 42000
+
+
+def test_a_clean_turn_is_not_marked_partial():
+    """The positive control. A `partial` that is always True tells nobody
+    anything, and would make every completed answer look truncated."""
+    chunks = [
+        {"choices": [{"delta": {"content": "Done."}}], "usage": None},
+        {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 2}},
+    ]
+    sse_lines = _make_sse_lines(chunks)
+
+    class FakeResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in sse_lines:
+                yield line
+
+        def raise_for_status(self):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            return FakeResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    _ns["httpx"].AsyncClient = FakeClient
+    _mock_execute_tool.reset_mock()
+    events = asyncio.run(_collect(run_conversation_turn(
+        messages=[{"role": "user", "content": "hi"}],
+        system_prompt="You are a malware analyst.",
+        model="claude-sonnet-4-6",
+        session=MagicMock(),
+        report={},
+        analysis_id=1,
+    )))
+    done = next(e for e in events if e["event"] == "done")
+    assert done["data"]["partial"] is False, done["data"]
+    assert not [e for e in events if e["event"] == "error"]

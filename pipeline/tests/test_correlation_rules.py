@@ -6,6 +6,8 @@ Rules are pure functions of the report dict, so each is tested with an inline
 dict fixture (no filesystem). enrich (the only impure step) is tested separately
 with tmp_path + a monkeypatched storage root.
 """
+import json
+
 import lamware_pipeline.correlation_rules as cr
 import pytest
 from lamware_pipeline.correlation_rules import (
@@ -322,3 +324,74 @@ def test_enrich_reads_buffer_under_pipeline_reports_root(tmp_path, monkeypatch):
     ]}}
     enrich_correlation_inputs(report)
     assert report["_correlation_inputs"]["buffer_samples"]["5:0x1000"] == (b"SHELLCODE").hex()
+
+
+# ---------------------------------------------------------------------------
+# Command-line spoofing must survive the JSON round-trip
+# ---------------------------------------------------------------------------
+#
+# rule_cmdline_spoofing keyed its Volatility lookup by the cmdline plugin's PID
+# (an int from the -r json renderer) and then iterated cape["process_cmdlines"],
+# whose keys are ints ONLY while the report is in memory. stages/cape.py builds
+# them from int process_id, json.dump writes them as JSON object keys — i.e.
+# strings — and run_replay reloads the report with no coercion.
+#
+# So on the replay path every lookup missed and the rule returned [] no matter
+# how badly a command line had been spoofed. The live path was unaffected, which
+# is why the existing fixtures never caught it: they only ever construct the
+# in-memory int-keyed shape.
+#
+# Replay is not read-only. run-pipeline's write_report() rewrites the SAME
+# reports/<task>/report.json, so a re-run erased the original `critical` finding
+# from the canonical artifact, and the degraded report is then what feeds
+# ingest_to_db and the PDF generator.
+
+def _spoofed_report():
+    return {
+        "cape": {"process_cmdlines": {1234: 'C:\\Windows\\System32\\svchost.exe -k netsvcs'}},
+        "volatility": {"plugins": {"cmdline": [
+            {"PID": 1234, "Args": 'C:\\Users\\v\\AppData\\Local\\Temp\\evil.exe --beacon'},
+        ]}},
+    }
+
+
+def _round_trip(report):
+    """What run_replay does: the report comes back off disk, so dict keys that
+    were ints are now strings."""
+    return json.loads(json.dumps(report))
+
+
+def test_cmdline_spoofing_is_detected_in_memory():
+    """Positive control. Without it, a rule that detects nothing at all would
+    satisfy the replay assertion below."""
+    findings = rule_cmdline_spoofing(_spoofed_report())
+    assert len(findings) == 1, findings
+    assert findings[0]["type"] == "cmdline_spoofing"
+    assert findings[0]["severity"] == "critical"
+
+
+def test_cmdline_spoofing_is_still_detected_after_a_json_round_trip():
+    """THE bug. Same data, string PID keys, and the rule went silent."""
+    findings = rule_cmdline_spoofing(_round_trip(_spoofed_report()))
+    assert len(findings) == 1, (
+        "spoofing went undetected on the replay path; a re-run then overwrites "
+        "report.json and erases the original critical finding")
+    assert findings[0]["severity"] == "critical"
+
+
+def test_the_round_trip_really_does_change_the_key_type():
+    """Guards the guard: if keys stayed ints, the test above would be a
+    duplicate of the in-memory one and would prove nothing."""
+    assert list(_round_trip(_spoofed_report())["cape"]["process_cmdlines"]) == ["1234"]
+
+
+def test_a_matching_cmdline_is_not_flagged_either_way():
+    """The rule must not start firing on every process now that keys agree."""
+    same = {
+        "cape": {"process_cmdlines": {1234: "C:\\Windows\\System32\\svchost.exe -k netsvcs"}},
+        "volatility": {"plugins": {"cmdline": [
+            {"PID": 1234, "Args": "C:\\Windows\\System32\\svchost.exe -k netsvcs"},
+        ]}},
+    }
+    assert rule_cmdline_spoofing(same) == []
+    assert rule_cmdline_spoofing(_round_trip(same)) == []

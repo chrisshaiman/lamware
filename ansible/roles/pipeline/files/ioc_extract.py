@@ -177,6 +177,46 @@ def _strs(value):
                 yield item
 
 
+# Config keys whose values are indicators. Matched case-INSENSITIVELY: Cape's
+# extractors name these however the family's own config does, and capitalised
+# forms are the common case — this repo's own fixtures use {"C2": ...}. The
+# previous exact-lowercase tuple therefore matched almost nothing, so C2
+# addresses that Cape had already decoded (the highest-confidence indicators
+# the pipeline ever gets) produced no IOC at all. correlation_rules.py had this
+# right and reads the same configs with key.lower().
+#
+# Deliberately an explicit set rather than substring hints: an "ip" or "url"
+# hint would match "description" and "curl_useragent", turning prose into
+# indicators.
+_CONFIG_IOC_KEYS = {
+    "c2", "c2s", "c2_address", "c2_addresses", "c2_url", "c2_urls", "c2_domain",
+    "cnc", "cncs", "cnc_url", "controller", "controllers",
+    "server", "servers", "host", "hosts", "hostname", "hostnames",
+    "address", "addresses", "url", "urls", "uri", "uris",
+    "domain", "domains", "ip", "ips", "ipaddress", "ip_addresses",
+}
+
+
+def _add_config_ioc(add_ioc, key: str, value) -> None:
+    """Classify one extracted-config value and record it.
+
+    Shared by the scalar and list branches so a list of URLs is not silently
+    filed as domain-name, which is what the duplicated inline branch did.
+    """
+    if not isinstance(value, str):
+        return
+    value = value.strip()
+    if not value:
+        return
+    desc = f"Extracted config: {key}"
+    if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', value):
+        add_ioc("ipv4-addr", value, "Cape", desc)
+    elif "://" in value:
+        add_ioc("url", value, "Cape", desc)
+    else:
+        add_ioc("domain-name", value, "Cape", desc)
+
+
 def extract_iocs(report: dict) -> list[dict]:
     """Extract all actionable IOCs from every pipeline stage.
 
@@ -281,23 +321,14 @@ def extract_iocs(report: dict) -> list[dict]:
     # --- Cape extracted configs (C2 addresses, etc.) ---
     for cfg in _dicts(cape.get("extracted_configs")):
         if isinstance(cfg, dict):
-            # Common config fields that contain IOCs
-            for key in ("c2", "c2_address", "cnc", "server", "url", "domains", "ips"):
-                val = cfg.get(key)
-                if isinstance(val, str) and val:
-                    if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', val):
-                        add_ioc("ipv4-addr", val, "Cape", f"Extracted config: {key}")
-                    elif "://" in val:
-                        add_ioc("url", val, "Cape", f"Extracted config: {key}")
-                    else:
-                        add_ioc("domain-name", val, "Cape", f"Extracted config: {key}")
+            for key, val in cfg.items():
+                if not isinstance(key, str) or key.strip().lower() not in _CONFIG_IOC_KEYS:
+                    continue
+                if isinstance(val, str):
+                    _add_config_ioc(add_ioc, key, val)
                 elif isinstance(val, list):
                     for item in val:
-                        if isinstance(item, str) and item:
-                            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', item):
-                                add_ioc("ipv4-addr", item, "Cape", f"Extracted config: {key}")
-                            else:
-                                add_ioc("domain-name", item, "Cape", f"Extracted config: {key}")
+                        _add_config_ioc(add_ioc, key, item)
 
     # --- Volatility network IOCs ---
     vol = _as_dict(report.get("volatility"))

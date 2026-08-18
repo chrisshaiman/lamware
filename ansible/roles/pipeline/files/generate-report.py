@@ -332,6 +332,31 @@ def severity_badge(severity: str) -> str:
 # Report sections
 # ---------------------------------------------------------------------------
 
+def sample_sha256(report: dict) -> str:
+    """The SHA-256 of the submitted sample.
+
+    This used to read ghidra.analyzed_files[0].sha256, which is not the sample:
+    that list is populated from find_pe_payloads(task_id) — Cape's EXTRACTED
+    payloads — and then from malfind shellcode candidates. Only the fallback
+    branch, taken when no payloads are readable, puts the original binary there.
+    So on any run that dropped a payload, the report header printed a dropped
+    file's hash beside the label "SHA256", while db_ingest stored the real one:
+    the PDF and the database disagreed about which sample the report was about,
+    and the PDF is the artifact that leaves the platform.
+
+    Same resolution order as ingest_to_db, so the two cannot drift apart again.
+    """
+    sha256 = report.get("triage", {}).get("hashes", {}).get("sha256", "")
+    if sha256:
+        return sha256
+    # Sample filenames are often <sha256>.exe.
+    name = report.get("sample_name", "")
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    if len(stem) == 64 and all(c in "0123456789abcdef" for c in stem.lower()):
+        return stem.lower()
+    return "unknown"
+
+
 def render_header(report: dict) -> str:
     """Render report header with sample metadata."""
     sample_name = report.get("sample_name", "unknown")
@@ -347,10 +372,7 @@ def render_header(report: dict) -> str:
               or report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess")
               or "unknown")
 
-    sha256 = "unknown"
-    ghidra_files = report.get("ghidra", {}).get("analyzed_files", [])
-    if ghidra_files:
-        sha256 = ghidra_files[0].get("sha256", "unknown")
+    sha256 = sample_sha256(report)
 
     triage = report.get("triage", {})
     file_type = triage.get("file_type", "unknown")

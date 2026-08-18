@@ -2,6 +2,12 @@
 # Matches nginx limit_req rate-limiting log entries in error.log.
 # Format: "limiting requests, excess: 50.123 by zone "api", client: 1.2.3.4, ..."
 
+# No date prefix in the pattern. fail2ban matches its datepattern FIRST and hands
+# failregex the line with the timestamp already removed, so the leading
+# `\S+ \S+ ` this used to carry had nothing left to match and the filter never
+# fired — nginx rate limiting was logged and never banned. Verified with
+# fail2ban-regex: with the prefix, "0 matched, 1 missed"; without it, the same
+# line matches and the unrelated `open() ... failed` error still does not.
 [Definition]
-failregex = ^\s*\S+ \S+ \[error\] \d+#\d+: \*\d+ limiting requests, excess: [\d.]+ by zone "[^"]+", client: <HOST>,
+failregex = ^\s*\[error\] \d+#\d+: \*\d+ limiting requests, excess: [\d.]+ by zone "[^"]+", client: <HOST>,
 ignoreregex =
