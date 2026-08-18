@@ -9,13 +9,17 @@ priority chain, severity scoring, and MITRE ATT&CK mapping helpers.
 """
 import re
 
-from .correlation_rules import cross_correlate  # noqa: F401  (back-compat public re-export)
+from .correlation_rules import (  # noqa: F401  (back-compat public re-exports)
+    correlation_warnings,
+    cross_correlate,
+)
 
 __all__ = [
     "determine_family",
     "calculate_severity",
     "build_mitre_mapping",
     "cross_correlate",
+    "correlation_warnings",
 ]
 
 

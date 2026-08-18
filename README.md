@@ -182,7 +182,9 @@ Each path has its own LLM prompt optimized for that language's patterns.
 
 ### AI-driven investigation
 
-The interpret stage uses an LLM's tool-use API with 6 Ghidra query tools. The agent autonomously lists functions, decompiles suspicious ones, traces cross-references, and reads data — producing a structured analysis with malware family identification and MITRE ATT&CK mapping. It follows leads iteratively rather than making a single pass.
+The interpret stage uses an LLM's tool-use API with 6 Ghidra query tools. The agent autonomously lists functions, decompiles suspicious ones, traces cross-references, and reads data — producing a structured analysis of capabilities and MITRE ATT&CK mapping, with every concrete claim checked against the evidence it was shown. It follows leads iteratively rather than making a single pass.
+
+The agent does not attribute a malware family, and it does not decide maliciousness. Family labels come from CAPE signatures or MalwareBazaar metadata and are presented as provenance; the verdict comes from triage, CAPE, and Volatility. See [Evaluation](#evaluation) for why, and what the stage *is* measured on.
 
 | Tool | Description |
 |---|---|
@@ -446,13 +448,48 @@ OVH Bare Metal
 
 ---
 
+## Evaluation
+
+The RE stage is measured, and the measurements are less flattering than a feature list would be. They are kept here rather than in the commit log because a capability claim without its evaluation is marketing.
+
+**What the stage is scored on.** Not "did it name the family" but **"is every concrete claim supported by the evidence the model was shown"**. `grounding_check.py` extracts each concrete IOC value the model asserts — domains, IPs, URLs, registry keys, mutexes — and cross-references it against the source text it was given, after defang normalization. A value whose artifacts do not appear in the source is a fabrication flag. The harness reports `grounded_ratio` and a fabrication count per cell.
+
+This exists because it was needed: a local model produced fluent, well-structured analysis containing an invented C2 domain and an invented registry GUID.
+
+| Metric | What it answers |
+|---|---|
+| `grounded_ratio` | Did the model make this up? |
+| fabrication count | Which specific claims are unsupported |
+| `tool_call_error_rate` | Was the model driving the tools, or fighting them |
+| `tool_layer_broken` | Was this cell measuring the model or the infrastructure |
+| `parse_failed` | Finished but unparseable — neither success nor error |
+| `family_guess` | **Contamination probe — not a capability metric** |
+
+**Family attribution does not work here, and that is the expected result.** Measured on the deployed pipeline: a 35B local model scores **0/14**, and the frontier-model reference scores **0/7** on the same samples. MalwareBazaar's own labels disagree with the reference on every one of them. The published literature explains why rather than excusing it — the [MOTIF paper](https://arxiv.org/abs/2111.15031) measures AVClass at **46.78%** and AV majority voting at **62.10%** against expert ground truth, so the label itself is under 50% reliable.
+
+The naive conclusion — "packing destroys family ID" — is **too strong and is not the claim here**. Supervised byte-level classifiers reach 91.66% on real packed malware. The distinction is what is being classified and how: byte histograms, entropy, and section characteristics over a *closed* family set is a different task from an LLM reading *decompiled code* over an open set of 454+. A packer stub is generic as source while staying statistically distinctive as bytes.
+
+So `family_guess` stays in the scorecard **inverted**: near-zero is correct, and an unexpectedly *high* score is evidence of memorized published analyses rather than analysis of the binary. Prompts are not tuned against it.
+
+The same structure explains why published threat-report IOCs cannot ground this stage: **0 of 9** icedid samples and **0 of 2** azorult samples contained any literal from their own linked reports. The reports describe runtime behaviour; static analysis sees the packer. Ground truth for recall therefore comes from CAPE detonation, which is independent of the model's evidence — and is treated as a **lower bound**, since one execution means evasion or a dead C2 under-reports.
+
+**Reproducibility.** Each scorecard cell records the seed *requested* and the sampling configuration the inference server *reported applying* — per cell, not per sweep, because a server can be restarted mid-run and a result whose sampling config is known only by recollection is not reproducible.
+
+**A metric that is implemented and deliberately refused.** Cross-run consensus — keeping only claims that independent runs agree on — is fully implemented and **disabled at the CLI**. The method rests entirely on the runs being independent, and no currently available axis supplies that: seeds are inert on the transport the RE stage uses, and a shallower depth produces a literal prefix of a deeper one, so agreement would be guaranteed by construction. The harness refuses the flag rather than print a table reporting 100% agreement for free.
+
+**Known hazard, recorded because it is one refactor away.** The prompt builder injects the MalwareBazaar family verbatim when present. It does not contaminate the benchmark only because the eval passes the Ghidra sub-report while that field sits at report top level; passing the whole report would silently turn the benchmark into an answer key. The production .NET, PowerShell, and Go paths *do* receive that hint — so a family "identified" on those paths was supplied, not derived.
+
+Full reasoning, measurements, and citations: **[ADR-019](docs/DECISIONS.md)**.
+
+---
+
 ## Tested Malware Families
 
 | Family | Type | Coverage |
 |--------|------|----------|
 | Emotet | VB6 packer/loader | Full pipeline, 130+ IOCs, cross-correlation findings |
 | CobaltStrike/DidYouRansome | Native C beacon + ransomware | Full pipeline, 174 IOCs, 43 MITRE techniques |
-| NanoCore | .NET RAT | ILSpy decompiled, LLM identified family + 15 capabilities |
+| NanoCore | .NET RAT | ILSpy decompiled, 15 capabilities recovered (family supplied to the prompt as provenance — not an attribution result) |
 | AsyncRAT | .NET RAT | de4dotEx deobfuscation + ILSpy, 23 classes extracted |
 | BianLian | Go ransomware | GoReSym: 138 functions, 98 packages, SOCKS5 proxy architecture |
 | Sliver | Go C2 (garble-obfuscated) | GoReSym partial + evasion hunter: 7 anti-sandbox techniques |

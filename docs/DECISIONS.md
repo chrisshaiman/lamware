@@ -762,9 +762,13 @@ them.
   report would silently turn the benchmark into an answer key. Verified 2026-08-10 by
   rendering the prompt with a marker in every field: `filename`, `program_name` and
   `project_dir` do **not** reach the model; `bazaar_family` does.
-- The production .NET and PowerShell paths *do* receive that hint (via `_llm_context` in
-  `build_dotnet_init` / `build_ps_init`) while the PE path does not. That asymmetry is
-  intentional-by-accident and worth revisiting if those paths are ever benchmarked.
+- The production .NET, PowerShell **and Go** paths *do* receive that hint — all three
+  spread `**llm_context` into their init payload (`build_dotnet_init` / `build_ps_init` /
+  `build_go_init` in `stages/single_shot_init.py`), and `run-pipeline.py` puts
+  `bazaar_family` in `_llm_context` whenever the report carries it. The PE path does not.
+  That asymmetry is intentional-by-accident and worth revisiting if those paths are ever
+  benchmarked. Corrected 2026-08-18: this entry previously listed only .NET and
+  PowerShell, which undercounted the exposed paths.
 - Unpacking is the higher-leverage fix. CAPE already dumps unpacked payloads to
   `/opt/CAPEv2/storage/analyses/<task>/dropped`, and the investigate tools already read
   them. Running Ghidra over those rather than the packed original attacks the root cause

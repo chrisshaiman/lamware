@@ -1155,8 +1155,18 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         title = finding.get("title", "?")
         sources = " + ".join(finding.get("sources", []))
         log.info(f"  [{severity.upper()}] {title} ({sources})")
+    # An empty finding list means "nothing correlated" ONLY if every rule had its
+    # input. correlation_warnings names the rules that could not run; without it
+    # a timed-out malfind read as a sample with no injection.
+    corr_warnings = report.get("correlation_warnings") or []
+    for warning in corr_warnings:
+        log.warning(f"  [DEGRADED] {warning}")
     if not report["cross_correlations"]:
-        log.info("  No cross-tool findings detected")
+        if corr_warnings:
+            log.info(f"  No cross-tool findings — but {len(corr_warnings)} rule input(s) "
+                     f"were unavailable, so this is not a clean result")
+        else:
+            log.info("  No cross-tool findings detected")
 
     # Programmatic analysis — deterministic, runs before LLM
     log.info("\n[Analysis] Programmatic analysis...")
