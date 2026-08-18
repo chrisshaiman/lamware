@@ -14,7 +14,7 @@ from llm_ab_re import TOOL_LAYER_BROKEN_THRESHOLD, analysis_completed, is_tool_e
 from stages.ghidra import collect_analysis_warnings
 
 from lamware_eval.corpus import load_corpus
-from lamware_eval.metrics import aggregate, compose_cell
+from lamware_eval.metrics import aggregate, cell_error, compose_cell
 from lamware_eval.runner import _RATES, tool_output_text
 from lamware_eval.scorecard import render_scorecard
 
@@ -104,7 +104,7 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                      "parse_failed": bool(analysis.get("parse_note")),
                      "tool_calls_used": res.get("tool_calls_used"),
                      **_tool_call_metrics(arm_dir)},
-                    analysis.get("parse_note"),
+                    cell_error(res, analysis),
                     ghidra_warnings=_ghidra_warnings(gr)))
     return render_scorecard(label, cells, aggregate(cells)), cells
 

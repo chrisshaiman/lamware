@@ -12,7 +12,7 @@ from stages.interpret import run_interpret
 
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
-from lamware_eval.metrics import compose_cell
+from lamware_eval.metrics import cell_error, compose_cell
 
 # Harness backstop. MUST stay ABOVE the interpret container's own --timeout
 # (10800s) so the container is the thing that reaps a stuck run and we get a
@@ -187,10 +187,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # Append the container's own stderr to the cell error. Without it a crashed
     # container reports only "exited without final result", which is a symptom, not a
     # cause — and costs a full re-run (26 min on 2026-07-27) to learn anything.
-    err = res.get("error") or analysis.get("error")
-    stderr_tail = (res.get("container_stderr") or "").strip()
-    if err and stderr_tail:
-        err = f"{err} | container stderr: {stderr_tail[-1500:]}"
+    err = cell_error(res, analysis)
 
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
                         extract_metrics(res), err,
