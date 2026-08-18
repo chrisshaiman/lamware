@@ -406,9 +406,90 @@ def evaluate_rules(report: dict) -> list[dict]:
     return [finding for rule in _RULES for finding in rule(report)]
 
 
+# -------------------------------------------------------------------------
+# Coverage — which rules could not run, and why
+# -------------------------------------------------------------------------
+
+#: Volatility plugin output -> the question the rules reading it answer. Every
+#: entry here is a plugin some rule in `_RULES` indexes out of
+#: report["volatility"]["plugins"]; test_correlation_coverage asserts the two
+#: stay in step, so adding a rule that reads a new plugin without declaring it
+#: fails rather than silently going unreported.
+_PLUGIN_CONSUMERS = {
+    "dlllist": "whether a dropped file was loaded into a process",
+    "malfind": ("whether injected shellcode self-modified, and whether injection "
+                "is corroborated in memory"),
+    "cmdline": "whether a process spoofed its command line",
+    "netscan": "whether a Cape-identified C2 was live at capture",
+}
+
+
+def _plugin_state(plugins: dict, name: str) -> tuple[bool, str | None]:
+    """(usable, reason_it_is_not) for one Volatility plugin's output.
+
+    `run_single_plugin` returns a LIST on success and ``{"error": ...}`` on
+    failure — a timeout, a non-zero exit, or unparseable output. An absent key
+    means the plugin was never run at all.
+    """
+    if name not in plugins:
+        return False, "not run"
+    value = plugins[name]
+    if isinstance(value, list):
+        return True, None
+    if isinstance(value, dict) and value.get("error"):
+        return False, str(value["error"])[:200]
+    return False, f"unexpected {type(value).__name__} output"
+
+
+def correlation_warnings(report: dict) -> list[str]:
+    """The rules that could not be evaluated, and what went missing.
+
+    Every rule guards its Volatility input with ``isinstance(..., list)``, which
+    is correct — a plugin that failed hands back ``{"error": ...}`` and must not
+    be iterated. But the guard returns ``[]``, which is the same thing the rule
+    returns when it ran fine and found nothing. The two states were
+    indistinguishable in the report, and `run-pipeline` logged the merged result
+    as "No cross-tool findings detected" — a claim it had not established.
+
+    That matters most exactly where it is most likely: `malfind` runs under a
+    120s cap documented as "partial results acceptable", so a timeout on a large
+    dump is an ordinary outcome, not a rare one. When it times out, both
+    injection rules go quiet and the report reads as though injection was
+    checked for and not found.
+
+    Same principle as `PayloadAccessError` in lamware_shared.cape_payloads and
+    the Ghidra `analysis_warnings` surface (#315/#367): "I could not look" has to
+    be its own answer, distinct from "I looked and there was nothing".
+
+    Returns [] when Volatility did not run at all — that is a reported pipeline
+    state (the stage is trigger-gated), not a silent degradation of correlation.
+    """
+    volatility = report.get("volatility")
+    if not isinstance(volatility, dict):
+        return []
+    plugins = volatility.get("plugins")
+    if not isinstance(plugins, dict):
+        return []
+    warnings: list[str] = []
+    for name in sorted(_PLUGIN_CONSUMERS):
+        usable, reason = _plugin_state(plugins, name)
+        if not usable:
+            warnings.append(
+                f"Volatility {name} unavailable ({reason}) — could not evaluate "
+                f"{_PLUGIN_CONSUMERS[name]}"
+            )
+    return warnings
+
+
 def cross_correlate(report: dict) -> list[dict]:
-    """Public entrypoint. Enrich (filesystem) -> evaluate pure rules -> strip inputs."""
+    """Public entrypoint. Enrich (filesystem) -> evaluate pure rules -> strip inputs.
+
+    Also sets ``report["correlation_warnings"]`` so an empty finding list can be
+    read correctly: no findings WITH warnings means the evidence was missing, not
+    that the sample was clean.
+    """
     enrich_correlation_inputs(report)
+    report["correlation_warnings"] = correlation_warnings(report)
     try:
         return evaluate_rules(report)
     finally:
