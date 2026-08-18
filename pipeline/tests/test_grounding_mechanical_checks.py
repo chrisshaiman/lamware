@@ -23,6 +23,8 @@ passes on invented examples but not on the output that motivated it is worthless
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ansible" / "roles" / "pipeline" / "files"))
 
@@ -156,3 +158,76 @@ def test_substring_collisions_do_not_produce_false_positives():
     """`sha-1` must not match inside `sha-256`, or every SHA-256 claim is flagged."""
     assert constant_misattributions(
         "0x6a09e667 is the SHA-256 initial hash value") == []
+
+
+# ---------------------------------------------------------------------------
+# A cited ADDRESS is not a claim about a named constant's value
+# ---------------------------------------------------------------------------
+#
+# The named-constant check collected every hex value in the text and required
+# the constant's value to be among them:
+#
+#     cited = {h.lstrip("0").lower() for h in _HEX_IN_TEXT.findall(text)}
+#     if cited and expected not in cited: ...flag...
+#
+# `cited` was not scoped to the constant, so any address in the same sentence
+# counted as a competing claim. "VirtualAlloc at 0x00401230 requests
+# PAGE_EXECUTE_READWRITE" — a correct statement, and the ordinary way to write
+# RE prose — was reported as "PAGE_EXECUTE_READWRITE is 0x40, not 0x401230".
+#
+# This is the checker that measures hallucination, so its false positives are
+# recorded as the model's. A grounding check that invents misattributions
+# against correct analyses corrupts the metric the eval exists to produce, in
+# the direction that looks like rigour.
+
+CORRECT_PROSE = [
+    "VirtualAlloc at 0x00401230 requests PAGE_EXECUTE_READWRITE.",
+    "The shellcode at 0x7ffd1000 maps PAGE_READWRITE for its config.",
+    "At FUN_00401000 (0x401000) the stub sets PAGE_EXECUTE_READ on the region.",
+    "PAGE_EXECUTE_READWRITE (0x40) applied at 0x00401230.",
+    "Memory protection: 0x40 PAGE_EXECUTE_READWRITE",
+    "The region was allocated PAGE_EXECUTE_READWRITE.",
+]
+
+REAL_MISATTRIBUTIONS = [
+    ("Memory protection: 0x20 (PAGE_EXECUTE_READWRITE)", "0X40"),
+    ("Claims PAGE_EXECUTE_READWRITE is 0x20.", "0X40"),
+    ("PAGE_READWRITE = 0x40 in the config blob at 0x140001000", "0X4"),
+    ("The loader uses PAGE_EXECUTE_READ, i.e. 0x40.", "0X20"),
+]
+
+
+@pytest.mark.parametrize("text", CORRECT_PROSE)
+def test_an_address_in_the_same_sentence_is_not_a_misattribution(text):
+    """THE bug. Every one of these is a true statement."""
+    assert constant_misattributions(text) == [], (
+        f"a correct claim was reported as a hallucination: {text!r}")
+
+
+@pytest.mark.parametrize("text,expected_hex", REAL_MISATTRIBUTIONS)
+def test_a_real_misattribution_is_still_caught(text, expected_hex):
+    """The check must not be narrowed into uselessness — this is the half that
+    matters, and both orderings and several copulas have to keep working."""
+    wrong = constant_misattributions(text)
+    assert wrong, f"a genuine misattribution went unreported: {text!r}"
+    assert expected_hex in wrong[0].upper()
+
+
+def test_a_wrong_value_still_flags_when_an_address_is_also_present():
+    """The two halves together: scoping to the constant must not let a real
+    misattribution hide behind an unrelated address."""
+    wrong = constant_misattributions(
+        "At 0x00401230 the stub sets PAGE_EXECUTE_READWRITE (0x20).")
+    assert wrong and "0X40" in wrong[0].upper()
+
+
+def test_naming_the_constant_with_no_value_stays_silent():
+    """Silence is the documented default: expressing no opinion is not an error."""
+    assert constant_misattributions("It sets PAGE_EXECUTE_READWRITE on the region.") == []
+
+
+def test_the_nesting_rule_still_holds():
+    """PAGE_EXECUTE is a substring of PAGE_EXECUTE_READWRITE; the longest match
+    wins, or the shorter name is checked against the longer one's value."""
+    assert constant_misattributions("Sets PAGE_EXECUTE_READWRITE (0x40).") == []
+    assert constant_misattributions("Sets PAGE_EXECUTE (0x10).") == []
