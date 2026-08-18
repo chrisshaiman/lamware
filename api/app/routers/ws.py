@@ -125,7 +125,12 @@ async def websocket_pipeline(websocket: WebSocket):
     except WebSocketDisconnect:
         return
 
-    if msg.get("type") != "auth" or not msg.get("token"):
+    # isinstance first: json.loads happily returns a list, int, str or None for
+    # a valid-JSON non-object frame, and only JSONDecodeError is caught above. A
+    # first frame of "[]" therefore reached .get() and raised AttributeError,
+    # which nothing catches — the handler died and _log_failed_auth never ran,
+    # so an unauthenticated caller could crash the connection leaving no record.
+    if not isinstance(msg, dict) or msg.get("type") != "auth" or not msg.get("token"):
         _log_failed_auth(websocket, "WS first message was not an auth frame")
         await websocket.close(code=4001, reason="First message must be auth with JWT token")
         return
