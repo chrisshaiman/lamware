@@ -100,12 +100,31 @@ def test_unexpected_output_shape_is_reported():
 
 # --- absent stages are not degradation ---
 
-def test_volatility_not_run_is_not_a_correlation_warning():
-    """Volatility is trigger-gated. A sample that never reached it is a reported
+def test_volatility_not_triggered_is_not_a_correlation_warning():
+    """Volatility is signature-gated. A sample that never reached it is a reported
     pipeline state, not a correlation rule silently failing."""
     assert correlation_warnings({}) == []
     assert correlation_warnings({"volatility": {}}) == []
-    assert correlation_warnings({"volatility": {"error": "stage skipped"}}) == []
+    assert correlation_warnings(
+        {"volatility": {"triggered": False, "reason": "no trigger signatures"}}) == []
+
+
+def test_whole_stage_timeout_warns_for_every_rule():
+    """run-pipeline writes {"triggered": True, "error": "timeout (45 min)"} when the
+    stage blows its 45-minute budget. That dict has no "plugins" key, so the
+    per-plugin path cannot see it — and it is the severest case, since every rule
+    is blind at once rather than one."""
+    report = {"volatility": {"triggered": True, "error": "timeout (45 min)"}}
+    warnings = correlation_warnings(report)
+    assert len(warnings) == len(_PLUGIN_CONSUMERS)
+    assert all("timeout (45 min)" in w for w in warnings)
+    for description in _PLUGIN_CONSUMERS.values():
+        assert any(description in w for w in warnings)
+
+
+def test_stage_error_without_triggered_flag_still_warns():
+    assert len(correlation_warnings({"volatility": {"error": "container died"}})) == len(
+        _PLUGIN_CONSUMERS)
 
 
 # --- the entrypoint publishes it ---

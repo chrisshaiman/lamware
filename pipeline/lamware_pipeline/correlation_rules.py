@@ -469,6 +469,22 @@ def correlation_warnings(report: dict) -> list[str]:
         return []
     plugins = volatility.get("plugins")
     if not isinstance(plugins, dict):
+        # No plugin outputs at all, which is the SEVEREST form of this bug rather
+        # than an exemption from it: every rule is blind at once. run-pipeline
+        # writes {"triggered": True, "error": "timeout (45 min)"} when the whole
+        # stage exceeds 45 minutes, and that dict has no "plugins" key for the
+        # per-plugin loop below to inspect.
+        #
+        # Distinguished from never having run: `triggered: False` carries a
+        # `reason` and is a reported pipeline state (the stage is signature-gated),
+        # so it stays silent.
+        if volatility.get("triggered") or volatility.get("error"):
+            reason = volatility.get("error") or "stage produced no plugin output"
+            return [
+                f"Volatility produced no plugin output ({reason}) — could not "
+                f"evaluate {_PLUGIN_CONSUMERS[name]}"
+                for name in sorted(_PLUGIN_CONSUMERS)
+            ]
         return []
     warnings: list[str] = []
     for name in sorted(_PLUGIN_CONSUMERS):
