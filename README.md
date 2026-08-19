@@ -130,14 +130,15 @@ flowchart TB
     CAPE --> PAYLOAD
     CAPE --> PCAP
     CAPE --> VOL
-    VOL --> XCORR
-    CAPE --> XCORR
-    XCORR --> GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH
+    VOL --> GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH
     GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH --> LLM
     LLM --> EVASION
     CAPE --> SCREENSHOTS
     SCREENSHOTS --> VISUAL
-    EVASION --> IOC
+    CAPE --> XCORR
+    VOL --> XCORR
+    EVASION --> XCORR
+    XCORR --> IOC
     VISUAL --> IOC
     IOC --> SUMMARY
     SUMMARY --> PLAIN
@@ -167,6 +168,16 @@ flowchart TB
         style L4 fill:#1a4a2a,stroke:#6bff8b
     end
 ```
+
+> [!NOTE]
+> **Correlation currently runs *after* interpretation, not before it.** The diagram
+> reflects the code: cross-correlation is computed once static analysis and the LLM
+> stages have completed, and its findings reach severity scoring, IOC extraction and
+> the executive summary — but **not** the agentic RE investigation, which sees only
+> its decompiler output. The project's "correlation before generation" principle is
+> therefore implemented for the summary writer and not yet for the investigator.
+> Tracked in [#420](https://github.com/chrisshaiman/lamware/issues/420), which also
+> specifies the experiment that would show whether closing the gap actually helps.
 
 > **LLM network path:** the interpret (LLM-broker) container — the one component touching malware-derived LLM I/O — runs with **`--network=none`** (no host network namespace) and reaches the self-hosted LiteLLM proxy solely through a **bind-mounted Unix socket** (a root `socat` bridge fronts LiteLLM's `localhost:4000`). So it cannot route to host services (Postgres/Keycloak/Mongo/CAPE) or the internet — only LiteLLM. LiteLLM is the only process with outbound HTTPS to Anthropic's API; the Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. **Every** analysis container is `--network=none`.
 
