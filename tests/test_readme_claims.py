@@ -1,0 +1,158 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+"""The README must not claim capabilities the code does not have (#416).
+
+Documentation drift here is the same defect class the rest of the suite hunts — a
+consumer reading a contract its producer no longer honours:
+
+  #406  `get_api_traces` read `cape.behavior`, which nothing writes.
+  #409  the general guard for consumers reading keys with no producer.
+  #411  a correlation rule read a failure value as an empty result.
+  README  advertised "malware family identification" while ADR-019 had measured it
+          at 0/14 local and 0/7 on the frontier reference and formally retired it.
+
+The last one sat in `main` for weeks. Nothing could have caught it, because nothing
+asserted that prose matches code.
+
+This is not a new kind of test for this repo. `test_smoke_gate_honesty.py` already
+asserts that the smoke gate "must not claim readiness it has not proven";
+`test_dead_controls.py` reads templates as text and asserts constructs are absent;
+`test_version_consistency.py` enforces one claim across every manifest. This
+generalises them to the README.
+
+WHY IT HAS TO BE MECHANICAL. Verifying these by hand is unreliable even with the
+repo checked out. While fact-checking a README rewrite on 2026-08-19, two claims
+were wrongly judged false: Zeek "was not deployed" (a bad `grep --include=*` missed
+`roles/pcap-analysis/templates/Containerfile.j2`, which installs it) and entropy
+analysis "was not part of triage" (it is in the triage Containerfile, not
+`stages/triage.py`). Both were correct claims about to be deleted as drift. A third
+check found real drift the same way: the README said Volatility ran "7 plugins" when
+6 are standard — 7 is the parallel WORKER count.
+
+Matching is deliberately loose — presence of a name, not exact prose — so ordinary
+editing does not fail the build. The target is claims that have become FALSE.
+"""
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+README = (ROOT / "README.md").read_text(encoding="utf-8")
+VALIDATORS = (ROOT / "shared" / "lamware_shared" / "tool_validators.py").read_text(encoding="utf-8")
+RUN_PIPELINE = (ROOT / "ansible" / "roles" / "pipeline" / "files" / "run-pipeline.py").read_text(
+    encoding="utf-8")
+
+# Prose-only view: an "absence" assertion must not be satisfiable by the comment or
+# table cell that explains the absence. Same guard test_dead_controls.py applies.
+README_PROSE = "\n".join(
+    ln for ln in README.splitlines() if not ln.lstrip().startswith(("<!--", "|", ">")))
+
+
+def _tool_table() -> set[str]:
+    r"""Backticked names in the README's `| Tool | Description |` table only.
+
+    Scoped deliberately: a bare `^\| `name` \|` match also swept the Evaluation
+    section's metrics table and reported `grounded_ratio` as an undefined Ghidra tool.
+    """
+    m = re.search(r"^\| Tool \| Description \|\n\|[-|]+\|\n((?:\|.*\n)+)", README, re.M)
+    assert m, "the Ghidra tool table moved — update this test with it"
+    return set(re.findall(r"^\| `([a-z_]+)` \|", m.group(1), re.M))
+
+
+def _block(source: str, name: str) -> list[str]:
+    """String literals inside a `NAME = [ ... ]` assignment."""
+    m = re.search(rf"^{name}\s*=\s*\[(.*?)^\]", source, re.S | re.M)
+    assert m, f"{name} block not found — the parser needs updating, not deleting"
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
+# --- Ghidra tool table matches the validators ------------------------------
+
+def test_readme_ghidra_tools_all_exist():
+    """A tool renamed or removed in code but left in the README table."""
+    documented = _tool_table()
+    real = set(re.findall(r'^\s{4}"([a-z_]+)": \{', VALIDATORS, re.M))
+    assert real, "GHIDRA_ARG_VALIDATORS parse failed — fix the parser"
+    undocumented_claims = documented - real
+    assert not undocumented_claims, (
+        f"README documents Ghidra tool(s) {sorted(undocumented_claims)} that "
+        f"GHIDRA_ARG_VALIDATORS does not define")
+
+
+def test_every_real_ghidra_tool_is_documented():
+    documented = _tool_table()
+    real = set(re.findall(r'^\s{4}"([a-z_]+)": \{', VALIDATORS, re.M))
+    assert not (real - documented), (
+        f"Ghidra tool(s) {sorted(real - documented)} exist but are undocumented")
+
+
+def test_readme_tool_count_matches():
+    """The prose says "6 Ghidra query tools"; the count must not drift from it."""
+    m = re.search(r"(\d+) Ghidra query tools", README)
+    assert m, "the tool-count claim moved — update this test with it"
+    real = re.findall(r'^\s{4}"([a-z_]+)": \{', VALIDATORS, re.M)
+    assert int(m.group(1)) == len(real), (
+        f"README claims {m.group(1)} Ghidra tools; {len(real)} are defined")
+
+
+# --- Volatility plugin claims ----------------------------------------------
+
+def test_readme_volatility_plugin_count_matches():
+    """Found drift when written: the README said 7, six are standard, and 7 is the
+    parallel worker count. Two different numbers that look like one."""
+    m = re.search(r"(\d+) standard plugins", README)
+    assert m, "the Volatility plugin-count claim moved — update this test with it"
+    plugins = _block(RUN_PIPELINE, "VOLATILITY_STANDARD_PLUGINS")
+    assert int(m.group(1)) == len(plugins), (
+        f"README claims {m.group(1)} standard Volatility plugins; "
+        f"VOLATILITY_STANDARD_PLUGINS has {len(plugins)}: {plugins}")
+
+
+# --- Retired capabilities stay retired -------------------------------------
+
+#: (regex, the ADR that retired it). The regression test for the defect that
+#: motivated this file.
+_RETIRED = [
+    (r"malware family identification", "ADR-019"),
+    (r"identifies?\s+(?:the\s+)?malware family", "ADR-019"),
+]
+
+
+def test_retired_capabilities_are_not_advertised():
+    for pattern, adr in _RETIRED:
+        hit = re.search(pattern, README_PROSE, re.I)
+        assert not hit, (
+            f"README advertises {hit.group(0)!r}, retired by {adr}. Family labels "
+            f"come from CAPE signatures or MalwareBazaar metadata and are presented "
+            f"as provenance, not as an RE-stage result.")
+
+
+def test_readme_still_states_who_decides_maliciousness():
+    """The positive half. Deleting the disclaimer must fail as loudly as
+    re-adding the claim, or the guard only works in one direction."""
+    assert re.search(r"does not decide whether a sample is malicious|"
+                     r"it does not decide maliciousness", README, re.I), (
+        "README no longer states that the AI does not decide maliciousness")
+
+
+# --- Documented layout exists ----------------------------------------------
+
+def test_documented_project_structure_exists():
+    """A proposed rewrite placed `lamware_eval/` at top level; it lives under
+    ansible/roles/pipeline/files/. Cheap to assert, and it would have caught it."""
+    block = re.search(r"```\nlamware/\n(.*?)```", README, re.S)
+    assert block, "project-structure block not found — update this test with it"
+    dirs = re.findall(r"^[├└]──\s+(\S+?)/", block.group(1), re.M)
+    assert dirs, "project-structure parse failed — fix the parser"
+    missing = [d for d in dirs if not (ROOT / d).is_dir()]
+    assert not missing, f"README documents non-existent director(ies): {missing}"
+
+
+# --- Language routing table matches the dispatch ---------------------------
+
+def test_documented_analysis_stages_exist():
+    """Each language path named in the README has a stage module behind it."""
+    stages = ROOT / "ansible" / "roles" / "pipeline" / "files" / "stages"
+    for module in ("ghidra", "dotnet", "go", "pyinstaller", "java", "office",
+                   "powershell"):
+        assert (stages / f"{module}.py").is_file(), (
+            f"README documents a {module} analysis path with no stages/{module}.py")
