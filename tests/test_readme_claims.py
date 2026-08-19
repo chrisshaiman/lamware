@@ -134,6 +134,36 @@ def test_readme_still_states_who_decides_maliciousness():
         "README no longer states that the AI does not decide maliciousness")
 
 
+# --- Terminology that overstates what an observation establishes ------------
+
+def test_extraction_is_not_described_as_ground_truth():
+    """`WriteProcessMemory` traces are a strong observation, not ground truth.
+
+    The bytes are what CAPE recorded being written. That does not establish they are
+    the final executable payload — which is precisely what the malfind correlation
+    exists to test. Calling it "ground truth" is the same overclaim ADR-019 retired
+    family attribution for, and a reader who checks will notice.
+    """
+    hit = re.search(r"ground[- ]truth\s+\w*\s*(extraction|shellcode)", README, re.I)
+    assert not hit, (
+        f"README describes extraction as {hit.group(0)!r}. CAPE's WriteProcessMemory "
+        f"observation is trace-derived, not ground truth.")
+
+
+def test_air_gap_claim_is_scoped_to_the_detonation_network():
+    """"Air-gapped" unqualified reads as "this machine has no egress", which is false —
+    the LiteLLM gateway holds an outbound HTTPS path to the Anthropic API. People
+    deploy malware infrastructure off README wording, so the two must not blur.
+    """
+    if not re.search(r"air[- ]gapped", README, re.I):
+        return  # the claim is gone entirely; nothing to scope
+    assert re.search(r"detonation network is air-gapped", README, re.I), (
+        "README says 'air-gapped' without scoping it to the detonation network")
+    assert re.search(r"analysis host is not", README, re.I), (
+        "README claims an air gap without stating that the analysis host has a "
+        "controlled outbound path for the LLM gateway")
+
+
 # --- Documented layout exists ----------------------------------------------
 
 def test_documented_project_structure_exists():

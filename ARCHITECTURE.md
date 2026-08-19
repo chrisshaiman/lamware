@@ -152,3 +152,214 @@ this is the primary reason bare metal is required.
 | WireGuard scope | Admin access only | Operator laptop → host management |
 | Bare metal provider | OVHcloud US | Only cost-competitive bare metal provider with US locations |
 | Hosting jurisdiction | US only (OVH US + AWS US region) | CFAA compliance, chain of custody, operator is US-based |
+
+---
+
+## Full pipeline
+
+```mermaid
+flowchart TB
+    SAMPLE([Sample submitted])
+
+    subgraph "Stage 1 — Triage"
+        TRIAGE["YARA, ssdeep, FLOSS, entropy, PE analysis<br/>🔒 containerized, --network=none"]
+    end
+
+    subgraph "Stage 2 — Dynamic Analysis"
+        CAPE["CAPEv2 sandbox — Windows 11 guest VMs<br/>KVM/QEMU + anti-evasion hardening<br/>Behavioral signatures, memory dumps, network capture"]
+        INJECT["2.5a: Injection Buffer Extraction<br/>WriteProcessMemory API traces — ground truth"]
+        PAYLOAD["2.5b: Payload Analysis<br/>Decrypted APIs, file paths, URLs, IPs"]
+    end
+
+    subgraph "Stage 2.7 — PCAP"
+        PCAP["Zeek (protocol) + Suricata (IDS)<br/>JA3 fingerprints, HTTP details, IDS alerts<br/>🔒 containerized, --network=none"]
+    end
+
+    subgraph "Stage 3 — Memory Forensics"
+        VOL["Volatility 3 — 6 standard plugins + trigger-gated extras, run in parallel<br/>Injection detection, connections, mutex IOCs<br/>🔒 containerized, --network=none, ramdisk"]
+    end
+
+    XCORR["Cross-Correlation<br/>Dropped file loaded? Shellcode self-modified?<br/>Command line spoofed?"]
+
+    subgraph "Stage 4 — Static Analysis"
+        direction LR
+        GHIDRA["Native PE<br/>Ghidra headless"]
+        DOTNET[".NET<br/>de4dotEx + ILSpy"]
+        GOBIN["Go<br/>GoReSym"]
+        PYINST["PyInstaller<br/>pyinstxtractor + pycdc"]
+        JAVA["Java JAR<br/>java-deobfuscator + CFR"]
+        OFFICE["Office macros<br/>olevba + mraptor"]
+        PWSH["PowerShell<br/>PSDecode"]
+    end
+
+    subgraph "Stage 4.5 — AI Investigation"
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
+    end
+
+    subgraph "Stage 4.7 — Evasion Hunter"
+        EVASION["Triggers on low-signature samples<br/>Identifies sandbox detection techniques<br/>Recommends hardening measures<br/>🟣 via LiteLLM proxy"]
+    end
+
+    subgraph "Stage 5 — Screenshots + Visual"
+        SCREENSHOTS["QEMU VNC capture + perceptual dedup<br/>🔒 containerized, --network=none"]
+        VISUAL["Multimodal LLM interpretation<br/>Ransom notes, dialogs, evasion signals<br/>🟣 via LiteLLM proxy"]
+    end
+
+    IOC["IOC Extraction<br/>STIX 2.1 types, mutex IOCs from Cape API traces"]
+
+    subgraph "Stage 5 — Summaries"
+        SUMMARY["Kill Chain Summary — Haiku<br/>Each claim cites corroborating tool sources"]
+        PLAIN["Plain English Summary — Haiku<br/>Non-technical explanation"]
+    end
+
+    DB[("Database Ingestion<br/>PostgreSQL — IOCs, techniques,<br/>capabilities, network events")]
+
+    PDF["PDF Report<br/>🔒 containerized WeasyPrint"]
+
+    SAMPLE --> TRIAGE
+    TRIAGE --> CAPE
+    CAPE --> INJECT
+    CAPE --> PAYLOAD
+    CAPE --> PCAP
+    CAPE --> VOL
+    VOL --> GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH
+    GHIDRA & DOTNET & GOBIN & PYINST & JAVA & OFFICE & PWSH --> LLM
+    LLM --> EVASION
+    CAPE --> SCREENSHOTS
+    SCREENSHOTS --> VISUAL
+    CAPE --> XCORR
+    VOL --> XCORR
+    EVASION --> XCORR
+    XCORR --> IOC
+    VISUAL --> IOC
+    IOC --> SUMMARY
+    SUMMARY --> PLAIN
+    PLAIN --> DB
+    DB --> PDF
+
+    style TRIAGE fill:#1a3a4a,stroke:#6bb5ff
+    style CAPE fill:#4a1a1a,stroke:#ff6b6b
+    style PCAP fill:#1a3a4a,stroke:#6bb5ff
+    style VOL fill:#1a3a4a,stroke:#6bb5ff
+    style GHIDRA fill:#1a3a4a,stroke:#6bb5ff
+    style LLM fill:#3a2a4a,stroke:#b56bff
+    style EVASION fill:#3a2a4a,stroke:#b56bff
+    style VISUAL fill:#3a2a4a,stroke:#b56bff
+    style PDF fill:#1a3a4a,stroke:#6bb5ff
+    style DB fill:#1a4a2a,stroke:#6bff8b
+
+    subgraph Legend
+        direction LR
+        L1["🔵 Air-gapped container\n--network=none"]
+        L2["🔴 Detonation sandbox\nKVM/QEMU, air-gapped VMs"]
+        L3["🟣 LLM stage\nvia LiteLLM proxy → Anthropic API"]
+        L4["🟢 Database"]
+        style L1 fill:#1a3a4a,stroke:#6bb5ff
+        style L2 fill:#4a1a1a,stroke:#ff6b6b
+        style L3 fill:#3a2a4a,stroke:#b56bff
+        style L4 fill:#1a4a2a,stroke:#6bff8b
+    end
+```
+
+> [!NOTE]
+> **Correlation currently runs *after* interpretation, not before it.** The diagram
+> reflects the code: cross-correlation is computed once static analysis and the LLM
+> stages have completed, and its findings reach severity scoring, IOC extraction and
+> the executive summary — but **not** the agentic RE investigation, which sees only
+> its decompiler output. The project's "correlation before generation" principle is
+> therefore implemented for the summary writer and not yet for the investigator.
+> Tracked in [#420](https://github.com/chrisshaiman/lamware/issues/420), which also
+> specifies the experiment that would show whether closing the gap actually helps.
+
+> **LLM network path:** the interpret (LLM-broker) container — the one component touching malware-derived LLM I/O — runs with **`--network=none`** (no host network namespace) and reaches the self-hosted LiteLLM proxy solely through a **bind-mounted Unix socket** (a root `socat` bridge fronts LiteLLM's `localhost:4000`). So it cannot route to host services (Postgres/Keycloak/Mongo/CAPE) or the internet — only LiteLLM. LiteLLM is the only process with outbound HTTPS to Anthropic's API; the Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. **Every** analysis container is `--network=none`.
+
+---
+
+---
+
+## Host infrastructure
+
+```
+OVH Bare Metal
++-- Ubuntu 24.04 (hardened -- CIS baseline via konstruktoid)
++-- KVM/QEMU with DSDT-patched firmware (anti-VM evasion)
++-- CAPEv2 dynamic analysis sandbox
++-- Windows 11 guest VMs with anti-evasion measures
++-- INetSim network simulation
++-- WireGuard VPN for admin access (laptop + phone peers)
++-- Podman (rootless containers for pipeline, root container for LiteLLM)
++-- LiteLLM proxy (centralized LLM API routing, key isolation, cost tracking)
++-- PostgreSQL (analysis database)
++-- React frontend + FastAPI backend (behind WireGuard, nginx reverse proxy)
++-- WebSocket real-time pipeline updates (PG LISTEN/NOTIFY)
++-- Mobile-responsive UI with collapsible sidebar
++-- Unified logging with per-task log files
++-- 20 Ansible roles for fully automated deployment
+```
+
+> **Deployment target:** OVH bare metal is the supported, deployed architecture. An earlier design used an AWS data plane (API Gateway → S3 → SQS → Lambda); it never worked and was decommissioned by ADR-016, with the code removed in #211. Nothing in this repo deploys to AWS.
+
+<details>
+<summary>Cost estimate</summary>
+
+~$44-92/month (OVH bare metal) + ~$0.50-$5.00/day LLM API costs depending on sample volume.
+
+</details>
+
+---
+
+---
+
+## Database schema
+
+<details>
+<summary>Normalized PostgreSQL schema for cross-sample intelligence</summary>
+
+- **IOCs** with STIX 2.1 types — query "which samples share this C2 domain?"
+- **MITRE ATT&CK** with tactic context — "show me all T1055 across families"
+- **Sample relationships** — dropped/injected file lineage tracking
+- **Network events** — structured DNS, HTTP, TCP from sandbox
+- **MISP-style tags** — flexible taxonomy on samples, analyses, and IOCs
+- **Correlation views** — shared infrastructure, technique frequency, sample lineage
+
+</details>
+
+---
+
+---
+
+## Implementation details
+
+Moved out of the README: true, but not what a reader needs in order to decide whether
+the project is worth their time.
+
+**Model routing.** The interpret stage starts on Sonnet and escalates to Opus after 5
+tool calls on complex samples; executive summaries run on Haiku. All calls route through
+the self-hosted LiteLLM proxy, which is the only process holding the Anthropic key and
+the only one with outbound HTTPS.
+
+**Real-time pipeline updates.** Stage transitions are published with PostgreSQL
+`NOTIFY pipeline_events` and relayed to the dashboard over a WebSocket, so the UI does
+not poll. See `pipeline_status.py` and `api/app/routers/ws.py`.
+
+**Mobile access.** The dashboard is responsive with a collapsible sidebar, reachable
+from a phone through its own WireGuard peer.
+
+---
+
+## Language routing
+
+The pipeline detects the binary type and routes to the right tool:
+
+| Binary Type | Tool Chain | Output |
+|---|---|---|
+| Native PE (C/C++) | Ghidra headless | Pseudocode, imports, xrefs |
+| .NET (C#) | de4dotEx deobfuscation + ILSpy | Deobfuscated C# source |
+| Go | GoReSym | Recovered function names, types, packages, build info |
+| Go (garble) | GoReSym partial + Ghidra fallback | Garbled names but structural metadata |
+| PyInstaller | pyinstxtractor + pycdc | Python 3.11/3.12 source, multi-file decompilation |
+| Java JAR | java-deobfuscator + CFR | Deobfuscated Java source, manifest, class listing |
+| Office (VBA macros) | olevba extraction + mraptor | VBA source, auto-exec triggers, IOCs, deobfuscation |
+| PowerShell | pwsh + PSDecode | Multi-layer deobfuscation, CAPE encoded command extraction |
+
+Each path has its own LLM prompt optimized for that language's patterns.
