@@ -136,22 +136,33 @@ this is the primary reason bare metal is required.
 
 ## Key technical decisions
 
-| Decision | Choice | Reason |
-|---|---|---|
-| Hypervisor | KVM/QEMU | Cape requires it; DSDT patching for evasion bypass |
-| Cape version | CAPEv2 (kevoreilly) | Active fork, Cuckoo is unmaintained |
-| Host OS | Ubuntu 24.04 LTS | Cape's recommended and tested target |
-| Config mgmt | Ansible | Idempotent, SSH-only, provider-agnostic |
-| Image build | Packer + QEMU builder | Provider-agnostic qcow2/snapshot output |
-| Base hardening | konstruktoid/hardened-images | Well-maintained, CIS-aligned, Ansible-based |
-| Detonation network | Isolated KVM bridge (`virbr-det`) | Air-gapped, no NAT, iptables DROP to `eth0` |
-| Network simulation | INetSim on host | Logs C2 callbacks without real outbound traffic |
-| Secrets | Ansible Vault | Encrypted vars/secrets.yml, no cloud dependency |
-| Sample storage | S3 with object lock (optional) | Integrity guarantee, GOVERNANCE mode 90-day retention |
-| Sample ingestion | MalwareBazaar CLI | Operator-driven interactive submission via sample-feeder |
-| WireGuard scope | Admin access only | Operator laptop → host management |
-| Bare metal provider | OVHcloud US | Only cost-competitive bare metal provider with US locations |
-| Hosting jurisdiction | US only (OVH US + AWS US region) | CFAA compliance, chain of custody, operator is US-based |
+Summary table. The **ADR** column is the router — each links to the record with the
+context, the alternatives considered and the consequences. Rows without one were never
+contentious enough to need an ADR. Full log, grouped and with statuses:
+[docs/DECISIONS.md](docs/DECISIONS.md).
+
+| Decision | Choice | Reason | ADR |
+|---|---|---|---|
+| Bare metal provider | OVHcloud US | Only cost-competitive bare metal provider with US locations | [001](docs/DECISIONS.md#adr-001-bare-metal-provider--ovhcloud-us) |
+| Hosting jurisdiction | US only | CFAA compliance, chain of custody, operator is US-based | [002](docs/DECISIONS.md#adr-002-all-infrastructure-hosted-in-the-united-states) |
+| Config mgmt / image build | Ansible + Packer + Terraform | Each tool does the layer it is good at; see the ADR for the split | [005](docs/DECISIONS.md#adr-005-packeransibleterraform-toolchain-split) |
+| Secrets | Ansible Vault | Encrypted `vars/secrets.yml`, no cloud dependency | [016](docs/DECISIONS.md#adr-016-migrate-secrets-to-ansible-vault-remove-aws-data-plane) |
+| WireGuard scope | Admin access only | Operator laptop → host management, never the detonation path | [004](docs/DECISIONS.md#adr-004-wireguard-scope-limited-to-admin-access-only) |
+| Detonation network | Isolated KVM bridge (`virbr-det`) | No NAT, iptables DROP toward the management interface | [011](docs/DECISIONS.md#adr-011-guest-network-simulation--inetsim-on-host) |
+| Network simulation | INetSim on host | Logs C2 callbacks without real outbound traffic | [011](docs/DECISIONS.md#adr-011-guest-network-simulation--inetsim-on-host) |
+| Guest hardening | DSDT patching, anti-evasion measures | Malware that detects a VM does not detonate | [012](docs/DECISIONS.md#adr-012-guest-vm-anti-evasion-hardening) |
+| Windows guest OS | Windows 11 Enterprise evaluation | Licensing, and what CAPE is tested against | [009](docs/DECISIONS.md#adr-009-windows-guest-os--windows-11-enterprise-evaluation-iso) |
+| Cape agent mode | `cape-agent.py` with capemon | Behavioural coverage the plain agent does not give | [010](docs/DECISIONS.md#adr-010-cape-agent-mode--cape-agentpy-with-capemon) |
+| Guest snapshots | clean + office profiles | Office samples need a populated guest; others do not | [013](docs/DECISIONS.md#adr-013-guest-snapshot-strategy--clean--office-profiles) |
+| Sample ingestion | MalwareBazaar CLI (`sample-feeder`) | Operator-driven, interactive, no API surface to abuse | [015](docs/DECISIONS.md#adr-015-malwarebazaar-sample-feeder-interactive-cli) |
+| Investigation agent | Bounded read-only tools, output-only pins | The agent gets a capability, not a shell | [017](docs/DECISIONS.md#adr-017-investigation-agent-architecture) |
+| Schema migrations | Alembic | Reproducible schema, no hand-applied SQL | [018](docs/DECISIONS.md#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) |
+| Family attribution | Not a capability metric | Measured 0/14 and 0/7; retired rather than tuned against | [019](docs/DECISIONS.md#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) |
+| Sample storage | **Not deployed** — S3 Object Lock deferred | Evidence archival is a standalone future option, not part of the running system | [007](docs/DECISIONS.md#adr-007-s3-object-lock-mode--governance-not-compliance) |
+| Hypervisor | KVM/QEMU | Cape requires it | — |
+| Cape version | CAPEv2 (kevoreilly) | Active fork; Cuckoo is unmaintained | — |
+| Host OS | Ubuntu 24.04 LTS | Cape's recommended and tested target | — |
+| Base hardening | konstruktoid/hardened-images | Well-maintained, CIS-aligned, Ansible-based | — |
 
 ---
 
