@@ -3,6 +3,61 @@
 ADR log for non-obvious decisions. Format: Status / Context / Decision / Consequences.
 Add new ADRs here rather than editing old ones — superseded decisions stay in the log.
 
+
+## Index
+
+Grouped by what the decision governs, because a reader arriving with a question has a
+subject in mind rather than a number. **Status is the column that matters:** four of
+these describe an AWS data plane that no longer exists.
+
+### Infrastructure and hosting
+
+| ADR | Decision | Status |
+|---|---|---|
+| [001](#adr-001-bare-metal-provider--ovhcloud-us) | Bare metal provider — OVHcloud US | Live |
+| [002](#adr-002-all-infrastructure-hosted-in-the-united-states) | All infrastructure hosted in the United States | Live |
+| [005](#adr-005-packeransibleterraform-toolchain-split) | Packer / Ansible / Terraform toolchain split | Live |
+| [016](#adr-016-migrate-secrets-to-ansible-vault-remove-aws-data-plane) | Ansible Vault for secrets; AWS data plane removed | Live — supersedes 003, 006, 008 |
+
+### Network and containment
+
+| ADR | Decision | Status |
+|---|---|---|
+| [004](#adr-004-wireguard-scope-limited-to-admin-access-only) | WireGuard scope limited to admin access | Live (revised 2026-04-18) |
+| [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
+| [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
+
+### Detonation environment
+
+| ADR | Decision | Status |
+|---|---|---|
+| [009](#adr-009-windows-guest-os--windows-11-enterprise-evaluation-iso) | Windows guest OS — Windows 11 Enterprise eval | Live (revised 2026-04-04) |
+| [010](#adr-010-cape-agent-mode--cape-agentpy-with-capemon) | Cape agent mode — `cape-agent.py` with capemon | Live (revised 2026-04-15) |
+| [013](#adr-013-guest-snapshot-strategy--clean--office-profiles) | Guest snapshot strategy — clean + office profiles | Live |
+
+### Analysis, data and the LLM
+
+| ADR | Decision | Status |
+|---|---|---|
+| [015](#adr-015-malwarebazaar-sample-feeder-interactive-cli) | MalwareBazaar sample feeder (interactive CLI) | Live |
+| [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
+| [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
+| [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
+
+### Historical — describe infrastructure that is no longer deployed
+
+Kept because the log records what was decided and why, not only what survives. None of
+these describe the running system.
+
+| ADR | Decision | Status |
+|---|---|---|
+| [003](#adr-003-lambdacape-connectivity-via-sqs-not-direct-wireguard-call) | Lambda→Cape connectivity via SQS | **Superseded by 016** — SQS agent removed; ingestion is `sample-feeder` |
+| [006](#adr-006-no-nat-gateway--vpc-endpoints-only) | No NAT Gateway — VPC endpoints only | **Superseded by 016** — the AWS VPC is gone |
+| [008](#adr-008-two-phase-sample-submission-to-eliminate-sqss3-race) | Two-phase sample submission (SQS/S3 race) | **Superseded by 016** — the race cannot occur without the pipeline |
+| [007](#adr-007-s3-object-lock-mode--governance-not-compliance) | S3 Object Lock — GOVERNANCE, not COMPLIANCE | **Deferred, not superseded** — 016 keeps S3 archival as a standalone future option; scaffolding recoverable from `6ce668c` |
+
+There is no ADR-014; the number was never used.
+
 ---
 
 ## ADR-001: Bare metal provider — OVHcloud US
@@ -53,7 +108,9 @@ restricted to `us-east-1`, `us-east-2`, or `us-west-2`. OVH must be a US locatio
 
 ## ADR-003: Lambda→Cape connectivity via SQS (not direct WireGuard call)
 
-**Status:** Decided
+**Status:** Superseded by ADR-016 (2026-04-24) — the SQS agent was removed and sample
+ingestion moved to the `sample-feeder` CLI. Retained for the record; does not describe
+the running system.
 
 **Context:**
 Lambda functions (`sample_submitter`) need to submit analysis jobs to Cape running on
@@ -118,7 +175,8 @@ protects is a circular trust dependency.
 
 ## ADR-006: No NAT Gateway — VPC endpoints only
 
-**Status:** Decided
+**Status:** Superseded by ADR-016 (2026-04-24) — the AWS VPC no longer exists, so there
+is no NAT/endpoint decision left to make. Retained for the record.
 
 **Context:**
 The initial VPC design included a NAT Gateway (~$33/month) to give Lambda outbound
@@ -156,7 +214,11 @@ Net saving: ~$19/month ($33 NAT removed, $14 endpoints added).
 
 ## ADR-007: S3 Object Lock mode — GOVERNANCE, not COMPLIANCE
 
-**Status:** Decided (known limitation documented)
+**Status:** Deferred, not superseded — ADR-016 keeps S3 with Object Lock as a standalone
+option for evidence archival, deployable with no other AWS infrastructure. Nothing is
+deployed today; the Object Lock and lifecycle scaffolding is recoverable from git at
+`6ce668c` (`aws/modules/s3/`). The GOVERNANCE-vs-COMPLIANCE reasoning below stands if
+it is ever taken up.
 
 **Context:**
 S3 Object Lock has two modes. GOVERNANCE prevents deletion by normal IAM principals
@@ -221,7 +283,8 @@ Hardware-specific steps (DSDT patching) are Ansible-only. Never baked into Packe
 
 ## ADR-008: Two-phase sample submission to eliminate SQS/S3 race
 
-**Status:** Decided
+**Status:** Superseded by ADR-016 (2026-04-24) — the SQS/S3 submission pipeline this
+race applied to was decommissioned. Retained for the record.
 
 **Context:**
 The original `sample_submitter` Lambda (Phase 1 only) issued a pre-signed S3 PUT URL
