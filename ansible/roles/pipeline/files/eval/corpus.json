@@ -1,9 +1,139 @@
 {
+  "_selection": {
+    "criterion": "Samples are selected for whether they EXERCISE the pipeline, not for family diversity. The previous corpus was chosen on family labels and produced zero cross-tool correlations on all 7 samples; the MOTIF corpus (n=29) likewise produced zero, with Volatility never triggering. See #426.",
+    "measured_2026_08_19": {
+      "cape_reports_on_disk": 1016,
+      "with_extractable_injection_buffers": 92,
+      "of_those_also_tripping_volatility_triggers": 92,
+      "unique_samples_after_sha256_dedup": 55,
+      "binaries_still_retained": 55
+    },
+    "build": "corpus_dir entries do not exist until built. Each requires a full pipeline run (detonation, Volatility, Ghidra) with the resulting report.json and persisted Ghidra project copied into corpus_dir. The interpret stage can be disabled for the build; the eval harness supplies its own.",
+    "roles": {
+      "positive": "expected to produce >= 1 cross-tool correlation",
+      "negative-control": "expected to produce zero; retained deliberately"
+    }
+  },
   "samples": [
     {
-      "sha256": "5258a241f8c67e1666060e2c033d127dee8c2c50c7a8dfe0676264e9cb6762c1",
-      "mb_family": "amadey",
-      "corpus_dir": "/opt/pipeline/eval-corpus/amadey_5258a241"
+      "sha256": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729",
+      "mb_family": "unclassified",
+      "corpus_dir": "/opt/pipeline/eval-corpus/unclassified_25d18a2b",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 104 recorded 222 extractable cross-process injection write(s) and 24 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 104,
+      "expected_injection_buffers": 222
+    },
+    {
+      "sha256": "42b9c406d5569b9619c980b336d3236ac7f7789db57ba3b31cd79c463e6f2ca2",
+      "mb_family": "unclassified",
+      "corpus_dir": "/opt/pipeline/eval-corpus/unclassified_42b9c406",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 746 recorded 81 extractable cross-process injection write(s) and 49 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 746,
+      "expected_injection_buffers": 81
+    },
+    {
+      "sha256": "72b2bb12dedd3cc8b5d9a977adb6f8b68b3ce3a26bc20c277fa49f1b59048f9a",
+      "mb_family": "warzonerat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/warzonerat_72b2bb12",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 943 recorded 14 extractable cross-process injection write(s) and 29 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 943,
+      "expected_injection_buffers": 14
+    },
+    {
+      "sha256": "fd55e57a095fc22e451fd7288ec7d450ab4d55a57a76adea5fd812175e127b8b",
+      "mb_family": "xworm",
+      "corpus_dir": "/opt/pipeline/eval-corpus/xworm_fd55e57a",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 176 recorded 8 extractable cross-process injection write(s) and 35 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 176,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "2fb2ef88e05e8dff44e3efa3220a15be55ec847fa6702c14f8f81c05758477d4",
+      "mb_family": "agenttesla",
+      "corpus_dir": "/opt/pipeline/eval-corpus/agenttesla_2fb2ef88",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 695 recorded 8 extractable cross-process injection write(s) and 27 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 695,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "d26bc055f0cfdef6b5e80e6e35a0b9512bd7d233579119a0a874228915fe4ed7",
+      "mb_family": "salat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/salat_d26bc055",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 842 recorded 8 extractable cross-process injection write(s) and 42 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 842,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1",
+      "mb_family": "cobaltstrikebeacon",
+      "corpus_dir": "/opt/pipeline/eval-corpus/cobaltstrikebeacon_179dcccf",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 31 recorded 5 extractable cross-process injection write(s) and 51 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 31,
+      "expected_injection_buffers": 5
+    },
+    {
+      "sha256": "1f2b22638ddb587f86f508aaffebc0f0eb1acdbcf783b92260e819d2be9cca2e",
+      "mb_family": "quasarrat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/quasarrat_1f2b2263",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 785 recorded 4 extractable cross-process injection write(s) and 36 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 785,
+      "expected_injection_buffers": 4
+    },
+    {
+      "sha256": "5b4f596d3cf54c94c57934ccc75e31d7f5999df9abb1b77ff6f8cff007da8d74",
+      "mb_family": "formbook",
+      "corpus_dir": "/opt/pipeline/eval-corpus/formbook_5b4f596d",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 560 recorded 2 extractable cross-process injection write(s) and 34 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 560,
+      "expected_injection_buffers": 2
+    },
+    {
+      "sha256": "982a0d1b819db754da8d7b33ec3ce845594e3efaddcc77047664243edd9fb329",
+      "mb_family": "raccoonstealer",
+      "corpus_dir": "/opt/pipeline/eval-corpus/raccoonstealer_982a0d1b",
+      "analyst_label": null,
+      "role": "negative-control",
+      "selected_because": "Retained from the previous corpus. Produces zero correlations: no cross-process injection writes, and CAPE signatures do not trip the Volatility triggers. A corpus where every sample correlates cannot distinguish 'fires appropriately' from 'fires indiscriminately'.",
+      "source_cape_task": null,
+      "expected_injection_buffers": 0
+    },
+    {
+      "sha256": "c26e8e9bce270e1381ed8968384dd63feba64da2f8694c8e0be152ac1aae96a0",
+      "mb_family": "icedid",
+      "corpus_dir": "/opt/pipeline/eval-corpus/icedid_c26e8e9b",
+      "analyst_label": null,
+      "role": "negative-control",
+      "selected_because": "Retained from the previous corpus. Produces zero correlations: no cross-process injection writes, and CAPE signatures do not trip the Volatility triggers. A corpus where every sample correlates cannot distinguish 'fires appropriately' from 'fires indiscriminately'.",
+      "source_cape_task": null,
+      "expected_injection_buffers": 0
+    },
+    {
+      "sha256": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e",
+      "mb_family": "latrodectus",
+      "corpus_dir": "/opt/pipeline/eval-corpus/latrodectus_d22c9656",
+      "analyst_label": null,
+      "role": "negative-control",
+      "selected_because": "Retained from the previous corpus. Produces zero correlations: no cross-process injection writes, and CAPE signatures do not trip the Volatility triggers. A corpus where every sample correlates cannot distinguish 'fires appropriately' from 'fires indiscriminately'.",
+      "source_cape_task": null,
+      "expected_injection_buffers": 0
     }
   ]
 }
