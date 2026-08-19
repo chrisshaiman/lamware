@@ -105,6 +105,22 @@ host topology and the database schema are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
+## What you get back
+
+| Output | Description |
+|---|---|
+| **Structured IOCs** | STIX 2.1 types, source attribution, context — ready for SIEM and block lists |
+| **ATT&CK technique candidates** | From CAPE behavioral signatures and analysis, with IOC-to-technique evidence. Candidates for analyst confirmation — accuracy is not established by a dedicated evaluation |
+| **Cross-tool findings** | Dropped files confirmed loaded, shellcode self-modification, cmdline spoofing — with the tools that corroborated each |
+| **Analyst narrative** | What the malware does and how, traced through decompiled code and grounded in the evidence shown |
+| **Kill chain summary** | Briefing organized by attack phase rather than by tool |
+| **Memory forensics** | Suspicious cmdlines, mutex IOCs, DLLs from unusual paths, process anomalies |
+| **PDF report** | Source attribution badges showing which stage surfaced each finding |
+| **PostgreSQL** | Normalized schema for cross-sample correlation and family tracking |
+| **Web dashboard** | Analyses, IOCs, techniques, evasion view, live pipeline status |
+
+---
+
 ## What we've demonstrated
 
 ### Cross-tool correlation

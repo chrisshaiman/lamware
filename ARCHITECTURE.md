@@ -167,7 +167,7 @@ flowchart TB
 
     subgraph "Stage 2 — Dynamic Analysis"
         CAPE["CAPEv2 sandbox — Windows 11 guest VMs<br/>KVM/QEMU + anti-evasion hardening<br/>Behavioral signatures, memory dumps, network capture"]
-        INJECT["2.5a: Injection Buffer Extraction<br/>WriteProcessMemory API traces — ground truth"]
+        INJECT["2.5a: Injection Buffer Extraction<br/>WriteProcessMemory API traces — trace-derived injection bytes"]
         PAYLOAD["2.5b: Payload Analysis<br/>Decrypted APIs, file paths, URLs, IPs"]
     end
 

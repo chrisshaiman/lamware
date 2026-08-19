@@ -37,6 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+ARCHITECTURE = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 VALIDATORS = (ROOT / "shared" / "lamware_shared" / "tool_validators.py").read_text(encoding="utf-8")
 RUN_PIPELINE = (ROOT / "ansible" / "roles" / "pipeline" / "files" / "run-pipeline.py").read_text(
     encoding="utf-8")
@@ -136,18 +137,41 @@ def test_readme_still_states_who_decides_maliciousness():
 
 # --- Terminology that overstates what an observation establishes ------------
 
-def test_extraction_is_not_described_as_ground_truth():
-    """`WriteProcessMemory` traces are a strong observation, not ground truth.
+#: Subjects whose description must not claim "ground truth". Deliberately NOT a blanket
+#: ban on the phrase: "expert ground truth" (the MOTIF corpus) and "ground truth for
+#: recall comes from CAPE detonation ... treated as a lower bound" are correct, qualified
+#: uses about evaluation. What must never be called ground truth is the INJECTION
+#: EXTRACTION, which is an observation of what was written.
+_EXTRACTION_SUBJECT = re.compile(
+    r"WriteProcessMemory|injection buffer|injected bytes|shellcode extraction", re.I)
 
-    The bytes are what CAPE recorded being written. That does not establish they are
-    the final executable payload — which is precisely what the malfind correlation
-    exists to test. Calling it "ground truth" is the same overclaim ADR-019 retired
-    family attribution for, and a reader who checks will notice.
+
+def test_extraction_is_not_described_as_ground_truth():
+    r"""`WriteProcessMemory` traces are a strong observation, not ground truth.
+
+    The bytes are what CAPE recorded being written. That does not establish they are the
+    final executable payload — which is precisely what the malfind correlation exists to
+    test. Calling it "ground truth" is the same overclaim ADR-019 retired family
+    attribution for.
+
+    THIS TEST'S FIRST VERSION WAS A DEAD CONTROL, and the failure is instructive enough
+    to keep on the record. It matched `ground[- ]truth\s+\w*\s*(extraction|shellcode)`
+    and read README.md only. The live instance was a mermaid node reading
+    "WriteProcessMemory API traces — ground truth" — the phrase TRAILS its subject, so
+    the regex missed it — and the same commit that "fixed" the wording moved that
+    diagram into ARCHITECTURE.md, outside the file the guard read. The guard passed, the
+    claim survived, and a reviewer found it. A control that watches a proxy rather than
+    the thing it protects is exactly what test_dead_controls.py exists for.
+
+    Now: scan BOTH documents, match on the SUBJECT rather than a phrase ordering.
     """
-    hit = re.search(r"ground[- ]truth\s+\w*\s*(extraction|shellcode)", README, re.I)
-    assert not hit, (
-        f"README describes extraction as {hit.group(0)!r}. CAPE's WriteProcessMemory "
-        f"observation is trace-derived, not ground truth.")
+    for name, doc in (("README.md", README), ("ARCHITECTURE.md", ARCHITECTURE)):
+        for line in doc.splitlines():
+            if _EXTRACTION_SUBJECT.search(line) and re.search(r"ground[- ]truth", line, re.I):
+                raise AssertionError(
+                    f"{name} calls injection extraction ground truth: {line.strip()!r}. "
+                    f"CAPE's WriteProcessMemory observation is trace-derived — it records "
+                    f"what was written, not that those bytes are the final payload.")
 
 
 def test_air_gap_claim_is_scoped_to_the_detonation_network():
