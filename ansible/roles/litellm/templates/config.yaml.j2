@@ -80,6 +80,32 @@ model_list:
       model: "anthropic/qwen3.6"
       api_base: "{{ litellm_llamacpp_anthropic_base | default('http://127.0.0.1:11435') }}"
       api_key: "sk-none"
+
+  # The SUMMARY model, on the same llama.cpp server. Kept separate from -re above
+  # on purpose, twice over:
+  #
+  #   1. -re carries NO cloud fallback by design (see `fallbacks` below and
+  #      test_litellm_fallbacks.py) because its context holds decompiled malware.
+  #      Summaries have always fallen back to Haiku via local-qwen; pointing them
+  #      at -re would silently remove that, turning a degraded summary into a
+  #      failed pipeline stage.
+  #   2. -re names the agentic RE arm the eval harness measures. Routing summary
+  #      traffic through it would put unrelated load on the alias whose behaviour
+  #      the scorecard attributes to RE.
+  #
+  # This one DOES take the /v1 suffix: it uses the OpenAI leg, replacing
+  # `ollama_chat/`, which is also an OpenAI-shaped chat completion and so the
+  # closer behavioural match. The anthropic/ leg above exists for -re specifically
+  # because #285 needed thinking to survive tool-calling turns; summaries make no
+  # tool calls.
+  #
+  # Exists so the pipeline stops depending on Ollama, which serves the SAME
+  # qwen3.6 weights and loads a second ~14GB copy alongside llama-server (#407).
+  - model_name: "local-qwen-llamacpp"
+    litellm_params:
+      model: "openai/qwen3.6"
+      api_base: "{{ litellm_llamacpp_openai_base | default('http://127.0.0.1:11435/v1') }}"
+      api_key: "sk-none"
 {% for seed in litellm_llamacpp_seeds %}
 {% if loop.first %}
   # ---------------------------------------------------------------------------
@@ -146,7 +172,7 @@ litellm_settings:
   #     and defeating the air-gap that is the whole reason RE runs locally.
   #     RE must fail loudly and stay offline. Guarded by
   #     pipeline/tests/test_litellm_fallbacks.py.
-  fallbacks: [{"local-qwen": ["haiku-fallback"]}]
+  fallbacks: [{"local-qwen": ["haiku-fallback"]}, {"local-qwen-llamacpp": ["haiku-fallback"]}]
 
 general_settings:
   master_key: "{{ litellm_master_key | mandatory }}"
