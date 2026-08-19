@@ -101,11 +101,27 @@ model_list:
   #
   # Exists so the pipeline stops depending on Ollama, which serves the SAME
   # qwen3.6 weights and loads a second ~14GB copy alongside llama-server (#407).
+  # enable_thinking:false is LOAD-BEARING, not a tuning knob. qwen3.6 is a thinking
+  # model, and on llama.cpp's OpenAI leg the thinking goes to `reasoning_content`
+  # while `content` comes back EMPTY. Measured 2026-08-19 on the deployed proxy:
+  #
+  #   without it   content_len=0    finish=length  completion_tokens=400  34.0s
+  #   with it      content_len=436  finish=stop    completion_tokens=86    7.1s
+  #
+  # Without it the call still returns HTTP 200 with no error, so the Haiku fallback
+  # below never fires and the pipeline writes an EMPTY executive summary — a stage
+  # that succeeds and produces nothing. Ollama's leg does not have this problem,
+  # which is why the swap looked safe and was not.
+  #
+  # `/no_think` in the prompt does NOT do this; chat_template_kwargs is the switch
+  # that works (#297). Guarded by pipeline/tests/test_litellm_summary_thinking.py.
   - model_name: "local-qwen-llamacpp"
     litellm_params:
       model: "openai/qwen3.6"
       api_base: "{{ litellm_llamacpp_openai_base | default('http://127.0.0.1:11435/v1') }}"
       api_key: "sk-none"
+      chat_template_kwargs:
+        enable_thinking: false
 {% for seed in litellm_llamacpp_seeds %}
 {% if loop.first %}
   # ---------------------------------------------------------------------------
