@@ -13,11 +13,22 @@ pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
 pipeline_report_retention_days: 7
 
 # LLM model the pipeline REQUESTS for the summary stages (routed via LiteLLM).
-# Default local-first (Ollama Qwen3.6); set to a Haiku model to revert to cloud,
+# Default local-first (llama.cpp Qwen3.6); set to a Haiku model to revert to cloud,
 # or local-qwen-strict for offline (no Haiku fallback). Distinct from the litellm
 # role's interpret_summary_model, which names an Anthropic model_list entry.
-pipeline_summary_model: "local-qwen"
-pipeline_plain_english_model: "local-qwen"
+#
+# Moved off "local-qwen" (Ollama) in favour of llama.cpp, which already serves the
+# SAME qwen3.6 weights. With both running, the first summary call loads a second
+# ~14GB copy alongside llama-server's, on a host with ~31GB available (#407, #191).
+# That is the condition #403 recorded as an OOM kill of llama-server MID-SWEEP —
+# and because determinism only holds within one server session, a restart part-way
+# through a run makes the cells either side of it incomparable without anything in
+# the scorecard showing it.
+#
+# Both aliases keep the Haiku fallback, so a local outage still degrades rather
+# than failing the stage.
+pipeline_summary_model: "local-qwen-llamacpp"
+pipeline_plain_english_model: "local-qwen-llamacpp"
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
 pipeline_volatility_triggers:
