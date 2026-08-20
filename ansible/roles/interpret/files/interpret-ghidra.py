@@ -2196,8 +2196,105 @@ def _promote_nested_analysis(result: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: dict[str, Any]) -> None:
-    """Summarize the full pipeline report in a single Claude call (no tools)."""
+# ---------------------------------------------------------------------------
+# Summary transport
+# ---------------------------------------------------------------------------
+
+#: Summary models whose ANTHROPIC leg cannot be made to answer, so the prose
+#: stages take LiteLLM's OpenAI leg instead. Prefix match, so a future
+#: `-sum`/`-s<seed>` variant is covered without editing this.
+_OPENAI_LEG_SUMMARY_PREFIXES = ("local-qwen-llamacpp",)
+
+#: qwen3.6 is a thinking model, and NOTHING disables that over /v1/messages.
+#: Measured end to end 2026-08-19, identical prompt, max_tokens=400:
+#:
+#:   llama-server DIRECT  /v1/messages       + chat_template_kwargs  ->  496 chars,  9.0s
+#:   llama-server DIRECT  /chat/completions  + chat_template_kwargs  ->  496 chars,  7.9s
+#:   LiteLLM   /chat/completions  kwarg in litellm_params            ->  436 chars,  7.1s
+#:   LiteLLM   /v1/messages       kwarg in litellm_params            ->  0 chars, 400 tok
+#:   LiteLLM   /v1/messages       kwarg in extra_body                ->  0 chars, 400 tok
+#:   LiteLLM   /v1/messages       kwarg in the request body          ->  0 chars, 400 tok
+#:   LiteLLM   /v1/messages       anthropic thinking:{disabled}      ->  0 chars, 400 tok
+#:
+#: llama.cpp honours the kwarg on BOTH of its endpoints. LiteLLM's anthropic
+#: translator drops it, correctly — `chat_template_kwargs` is not in the Anthropic
+#: schema, so the mapping layer has nowhere to put it. No config can fix that.
+#:
+#: The failure was silent and expensive: the model spent its whole budget thinking,
+#: returned content with no text block, and the pipeline stored an EMPTY executive
+#: summary after a 300s timeout. HTTP 200 throughout, so the Haiku fallback never
+#: fired — the same succeeds-but-produces-nothing shape as #411.
+#:
+#: Cloud models are unaffected and keep the anthropic client: they have no chat
+#: template to configure, and the passthrough is where prompt caching lives.
+
+
+def _needs_openai_leg(model: str) -> bool:
+    return model.startswith(_OPENAI_LEG_SUMMARY_PREFIXES)
+
+
+def summarize_via_openai_leg(http_client: httpx.Client, base_url: str, api_key: str,
+                             model: str, system: str, prompt_text: str,
+                             max_tokens: int, label: str = "summary") -> tuple[str, dict]:
+    """One prose completion over LiteLLM's OpenAI leg, thinking disabled.
+
+    Same transport `synthesize_analysis` already uses for local structured output,
+    for the same reason: it is the only route on which llama.cpp can be told not to
+    think. Returns (text, usage) with usage in the Anthropic key names the callers
+    and the scorecard already expect.
+
+    Raises on transport failure so the caller's existing error branch reports it,
+    rather than emitting an empty summary that reads as "nothing to say".
+    """
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "system", "content": system},
+                     {"role": "user", "content": prompt_text}],
+        # Belt and braces: also set at the alias in litellm_params. Sending it here
+        # too means a summary does not start thinking for 300s because a config edit
+        # dropped the alias-level copy.
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    log_request_shape(label, model, None, None,
+                      payload["messages"], wire="openai")
+    # The client is REQUIRED, never constructed here. This container runs
+    # --network=none and reaches LiteLLM only over a Unix socket, so a bare
+    # httpx.Client() would not route anywhere — and would carry httpx's default
+    # timeout, which is far below CPU inference latency. Callers pass the same
+    # UDS-aware client `synthesize_analysis` uses. Guarded by
+    # test_interpret_streaming.py::test_no_bare_httpx_client_survives, which caught
+    # exactly this in the first draft.
+    try:
+        t0 = time.time()
+        resp = http_client.post(
+            base_url.rstrip("/") + "/chat/completions",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
+            timeout=LLM_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        log_request_result(label, data, time.time() - t0, wire="openai")
+    except httpx.HTTPError:
+        raise
+    choice = (data.get("choices") or [{}])[0]
+    text = (choice.get("message") or {}).get("content") or ""
+    u = data.get("usage") or {}
+    return text, {"input_tokens": u.get("prompt_tokens", 0),
+                  "output_tokens": u.get("completion_tokens", 0)}
+
+
+def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: dict[str, Any],
+                  http_client: httpx.Client | None = None,
+                  openai_base: str = "", api_key: str = "") -> None:
+    """Summarize the full pipeline report in a single call (no tools).
+
+    `openai_base`/`api_key` route local llama.cpp models over LiteLLM's OpenAI leg;
+    see _OPENAI_LEG_SUMMARY_PREFIXES for why that is the only route on which they
+    can be told not to think. Cloud models ignore both and use `client`.
+    """
     model = config.get("summary_model", config.get("model", DEFAULT_CONFIG["model"]))
     max_tokens = config.get("max_output_tokens", DEFAULT_CONFIG["max_output_tokens"])
 
@@ -2415,24 +2512,30 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
     prompt_text = KNOWN_GOOD_CONTEXT + "\n\n" + INETSIM_CONTEXT + "\n\n" + "\n".join(parts)
 
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=CACHED_SUMMARY_SYSTEM,
-            messages=[{"role": "user", "content": prompt_text}],
-        )
-        text = "".join(b.text for b in response.content if b.type == "text")
+        if _needs_openai_leg(model) and openai_base and http_client is not None:
+            text, usage = summarize_via_openai_leg(
+                http_client, openai_base, api_key or "", model,
+                CACHED_SUMMARY_SYSTEM, prompt_text, max_tokens, label="summary")
+        else:
+            response = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=CACHED_SUMMARY_SYSTEM,
+                messages=[{"role": "user", "content": prompt_text}],
+            )
+            text = "".join(b.text for b in response.content if b.type == "text")
+            usage = usage_from_response(response)
         summary = parse_final_response(text)
         emit({
             "type": "summary",
             "summary": summary,
             "model_used": model,
-            "usage": usage_from_response(response),
+            "usage": usage,
         })
-    except anthropic.APIError as e:
+    except (anthropic.APIError, httpx.HTTPError) as e:
         emit({
             "type": "summary",
-            "summary": {"error": f"Claude API error: {e}"},
+            "summary": {"error": f"{type(e).__name__}: {e}"},
             "model_used": model,
         })
 
@@ -2519,7 +2622,9 @@ def main() -> None:
     if init_msg.get("type") == "summarize":
         report = init_msg.get("report", {})
         config = init_msg.get("config", {})
-        run_summarize(summary_client, report, {**DEFAULT_CONFIG, **config})
+        run_summarize(summary_client, report, {**DEFAULT_CONFIG, **config},
+                      http_client=synth_http, openai_base=synth_openai_base,
+                      api_key=api_key)
         sys.exit(0)
 
     # ---- Plain English summary — non-technical explanation ----
@@ -2536,16 +2641,26 @@ Family: {family}
 Severity: {severity}
 Technical summary: {executive}"""
 
+        pe_model = init_msg.get("model", DEFAULT_CONFIG["model"])
         try:
-            response = summary_client.messages.create(
-                model=init_msg.get("model", DEFAULT_CONFIG["model"]),
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = "".join(b.text for b in response.content if b.type == "text")
+            # Same transport split as run_summarize: a local llama.cpp model cannot be
+            # told to stop thinking over /v1/messages, and a 200-token budget is spent
+            # entirely on thinking before any prose is emitted.
+            if _needs_openai_leg(pe_model) and synth_openai_base:
+                text, usage = summarize_via_openai_leg(
+                    synth_http, synth_openai_base, api_key, pe_model,
+                    "You explain malware analysis in plain language.",
+                    prompt, 200, label="plain_english")
+            else:
+                response = summary_client.messages.create(
+                    model=pe_model,
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                text = "".join(b.text for b in response.content if b.type == "text")
+                usage = usage_from_response(response)
             emit({"type": "plain_english", "summary": text.strip(),
-                  "usage": usage_from_response(response),
-                  "model_used": init_msg.get("model", DEFAULT_CONFIG["model"])})
+                  "usage": usage, "model_used": pe_model})
         except Exception as e:
             emit({"type": "plain_english", "summary": "", "error": str(e)})
         sys.exit(0)
