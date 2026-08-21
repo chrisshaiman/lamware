@@ -2694,6 +2694,30 @@ Technical summary: {executive}"""
     # it, so this is a no-op in normal runs. Mirrors re_backend on the agentic path,
     # and for the same non-negotiable reason: the passthrough serves no local model,
     # so "local" and "router" are one choice here, not two (#273).
+    # Wired to the .NET, Go and PowerShell pilot paths, PLUS visual_analysis.
+    #
+    # visual_analysis was added 2026-08-20 on two grounds, both measured:
+    #
+    #   FREQUENCY  it runs on 12 of 13 recorded analyses (92%), because screenshots
+    #              come from CAPE detonation and that happens for every sample. The
+    #              other unwired paths are file-type gated — java_cfr, office_macro
+    #              and pyinstaller fired on 0 of those 13.
+    #   CONTENT    it is the only stage that transmits base64 SCREENSHOTS of a
+    #              detonated sample: ransom notes, credential dialogs, C2 panels.
+    #              Every analysis on record ran it on claude-sonnet-4-6 through the
+    #              anthropic passthrough (model_initial = model_final =
+    #              claude-sonnet-4-6, provider = anthropic, 12/12 reports).
+    #
+    # The capability was already present and simply not connected: llama-server runs
+    # with `--mmproj /models/mmproj-F16.gguf` and answers image prompts on both
+    # message shapes — a solid-colour PNG returned "The image is red" in 1.3s via
+    # /chat/completions and 0.5s via /v1/messages, measured the same day.
+    #
+    # java_cfr, office_macro, pyinstaller and evasion_hunter are deliberately LEFT on
+    # the cloud client. Widening the pilot to all eight would swap Sonnet for a 35B
+    # across paths that rarely run, with no measurement of the quality cost — and the
+    # original pilot boundary was chosen for reasons nobody wrote down, so it is not
+    # mine to erase wholesale.
     ss_client = summary_client if config.get("single_shot_backend") == "local" else client
 
     # ---- .NET path — single-shot, no tools ----
@@ -2906,7 +2930,7 @@ Technical summary: {executive}"""
                 },
             })
         try:
-            response = client.messages.create(
+            response = ss_client.messages.create(
                 model=model,
                 max_tokens=max_output_tokens,
                 system=CACHED_VISUAL_SYSTEM,

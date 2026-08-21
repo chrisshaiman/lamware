@@ -1,6 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""Static guard: the single-shot backend knob is wired to exactly the 3 pilot paths."""
+"""Static guard: which stages honour single_shot_backend, and which deliberately do not."""
 from pathlib import Path
 
 SCRIPT = (Path(__file__).resolve().parents[2]
@@ -35,10 +35,58 @@ def test_ss_client_defined_from_backend_flag():
     assert 'ss_client = summary_client if config.get("single_shot_backend") == "local" else client' in text
 
 
-def test_exactly_three_pilot_paths_use_ss_client():
-    text = SCRIPT.read_text(encoding="utf-8")
-    # .NET, Go, PowerShell — and only those — route through ss_client.
-    assert text.count("ss_client.messages.create(") == 3
+#: Stages wired to the single-shot backend knob, and the stages deliberately not.
+#: Named rather than counted: the previous version asserted `== 3` with no record of
+#: WHICH three or why, so a change could satisfy it by moving one stage in and another
+#: out. It also could not say whether a fourth was an oversight or a decision.
+_WIRED = {"dotnet", "go_goresym", "powershell", "visual_analysis"}
+_NOT_WIRED = {"java_cfr", "office_macro", "pyinstaller", "evasion_hunter"}
+
+
+def _client_by_stage() -> dict[str, str]:
+    import re
+    stage, out = None, {}
+    for ln in SCRIPT.read_text(encoding="utf-8").splitlines():
+        m = re.search(r'analysis_type"\)\s*==\s*"([a-z_0-9]+)"', ln)
+        if m:
+            stage = m.group(1)
+        c = re.search(r"response = (ss_client|client)\.messages\.create", ln)
+        if c and stage:
+            out.setdefault(stage, c.group(1))
+    return out
+
+
+def test_the_stage_parser_finds_every_known_path():
+    """Without this the two tests below pass vacuously if the dispatch is refactored."""
+    found = set(_client_by_stage())
+    missing = (_WIRED | _NOT_WIRED) - found
+    assert not missing, f"parser located no client call for {sorted(missing)}"
+
+
+def test_wired_paths_use_ss_client():
+    found = _client_by_stage()
+    wrong = {s: found[s] for s in sorted(_WIRED) if found.get(s) != "ss_client"}
+    assert not wrong, f"these must honour single_shot_backend: {wrong}"
+
+
+def test_unwired_paths_stay_on_the_cloud_client():
+    """The pilot boundary is a decision, not an accident.
+
+    visual_analysis was added to _WIRED on 2026-08-20 on measured grounds: it runs on
+    12 of 13 recorded analyses (screenshots come from CAPE detonation, so every
+    sample), and it is the only stage that transmits base64 screenshots of detonated
+    malware — ransom notes, credential dialogs, C2 panels — which every report on
+    record sent to claude-sonnet-4-6 via the anthropic passthrough.
+
+    The remaining four are file-type gated and fired on 0 of those same 13. Moving
+    them would swap Sonnet for a 35B on paths that rarely run, with no measurement of
+    the quality cost. Widen this set only with a reason recorded here.
+    """
+    found = _client_by_stage()
+    moved = {s: found[s] for s in sorted(_NOT_WIRED) if found.get(s) != "client"}
+    assert not moved, (
+        f"{moved} moved onto the local backend without widening _NOT_WIRED — if that "
+        f"is intended, record why here")
 
 
 def test_local_re_swaps_to_the_router_client():
