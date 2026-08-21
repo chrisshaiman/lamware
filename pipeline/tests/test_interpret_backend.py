@@ -30,9 +30,22 @@ def _comment_block_above(anchor: str) -> str:
     return "\n".join(reversed(out))
 
 
-def test_ss_client_defined_from_backend_flag():
+def test_backend_flag_is_a_flag_not_a_client():
+    """It used to select a CLIENT: `ss_client = summary_client if ... else client`.
+
+    That shape was the bug. summary_client speaks to /v1/messages, where a local
+    model's thinking cannot be disabled, so every stage that "selected local" got an
+    empty response. Measured 2026-08-20 at max_tokens=1024: dotnet, go_goresym and
+    powershell each returned 0 characters after burning the full budget, and visual
+    returned 0 after 302s. The flag was wired, guarded, and non-functional.
+
+    It is now a boolean consumed by single_shot_completion, which picks the transport
+    that can actually answer.
+    """
     text = SCRIPT.read_text(encoding="utf-8")
-    assert 'ss_client = summary_client if config.get("single_shot_backend") == "local" else client' in text
+    assert 'ss_local = config.get("single_shot_backend") == "local"' in text
+    assert "ss_client = summary_client" not in text, (
+        "selecting a client here reintroduces the empty-response bug")
 
 
 #: Stages wired to the single-shot backend knob, and the stages deliberately not.
@@ -50,7 +63,11 @@ def _client_by_stage() -> dict[str, str]:
         m = re.search(r'analysis_type"\)\s*==\s*"([a-z_0-9]+)"', ln)
         if m:
             stage = m.group(1)
-        c = re.search(r"response = (ss_client|client)\.messages\.create", ln)
+        # Two shapes now: converted stages call single_shot_completion(ss_local, ...);
+        # unconverted ones still call client.messages.create directly.
+        if "single_shot_completion(" in ln and stage:
+            out.setdefault(stage, "single_shot_completion")
+        c = re.search(r"response = (client)\.messages\.create", ln)
         if c and stage:
             out.setdefault(stage, c.group(1))
     return out
@@ -63,10 +80,16 @@ def test_the_stage_parser_finds_every_known_path():
     assert not missing, f"parser located no client call for {sorted(missing)}"
 
 
-def test_wired_paths_use_ss_client():
+def test_wired_paths_go_through_single_shot_completion():
+    """Honouring the flag means routing through the dispatcher, not picking a client.
+
+    A stage that reads ss_local and then calls the anthropic client anyway is the
+    original defect with extra steps.
+    """
     found = _client_by_stage()
-    wrong = {s: found[s] for s in sorted(_WIRED) if found.get(s) != "ss_client"}
-    assert not wrong, f"these must honour single_shot_backend: {wrong}"
+    wrong = {s: found.get(s) for s in sorted(_WIRED)
+             if found.get(s) != "single_shot_completion"}
+    assert not wrong, f"these must dispatch via single_shot_completion: {wrong}"
 
 
 def test_unwired_paths_stay_on_the_cloud_client():
@@ -125,3 +148,58 @@ def test_the_transport_comment_names_both_routes():
     upper = block.upper()
     assert "CLOUD" in upper and "ROUTER" in upper, (
         "it must say which transport serves which path, rather than naming one")
+
+
+def _dispatcher_body() -> str:
+    """single_shot_completion's source, comments and docstring stripped.
+
+    An absence check must not be satisfiable by the prose explaining the absence —
+    the docstring here quotes the very transport it must not use.
+    """
+    import re
+    src = SCRIPT.read_text(encoding="utf-8")
+    body = re.search(r"^def single_shot_completion\(.*?(?=^def |\Z)", src, re.S | re.M)
+    assert body, "single_shot_completion not found"
+    out, in_doc = [], False
+    for ln in body.group(0).splitlines():
+        s = ln.strip()
+        if s.startswith('"""') or s.endswith('"""'):
+            if s.count('"""') == 1:
+                in_doc = not in_doc
+            continue
+        if in_doc or s.startswith("#"):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def test_the_local_branch_actually_routes_somewhere():
+    """The call-site guards above pass even if the local branch never fires.
+
+    Verified: replacing the branch condition with `if False:` — which restores the
+    exact bug, every local stage falling through to the anthropic client — left all
+    of them green. Shape assertions cannot see behaviour, so this pins the branch.
+    """
+    body = _dispatcher_body()
+    assert "if use_local" in body, (
+        "the local branch must be reachable; a disabled condition silently restores "
+        "the empty-response bug")
+    local_half = body.split("if use_local", 1)[1].split("response = anthropic_client")[0]
+    assert "/chat/completions" in local_half, (
+        "local must post to the OpenAI leg — /v1/messages returns 0 characters")
+    assert "enable_thinking" in local_half, (
+        "local must disable thinking, or the whole budget goes to reasoning")
+
+
+def test_the_cloud_branch_still_uses_the_anthropic_client():
+    body = _dispatcher_body()
+    assert "anthropic_client.messages.create" in body, (
+        "cloud models must keep the passthrough — prompt caching lives there")
+
+
+def test_images_survive_the_conversion():
+    """A multimodal stage over the OpenAI leg loses its images silently without this:
+    the request succeeds and the model describes nothing."""
+    src = SCRIPT.read_text(encoding="utf-8")
+    assert "image_url" in src and "_to_openai_content" in src, (
+        "Anthropic image blocks must be converted to OpenAI image_url parts")

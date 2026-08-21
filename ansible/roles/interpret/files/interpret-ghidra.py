@@ -2286,6 +2286,100 @@ def summarize_via_openai_leg(http_client: httpx.Client, base_url: str, api_key: 
                   "output_tokens": u.get("completion_tokens", 0)}
 
 
+def _flatten_system(system) -> str:
+    """Anthropic system blocks -> a plain string for the OpenAI leg.
+
+    CACHED_SUMMARY_SYSTEM and CACHED_VISUAL_SYSTEM are lists of content blocks with
+    `cache_control`, which is Anthropic's shape. The OpenAI leg wants a string.
+    """
+    if isinstance(system, str):
+        return system
+    return "\n".join(b.get("text", "") for b in (system or [])
+                      if isinstance(b, dict) and b.get("type") == "text")
+
+
+def _to_openai_content(content):
+    """Anthropic message content -> OpenAI content, preserving images.
+
+    The visual stage builds Anthropic image blocks:
+        {"type": "image", "source": {"type": "base64", "media_type": ..., "data": ...}}
+    The OpenAI leg expects:
+        {"type": "image_url", "image_url": {"url": "data:<media_type>;base64,<data>"}}
+
+    Without this conversion a multimodal stage sent over the OpenAI leg loses its
+    images silently — the request succeeds and the model describes nothing.
+    """
+    if isinstance(content, str):
+        return content
+    out = []
+    for blk in content or []:
+        if not isinstance(blk, dict):
+            continue
+        if blk.get("type") == "image":
+            src = blk.get("source") or {}
+            media = src.get("media_type", "image/png")
+            out.append({"type": "image_url", "image_url": {
+                "url": f"data:{media};base64,{src.get('data', '')}"}})
+        else:
+            out.append(blk)
+    return out
+
+
+def single_shot_completion(use_local: bool, anthropic_client, http_client,
+                           base_url: str, api_key: str, model: str, system,
+                           content, max_tokens: int, label: str) -> tuple[str, dict]:
+    """One single-shot completion, over whichever transport can actually answer.
+
+    LOCAL MODELS MUST NOT USE THE ANTHROPIC CLIENT. qwen3.6 is a thinking model and
+    nothing disables that over /v1/messages, so the whole budget goes to reasoning
+    and `content` comes back empty. Measured 2026-08-20 through the deployed proxy,
+    representative single-shot payloads, max_tokens=1024:
+
+        stage        /v1/messages (ss_client)      OpenAI leg + enable_thinking:false
+        dotnet       97.2s  1024 tok  0 chars      40.5s   509 tok  2249 chars
+        go_goresym   91.2s  1024 tok  0 chars      57.8s   737 tok  3005 chars
+        powershell   89.7s  1024 tok  0 chars      80.2s  1024 tok  4233 chars
+        visual       302.2s 2048 tok  0 chars     153.5s   303 tok  1324 chars
+
+    Every path returned ZERO characters on the router. `single_shot_backend=local`
+    was wired, guarded by test_interpret_backend, and non-functional for every stage
+    it claimed to cover — the failure was invisible because an empty analysis reads
+    as "nothing to report" rather than "the transport cannot answer" (#411's shape).
+
+    Cloud models keep the anthropic client: they have no chat template to configure,
+    and the passthrough is where prompt caching lives.
+    """
+    if use_local and base_url and http_client is not None:
+        payload = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "system", "content": _flatten_system(system)},
+                         {"role": "user", "content": _to_openai_content(content)}],
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        log_request_shape(label, model, None, None, payload["messages"], wire="openai")
+        t0 = time.time()
+        resp = http_client.post(
+            base_url.rstrip("/") + "/chat/completions", json=payload,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"},
+            timeout=LLM_TIMEOUT_S)
+        resp.raise_for_status()
+        data = resp.json()
+        log_request_result(label, data, time.time() - t0, wire="openai")
+        msg = ((data.get("choices") or [{}])[0].get("message") or {})
+        u = data.get("usage") or {}
+        return (msg.get("content") or ""), {
+            "input_tokens": u.get("prompt_tokens", 0),
+            "output_tokens": u.get("completion_tokens", 0)}
+
+    response = anthropic_client.messages.create(
+        model=model, max_tokens=max_tokens, system=system,
+        messages=[{"role": "user", "content": content}])
+    text = "".join(b.text for b in response.content if b.type == "text")
+    return text, usage_from_response(response)
+
+
 def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: dict[str, Any],
                   http_client: httpx.Client | None = None,
                   openai_base: str = "", api_key: str = "") -> None:
@@ -2718,34 +2812,34 @@ Technical summary: {executive}"""
     # across paths that rarely run, with no measurement of the quality cost — and the
     # original pilot boundary was chosen for reasons nobody wrote down, so it is not
     # mine to erase wholesale.
-    ss_client = summary_client if config.get("single_shot_backend") == "local" else client
+    # A FLAG, not a client. The router client cannot answer for a local model at all
+    # (see single_shot_completion for the measurements), so "pick a client" was the
+    # wrong shape — every stage that picked the local one got an empty response.
+    ss_local = config.get("single_shot_backend") == "local"
 
     # ---- .NET path — single-shot, no tools ----
     if ghidra_data.get("analysis_type") == "dotnet":
         emit_status(f"Starting .NET analysis with {model}", 0)
         dotnet_text = _ctx + build_dotnet_message(ghidra_data, config)
         try:
-            response = ss_client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_DOTNET_SYSTEM,
-                messages=[{"role": "user", "content": dotnet_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_DOTNET_SYSTEM, dotnet_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -2818,27 +2912,24 @@ Technical summary: {executive}"""
         emit_status(f"Starting PowerShell analysis with {model}", 0)
         ps_text = _ctx + build_powershell_message(ghidra_data, config)
         try:
-            response = ss_client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_POWERSHELL_SYSTEM,
-                messages=[{"role": "user", "content": ps_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_POWERSHELL_SYSTEM, ps_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -2878,27 +2969,24 @@ Technical summary: {executive}"""
         emit_status(f"Starting Go analysis with {model}", 0)
         go_text = _ctx + build_go_message(ghidra_data, config)
         try:
-            response = ss_client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_GO_SYSTEM,
-                messages=[{"role": "user", "content": go_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_GO_SYSTEM, go_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -2930,27 +3018,24 @@ Technical summary: {executive}"""
                 },
             })
         try:
-            response = ss_client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_VISUAL_SYSTEM,
-                messages=[{"role": "user", "content": content_parts}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_VISUAL_SYSTEM, content_parts, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
