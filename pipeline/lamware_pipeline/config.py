@@ -29,6 +29,11 @@ class InterpretConfig(BaseModel):
     max_string_length: int
     summary_model: str          # model for the executive/kill-chain summary
     plain_english_model: str    # model for the plain-English summary
+    # Wall-clock budget for the whole summarize container run. Defaulted rather than
+    # required so a config.json written before this key still loads — the eval harness
+    # passes whole config dicts through and an older one would fail validation, which
+    # `extra="forbid"` makes a hard error rather than a warning.
+    summary_timeout: int = 900
 
 
 class PipelineConfig(BaseModel):

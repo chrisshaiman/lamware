@@ -139,7 +139,13 @@ def test_interpret_submodel(tmp_path):
     p.write_text(json.dumps(_VALID))
     cfg = PipelineConfig.load(str(p))
     dumped = cfg.interpret.model_dump()
-    assert dumped == _VALID["interpret"]
+    # Subset, not equality. `_VALID` is a hand-written fixture, so an exact match
+    # makes every DEFAULTED field a fixture edit — and the failure reads as "the
+    # model changed" when the model is fine. Fields the fixture omits are covered by
+    # test_config_template_renders.py, which validates the real template against the
+    # real model rather than against anyone's belief about it.
+    for k, v in _VALID["interpret"].items():
+        assert dumped[k] == v, k
     assert dumped["model"] == "claude-sonnet-4-6"
     assert dumped["summary_model"] == "local-qwen"
 
