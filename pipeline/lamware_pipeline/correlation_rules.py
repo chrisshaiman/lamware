@@ -11,7 +11,9 @@ Each rule is a pure function (report: dict) -> list[dict]; findings preserve the
 historical key shape (type, severity, title, detail, sources, mitre, ...).
 """
 import ipaddress
+import json
 import os
+import re
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
 _PIPELINE_REPORTS_ROOT = "/opt/pipeline/reports"
@@ -49,26 +51,75 @@ def _within_allowed_root(path: str) -> bool:
     return False
 
 
-def _gather_dropped_files(report: dict) -> list[str]:
-    """Filenames from ghidra shellcode artifacts + the CAPE dropped dir (bounded)."""
+#: files.json categories that are CAPE's own dump artifacts rather than files
+#: the sample wrote. Their `filepath` points into the randomised per-analysis
+#: staging directory (C:\<random>\CAPE\<pid>_<ts>), which is not a guest path
+#: the sample chose and will never appear in dlllist.
+_CAPE_INTERNAL_CATEGORIES = {"CAPE", "procdump", "memory"}
+_ABS_WINDOWS_PATH_RE = re.compile(r"^[a-zA-Z]:[\\/]")
+
+
+def _gather_dropped_files(report: dict) -> tuple[list[str], str | None]:
+    """Guest paths of files the sample wrote, from CAPE's files.json manifest.
+
+    Returns (paths, reason_the_manifest_could_not_be_read). Bounded and
+    path-contained.
+
+    This used to list ``<task>/dropped/`` and return bare filenames. CAPEv2 does
+    not create that directory — it is Cuckoo's layout — so the listing found
+    nothing on any of the 1024 analyses on this host, and the only other source
+    was ``ghidra.analyzed_files[].shellcode_artifacts.file_paths``. Those are
+    Windows path STRINGS scraped by regex out of the first 64KB of a malfind
+    dump (see extract_shellcode_artifacts): what injected code mentions while
+    resolving imports, not what it wrote to disk. Feeding them to a rule that
+    reports "dropped file was loaded and executed" is a category error, and it
+    is the mechanism by which shellcode merely referencing a system DLL would
+    have produced a HIGH finding once the substring join matched it.
+
+    files.json is JSON Lines, one record per artifact CAPE retained, with the
+    guest path in `filepath` and the storage location in `path`. Records whose
+    filepath is not an absolute Windows path are CAPE's hash-named entries with
+    no known origin, and cannot be correlated against a loaded module.
+    """
+    cape = report.get("cape")
+    if not isinstance(cape, dict) or not cape:
+        # Cape did not run. Same treatment as `triggered: False` on the
+        # Volatility side: a reported pipeline state, not a silent degradation
+        # of correlation, so it produces no warning.
+        return [], None
+    task_id = cape.get("task_id")
+    if not task_id:
+        return [], "no Cape task id in report"
+    manifest = os.path.join(_CAPE_STORAGE_ROOT, str(task_id), "files.json")
+    if not _within_allowed_root(manifest):
+        return [], "manifest path outside the allowed storage root"
+    if not os.path.isfile(manifest):
+        return [], f"{manifest} not found"
+
     names: list[str] = []
-    # Pure: shellcode artifact paths already present in the report
-    for af in report.get("ghidra", {}).get("analyzed_files", []):
-        for path in af.get("shellcode_artifacts", {}).get("file_paths", []):
-            names.append(path)
-    # Impure: list the CAPE dropped dir if task_id known and path is contained
-    task_id = report.get("cape", {}).get("task_id")
-    if task_id:
-        dropped_dir = os.path.join(_CAPE_STORAGE_ROOT, str(task_id), "dropped")
-        if _within_allowed_root(dropped_dir) and os.path.isdir(dropped_dir):
-            try:
-                for fname in os.listdir(dropped_dir):
-                    names.append(fname)
-                    if len(names) >= _MAX_DROPPED_FILES:
-                        break
-            except OSError:
-                pass
-    return names[:_MAX_DROPPED_FILES]
+    try:
+        with open(manifest, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                if record.get("category") in _CAPE_INTERNAL_CATEGORIES:
+                    continue
+                filepath = record.get("filepath")
+                if not isinstance(filepath, str) or not _ABS_WINDOWS_PATH_RE.match(filepath):
+                    continue
+                names.append(filepath)
+                if len(names) >= _MAX_DROPPED_FILES:
+                    break
+    except OSError as exc:
+        return [], f"{type(exc).__name__} reading {manifest}"
+    return names[:_MAX_DROPPED_FILES], None
 
 
 def _gather_buffer_samples(report: dict) -> dict:
@@ -91,8 +142,10 @@ def _gather_buffer_samples(report: dict) -> dict:
 def enrich_correlation_inputs(report: dict) -> dict:
     """Populate report['_correlation_inputs'] from the filesystem. Idempotent:
     overwrites wholesale so replay re-runs are safe. Returns the (mutated) report."""
+    dropped_files, dropped_unavailable = _gather_dropped_files(report)
     report["_correlation_inputs"] = {
-        "dropped_files": _gather_dropped_files(report),
+        "dropped_files": dropped_files,
+        "dropped_files_unavailable": dropped_unavailable,
         "buffer_samples": _gather_buffer_samples(report),
     }
     return report
@@ -102,6 +155,29 @@ def enrich_correlation_inputs(report: dict) -> dict:
 # Rules — pure functions of the report dict (read _correlation_inputs only).
 # -------------------------------------------------------------------------
 
+def _normalise_win_path(value: str) -> str:
+    """Canonical form of a Windows path for equality comparison.
+
+    SysWOW64 folds onto System32 because the two sides record opposite ends of
+    WOW64 filesystem redirection: a 32-bit process writing to `System32` is
+    transparently redirected to `SysWOW64`, Cape logs the path the API was
+    called with, and Volatility reads the mapped file afterwards. Observed on
+    task 1023, where the sample dropped
+    `System32\\config\\systemprofile\\...\\UltraSuiteSmartCoreware\\ffmpeg.dll` and
+    Grape.exe loaded the SysWOW64 form of the same path. Everything below the
+    redirected root still has to match exactly, so this is nothing like the
+    basename join it replaces.
+    """
+    return (value.strip().strip('"').replace("/", "\\").lower()
+            .replace("\\syswow64\\", "\\system32\\"))
+
+
+def _basename(path: str) -> str:
+    """Last component of a Windows or POSIX path (os.path.basename is POSIX-only
+    here — the pipeline runs on Linux and would keep the whole backslash path)."""
+    return path.replace("/", "\\").rsplit("\\", 1)[-1]
+
+
 def rule_dropped_file_loaded(report: dict) -> list[dict]:
     """Dropped file (Cape) confirmed loaded into a process (Volatility dlllist)."""
     findings = []
@@ -110,29 +186,36 @@ def rule_dropped_file_loaded(report: dict) -> list[dict]:
     if not (isinstance(dlllist, list) and dropped_files):
         return findings
 
-    loaded_dlls = set()
+    # Full paths only, on both sides. The rule used to reduce the dropped file
+    # to its basename and then accept a SUBSTRING match against any loaded
+    # module — so a sample dropping `ntdll.dll` anywhere correlated with the
+    # system `c:\windows\system32\ntdll.dll` and reported HIGH. DLL
+    # side-loading is the most common reason a dropped name collides with a
+    # loaded one, so the rule misfired hardest on the samples it exists for.
+    # dlllist entries without a Path cannot establish identity and are skipped:
+    # matching a dropped file to a bare module NAME is the basename join again.
+    loaded: dict[str, list[dict]] = {}
     for entry in dlllist:
         dll_path = entry.get("Path", "")
-        dll_name = entry.get("Name", "")
-        if dll_path:
-            loaded_dlls.add(dll_path.lower())
-            loaded_dlls.add(dll_name.lower() if dll_name else "")
+        if not dll_path:
+            continue
+        loaded.setdefault(_normalise_win_path(dll_path), []).append(entry)
 
     for dropped in dropped_files:
-        dropped_name = dropped.lower().split("\\")[-1].split("/")[-1]
-        if dropped_name in loaded_dlls or any(dropped_name in dll for dll in loaded_dlls if dll):
-            pid_loaded_by = []
-            for entry in dlllist:
-                if dropped_name in (entry.get("Path", "") + entry.get("Name", "")).lower():
-                    pid_loaded_by.append(f"{entry.get('Process', '?')} (pid {entry.get('PID', '?')})")
-            findings.append({
-                "type": "dropped_file_loaded",
-                "severity": "high",
-                "title": f"Dropped file '{dropped_name}' was loaded and executed",
-                "detail": f"Cape observed this file being written to disk. Volatility confirms it was loaded by: {', '.join(set(pid_loaded_by[:5]))}",
-                "sources": ["Cape", "Volatility"],
-                "mitre": "T1059 — Execution",
-            })
+        key = _normalise_win_path(dropped)
+        if not key or key not in loaded:
+            continue
+        pid_loaded_by = []
+        for entry in loaded[key]:
+            pid_loaded_by.append(f"{entry.get('Process', '?')} (pid {entry.get('PID', '?')})")
+        findings.append({
+            "type": "dropped_file_loaded",
+            "severity": "high",
+            "title": f"Dropped file '{_basename(dropped)}' was loaded and executed",
+            "detail": f"Cape observed this file being written to {dropped}. Volatility confirms it was loaded by: {', '.join(dict.fromkeys(pid_loaded_by[:5]))}",
+            "sources": ["Cape", "Volatility"],
+            "mitre": "T1059 — Execution",
+        })
     return findings
 
 
@@ -201,22 +284,73 @@ _BENIGN_CMDLINE_FLAGS = ["-embedding", "-secured", "/prefetch:", "-servername:"]
 
 
 def _is_benign_cmdline_difference(before: str, after: str) -> bool:
-    """True if the only cmdline difference is a known benign flag (e.g. COM -Embedding)."""
-    b = before.strip().lower()
-    a = after.strip().lower()
+    """True if the only cmdline difference is a known benign flag (e.g. COM -Embedding).
+
+    Gated on the flag actually appearing. Without that gate the second branch
+    re-split both sides on whitespace and compared the results, which made the
+    helper a general whitespace-insensitive comparator: a changed argument whose
+    only difference was a space INSIDE quotes came back "benign" no matter which
+    flag was being considered, and the rule stayed silent on a real change.
+    """
+    b = _normalise_cmdline(before)
+    a = _normalise_cmdline(after)
     for flag in _BENIGN_CMDLINE_FLAGS:
+        if flag not in b and flag not in a:
+            continue
         if b.replace(flag, "").strip() == a.replace(flag, "").strip():
             return True
-        b_no_flag = " ".join(p for p in b.split() if flag not in p.lower())
-        a_no_flag = " ".join(p for p in a.split() if flag not in p.lower())
+        b_no_flag = " ".join(p for p in b.split() if flag not in p)
+        a_no_flag = " ".join(p for p in a.split() if flag not in p)
         if b_no_flag == a_no_flag:
             return True
     return False
 
 
+#: A path component Windows shortened to 8.3 form: PROGRA~1, DOCUME~1. The two
+#: sides of this rule read the same command line from different places — Cape
+#: logs what the launcher passed, Volatility reads the PEB later — and either
+#: may hold the short form. Resolving one to the other needs the guest
+#: filesystem, which is gone by the time correlation runs.
+_SHORT_PATH_RE = re.compile(r"~\d")
+
+
+def _split_cmdline(value: str) -> list[str]:
+    """Windows-ish argv split: whitespace-separated, double quotes group.
+
+    Not shlex — shlex is POSIX and treats the backslashes in every Windows path
+    as escapes, which mangles exactly the input this rule compares.
+    """
+    tokens: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for ch in value:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif ch.isspace() and not in_quotes:
+            if current:
+                tokens.append("".join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _normalise_cmdline(value: str) -> str:
+    """Canonical form for comparing two recordings of the same command line.
+
+    Removes the differences that are recording artefacts rather than evidence:
+    argv0 quoting (Cape logs `"C:\\x.exe" -a`, the PEB may hold `C:\\x.exe -a`),
+    runs of whitespace between arguments, and case. What survives is the
+    argument vector, which is what "spoofing" would have to change.
+    """
+    return " ".join(_split_cmdline(value)).strip().lower()
+
+
 def rule_cmdline_spoofing(report: dict) -> list[dict]:
     """Process cmdline in memory (Volatility PEB) differs from the launch cmdline
-    Cape logged → command-line spoofing. Verbatim logic from the original rule."""
+    Cape logged → command-line spoofing."""
     findings = []
     cape = report.get("cape", {})
     cmdline = report.get("volatility", {}).get("plugins", {}).get("cmdline", [])
@@ -242,21 +376,39 @@ def rule_cmdline_spoofing(report: dict) -> list[dict]:
     cape_cmdlines = cape.get("process_cmdlines", {})
     for pid, cape_cmd in cape_cmdlines.items():
         vol_cmd = vol_cmdlines.get(str(pid), "")
-        if vol_cmd and cape_cmd and vol_cmd.strip() != cape_cmd.strip():
-            if vol_cmd.strip().lower() != cape_cmd.strip().lower():
-                if _is_benign_cmdline_difference(cape_cmd, vol_cmd):
-                    continue
-                findings.append({
-                    "type": "cmdline_spoofing",
-                    "severity": "critical",
-                    "title": f"Command line spoofing detected in PID {pid}",
-                    "detail": "Process command line changed between execution and memory dump.",
-                    "before": cape_cmd[:300],
-                    "after": vol_cmd[:300],
-                    "pid": pid,
-                    "sources": ["Cape", "Volatility"],
-                    "mitre": "T1036 — Masquerading",
-                })
+        if not (vol_cmd and cape_cmd):
+            continue
+        # Normalise BEFORE comparing. The old rule compared raw strings and then
+        # tried to explain the difference away with a four-entry flag deny-list,
+        # which is the shape the frontend's DefangedAnchor comment argues
+        # against: on a security boundary a deny-list has to enumerate every way
+        # of writing the thing, and it never does. Quoting and whitespace are
+        # not flags, so no deny-list entry could have covered them, and each one
+        # produced a CRITICAL finding plus +10 on the deterministic severity
+        # score that ADR-017 exists to keep free of unreliable signal.
+        if _normalise_cmdline(vol_cmd) == _normalise_cmdline(cape_cmd):
+            continue
+        if _is_benign_cmdline_difference(cape_cmd, vol_cmd):
+            continue
+        # 8.3 vs long form is a recording difference we cannot resolve without
+        # the guest filesystem. Staying silent loses a spoof that also happens
+        # to involve a short path; firing calls an ordinary Windows path
+        # abbreviation critical. For a rule feeding the deterministic score,
+        # the miss is the cheaper error — and correlation_warnings is not the
+        # right home for it either, since this is one process, not a blind rule.
+        if _SHORT_PATH_RE.search(vol_cmd) or _SHORT_PATH_RE.search(cape_cmd):
+            continue
+        findings.append({
+            "type": "cmdline_spoofing",
+            "severity": "critical",
+            "title": f"Command line spoofing detected in PID {pid}",
+            "detail": "Process command line changed between execution and memory dump.",
+            "before": cape_cmd[:300],
+            "after": vol_cmd[:300],
+            "pid": pid,
+            "sources": ["Cape", "Volatility"],
+            "mitre": "T1036 — Masquerading",
+        })
     return findings
 
 
@@ -493,6 +645,18 @@ def correlation_warnings(report: dict) -> list[str]:
             warnings.append(
                 f"Volatility {name} unavailable ({reason}) — could not evaluate "
                 f"{_PLUGIN_CONSUMERS[name]}"
+            )
+    # The Cape half of rule_dropped_file_loaded needs the same treatment. Its
+    # input was silently empty on every run for a different reason than a failed
+    # plugin: it read a directory CAPEv2 does not create (see
+    # _gather_dropped_files). Only reported when dlllist IS usable — otherwise
+    # the dlllist warning above already says the rule could not be evaluated.
+    if _plugin_state(plugins, "dlllist")[0]:
+        reason = report.get("_correlation_inputs", {}).get("dropped_files_unavailable")
+        if reason:
+            warnings.append(
+                f"Cape dropped-file manifest unavailable ({reason}) — could not "
+                f"evaluate {_PLUGIN_CONSUMERS['dlllist']}"
             )
     return warnings
 

