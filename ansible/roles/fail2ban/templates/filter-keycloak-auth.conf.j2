@@ -1,7 +1,32 @@
 # /etc/fail2ban/filter.d/keycloak-auth.conf — managed by Ansible
-# Matches Keycloak login failure events from journald.
-# Keycloak 26.x logs: "LOGIN_ERROR ... ipAddress=1.2.3.4"
+#
+# Matches Keycloak login-failure events from journald.
+#
+# The previous pattern was `LOGIN_ERROR.*ipAddress=<HOST>` and NEVER MATCHED. Keycloak
+# 26 quotes its event values, so a real line reads
+#
+#   type="LOGIN_ERROR", realmId="0286a739-...", realmName="lamware",
+#     clientId="lamware-web", ..., ipAddress="34.29.229.177"
+#
+# and `ipAddress=<HOST>` cannot match a leading quote. fail2ban-regex against a real
+# journal line from this host returned `0 matched, 1 missed`, while the jail sat
+# enabled with maxretry=10 reporting zero failures — indistinguishable from nobody
+# attacking Keycloak. Same shape as the dead controls in tests/test_dead_controls.py.
+#
+# Two further properties this pattern needs, neither of which the old one had:
+#
+#   NON-GREEDY, ANCHORED TO THE FIELD. `.*` is greedy, so with an unquoted format it
+#   binds to the LAST `ipAddress=` on the line. In Keycloak's event format `username`
+#   comes AFTER `ipAddress`, so an unauthenticated attacker submitting a username of
+#   the form `ipAddress=<victim>` could ban an arbitrary IP through iptables-multiport
+#   on http,https. `[^,]*?` plus the explicit field boundary removes that.
+#
+#   QUOTE-OPTIONAL. Matching both spellings means a Keycloak upgrade that drops the
+#   quoting degrades to "still works" rather than back to "silently dead".
+#
+# Guarded by tests/test_keycloak_fail2ban_filter.py, which executes fail2ban-regex
+# against captured lines in both formats rather than eyeballing the pattern.
 
 [Definition]
-failregex = LOGIN_ERROR.*ipAddress=<HOST>
+failregex = ^.*?type="?LOGIN_ERROR"?[^\n]*?\bipAddress="?<HOST>"?
 ignoreregex =
