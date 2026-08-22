@@ -8,6 +8,11 @@
 # tool availability). All malware-derived content is wrapped in
 # UNTRUSTED_DATA delimiters — the same prompt-injection defense used by the
 # pipeline's interpret stage.
+#
+# That covers the STATIC context block built here. Mid-conversation tool results
+# are fenced separately, in orchestrator.py where they are appended, using the
+# same lamware_shared.untrusted helpers. Both halves matter: this block is a few
+# KB, the tool loop is tens of KB of decompiled code and strings.
 
 import logging
 import re

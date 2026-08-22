@@ -27,6 +27,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 import httpx
+from lamware_shared.untrusted import wrap_untrusted
 
 from ..config import settings
 from .tools import TOOL_DEFINITIONS, execute_tool
@@ -375,11 +376,25 @@ async def run_conversation_turn(
 
                 yield {"event": "tool_result", "data": {"tool": tool_name, "result": result}}
 
-                # Append tool result message
+                # Append tool result message — FENCED.
+                #
+                # decompile_function, get_strings_at, get_api_traces and run_python
+                # all return adversary-derived bytes, and in a deep investigation
+                # this is where most of them arrive: the static context block is a
+                # few KB, the tool loop is tens.
+                #
+                # Unfenced is worse than merely unprotected here. Rule 1 of the
+                # system prompt teaches the model that the fence IS the trust
+                # boundary, so content outside it is affirmatively framed as
+                # trustworthy — a sample with instructions in .rdata does not need
+                # to escape anything, it just needs to be read by a tool.
+                #
+                # Same defect GHSA-f5q8-v78c-mr55 #3 fixed in the pipeline's loop,
+                # which system_prompt.py already claimed parity with.
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": json.dumps(result),
+                    "content": wrap_untrusted(json.dumps(result)),
                 })
 
                 tool_calls_used += 1
