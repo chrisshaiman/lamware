@@ -145,5 +145,44 @@ def test_cross_correlate_sets_empty_warnings_when_healthy():
     assert report["correlation_warnings"] == []
 
 
+# --- the Cape half of rule_dropped_file_loaded gets the same treatment ---
+
+def test_an_unreadable_cape_manifest_is_reported_not_silent(tmp_path, monkeypatch):
+    """rule_dropped_file_loaded was blind on every run for a reason no plugin
+    check could catch: its Cape input listed `<task>/dropped/`, a directory
+    CAPEv2 does not create. Volatility was healthy, so nothing warned, and the
+    rule's silence read as "no dropped file was loaded"."""
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(tmp_path / "storage"))
+    report = _plugins(malfind=[], dlllist=[], cmdline=[], netscan=[])
+    report["cape"] = {"task_id": 7}
+    cross_correlate(report)
+    assert len(report["correlation_warnings"]) == 1
+    warning = report["correlation_warnings"][0]
+    assert "Cape dropped-file manifest unavailable" in warning
+    assert _PLUGIN_CONSUMERS["dlllist"] in warning
+
+
+def test_a_readable_manifest_produces_no_cape_warning(tmp_path, monkeypatch):
+    root = tmp_path / "storage"
+    (root / "7").mkdir(parents=True)
+    (root / "7" / "files.json").write_text("", encoding="utf-8")
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(root))
+    report = _plugins(malfind=[], dlllist=[], cmdline=[], netscan=[])
+    report["cape"] = {"task_id": 7}
+    cross_correlate(report)
+    assert report["correlation_warnings"] == []
+
+
+def test_a_dead_dlllist_does_not_also_warn_about_the_manifest(tmp_path, monkeypatch):
+    """One blind rule, one warning. When dlllist itself failed, the rule could
+    not have run whatever the manifest said."""
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(tmp_path / "storage"))
+    report = _plugins(malfind=[], dlllist={"error": "timeout"}, cmdline=[], netscan=[])
+    report["cape"] = {"task_id": 7}
+    cross_correlate(report)
+    assert len(report["correlation_warnings"]) == 1
+    assert "Volatility dlllist unavailable" in report["correlation_warnings"][0]
+
+
 def test_helper_is_reexported_from_correlation_module():
     assert reexported is correlation_warnings
