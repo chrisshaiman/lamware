@@ -15,8 +15,16 @@ dependencies = ["lamware-shared", "pydantic>=2", "psycopg2-binary>=2.9", "reques
 # to prove a module imports would only prove it imports against a fake, and this repo has
 # already been bitten by leaked sys.modules stubs (#214 — it got the WebSocket tests
 # excluded from CI entirely).
+#
+# jinja2 + pyyaml are here for the same reason, one layer out: test_config_template_renders
+# renders the REAL config.json.j2 against the REAL defaults/main.yml and validates the
+# result with the REAL PipelineConfig. Adding `summary_timeout` to the template but not the
+# model was a hard startup failure that killed every pipeline run, and the tests shipped
+# with it passed because none of them rendered anything. Ansible supplies both libraries at
+# deploy; CI installs only this package, so without them the guard would be skipped — and a
+# guard that skips in CI is the vacuous-test problem this repo keeps re-learning.
 [project.optional-dependencies]
-test = ["anthropic>=0.40", "httpx>=0.27"]
+test = ["anthropic>=0.40", "httpx>=0.27", "jinja2>=3.1", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
