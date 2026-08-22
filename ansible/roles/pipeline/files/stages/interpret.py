@@ -811,11 +811,27 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
     # large reports (42MB+ when malfind/volatility data is included)
     msg = json.dumps({"type": "summarize", "report": report, "config": interpret_config}, default=str)
 
+    # 300s was hardcoded here and is too tight for a CPU-generated summary.
+    # Measured 2026-08-20, qwen3.6 on llama.cpp, real report prompt (~2,800 tokens):
+    #
+    #   generation    1,959-3,402 output tokens at ~10 tok/s   ->  215-340s
+    #
+    # The length is not a defect. Every historical run produced a summary of the same
+    # order — local-qwen (Ollama) recorded 478, 479, 698, 1672, 1696, 1714, 1755, 1843
+    # and 1921 output tokens across the surviving reports, all of which SUCCEEDED. The
+    # stage has always sat just under the limit; moving to llama.cpp, which generates
+    # somewhat longer, pushed it over.
+    #
+    # A timeout that a normal run finishes 15s inside is not a safety margin. Note the
+    # failure mode it was producing: communicate() discards stdout on TimeoutExpired,
+    # so the summary was lost AND the request-shape events that would have explained
+    # why went with it — the run reported an empty summary with no evidence attached.
+    timeout_s = int(interpret_config.get("summary_timeout", 900))
     try:
-        stdout, stderr = proc.communicate(input=msg + "\n", timeout=300)
+        stdout, stderr = proc.communicate(input=msg + "\n", timeout=timeout_s)
     except subprocess.TimeoutExpired:
         proc.kill()
-        return {"error": "Summary generation timed out (300s)"}
+        return {"error": f"Summary generation timed out ({timeout_s}s)"}
     except Exception as e:
         proc.kill()
         return {"error": f"Summary communication error: {e}"}

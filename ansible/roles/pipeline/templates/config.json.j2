@@ -40,6 +40,7 @@
     "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
     "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
     "max_tool_calls": {{ interpret_max_tool_calls | default(10) }},
+    "summary_timeout": {{ interpret_summary_timeout | default(900) }},
     "max_imports": {{ interpret_max_imports | default(200) }},
     "max_strings": {{ interpret_max_strings | default(100) }},
     "max_string_length": {{ interpret_max_string_length | default(500) }},

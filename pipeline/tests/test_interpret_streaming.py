@@ -216,10 +216,23 @@ def test_synthesis_paths_share_the_same_budget():
     assert "timeout=LLM_TIMEOUT_S" in TMPL
 
 
-def test_single_shot_paths_are_left_alone():
-    """Only the long agentic paths changed — single-shot analysis calls are short and
-    were not implicated, so converting them would be unrequested scope."""
-    assert "response = ss_client.messages.create(" in TMPL
+def test_single_shot_paths_do_not_stream():
+    """Single-shot stages stay non-streaming; they are short and were never implicated.
+
+    This previously asserted `response = ss_client.messages.create(` verbatim, with
+    the reasoning that converting those calls "would be unrequested scope". That was
+    correct for a STREAMING change. It stopped being the right assertion on
+    2026-08-20, when the single-shot paths moved to `single_shot_completion` for an
+    unrelated reason: the router transport cannot answer for a local model at all, so
+    every stage using it returned zero characters.
+
+    The obligation that actually belongs to this file is "single-shot does not
+    stream", which is what is asserted now. Whether it uses the anthropic client or
+    the OpenAI leg is test_interpret_backend's business.
+    """
+    assert "single_shot_completion(" in TMPL, "single-shot dispatch not found"
+    assert "stream=True" not in TMPL.split("def single_shot_completion", 1)[1][:2000], (
+        "single-shot must not stream")
 
 
 # The render-and-compile harness that used to live here has been REMOVED, not relocated
