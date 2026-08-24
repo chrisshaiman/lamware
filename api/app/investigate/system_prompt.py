@@ -61,7 +61,11 @@ skip basics, focus on what the evidence shows.
 """
 
 # Regex for valid MITRE ATT&CK technique IDs (e.g. T1055 or T1055.003)
-_TECHNIQUE_ID_RE = re.compile(r"^T\d{4}(\.\d{3})?$")
+#: `\\Z`, not `$`. This regex is the BYPASS GATE for _sanitize_untrusted below:
+#: an id that matches skips sanitisation entirely. `$` also matches before a
+#: trailing newline, so `"T1055\\n"` matched, skipped the CR/LF collapsing that
+#: sanitiser exists to do, and contributed a raw line break to the system prompt.
+_TECHNIQUE_ID_RE = re.compile(r"\AT\d{4}(\.\d{3})?\Z")
 
 
 def _sanitize_untrusted(value: str, max_len: int = 512) -> str:
@@ -76,6 +80,47 @@ def _sanitize_untrusted(value: str, max_len: int = 512) -> str:
     if len(s) > max_len:
         s = s[:max_len] + "…[truncated]"
     return s
+
+
+def technique_line(tid: object, tname: object, tactics: object) -> str:
+    """One MITRE bullet for the system prompt. Every field sanitised.
+
+    Extracted from build_system_prompt so it can be tested against hostile
+    values without a database — this line sits INSIDE the UNTRUSTED_DATA fence,
+    and everything that reaches it is derived from the sample or from model
+    output.
+
+    Two holes closed here, both of the same shape: a value that was trusted
+    because of where it came from rather than because of what it contains.
+
+    `_TECHNIQUE_ID_RE` is the bypass gate — an id that matches skips
+    sanitisation. It was anchored with `$`, which in Python also matches
+    immediately before a trailing newline, so `"T1055\n"` matched, skipped the
+    CR/LF collapsing, and contributed a raw line break to the prompt.
+
+    `tactics` was never sanitised at all. A tactic containing a newline followed
+    by the closing delimiter ends the fence early and lands the remainder in the
+    region rule 1 teaches the model to treat as trustworthy — the
+    GHSA-f5q8-v78c-mr55 shape. Not reachable today: `db_ingest` fills that column
+    from the static MITRE_TACTICS lookup keyed by technique id, and all 214 rows
+    on the sandbox host are clean. "The only writer is trusted" is a property of
+    today's writers, not of the column.
+    """
+    tid_str = tid or ""
+    if not _TECHNIQUE_ID_RE.match(str(tid_str)):
+        tid_str = _sanitize_untrusted(str(tid_str), max_len=200)
+    tname_str = _sanitize_untrusted(str(tname) if tname else "unknown", max_len=200)
+    if tactics:
+        # tactics is a PostgreSQL VARCHAR[] — may arrive as a Python list
+        if isinstance(tactics, list):
+            tactics_str = ", ".join(str(t) for t in tactics if t)
+        else:
+            # Fallback: treat as raw string (e.g., "{t1,t2}" from some drivers)
+            tactics_str = str(tactics).strip("{}")
+    else:
+        tactics_str = "unknown"
+    tactics_str = _sanitize_untrusted(tactics_str, max_len=200)
+    return f"- {tid_str}: {tname_str} ({tactics_str})"
 
 
 def build_system_prompt(analysis_id: int, session: Session) -> str:
@@ -235,21 +280,7 @@ def _build_context_block(analysis_id: int, session: Session) -> str:
     ]
     if shown_techniques:
         for tid, tname, tactics in shown_techniques:
-            # Validate technique ID; sanitize if it doesn't match ATT&CK format
-            tid_str = tid or ""
-            if not _TECHNIQUE_ID_RE.match(tid_str):
-                tid_str = _sanitize_untrusted(tid_str, max_len=200)
-            tname_str = _sanitize_untrusted(tname or "unknown", max_len=200)
-            if tactics:
-                # tactics is a PostgreSQL VARCHAR[] — may arrive as a Python list
-                if isinstance(tactics, list):
-                    tactics_str = ", ".join(t for t in tactics if t)
-                else:
-                    # Fallback: treat as raw string (e.g., "{t1,t2}" from some drivers)
-                    tactics_str = str(tactics).strip("{}")
-            else:
-                tactics_str = "unknown"
-            lines.append(f"- {tid_str}: {tname_str} ({tactics_str})")
+            lines.append(technique_line(tid, tname, tactics))
     else:
         lines.append("(no techniques recorded)")
     lines += ["---END_UNTRUSTED_DATA---", ""]

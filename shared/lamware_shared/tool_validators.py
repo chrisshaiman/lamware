@@ -32,7 +32,13 @@ def validate_ghidra_args(tool_name: str, args: dict) -> str | None:
         pattern = validators.get(arg_name)
         if pattern is None:
             continue
-        if not re.match(pattern, str(arg_value)):
+        # fullmatch, not match. Python's `$` also matches immediately BEFORE a
+        # trailing newline, so `re.match(r"^0x[0-9a-fA-F]{1,16}$", "0x401000\n")`
+        # succeeds and every pattern in the table above accepted a value it was
+        # written to reject. Fixing it here rather than by rewriting six patterns
+        # means a pattern added later cannot reintroduce it — and the anchors the
+        # patterns already carry stay harmless under fullmatch.
+        if not re.fullmatch(pattern, str(arg_value)):
             return f"Invalid {arg_name}: must match {pattern}"
     if "range" in args:
         try:

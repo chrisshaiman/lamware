@@ -236,7 +236,7 @@ def _drop_subsumed(literals: list[str]) -> list[str]:
 # on, a short value like `0x40` would collide with any decimal 40 in the tool output
 # (a length, a count, an offset) and ground a claim on a coincidence. Real addresses
 # in this corpus are 6-12 digits, so the floor costs nothing and closes that hole.
-_HEX_LITERAL = re.compile(r"^0x([0-9a-f]+)$")
+_HEX_LITERAL = re.compile(r"\A0x([0-9a-f]+)\Z")  # \Z: `$` also matches before a trailing newline
 _MIN_BARE_HEX_DIGITS = 4
 
 
@@ -271,7 +271,7 @@ def _hex_value_pattern(literal: str) -> "re.Pattern | None":
 # denominator. This changes what we say about a model, not what we score it.
 # Deliberately narrow: only Ghidra symbol prefixes with a trailing run of X's, so it
 # cannot be used to launder a real fabrication into an unscoreable one.
-_PLACEHOLDER_SYMBOL = re.compile(r"^(?:FUN|DAT|LAB|PTR|SUB|UNK)_[0-9a-fA-F]*X{2,}$")
+_PLACEHOLDER_SYMBOL = re.compile(r"\A(?:FUN|DAT|LAB|PTR|SUB|UNK)_[0-9a-fA-F]*X{2,}\Z")
 
 # A `type:` field names the KIND of evidence. It is not evidence.
 #
@@ -318,7 +318,7 @@ def _literal_in_source(literal: str, norm_source: str) -> bool:
 #
 # `FUN_0041246b is the core anti-analysis function` is NOT bare — the symbol carries a
 # claim about it. Only a value that is the symbol ALONE qualifies.
-_BARE_SYMBOL = re.compile(r"^(?:DAT|FUN|LAB|SUB|UNK|PTR)_[0-9A-Fa-f]+$", re.IGNORECASE)
+_BARE_SYMBOL = re.compile(r"\A(?:DAT|FUN|LAB|SUB|UNK|PTR)_[0-9A-Fa-f]+\Z", re.IGNORECASE)
 
 # Constants whose identity is unambiguous, for detecting a REAL value with a FABRICATED
 # explanation — a class grounding structurally cannot see, because the literal is

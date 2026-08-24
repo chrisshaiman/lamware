@@ -33,7 +33,9 @@ import json
 import re
 from pathlib import Path
 
-_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$")
+# `\\Z`, not `$`: `$` also matches before a trailing newline, so "T1055\\n" read
+# as a well-formed id and was looked up in the catalog as one.
+_ID = re.compile(r"\AT\d{4}(?:\.\d{3})?\Z")
 _DEFAULT_CATALOG = Path(__file__).with_name("attack_catalog.json")
 
 
