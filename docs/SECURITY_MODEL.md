@@ -148,6 +148,48 @@ Each directory has an **owner** (full control) and a **group** (limited access).
 | `pipeline` | Pipeline, auto-feeder, containers | `NoNewPrivileges`, `ProtectKernelModules` | Full command allowlist, high priority alerts |
 | `lamware-api` | FastAPI only | `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges` | Only `uvicorn` allowed, **critical** priority alerts |
 
+## Application authorization
+
+The filesystem model above separates the *service users*. This section is the separate
+question of what one authenticated **analyst** can see of another's work, which the OS
+permissions do not speak to at all.
+
+**Investigation sessions are readable by every authenticated user, and writable only by
+their owner.** `_get_owned_session` enforces ownership on mutation — send a message,
+complete a session, confirm a pin — and returns 403 to anyone else who is not an admin.
+`GET /api/investigate/sessions/{id}` applies no such check, so any authenticated user can
+read another analyst's full transcript, their pins, and the cost of their session.
+
+This is deliberate for a single-team deployment: investigations are shared working notes
+on shared samples, and a sample's history is more useful when the whole team can read it.
+It is recorded here rather than left in a docstring because it is a property a reader
+would otherwise assume the opposite way, and because it is the assumption that has to be
+revisited when multi-user support lands
+([#163](https://github.com/chrisshaiman/lamware/issues/163)). Nothing in the codebase
+currently distinguishes "analyst" from "analyst on a different engagement".
+
+**Cross-analysis reads are intended for the database tools and blocked for the payload
+tools.** The five database tools the investigation agent can call take an `analysis_id`
+and honour it, which is what makes cross-sample correlation work; all five are read-only.
+`get_cape_payloads`, `read_payload`, `get_pcap_summary` and `get_api_traces` resolve their
+target from the session's own analysis and expose no `analysis_id` argument, so they
+structurally cannot reach another analysis's payload bytes or network capture. The
+distinction is the boundary; "the agent cannot read another analysis" is not.
+
+**One account may hold at most `MAX_CONNECTIONS_PER_PRINCIPAL` (16) WebSocket
+connections.** Refused connections close with 1013 rather than an auth code, because the
+credentials are fine. This is a runaway guard rather than a quota — several dashboard
+tabs is the normal case — and it exists because `broadcast` iterates the entire pool on
+every pipeline event, so an unbounded socket count is unbounded work per event.
+
+**Report file deletion validates `task_id` before joining it onto a path.**
+`DELETE /api/analyses/{id}` requires the admin role and removes the analysis's report
+directory. `task_id` is a free-form `varchar(100)` read from the database rather than
+from the request, so the guard is against a bad write upstream, not against the caller —
+but the loop unlinks what it finds, and an empty value resolves to the reports root.
+`lamware_shared.task_ids.is_safe_task_id` is the single rule, shared with
+`cape_payloads.payload_dirs`.
+
 **Runtime process monitoring:**
 
 The network monitor runs every 5 minutes and checks each user's running processes against a full command-line allowlist. Unexpected processes trigger ntfy push notifications — critical priority for `lamware-api` (should only ever run uvicorn), high priority for `cape` and `pipeline`.
