@@ -25,9 +25,14 @@ cannot drift apart from each other — or from CAPE — again.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import NamedTuple
+
+from lamware_shared.task_ids import is_safe_task_id
+
+log = logging.getLogger(__name__)
 
 CAPE_STORAGE = Path("/opt/CAPEv2/storage/analyses")
 
@@ -77,6 +82,14 @@ def payload_dirs(task_id: str | int | None,
     traverse ``storage/``, every call lands here.
     """
     if task_id is None or task_id == "":
+        return []
+    if not is_safe_task_id(str(task_id)):
+        # An unsafe value is "nothing was extracted", consistent with the
+        # missing-ID case above: this function's contract is a list of existing
+        # directories, and a value that cannot name one has none. Logged rather
+        # than raised because PayloadAccessError means "Cape's storage cannot be
+        # read", which is a different claim.
+        log.warning("Ignoring unsafe task_id %r for payload discovery", task_id)
         return []
     base = storage / str(task_id)
     dirs: list[Path] = []

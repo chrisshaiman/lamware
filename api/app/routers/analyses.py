@@ -6,12 +6,14 @@
 import csv
 import io
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+from lamware_shared.task_ids import is_safe_task_id
 from sqlalchemy import text
 from sqlmodel import Session, col, func, select
 
@@ -34,6 +36,8 @@ from ..models import (
 AUTH_RESPONSES = {401: {"description": "Authentication required"}, 403: {"description": "Insufficient role"}}
 
 router = APIRouter(prefix="/api/analyses", tags=["analyses"], responses=AUTH_RESPONSES)
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +432,30 @@ def delete_analysis(
         details={"task_id": task_id},
     )
 
-    # Remove report files from disk -- best-effort, no exception on failure
-    report_dir = Path(settings.reports_dir) / task_id
+    # Remove report files from disk -- best-effort, no exception on failure.
+    #
+    # The join is guarded because the loop below UNLINKS what it finds, and
+    # task_id is a free-form varchar. An empty value resolves `reports_dir /
+    # task_id` to the reports root itself, and the iterdir loop then removes its
+    # top-level contents — every other analysis's report directory entry. The
+    # value reaches here from the database row rather than the request, so this
+    # is defence against a bad write upstream rather than against this caller,
+    # which is exactly the case worth guarding on a delete.
     deleted_files: list[str] = []
+    if not is_safe_task_id(task_id):
+        log.error(
+            "Refusing to remove report files for analysis %s: unsafe task_id %r",
+            analysis_id, task_id,
+        )
+        return {
+            "deleted": True,
+            "analysis_id": analysis_id,
+            "task_id": task_id,
+            "files_removed": [],
+            "files_error": "task_id is not a safe path segment; files left in place",
+        }
+
+    report_dir = Path(settings.reports_dir) / task_id
     if report_dir.exists():
         for f in report_dir.iterdir():
             try:
