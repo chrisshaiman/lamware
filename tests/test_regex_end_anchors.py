@@ -27,12 +27,14 @@ The structural check deliberately ignores string literals that are not passed to
 `re` — `GHIDRA_ARG_VALIDATORS` holds `^...$` patterns on purpose, and they are
 safe because their consumer uses `re.fullmatch`. That is the fix that cannot be
 forgotten when a pattern is added, which is why it was done at the consumer.
+
+Those patterns are covered behaviourally in `shared/tests/`, not here. This file
+runs in the root pytest job, which installs only `requirements-dev.txt` and has
+no `lamware_shared` — importing it here passed locally and failed in CI.
 """
 import ast
 import re
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", "dist", "build", ".mypy_cache"}
@@ -169,42 +171,3 @@ def test_the_sweep_does_not_flag_the_safe_forms(tmp_path):
         assert _offenders() == []
     finally:
         ROOT = original
-
-
-# --- the Ghidra argument table, which the structural check cannot see -------
-
-@pytest.mark.parametrize("tool,arg,value", [
-    ("decompile_function", "name", "DecryptConfig"),
-    ("get_xrefs_to", "name", "DecryptConfig"),
-    ("get_xrefs_from", "name", "DecryptConfig"),
-    ("get_strings_at", "address", "0x00401000"),
-    ("get_strings_at", "range", "4096"),
-    ("list_functions", "filter", "Decrypt*"),
-    ("get_data_at", "address", "0x00401000"),
-    ("get_data_at", "length", "512"),
-])
-def test_no_ghidra_arg_accepts_a_trailing_newline(tool, arg, value):
-    """These patterns keep their `^...$` anchors; the fix is that their consumer
-    uses `re.fullmatch`. Asserted through the real validator, so it holds however
-    the table is written."""
-    from lamware_shared.tool_validators import validate_ghidra_args
-
-    assert validate_ghidra_args(tool, {arg: value}) is None, (
-        "precondition: this value must be accepted, or the test below proves nothing")
-    assert validate_ghidra_args(tool, {arg: value + "\n"}) is not None, (
-        f"{tool}.{arg} accepts {value + chr(10)!r}")
-
-
-def test_every_pattern_in_the_table_is_covered_above():
-    """A pattern added to the table without a case here would be untested, and
-    the parametrize list is the kind of thing that quietly falls behind."""
-    from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS
-
-    declared = {(tool, arg) for tool, args in GHIDRA_ARG_VALIDATORS.items() for arg in args}
-    covered = {
-        ("decompile_function", "name"), ("get_xrefs_to", "name"),
-        ("get_xrefs_from", "name"), ("get_strings_at", "address"),
-        ("get_strings_at", "range"), ("list_functions", "filter"),
-        ("get_data_at", "address"), ("get_data_at", "length"),
-    }
-    assert declared == covered, f"uncovered: {sorted(declared - covered)}"
