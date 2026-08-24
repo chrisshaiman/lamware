@@ -8,6 +8,7 @@ License: Apache 2.0
 import os
 
 from lamware_pipeline.config import PipelineConfig
+from lamware_pipeline.correlation_rules import correlation_rows
 from lamware_pipeline.db import build_insert, build_update
 from lamware_pipeline.relationships import write_relationships_safe
 
@@ -485,8 +486,40 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                       mapping.get("method", "programmatic"),
                       mapping.get("confidence", "high")))
 
+        # --- Insert cross-tool correlations (#423) ---
+        #
+        # Delete-then-insert rather than append. Every other child table here
+        # appends, which on the --replay path (#405 re-runs the whole ingest)
+        # duplicates rows. For IOCs that is untidy; for correlations it would
+        # corrupt the one number this table exists to produce, because a base
+        # rate counted over duplicated findings is not a base rate. Correlation
+        # output is wholly derived from the report, so replacing it wholesale is
+        # the correct semantics — the same reasoning enrich_correlation_inputs
+        # already applies to its own cache.
+        cur.execute("DELETE FROM correlations WHERE analysis_id = %s", (analysis_id,))
+
+        for row in correlation_rows(report.get("cross_correlations", []) or []):
+            cur.execute("""
+                INSERT INTO correlations
+                    (analysis_id, type, severity, title, detail, sources, mitre, pid)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (analysis_id, *row))
+
+        # Warnings are a column on the analysis, not rows beside the findings.
+        # Setting it to a list — EMPTY LIST INCLUDED — is what records that
+        # correlation ran: NULL means never recorded, '{}' means ran clean,
+        # non-empty means ran blind (#411). Written after the inserts and inside
+        # the same transaction, so a failure part-way cannot leave an analysis
+        # claiming it was correlated when nothing landed.
+        warnings = [str(w)[:500] for w in (report.get("correlation_warnings") or [])]
+        cur.execute(
+            "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
+            (warnings, analysis_id))
+
         conn.commit()
-        print(f"  DB: ingested analysis {analysis_id} for sample {sample_id}")
+        n_corr = len(report.get("cross_correlations", []) or [])
+        print(f"  DB: ingested analysis {analysis_id} for sample {sample_id} "
+              f"({n_corr} correlations, {len(warnings)} correlation warnings)")
 
         # Cross-sample campaign edges (non-fatal enrichment, separate from the
         # committed ingest above). A failure here never fails the analysis ingest.

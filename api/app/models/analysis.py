@@ -27,8 +27,8 @@ stage_timings holds per-stage elapsed seconds as a dict.
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Column, String
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -57,6 +57,24 @@ class Analysis(SQLModel, table=True):
     interpret_completed: bool | None = Field(default=False)
     summary_completed: bool | None = Field(default=False)
     pdf_generated: bool | None = Field(default=False)
+
+    #: Rules cross-tool correlation could not evaluate, one sentence each.
+    #:
+    #: Three states in one nullable column, which is the whole point (#423):
+    #:
+    #:     NULL   correlation was never recorded for this analysis — every one
+    #:            of the 998 rows that predate persistence, and the only value
+    #:            that must be excluded from a base-rate denominator
+    #:     '{}'   correlation ran and every rule could be evaluated
+    #:     {...}  correlation ran and these rules could not (#411)
+    #:
+    #: Findings are rows in `correlations`; these are not, because a warning is
+    #: one sentence, there are at most five per analysis (one per
+    #: _PLUGIN_CONSUMERS entry plus the Cape manifest), and they describe the
+    #: ANALYSIS rather than any finding. Being NOT NULL is also what says
+    #: "correlation ran", so there is no separate timestamp to disagree with it.
+    correlation_warnings: list[str] | None = Field(
+        default=None, sa_column=Column(ARRAY(String(500))))
 
     # AI RE metadata
     interpret_model: str | None = Field(default=None, max_length=100)
