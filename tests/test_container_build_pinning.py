@@ -30,7 +30,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = ROOT / "ansible" / "roles"
 
-_SHA = re.compile(r"^[0-9a-f]{40}$")
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 # `git clone` of a remote URL, i.e. fetching third-party source at build time.
 _CLONE = re.compile(r"git\s+clone\s+(?:--\S+\s+)*https?://\S+")
 
@@ -163,7 +163,7 @@ def test_every_fetched_source_is_checksum_verified():
         defaults = _yaml.safe_load(
             (ROLES / role / "defaults" / "main.yml").read_text(encoding="utf-8"))
         sha = str(defaults.get(f"{prefix}_sha256", ""))
-        assert re.match(r"^[0-9a-f]{64}$", sha), (
+        assert re.fullmatch(r"^[0-9a-f]{64}$", sha), (
             f"{role}: {prefix}_sha256 is {sha!r} — must be a full sha256")
         assert f"{prefix}_sha256" in tasks, (
             f"{role} defines {prefix}_sha256 but never uses it — an unused "

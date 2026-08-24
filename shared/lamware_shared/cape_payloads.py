@@ -47,7 +47,9 @@ MIN_PAYLOAD_BYTES = 1024
 #: Callers that hand files to a decompiler should pass this as ``max_bytes``.
 MAX_ANALYSABLE_BYTES = 32 * 1024 * 1024
 
-_SHA256_NAME = re.compile(r"^[0-9a-f]{64}$")
+#: `\\Z`, not `$` — `$` also matches before a trailing newline, and a filename
+#: may legally contain one on Linux.
+_SHA256_NAME = re.compile(r"\A[0-9a-f]{64}\Z")
 
 
 class PayloadAccessError(OSError):
