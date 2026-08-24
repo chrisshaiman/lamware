@@ -49,6 +49,29 @@ MODEL_COSTS: dict[str, dict[str, float]] = {
 # ---------------------------------------------------------------------------
 
 
+def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """USD for one turn. Warns rather than silently pricing an unknown model at zero.
+
+    The lookup used to fall back to `{"input": 0.0, "output": 0.0}` inline, which
+    made an unpriced model indistinguishable from a genuinely free one in the
+    recorded figure — and `investigation_cost_alert_usd` is an alert threshold,
+    not a cap, so nothing downstream bounded what it failed to notice.
+
+    The router's allowlist now derives from MODEL_COSTS, so this branch is
+    unreachable through the API. It is kept, and made loud, for anything that
+    reaches the orchestrator another way.
+    """
+    costs = MODEL_COSTS.get(model)
+    if costs is None:
+        log.warning(
+            "No cost entry for model %r — %d input and %d output tokens are "
+            "being recorded as $0.00. Add it to MODEL_COSTS.",
+            model, input_tokens, output_tokens,
+        )
+        return 0.0
+    return input_tokens * costs["input"] + output_tokens * costs["output"]
+
+
 def parse_stream_line(line: str) -> dict | None:
     """Parse one SSE line from the LLM stream into a chunk dict, or None.
 
@@ -401,12 +424,7 @@ async def run_conversation_turn(
 
             # Loop back to call the LLM again with tool results
 
-    # Compute cost
-    costs = MODEL_COSTS.get(model, {"input": 0.0, "output": 0.0})
-    cost = (
-        total_input_tokens * costs["input"]
-        + total_output_tokens * costs["output"]
-    )
+    cost = compute_cost(model, total_input_tokens, total_output_tokens)
 
     yield {
         "event": "done",
