@@ -79,3 +79,70 @@ def test_opus_priced_at_real_rate():
         }
     }
     assert db_ingest._calculate_llm_cost(report) == 17.50
+
+
+# ---------------------------------------------------------------------------
+# Local-model pricing must not silently fall through to the default row.
+#
+# The deployed summary and plain-english model is `local-qwen-llamacpp` (the
+# Ollama->llama.cpp switch), and the eval arms use `local-qwen-llamacpp-re` /
+# `local-qwen-re`. None were in _LLM_PRICING, so free local inference was billed
+# at the "default" Sonnet rate ($3/$15 per Mtok) on every run, surfaced in
+# llm_cost_usd and the spend dashboard. The old test only covered "local-qwen",
+# a name production no longer emits — the exact drift these guard against.
+# ---------------------------------------------------------------------------
+
+# The names the deployed config actually emits into a report's model fields, read
+# from Ansible defaults so a rename there fails HERE rather than at the invoice.
+def _deployed_local_pipeline_models():
+    import re
+    from pathlib import Path
+
+    defaults = (Path(__file__).resolve().parents[2]
+                / "ansible" / "roles" / "pipeline" / "defaults" / "main.yml")
+    text = defaults.read_text(encoding="utf-8")
+    names = set()
+    for key in ("pipeline_summary_model", "pipeline_plain_english_model"):
+        m = re.search(rf'^{key}:\s*"([^"]+)"', text, re.MULTILINE)
+        assert m, f"{key} not found in {defaults} — did the var get renamed?"
+        names.add(m.group(1))
+    return names
+
+
+def test_deployed_local_models_are_priced_at_zero():
+    # Every model the deployed pipeline config names for the summary/plain-english
+    # stages must resolve to $0, not the default Sonnet fallback.
+    for model in _deployed_local_pipeline_models():
+        assert model.startswith("local-"), (
+            f"{model!r} is configured as a pipeline model but is not a local- name; "
+            "if it is a cloud model it needs an explicit _LLM_PRICING entry")
+        assert db_ingest._price_for_model(model) == {"input": 0.0, "output": 0.0}, (
+            f"{model!r} is not priced at zero — free local inference would be billed "
+            "at the default cloud rate")
+
+
+def test_llamacpp_summary_priced_at_zero_end_to_end():
+    # The whole-report path, with the model name production actually uses.
+    report = {
+        "executive_summary": {
+            "model": "local-qwen-llamacpp",
+            "usage": {"input_tokens": 2_800, "output_tokens": 3_000},
+        },
+        "plain_english_usage": {"input_tokens": 2_800, "output_tokens": 3_000},
+        "plain_english_model": "local-qwen-llamacpp",
+    }
+    # has_usage is True (real tokens), so a nonzero result would be the mispricing.
+    assert db_ingest._calculate_llm_cost(report) == 0.0
+
+
+def test_local_re_and_seeded_variants_priced_at_zero():
+    for model in ("local-qwen-llamacpp-re", "local-qwen-re",
+                  "local-qwen-llamacpp-re-s1337"):
+        assert db_ingest._price_for_model(model) == {"input": 0.0, "output": 0.0}
+
+
+def test_unknown_model_still_falls_back_to_default():
+    # A genuinely unrecognised (non-local) model keeps the default estimate — the
+    # prefix rule must not swallow cloud models into $0.
+    assert db_ingest._price_for_model("some-new-cloud-model") == \
+        db_ingest._LLM_PRICING["default"]
