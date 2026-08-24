@@ -59,13 +59,15 @@ The LLM sits **downstream of the evidence**. It is never asked to decide malicio
 | Investigate decompiled code and follow cross-references | Determine whether a sample is malicious |
 | Explain observed behavior, connect static to dynamic findings | Modify the maliciousness verdict |
 | Identify plausible attack techniques | Write arbitrary files to the analysis host |
-| Produce analyst-oriented narratives | Access another analysis by changing an `analysis_id` |
+| Produce analyst-oriented narratives | Reach another analysis's payloads, pcap or API traces |
 | Propose findings for human confirmation | Receive the Anthropic API key |
 | Help navigate large volumes of analysis output | Reach the network from an analysis container |
 
 LLM output is **interpretation of evidence, not evidence itself**. Findings the agent proposes are held as proposals until an analyst confirms them.
 
-These are capability boundaries rather than input filters: `read_payload` takes an index into a resolved list rather than a path, tool arguments reach subprocesses as `argv` rather than a shell string, sandbox scripts arrive on stdin, and `pin_finding` returns a proposal instead of writing. See [ADR-017](docs/DECISIONS.md) for the architecture and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what remains unmitigated.
+These are capability boundaries rather than input filters: `read_payload` takes an index into a resolved list rather than a path, tool arguments reach subprocesses as `argv` rather than a shell string, sandbox scripts arrive on stdin, and `pin_finding` returns a proposal instead of writing.
+
+The payload boundary is worth stating precisely, because it is narrower than "cannot read another analysis". `get_cape_payloads`, `read_payload`, `get_pcap_summary` and `get_api_traces` resolve their target from the session's own analysis and take no `analysis_id`, so they structurally cannot reach another one. The five database tools *do* take an `analysis_id` and honour it — deliberately, because cross-sample correlation is the point of the platform, and every one of them is read-only. See [ADR-017](docs/DECISIONS.md) for the architecture and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what remains unmitigated.
 
 ---
 
@@ -228,10 +230,9 @@ The same structure explains why published threat-report IOCs cannot ground this 
 Stated here rather than left to be discovered, because the distinction that matters most
 in this project is **implemented ≠ demonstrated ≠ production-hardened**.
 
-**Correlation runs after the investigator, not before it.** `run_pipeline` computes
-cross-correlation at line 1152; the agentic investigation runs at line 997. Correlation
-findings therefore reach severity scoring, IOC extraction, the executive summary and the
-PDF — but **not** the agent, which sees only its decompiler output. The "correlation
+**Correlation runs after the investigator, not before it.** `run_pipeline` calls
+`run_interpret` before it calls `cross_correlate`. Correlation findings therefore reach
+severity scoring, IOC extraction, the executive summary and the PDF — but **not** the agent, which sees only its decompiler output. The "correlation
 before generation" principle below is currently implemented for the summary writer and
 not for the investigator. Closing that loop, and measuring whether it actually helps, is
 [#420](https://github.com/chrisshaiman/lamware/issues/420) — the project's central open

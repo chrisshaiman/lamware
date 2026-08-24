@@ -151,7 +151,13 @@ async def websocket_pipeline(websocket: WebSocket):
     principal = auth.user_id or auth.email or "unknown"
 
     # --- Authenticated — join broadcast pool ---
-    manager.track(websocket, principal=principal)
+    if not manager.track(websocket, principal=principal):
+        # Authentication succeeded; the account is simply holding too many
+        # sockets. 1013 "try again later" rather than an auth code, so a client
+        # with a leak retries instead of prompting for credentials it already has.
+        log.warning("WS connection limit reached for %s", principal)
+        await websocket.close(code=1013, reason="Too many concurrent connections")
+        return
 
     deadline = (
         auth.exp - _WS_EXPIRY_MARGIN_S

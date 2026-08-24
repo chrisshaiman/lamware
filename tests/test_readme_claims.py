@@ -32,6 +32,7 @@ check found real drift the same way: the README said Volatility ran "7 plugins" 
 Matching is deliberately loose — presence of a name, not exact prose — so ordinary
 editing does not fail the build. The target is claims that have become FALSE.
 """
+import ast
 import re
 from pathlib import Path
 
@@ -210,3 +211,92 @@ def test_documented_analysis_stages_exist():
                    "powershell"):
         assert (stages / f"{module}.py").is_file(), (
             f"README documents a {module} analysis path with no stages/{module}.py")
+
+
+# --- the central-question paragraph is about ORDER, so assert the order ------
+
+def test_the_readme_does_not_cite_source_line_numbers():
+    """A one-line edit to run-pipeline.py silently falsifies whatever paragraph
+    cites a line number, and no test could notice — the number is still a number.
+
+    This one mattered because the paragraph it appeared in describes the
+    project's central open research question (#420). Both citations were still
+    accurate when this test was written; the problem was that nothing kept them
+    that way.
+    """
+    citations = re.findall(r"\bat line \d+|\bline \d{2,}\b", README_PROSE)
+    assert not citations, (
+        f"README cites source line numbers {citations} — cite the symbol and "
+        f"assert the relationship instead, as test_correlation_runs_after_the_"
+        f"investigator does")
+
+
+def _call_line(source: str, func: str, callee: str) -> int:
+    """Line of the first `callee(` call inside `def func`, via the parsed tree."""
+    tree = ast.parse(source)
+    target = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == func),
+        None)
+    assert target is not None, f"{func} not found in run-pipeline.py"
+    calls = [
+        n for n in ast.walk(target)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == callee
+    ]
+    assert calls, f"{func} does not call {callee}"
+    return min(c.lineno for c in calls)
+
+
+def test_correlation_runs_after_the_investigator():
+    """The claim the README makes, checked against the call order in the code
+    rather than against two line numbers that happen to be written down.
+
+    If this ever fails, #420 has been closed and the README paragraph — and the
+    "central open research question" framing around it — needs rewriting, not
+    the test.
+    """
+    interpret = _call_line(RUN_PIPELINE, "run_pipeline", "run_interpret")
+    correlate = _call_line(RUN_PIPELINE, "run_pipeline", "cross_correlate")
+    assert interpret < correlate, (
+        f"run_interpret is called at line {interpret} and cross_correlate at "
+        f"{correlate} — correlation now precedes the investigator, so the "
+        f"README's 'Correlation runs after the investigator' limitation is stale")
+
+
+def test_the_readme_states_that_ordering_limitation():
+    assert "Correlation runs after the investigator" in README, (
+        "the limitation is still true in the code; it must stay documented")
+
+
+# --- the payload boundary is stated at the width it actually has -------------
+
+def test_the_does_not_table_does_not_claim_all_cross_analysis_access_is_blocked():
+    """The five database tools take an analysis_id and honour it, deliberately —
+    cross-sample correlation is the point of the platform. The security-claims
+    table said "Access another analysis by changing an analysis_id", which is
+    the worst place to be imprecise about a boundary that does exist but is
+    narrower than stated.
+    """
+    does_not = [
+        ln.split("|")[2].strip()
+        for ln in README.splitlines()
+        if ln.startswith("|") and ln.count("|") >= 3
+    ]
+    offending = [c for c in does_not
+                 if "another analysis" in c.lower() and "payload" not in c.lower()]
+    assert not offending, (
+        f"the does-not table claims {offending}, but the database tools accept "
+        f"and honour an analysis_id — name the payload tools instead")
+
+
+def test_the_payload_tools_named_in_the_readme_take_no_analysis_id():
+    """The boundary the README now claims, checked against the tool schemas."""
+    tools_src = (ROOT / "api" / "app" / "investigate" / "tools.py").read_text(encoding="utf-8")
+    for tool in ("get_cape_payloads", "read_payload", "get_pcap_summary", "get_api_traces"):
+        assert tool in README, f"{tool} is named as a boundary; keep it documented"
+        m = re.search(rf'"name":\s*"{tool}".*?"input_schema":\s*\{{(.*?)\n        \}}',
+                      tools_src, re.S)
+        assert m, f"could not locate {tool}'s input_schema — update this test with it"
+        assert "analysis_id" not in m.group(1), (
+            f"{tool} now advertises an analysis_id, so the README's payload "
+            f"boundary no longer holds")

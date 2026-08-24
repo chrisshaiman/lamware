@@ -11,6 +11,16 @@ from fastapi import WebSocket
 
 log = logging.getLogger(__name__)
 
+#: Concurrent WebSocket connections one authenticated principal may hold.
+#:
+#: There was no cap, so one account could hold unbounded sockets — every one of
+#: them a target of `broadcast`, which iterates the whole pool per event. Low
+#: severity while this is a single-team deployment behind authentication, which
+#: is why the number is generous rather than tight: it is a runaway guard, not a
+#: quota. A dashboard open in several tabs is the normal case, and 4 does not
+#: cover a browser that reconnects before the old socket is reaped.
+MAX_CONNECTIONS_PER_PRINCIPAL = 16
+
 
 class ConnectionManager:
     """Manages active WebSocket connections and broadcasts messages."""
@@ -22,17 +32,34 @@ class ConnectionManager:
         # Without this, nothing on a WebSocket channel was attributable to a user (#208).
         self.principals: dict[WebSocket, str] = {}
 
-    async def connect(self, websocket: WebSocket, principal: str = "anonymous") -> None:
+    async def connect(self, websocket: WebSocket, principal: str = "anonymous") -> bool:
         await websocket.accept()
-        self.track(websocket, principal=principal)
+        return self.track(websocket, principal=principal)
 
-    def track(self, websocket: WebSocket, principal: str = "anonymous") -> None:
-        """Add an already-accepted, AUTHENTICATED WebSocket to the broadcast pool."""
+    def connections_for(self, principal: str) -> int:
+        """How many sockets this principal currently holds."""
+        return sum(1 for p in self.principals.values() if p == principal)
+
+    def track(self, websocket: WebSocket, principal: str = "anonymous") -> bool:
+        """Add an already-accepted, AUTHENTICATED WebSocket to the broadcast pool.
+
+        Returns False and adds nothing when the principal is already at
+        MAX_CONNECTIONS_PER_PRINCIPAL. The caller closes the socket; refusing
+        here rather than in the router keeps the count and the limit in one
+        place, so a second entry point cannot bypass it.
+        """
+        if self.connections_for(principal) >= MAX_CONNECTIONS_PER_PRINCIPAL:
+            log.warning(
+                "WebSocket refused for %s: already holding %d connections (limit %d)",
+                principal, self.connections_for(principal), MAX_CONNECTIONS_PER_PRINCIPAL,
+            )
+            return False
         self.active_connections.add(websocket)
         self.principals[websocket] = principal
         log.info(
             "WebSocket client tracked: %s (%d total)", principal, len(self.active_connections)
         )
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         self.active_connections.discard(websocket)
