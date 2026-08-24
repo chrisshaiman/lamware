@@ -49,7 +49,15 @@ def upgrade() -> None:
         sa.Column("sources", postgresql.ARRAY(sa.String(length=50)), nullable=True),
         sa.Column("mitre", sa.String(length=200), nullable=True),
         sa.Column("pid", sa.String(length=20), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
+        # `timestamp with time zone DEFAULT now()`, matching every other
+        # created_at in the baseline. Load-bearing, not cosmetic: db_ingest's
+        # INSERT names eight columns and this is not one of them, exactly as the
+        # signatures and capabilities inserts omit theirs. Without the default
+        # every correlation insert raises NotNullViolation, which the ingest's
+        # blanket `except Exception: rollback` turns into a lost analysis —
+        # IOCs and techniques included, not just the correlations.
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("now()")),
         sa.ForeignKeyConstraint(["analysis_id"], ["analyses.id"]),
         sa.PrimaryKeyConstraint("id"),
     )

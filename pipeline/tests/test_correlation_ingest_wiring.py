@@ -144,3 +144,85 @@ def test_the_shaping_helper_is_used_rather_than_a_second_mapping():
         for alias in n.names
     }
     assert "correlation_rows" in imported
+
+
+# --- the INSERT has to be satisfiable against the schema it targets ---------
+
+MIGRATION = (Path(__file__).resolve().parents[2] / "api" / "alembic" / "versions"
+             / "0003_persist_correlation_findings.py").read_text(encoding="utf-8")
+
+
+def _required_columns_without_a_default(table: str) -> set[str]:
+    """NOT NULL columns of `table` that the database will not fill in itself.
+
+    SERIAL primary keys are excluded: alembic renders `sa.Integer()` under a
+    PrimaryKeyConstraint as SERIAL, which supplies its own value.
+    """
+    tree = ast.parse(MIGRATION)
+    create = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "create_table" and n.args
+        and isinstance(n.args[0], ast.Constant) and n.args[0].value == table)
+    required = set()
+    for arg in create.args[1:]:
+        if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and arg.func.attr == "Column" and arg.args):
+            continue
+        name = arg.args[0].value
+        kw = {k.arg: k.value for k in arg.keywords}
+        nullable = kw.get("nullable")
+        is_nullable = isinstance(nullable, ast.Constant) and nullable.value is True
+        if is_nullable or "server_default" in kw or name == "id":
+            continue
+        required.add(name)
+    return required
+
+
+def _insert_columns(table: str) -> set[str]:
+    sql = next(s for _, s in _sql_literals()
+               if s.upper().startswith(f"INSERT INTO {table.upper()}"))
+    inside = sql[sql.index("(") + 1:sql.index(")")]
+    return {c.strip() for c in inside.split(",")}
+
+
+def test_the_insert_supplies_every_column_the_schema_demands():
+    """The bug this caught: `created_at` was NOT NULL with no server_default and
+    the INSERT did not name it, so every correlation insert would have raised
+    NotNullViolation — and db_ingest's blanket `except Exception: rollback`
+    turns that into a LOST ANALYSIS, IOCs and techniques included, not merely
+    lost correlations.
+
+    It survived a run against real PostgreSQL because the verification script
+    hand-wrote its own INSERT with created_at included, rather than using the
+    statement db_ingest actually issues. This test compares the two directly.
+    """
+    required = _required_columns_without_a_default("correlations")
+    supplied = _insert_columns("correlations")
+    missing = required - supplied
+    assert not missing, (
+        f"the INSERT omits NOT NULL column(s) {sorted(missing)} that have no "
+        f"server_default — every insert would fail and roll back the analysis")
+
+
+def test_the_insert_names_no_column_the_table_lacks():
+    """The mirror: a renamed column would otherwise fail only in production."""
+    tree = ast.parse(MIGRATION)
+    create = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "create_table" and n.args
+        and isinstance(n.args[0], ast.Constant) and n.args[0].value == "correlations")
+    declared = {
+        a.args[0].value for a in create.args[1:]
+        if isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute)
+        and a.func.attr == "Column" and a.args
+    }
+    assert _insert_columns("correlations") <= declared
+
+
+def test_created_at_matches_the_convention_used_by_every_other_table():
+    """`timestamp with time zone DEFAULT now()` throughout the baseline. A naive
+    DateTime here would store local time next to twelve timezone-aware columns."""
+    assert "sa.DateTime(timezone=True)" in MIGRATION
+    assert 'server_default=sa.text("now()")' in MIGRATION
