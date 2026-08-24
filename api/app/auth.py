@@ -6,7 +6,9 @@
 # require_auth: FastAPI dependency returning AuthContext.
 # require_role: Factory returning a dependency that enforces a realm role.
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -23,6 +25,26 @@ log = logging.getLogger(__name__)
 
 _jwks_cache: dict[str, object] = {}
 _jwks_url: str = ""
+
+#: Minimum seconds between JWKS refetches triggered by an unknown `kid`.
+#:
+#: The refresh path is reachable by an UNAUTHENTICATED caller — that is its
+#: purpose — and it had no rate limit and no negative cache, so a loop of junk
+#: tokens carrying random `kid` values turned into one outbound request to
+#: Keycloak per token. An unauthenticated caller could aim that at the IdP the
+#: whole platform authenticates against.
+#:
+#: A single timestamp bounds it regardless of how many DISTINCT kids arrive,
+#: which a per-kid negative cache does not: caching unknown kids in a dict is
+#: itself unbounded memory when the attacker picks the keys. Rotation is still
+#: picked up within this window, and clients retry.
+_JWKS_MIN_REFRESH_INTERVAL_S = 30.0
+
+#: -inf, not 0.0: time.monotonic()'s reference point is undefined, and on a
+#: host booted moments ago it can be smaller than the interval — which would
+#: suppress the FIRST refresh, the one that is always legitimate.
+_last_jwks_refresh: float = float("-inf")
+_jwks_refresh_lock = asyncio.Lock()
 
 
 async def fetch_jwks() -> None:
@@ -57,13 +79,36 @@ async def _refresh_jwks_for_kid(kid: str) -> bool:
     into an HTTP 500 for what is really a failed authentication — bypassing the
     401 below and, with it, _log_failed_auth. An auth path must fail closed and
     on the record.
+
+    Refetches are rate-limited to one per _JWKS_MIN_REFRESH_INTERVAL_S. Inside
+    the window the answer comes from the cache we already hold, so an
+    unauthenticated flood of unknown kids costs Keycloak nothing.
     """
-    try:
-        await fetch_jwks()
-    except httpx.HTTPError as exc:
-        log.error("JWKS refresh failed for kid %s: %s", kid, exc)
-        return False
-    return kid in _jwks_cache
+    global _last_jwks_refresh
+
+    async with _jwks_refresh_lock:
+        # Re-check under the lock: while we waited, a concurrent caller may have
+        # refreshed and populated this very kid. Without this, N simultaneous
+        # unknown-kid requests all queue and each performs its own fetch — the
+        # rate limit outside the lock would not have stopped a thundering herd.
+        if kid in _jwks_cache:
+            return True
+
+        elapsed = time.monotonic() - _last_jwks_refresh
+        if elapsed < _JWKS_MIN_REFRESH_INTERVAL_S:
+            log.debug(
+                "JWKS refresh for kid %s suppressed — %.1fs since the last one",
+                kid, elapsed,
+            )
+            return False
+
+        _last_jwks_refresh = time.monotonic()
+        try:
+            await fetch_jwks()
+        except httpx.HTTPError as exc:
+            log.error("JWKS refresh failed for kid %s: %s", kid, exc)
+            return False
+        return kid in _jwks_cache
 
 
 # --- AuthContext -----------------------------------------------------------
