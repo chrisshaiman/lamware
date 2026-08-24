@@ -26,6 +26,7 @@ from ..models import (
     AnalysisIoc,
     AnalysisTechnique,
     Capability,
+    Correlation,
     IocValue,
     NetworkEvent,
     Sample,
@@ -233,6 +234,30 @@ def get_analysis(
         ).all()
     ]
 
+    # Cross-tool correlations. `correlation_warnings` rides along from the
+    # analysis row because an empty finding list means three different things
+    # and only that column separates them: NULL = correlation was never
+    # recorded, [] = it ran and the sample was clean, non-empty = it ran blind.
+    # #412 is the same defect one stage up — the UI showed a stage as done when
+    # every plugin inside it had failed.
+    correlations = [
+        {
+            "id": c.id,
+            "type": c.type,
+            "severity": c.severity,
+            "title": c.title,
+            "detail": c.detail,
+            "sources": c.sources or [],
+            "mitre": c.mitre,
+            "pid": c.pid,
+        }
+        for c in session.exec(
+            select(Correlation)
+            .where(Correlation.analysis_id == analysis_id)
+            .order_by(Correlation.type, Correlation.id)
+        ).all()
+    ]
+
     # Signatures sorted by severity desc, then name
     signatures = [
         {
@@ -370,6 +395,12 @@ def get_analysis(
         "techniques": techniques,
         "capabilities": capabilities,
         "signatures": signatures,
+        "correlations": correlations,
+        # null (not []) until correlation has been recorded for this analysis.
+        # A consumer reading `correlations: []` without checking this cannot
+        # tell "checked, clean" from "never recorded", so the distinction has to
+        # survive JSON: null vs [] vs [...].
+        "correlation_warnings": analysis.correlation_warnings,
         "network_events": network_events,
         # Cross-analysis overlap data for "Related Analyses" feature
         "overlapping_iocs": [

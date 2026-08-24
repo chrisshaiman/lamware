@@ -674,3 +674,65 @@ def cross_correlate(report: dict) -> list[dict]:
         return evaluate_rules(report)
     finally:
         report.pop("_correlation_inputs", None)
+
+
+# -------------------------------------------------------------------------
+# Persistence shaping — pure, so the row shape is testable without a database
+# -------------------------------------------------------------------------
+
+#: Columns of the `correlations` table, in the order `correlation_rows` emits.
+CORRELATION_COLUMNS = ("type", "severity", "title", "detail", "sources", "mitre", "pid")
+
+_MAX_TITLE = 500
+_MAX_DETAIL = 4000
+_MAX_MITRE = 200
+_MAX_PID = 20
+_MAX_SEVERITY = 20
+_MAX_TYPE = 100
+_MAX_SOURCE = 50
+
+
+def _clip(value, limit: int) -> str | None:
+    """A column-width-safe string, or None. Truncates rather than raising.
+
+    Every field here is derived from adversary-controlled input: a finding's
+    title embeds a dropped file's path, and `detail` embeds a command line the
+    sample chose. A value longer than the column silently aborts the whole
+    ingest transaction in psycopg2, which would lose the IOCs and techniques
+    alongside it — so the finding is trimmed instead of the analysis being lost.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    return text[:limit] if len(text) > limit else text
+
+
+def correlation_rows(findings: list[dict]) -> list[tuple]:
+    """Findings -> row tuples matching CORRELATION_COLUMNS.
+
+    Rules emit a dict whose shape has been stable since the registry was split
+    out, but `pid` is an int on some rules and a string on others, `sources` is
+    a list, and `detail` carries sample-chosen paths of no bounded length. This
+    normalises all three so the ingest is a loop and not a mapping exercise.
+    """
+    rows = []
+    for f in findings:
+        if not isinstance(f, dict):
+            continue
+        sources = f.get("sources")
+        if isinstance(sources, (list, tuple)):
+            source_list = [_clip(s, _MAX_SOURCE) for s in sources if s]
+        elif sources:
+            source_list = [_clip(sources, _MAX_SOURCE)]
+        else:
+            source_list = None
+        rows.append((
+            _clip(f.get("type", "unknown"), _MAX_TYPE),
+            _clip(f.get("severity", "unknown"), _MAX_SEVERITY),
+            _clip(f.get("title", ""), _MAX_TITLE),
+            _clip(f.get("detail"), _MAX_DETAIL),
+            source_list,
+            _clip(f.get("mitre"), _MAX_MITRE),
+            _clip(f.get("pid"), _MAX_PID),
+        ))
+    return rows

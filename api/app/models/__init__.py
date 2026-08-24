@@ -23,6 +23,7 @@ other modules should import from here rather than from individual files.
 from app.models.analysis import Analysis
 from app.models.audit import AuditLog
 from app.models.capability import Capability
+from app.models.correlation import Correlation
 from app.models.investigation import (
     InvestigationMessage,
     InvestigationPin,
@@ -48,6 +49,7 @@ __all__ = [
     "AnalysisTechnique",
     "Signature",
     "Capability",
+    "Correlation",
     "NetworkEvent",
     "InvestigationSession",
     "InvestigationMessage",
