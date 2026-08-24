@@ -287,6 +287,15 @@ export interface StatsResponse {
   cost_total: number;
   analyses_today: number;
   analyses_week: number;
+  /**
+   * Names of the stat queries that failed. Empty on a healthy response.
+   *
+   * The numbers above are still 0 for a failed query, because the response has
+   * to keep its shape — so without this a database the API cannot reach renders
+   * as "0 analyses, $0.00 spend", which is what a quiet week looks like. Read
+   * it before trusting a zero.
+   */
+  errors: string[];
 }
 
 // ---------------------------------------------------------------------------
