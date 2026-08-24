@@ -1,7 +1,7 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 
-import { BarChart3 } from "lucide-react";
+import { AlertTriangle, BarChart3 } from "lucide-react";
 import { useStats } from "#hooks/use-stats";
 import { useFamiliesList } from "#hooks/use-families";
 import { formatCost } from "#lib/utils";
@@ -40,6 +40,27 @@ export function StatsPage() {
         <BarChart3 className="h-5 w-5 text-[var(--color-text-secondary)]" />
         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">Statistics</h1>
       </div>
+
+      {/* A failed query still returns 0, so the zeros below are only meaningful
+          when this is empty. Saying so is the point — see StatsResponse.errors. */}
+      {stats.errors && stats.errors.length > 0 && (
+        <div
+          data-testid="stats-errors"
+          className="flex items-start gap-2 rounded-md border border-[var(--color-severity-high)] bg-[var(--color-surface)] p-3"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-severity-high)]" />
+          <div className="text-sm">
+            <div className="font-semibold text-[var(--color-text-primary)]">
+              Some statistics could not be queried
+            </div>
+            <div className="mt-0.5 text-[var(--color-text-secondary)]">
+              These figures are shown as zero because the query failed, not
+              because there is nothing to count:{" "}
+              <span className="font-mono">{stats.errors.join(", ")}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

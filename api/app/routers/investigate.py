@@ -21,15 +21,25 @@ from ..audit import log_audit
 from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
-from ..investigate.orchestrator import run_conversation_turn
+from ..investigate.orchestrator import MODEL_COSTS, run_conversation_turn
 from ..investigate.system_prompt import build_system_prompt
 from ..models.investigation import InvestigationMessage, InvestigationPin, InvestigationSession
 
 log = logging.getLogger(__name__)
 
 # Allowlist of models the investigation agent may use.
-# These correspond to model IDs recognised by the LiteLLM proxy.
-VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"]
+#
+# DERIVED from MODEL_COSTS rather than restated. These were two hand-maintained
+# lists in two modules that happened to agree, with nothing enforcing it — and a
+# model present here but absent there costs $0.00 per token, because
+# `MODEL_COSTS.get(model, {"input": 0.0, "output": 0.0})` has no way to tell an
+# unpriced model from a free one. `investigation_cost_alert_usd` is an alert
+# threshold, not a cap, so the spend it would not have alerted on is unbounded.
+#
+# Drift was likely rather than hypothetical: the LiteLLM proxy already serves
+# claude-sonnet-5 and claude-opus-5, and adding one to this list is the obvious
+# way to enable it.
+VALID_MODELS = sorted(MODEL_COSTS)
 
 AUTH_RESPONSES = {
     401: {"description": "Authentication required"},

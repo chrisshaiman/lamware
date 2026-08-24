@@ -21,7 +21,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 
 from ..config import settings
-from ..database import engine
+from ..database import build_pg_dsn, engine
 from ..models.analysis import Analysis
 from ..models.sample import Sample
 from ..ws_manager import manager
@@ -165,8 +165,19 @@ async def websocket_pipeline(websocket: WebSocket):
         try:
             with Session(engine) as session:
                 state = _get_current_state(session)
-        except Exception:
-            state = {"running": [], "recent_completed": [], "as_of": ""}
+        except Exception as exc:
+            # An empty state is what a genuinely idle platform looks like, so
+            # sending one on a failed query told every connecting client "nothing
+            # is running" when the truth was "I could not look". Same principle
+            # as correlation_warnings and spend.py:_zeroed — the shape stays, the
+            # reason rides along.
+            log.warning("WS initial state query failed: %s", exc)
+            state = {
+                "running": [],
+                "recent_completed": [],
+                "as_of": "",
+                "error": "state query failed",
+            }
         await websocket.send_json(state)
 
         # Keep alive until the client disconnects OR the session deadline passes.
@@ -195,10 +206,7 @@ async def websocket_pipeline(websocket: WebSocket):
 
 async def _pg_listener() -> None:
     """Listen on the pipeline_events PG channel and broadcast to WebSocket clients."""
-    dsn = (
-        f"postgresql://{settings.db_user}:{settings.db_password}"
-        f"@{settings.db_host}:{settings.db_port}/{settings.db_name}"
-    )
+    dsn = build_pg_dsn()
 
     while True:
         try:

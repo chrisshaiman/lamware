@@ -149,6 +149,15 @@ sys.modules.setdefault("app.investigate", _inv_pkg)
 
 _inv_orch = types.ModuleType("app.investigate.orchestrator")
 _inv_orch.run_conversation_turn = MagicMock()  # type: ignore[attr-defined]
+# MODEL_COSTS is a real dict, not a MagicMock: the router derives VALID_MODELS
+# from it (`sorted(MODEL_COSTS)`), so a mock would make the allowlist whatever
+# sorted() does to a MagicMock rather than the model IDs the tests below assert.
+# Mirrors the real table's KEYS; the prices are not read here.
+_inv_orch.MODEL_COSTS = {  # type: ignore[attr-defined]
+    "claude-sonnet-4-6": {"input": 3e-6, "output": 15e-6},
+    "claude-opus-4-6": {"input": 5e-6, "output": 25e-6},
+    "claude-haiku-4-5": {"input": 1e-6, "output": 5e-6},
+}
 sys.modules["app.investigate.orchestrator"] = _inv_orch
 
 _inv_sp = types.ModuleType("app.investigate.system_prompt")
@@ -216,6 +225,13 @@ restore(_SAVED_MODULES)
 # ---------------------------------------------------------------------------
 # VALID_MODELS
 # ---------------------------------------------------------------------------
+
+
+# NOTE: VALID_MODELS is now derived from MODEL_COSTS, and the MODEL_COSTS these
+# assertions see is the STUB above — so what they pin is the router's derivation,
+# not the real model list. The real one is checked against the real modules in
+# test_model_cost_coverage.py, which is also where the allowlist-vs-price
+# contract lives.
 
 
 def test_valid_models_contains_expected():

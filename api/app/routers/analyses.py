@@ -524,6 +524,51 @@ def get_logs(
 # GET /api/analyses/{id}/iocs/csv -- CSV export
 # ---------------------------------------------------------------------------
 
+IOC_CSV_HEADER = ["type", "value", "confidence", "source_stage", "context"]
+
+#: Characters a spreadsheet reads as the start of a formula. Tab and CR are in
+#: the set because Excel strips leading whitespace and evaluates what follows,
+#: so `\t=cmd|...` is a formula too.
+_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value: object) -> str:
+    """Neutralise spreadsheet formula injection in one CSV cell.
+
+    Quoting is not enough: `csv` quotes a field to preserve commas, and Excel
+    still evaluates a quoted cell whose content begins with `=`. The fix is to
+    change what the cell BEGINS with, which is why the leading apostrophe goes
+    on before the writer sees the value.
+
+    Every column goes through this, including the numeric ones. A cell that
+    cannot currently start with `=` is not the risk; a column added later
+    without anyone remembering this function is.
+    """
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_CSV_FORMULA_LEAD) else text
+
+
+def ioc_csv_rows(ioc_rows) -> list[list[str]]:
+    """Rows for the IOC CSV export, escaped. Pure, so it can be tested without a DB.
+
+    IOC values are adversary-chosen — a mutex name, a dropped filename, a
+    registry key — and `context` is written by the LLM from the same material.
+    The export is documented as "ready for SIEM and block lists", which means
+    these files get opened, and `=cmd|'/c calc'!A1` as a mutex name is a working
+    DDE payload the moment one is opened in Excel. Every other surface in this
+    codebase already treats these strings as hostile.
+    """
+    return [
+        [
+            csv_safe(ioc.type),
+            csv_safe(ioc.value),
+            csv_safe(ai.confidence or ""),
+            csv_safe(ai.source_stage or ""),
+            csv_safe(ai.context or ""),
+        ]
+        for ai, ioc in ioc_rows
+    ]
+
 
 @router.get("/{analysis_id}/iocs/csv", responses={200: {"content": {"text/csv": {}}}, 404: {"description": "Analysis not found"}})
 def export_iocs_csv(
@@ -543,15 +588,8 @@ def export_iocs_csv(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["type", "value", "confidence", "source_stage", "context"])
-    for ai, ioc in ioc_rows:
-        writer.writerow([
-            ioc.type,
-            ioc.value,
-            ai.confidence or "",
-            ai.source_stage or "",
-            ai.context or "",
-        ])
+    writer.writerow(IOC_CSV_HEADER)
+    writer.writerows(ioc_csv_rows(ioc_rows))
 
     buf.seek(0)
     filename = f"iocs_analysis_{analysis_id}.csv"
