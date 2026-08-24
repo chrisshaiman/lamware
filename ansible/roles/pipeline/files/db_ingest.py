@@ -130,11 +130,46 @@ _LLM_PRICING = {
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 5.00, "output": 25.00},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
-    # Local Ollama inference has no per-token API cost.
+    # Local inference has no per-token API cost. These names are matched exactly;
+    # the `local-` prefix rule in _price_for_model() is what actually covers the
+    # deployed set, which has drifted past this list before (see below).
     "local-qwen": {"input": 0.00, "output": 0.00},
     "local-qwen-strict": {"input": 0.00, "output": 0.00},
     "default": {"input": 3.00, "output": 15.00},
 }
+
+# Any model served by the local backend costs nothing per token. Kept as a PREFIX
+# rule rather than an enumeration because the enumeration silently fell behind the
+# deployment: pipeline_summary_model / pipeline_plain_english_model moved from
+# "local-qwen" to "local-qwen-llamacpp" (the Ollama->llama.cpp switch), and the eval
+# arms use "local-qwen-llamacpp-re" and "local-qwen-re". None of those were in the
+# table, so free local inference fell through to the "default" row and was billed at
+# Anthropic Sonnet rates ($3/$15 per Mtok) — ~$0.05 of phantom cost per summary,
+# on every run, surfaced in llm_cost_usd and the spend dashboard. The prefix makes
+# the whole `local-*` family correct without another name to forget.
+_LOCAL_MODEL_PREFIX = "local-"
+_ZERO_PRICING = {"input": 0.00, "output": 0.00}
+
+
+def _price_for_model(model: str) -> dict:
+    """Per-Mtok pricing for a model name, resolved fail-loud rather than fail-silent.
+
+    Order: an exact table entry wins; then any `local-*` name is priced at zero
+    (local inference has no API cost); only a genuinely unrecognised name reaches
+    the `default` row, and that case is announced. An unpriced model silently
+    charged at the default rate is exactly how the local-qwen-llamacpp cost was
+    wrong on every run with nothing to signal it.
+    """
+    name = model or "default"
+    entry = _LLM_PRICING.get(name)
+    if entry is not None:
+        return entry
+    if name.startswith(_LOCAL_MODEL_PREFIX):
+        return _ZERO_PRICING
+    print(f"  [!] llm_cost: model {name!r} is not in the pricing table — "
+          f"billing at the default ${_LLM_PRICING['default']['input']}/"
+          f"${_LLM_PRICING['default']['output']} per Mtok, which may be wrong")
+    return _LLM_PRICING["default"]
 
 
 def _calculate_llm_cost(report: dict) -> float:
@@ -164,7 +199,7 @@ def _calculate_llm_cost(report: dict) -> float:
 
         model = section.get("model_used", section.get("model_final",
                 section.get("model", "default")))
-        pricing = _LLM_PRICING.get(model, _LLM_PRICING["default"])
+        pricing = _price_for_model(model)
 
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
@@ -185,7 +220,7 @@ def _calculate_llm_cost(report: dict) -> float:
             # Price by the actual plain-English model (may be local = $0), falling
             # back to Haiku for older reports that didn't record the model.
             pe_model = report.get("plain_english_model") or "claude-haiku-4-5"
-            pricing = _LLM_PRICING.get(pe_model, _LLM_PRICING["default"])
+            pricing = _price_for_model(pe_model)
             cost = (input_tokens * pricing["input"] / 1_000_000) + \
                    (output_tokens * pricing["output"] / 1_000_000)
             total_cost += cost
