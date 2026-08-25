@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import lamware_pipeline.correlation_rules as cr
+import pytest
 from lamware_pipeline.correlation import correlation_warnings as reexported
 from lamware_pipeline.correlation_rules import (
     _PLUGIN_CONSUMERS,
@@ -186,3 +187,79 @@ def test_a_dead_dlllist_does_not_also_warn_about_the_manifest(tmp_path, monkeypa
 
 def test_helper_is_reexported_from_correlation_module():
     assert reexported is correlation_warnings
+
+
+# --- a failed Cape stage blinds every rule, and must say so ----------------
+
+def test_a_failed_cape_stage_is_reported_not_silent(monkeypatch, tmp_path):
+    """THE bug this closes. Every correlation rule reads Cape data, so a failed
+    Cape stage blinds all five — but it persisted as `correlation_warnings = []`,
+    which the schema and every base-rate query read as "correlation ran and every
+    rule could be evaluated". A failed sandbox run was recorded as a clean sample.
+
+    Not hypothetical: Cape served no task between 2026-08-21 and 2026-08-24
+    because its machine pool had emptied (#451), returning `failed_analysis`
+    after 30s while the pipeline carried on and wrote a report. A corpus run
+    spanning that outage would report a low fire rate that was an outage.
+    """
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(tmp_path))
+    report = {
+        "cape": {"task_id": 1028, "status": "failed_analysis"},
+        "volatility": {"triggered": False, "reason": "Cape analysis not available"},
+    }
+    cross_correlate(report)
+    assert report["correlation_warnings"], (
+        "a failed Cape stage records as a clean sample")
+    assert "Cape stage produced no output" in report["correlation_warnings"][0]
+
+
+@pytest.mark.parametrize("cape,expected", [
+    ({"task_id": 1, "status": "failed_analysis"}, True),
+    ({"task_id": None, "status": "error", "error": "Permission denied"}, True),
+    ({"task_id": 1, "status": "failed_processing"}, True),
+    ({"task_id": 1, "status": "failed_reporting"}, True),
+    ({"status": "skipped", "reason": "non-Windows binary"}, False),
+    ({"task_id": 1, "status": "reported"}, False),
+    ({}, False),
+])
+def test_only_a_cape_that_tried_and_failed_warns(cape, expected):
+    """`skipped` carries a reason and is a reported pipeline state — the same
+    argument that keeps Volatility's `triggered: False` silent. Warning on it
+    would make every non-Windows sample look like an outage."""
+    assert bool(cr._cape_unavailable_reason({"cape": cape})) is expected
+
+
+def test_the_cape_warning_names_the_underlying_error():
+    """An operator needs to know WHICH failure, not merely that there was one."""
+    reason = cr._cape_unavailable_reason(
+        {"cape": {"status": "error", "error": "connection refused to 10.200.0.1:8000"}})
+    assert "connection refused" in reason
+
+
+def test_a_failed_cape_is_distinguishable_from_a_clean_run(monkeypatch, tmp_path):
+    """The property the base rate depends on. Both produce zero findings; only
+    one of them means the sample was actually checked."""
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(tmp_path))
+    # The clean run needs a real (empty) manifest, or it warns about the manifest
+    # instead — which would make this pass for the wrong reason.
+    (tmp_path / "1").mkdir()
+    (tmp_path / "1" / "files.json").write_text("", encoding="utf-8")
+    plugins = {"dlllist": [], "malfind": [], "cmdline": [], "netscan": []}
+    failed = {"cape": {"task_id": 1, "status": "failed_analysis"},
+              "volatility": {"triggered": False, "reason": "Cape analysis not available"}}
+    clean = {"cape": {"task_id": 1, "status": "reported"}, "volatility": {"plugins": plugins}}
+    cross_correlate(failed)
+    cross_correlate(clean)
+    assert failed["correlation_warnings"] != clean["correlation_warnings"], (
+        "an outage and a clean sample persist identically")
+    assert clean["correlation_warnings"] == [], "a healthy run must stay quiet"
+
+
+def test_the_volatility_warnings_still_work_alongside():
+    """The Cape check is prepended, not substituted — a plugin failure on a
+    healthy Cape run must still be reported."""
+    report = _plugins(malfind={"error": "timeout (120s)"}, dlllist=[], cmdline=[], netscan=[])
+    report["cape"] = {"task_id": 1, "status": "reported"}
+    warnings = correlation_warnings(report)
+    assert any("malfind" in w for w in warnings)
+    assert not any("Cape stage" in w for w in warnings)
