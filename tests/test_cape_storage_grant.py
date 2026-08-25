@@ -214,9 +214,17 @@ def _probe_block() -> str:
     The lower bound was "Save baseline", which swept in the #392 world-readable
     sample check and its own `su ... nobody` read — making the count assertion
     below fail against correct code. Bound it at the next section header.
+
+    That has now happened twice: #451's machine-pool check landed between this
+    probe and the #392 one, bringing its own `su ... postgres`. The terminators
+    are therefore a list in FILE ORDER, and any new section inserted after the
+    storage probe has to be added at the front of it. The alternative — relaxing
+    the count assertion — would discard the property it exists to hold, since
+    "more than one" is precisely how a probe losing its `su` is detected.
     """
     body = MONITOR_T.split("CAPE storage reachability")[1]
-    for terminator in ("World-readable malware", "Save baseline"):
+    for terminator in ("CAPE has no usable machines", "World-readable malware",
+                       "Save baseline"):
         if terminator in body:
             return body.split(terminator)[0]
     return body
