@@ -446,6 +446,46 @@ elif ! su -s /bin/bash -c "ls -1 '$probe_dir' >/dev/null 2>&1" pipeline 2>/dev/n
 fi
 
 # -------------------------------------------------------------------------
+# CAPE has no usable machines (#451)
+#
+# Between 2026-08-21 and 2026-08-24 CAPE served no task at all: its libvirt
+# connection broke mid-start, the machine was dropped from the pool, and
+# machines are only enrolled at scheduler startup — so it never came back.
+# Every submission failed "unserviceable" after 30s for three days.
+#
+# `systemctl is-active cape` said `active` throughout, with NRestarts=0. So this
+# asks the question that was actually load-bearing — can CAPE detonate anything
+# right now? — rather than whether the process exists, for the same reason the
+# storage check above lists a real directory instead of reading a mode back.
+# -------------------------------------------------------------------------
+
+cape_machines_status="ok"
+cape_machines_problem=""
+
+if systemctl is-active --quiet cape 2>/dev/null; then
+    # count(*), NOT `WHERE locked = false`. A fully-locked pool is ordinary
+    # business: there are two machines, an analysis takes ~6.5 minutes, and this
+    # monitor runs every 5 — so "no machine free right now" is the normal state
+    # during a corpus run, and alerting on it would train everyone to ignore
+    # this alert. The #451 signature was the table being EMPTY.
+    machine_count=$(su -s /bin/bash -c \
+        "psql -tAX -d {{ cape_db_name | default('cape') }} -c 'SELECT count(*) FROM machines;'" \
+        postgres 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$machine_count" ]; then
+        # Cannot ask. Explicitly NOT an alert: a database we cannot reach is a
+        # different fault, already covered elsewhere, and crying "no machines"
+        # on every postgres blip is how a monitor gets muted.
+        cape_machines_status="unknown"
+        cape_machines_problem="could not query the cape database"
+    elif [ "$machine_count" -eq 0 ]; then
+        cape_machines_status="alert"
+        cape_machines_problem="cape is running but has NO analysis machines registered — every submission will fail 'unserviceable'"
+    fi
+else
+    cape_machines_status="stopped"
+fi
+
+# -------------------------------------------------------------------------
 # World-readable malware (#392)
 #
 # Both sample stores rely on a directory mode to gate access. That is the
@@ -474,6 +514,13 @@ if [ "$exposed_samples" -gt 0 ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: world-readable malware samples: $exposed_where"
     queue_alert sample_exposure "MALWARE SAMPLES WORLD-READABLE" \
         "$exposed_samples sample files can be read by any local account: $exposed_where. Fix: make deploy TAGS=cape-storage-perms,motif-perms" \
+        --priority urgent --tags skull
+fi
+
+if [ "$cape_machines_status" = "alert" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: CAPE has no usable machines: $cape_machines_problem"
+    queue_alert cape_machines "CAPE CANNOT DETONATE" \
+        "$cape_machines_problem. No sample has been analysed since this started. Fix: systemctl restart cape (re-enrolls from conf/kvm.conf)" \
         --priority urgent --tags skull
 fi
 
@@ -525,6 +572,8 @@ export NM_PIPELINE_PROCESS_STATUS="$pipeline_process_status"
 export NM_PIPELINE_UNEXPECTED="$pipeline_unexpected"
 export NM_API_PROCESS_STATUS="$api_process_status"
 export NM_API_UNEXPECTED="$api_unexpected"
+export NM_CAPE_MACHINES_STATUS="$cape_machines_status"
+export NM_CAPE_MACHINES_PROBLEM="$cape_machines_problem"
 export NM_CAPE_STORAGE_STATUS="$cape_storage_status"
 export NM_CAPE_STORAGE_PROBLEM="$cape_storage_problem"
 export NM_EXPOSED_WHERE="$exposed_where"
@@ -612,6 +661,8 @@ status = {
     'pipeline_unexpected_processes': env('NM_PIPELINE_UNEXPECTED').split(' | ') if env('NM_PIPELINE_UNEXPECTED') else [],
     'api_process_status': env('NM_API_PROCESS_STATUS'),
     'api_unexpected_processes': env('NM_API_UNEXPECTED').split(' | ') if env('NM_API_UNEXPECTED') else [],
+    'cape_machines_status': env('NM_CAPE_MACHINES_STATUS'),
+    'cape_machines_problem': env('NM_CAPE_MACHINES_PROBLEM') or None,
     'cape_storage_status': env('NM_CAPE_STORAGE_STATUS'),
     'cape_storage_problem': env('NM_CAPE_STORAGE_PROBLEM') or None,
     'exposed_sample_count': $exposed_samples,

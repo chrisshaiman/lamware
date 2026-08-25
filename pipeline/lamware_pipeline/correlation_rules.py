@@ -593,6 +593,39 @@ def _plugin_state(plugins: dict, name: str) -> tuple[bool, str | None]:
     return False, f"unexpected {type(value).__name__} output"
 
 
+#: Cape stage statuses that mean it TRIED and failed, as opposed to being
+#: skipped by policy. "skipped" carries a reason (a non-Windows binary) and is a
+#: reported pipeline state, exactly like Volatility's `triggered: False` — so it
+#: stays silent, for the same argument.
+_CAPE_FAILED_STATUSES = {"error", "failed_analysis", "failed_processing", "failed_reporting"}
+
+
+def _cape_unavailable_reason(report: dict) -> str | None:
+    """Why the Cape stage produced nothing to correlate, or None if it ran.
+
+    EVERY correlation rule reads Cape data — dropped files, injection buffers,
+    process command lines, extracted configs — so a failed Cape stage blinds all
+    five at once. Before this, that state persisted as `correlation_warnings =
+    '{}'`, which the schema and every base-rate query read as "correlation ran
+    and every rule could be evaluated": a failed sandbox run was recorded as a
+    clean sample.
+
+    That is not hypothetical. Cape served no task between 2026-08-21 and
+    2026-08-24 because its machine pool had emptied (#451), and every submission
+    in that window returned `failed_analysis` after 30 seconds while the pipeline
+    carried on and wrote a report. A corpus run spanning such an outage would
+    report a low correlation fire rate that was really an infrastructure fault.
+    """
+    cape = report.get("cape")
+    if not isinstance(cape, dict):
+        return None
+    status = cape.get("status")
+    if status in _CAPE_FAILED_STATUSES:
+        detail = cape.get("error") or status
+        return str(detail)[:200]
+    return None
+
+
 def correlation_warnings(report: dict) -> list[str]:
     """The rules that could not be evaluated, and what went missing.
 
@@ -616,6 +649,20 @@ def correlation_warnings(report: dict) -> list[str]:
     Returns [] when Volatility did not run at all — that is a reported pipeline
     state (the stage is trigger-gated), not a silent degradation of correlation.
     """
+    warnings: list[str] = []
+
+    cape_reason = _cape_unavailable_reason(report)
+    if cape_reason:
+        warnings.append(
+            f"Cape stage produced no output ({cape_reason}) — no correlation "
+            f"rule could be evaluated, because every rule reads Cape data"
+        )
+
+    return warnings + _volatility_warnings(report)
+
+
+def _volatility_warnings(report: dict) -> list[str]:
+    """The Volatility half: which plugins a rule needed and could not get."""
     volatility = report.get("volatility")
     if not isinstance(volatility, dict):
         return []

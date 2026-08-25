@@ -104,6 +104,7 @@ def _run(tmp_path, qemu_unexpected, queued=(BREACH, BREAKOUT)):
         'pipeline_process_status=ok', 'pipeline_unexpected=',
         'api_process_status=ok', 'api_unexpected=',
         'cape_storage_status=ok', 'cape_storage_problem=', 'exposed_where=',
+        'cape_machines_status=ok', 'cape_machines_problem=',
         # Through the harness env, so the test's own quoting cannot be what is
         # under test — the script reads it as an ordinary shell variable.
         'qemu_unexpected="$LAMWARE_TEST_QEMU_CHILDREN"',
