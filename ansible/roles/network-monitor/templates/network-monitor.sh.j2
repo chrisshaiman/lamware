@@ -281,9 +281,18 @@ cape_patterns=(
     '*/capev2-*/bin/python rooter.py*'
     '*/poetry*'
     # Podman containers + QEMU VMs
+    # Both spellings, for the reason given on the pipeline list above: rootless
+    # podman's supervisor reports a bare `podman`, everything it spawns reports
+    # an absolute path, and only the bare forms were listed.
     'podman'
+    '/usr/bin/podman'
+    '/usr/bin/podman *'
     'conmon*'
+    '/usr/bin/conmon *'
     'catatonit*'
+    '/usr/bin/catatonit*'
+    '/usr/bin/fuse-overlayfs *'
+    '/usr/bin/crun *'
     'pause'
     '*/tcpdump*'
     '*/qemu-system*'
@@ -337,12 +346,34 @@ pipeline_patterns=(
     '/opt/pipeline/cleanup.sh*'
     '/bin/sh -c *pipeline*'
     '/opt/pipeline/venv/bin/python* /opt/pipeline/generate-report.py*'
-    # Podman containers
+    # Analysis stage wrappers. Every stage shells out to /opt/<role>/run-<name>
+    # (run-ghidra, run-volatility, run-interpret, run-triage, run-pcap-analysis
+    # and a dozen more), and NONE of them was listed — so every pipeline run
+    # alerted, repeatedly, for doing exactly its job.
+    '/bin/bash /opt/*/run-*'
+    # Podman runtime — BOTH spellings, because both genuinely occur.
+    #
+    # Rootless podman rewrites argv[0], so its supervisor process reports the
+    # bare string `podman`; that is what the entries below with no path match,
+    # and they are live (verified in `ps -u pipeline -o args=`). Everything else
+    # podman spawns reports an ABSOLUTE path, and since these patterns anchor at
+    # the start of the string, `conmon*` could never match `/usr/bin/conmon …`.
+    # That one WAS dead: 1430 conmon and 1440 fuse-overlayfs alerts in the log,
+    # for processes doing exactly their job.
+    #
+    # Pinned to /usr/bin rather than relaxed to '*/conmon*', which would also
+    # match /tmp/attacker/conmon.
     'podman'
     'podman run --rm*'
     'podman build*'
-    'conmon*'
+    '/usr/bin/podman'
+    '/usr/bin/podman *'
+    '/usr/bin/conmon *'
     'catatonit*'
+    '/usr/bin/catatonit*'
+    '/usr/bin/fuse-overlayfs *'
+    '/usr/bin/crun *'
+    '/usr/bin/slirp4netns *'
     'pause'
     # Systemd user session.
     # Trailing glob is load-bearing: after a `systemctl daemon-reexec` (or a
