@@ -80,6 +80,60 @@
 # that libvirt may add. Use -C to check idempotently before inserting.
 # -------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
+# Guest DNS -> INetSim (#456)
+#
+# `route = none` in Cape's routing.conf is deliberate: guests are confined to
+# virbr-det by the rules below, and INetSim listens on the gateway, so Cape
+# installs no routing of its own. That works for HTTP/HTTPS/SMTP/FTP, which
+# INetSim binds directly on the gateway address.
+#
+# It does not work for DNS. libvirt's per-network dnsmasq binds :53 on that same
+# gateway when the network starts, so INetSim's DNS can never have it. INetSim
+# reported the service as started and exited silently; every analysis since has
+# resolved nothing.
+#
+# Redirect here rather than fixing it any of the other ways:
+#   - Cape's own inetsim route would install dns_forward, but only under
+#     `route = inetsim`, which duplicates the confinement these rules already
+#     provide and changes the containment model to fix a port conflict.
+#   - `<dns enable="no"/>` on the libvirt network frees :53, but it is not
+#     established whether dnsmasq still advertises a resolver over DHCP once its
+#     DNS is off. If it stops, guests end up with no resolver at all.
+# A PREROUTING redirect touches neither.
+# -----------------------------------------------------------------------------
+
+- name: Check guest DNS redirect to INetSim
+  ansible.builtin.command:
+    cmd: >-
+      iptables -t nat -C PREROUTING -i {{ detonation_bridge }}
+      -p {{ item }} --dport 53 -j REDIRECT --to-ports {{ inetsim_dns_port }}
+  register: networking_dns_redirect_check
+  changed_when: false
+  failed_when: false
+  loop:
+    - udp
+    - tcp
+
+- name: Redirect guest DNS to INetSim's alternate port
+  ansible.builtin.iptables:
+    table: nat
+    chain: PREROUTING
+    in_interface: "{{ detonation_bridge }}"
+    protocol: "{{ item.item }}"
+    destination_port: "53"
+    jump: REDIRECT
+    to_ports: "{{ inetsim_dns_port }}"
+    action: insert
+    rule_num: 1
+    state: present
+  loop: "{{ networking_dns_redirect_check.results }}"
+  loop_control:
+    label: "{{ item.item }}/53 -> {{ inetsim_dns_port }}"
+  when: item.rc != 0
+  # No notify: the unconditional "Save iptables rules" task at the end of this
+  # file persists everything, and a handler by that name does not exist.
+
 - name: Check air-gap rule — virbr-det → eth0
   ansible.builtin.command: >
     iptables -C FORWARD -i {{ detonation_bridge }} -o {{ management_interface }} -j DROP

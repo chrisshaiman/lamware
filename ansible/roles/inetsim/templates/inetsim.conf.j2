@@ -39,7 +39,7 @@ start_service          dns
 # Return inetsim_dns_default_ip for ALL queries regardless of name.
 # This means malware C2 domains, update servers, and CDNs all resolve to
 # INetSim's address — subsequent connections are captured by http/https.
-dns_bind_port          53
+dns_bind_port          {{ inetsim_dns_port }}
 dns_default_ip         {{ inetsim_dns_default_ip }}
 dns_default_ttl        {{ inetsim_dns_default_ttl }}
 
