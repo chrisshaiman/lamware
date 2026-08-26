@@ -26,6 +26,23 @@ lamware_domain: lamware.example.com
 detonation_bridge: virbr-det
 detonation_network: 192.168.100.0/24
 detonation_gateway: 192.168.100.1
+
+#: Port INetSim's DNS service binds. NOT 53.
+#:
+#: libvirt runs a dnsmasq per virtual network and binds :53 on the bridge
+#: gateway — the same address INetSim uses — from the moment the network starts.
+#: INetSim's DNS therefore forked, failed to bind, and exited, while INetSim
+#: logged "dns_53_tcp_udp started" and then "Simulation running." The other four
+#: services bound their own ports fine, so the failure was invisible.
+#:
+#: Consequence, measured across 13 analyses: every DNS query returned
+#: `answers: []`, no domain resolved, no connection was attempted, and
+#: windows.netscan found 0 rows in memory on every sample (#456).
+#:
+#: A PREROUTING redirect in roles/networking sends guest :53 here, which keeps
+#: libvirt's dnsmasq untouched so DHCP — including the resolver it advertises —
+#: is unchanged.
+inetsim_dns_port: 5300
 detonation_dhcp_start: 192.168.100.10
 detonation_dhcp_end: 192.168.100.50
 
