@@ -39,6 +39,64 @@
   # inetsim is in Ubuntu universe; ensure universe is enabled before running Ansible.
   # Command if needed: add-apt-repository universe
 
+- name: Install dig (used to prove INetSim's DNS actually answers)
+  ansible.builtin.apt:
+    name: bind9-dnsutils
+    state: present
+    update_cache: false
+
+# -------------------------------------------------------------------------
+# Net::DNS compatibility patch (#464)
+# -------------------------------------------------------------------------
+# INetSim 1.3.2 (May 2020, and upstream has not released since) calls the
+# historical Net::DNS::Nameserver::main_loop, which is now:
+#
+#     sub main_loop { carp 'deprecated...'; &start_server; exit; }
+#
+# and start_server begins:
+#
+#     my $pid = $$;                                    # FILE-scoped, set at load
+#     croak '...in a subprocess' unless $$ == $pid;    # Nameserver.pm:542
+#
+# $pid is captured when the module is compiled — in INetSim's parent. INetSim
+# forks a child per service, so the DNS child always fails that test, croaks,
+# and exits 25. It had logged "started" one line earlier and never logs
+# "stopped"; its stderr is not wired to the journal. The result is a service
+# that reports itself up and has never answered a single query, which is why
+# every analysis recorded `answers: []` (#456).
+#
+# loop_once is the other historical entry point: it does not call start_server,
+# carries no pid guard, and creates its own sockets lazily. Verified on the host
+# by replicating INetSim's structure (module loaded in parent, fork, child runs
+# loop_once): the child survived, bound udp/5300, and answered a query with the
+# gateway address.
+#
+# This edits a distro-owned file, so it is written to be self-healing: `replace`
+# re-applies after any apt upgrade that restores the original, and the assertion
+# below fails the deploy if the anchor ever stops matching. Neither is the real
+# guard — that is the live query at the end of this file, because a file that
+# looks right is not a DNS server that answers.
+
+- name: Patch INetSim DNS to use loop_once instead of main_loop (#464)
+  ansible.builtin.replace:
+    path: /usr/share/perl5/INetSim/DNS.pm
+    regexp: '^(\s*)\$server->main_loop;\s*$'
+    replace: '\1while (1) { $server->loop_once(10); }'
+    backup: true
+  notify: Restart inetsim
+
+- name: Assert the DNS patch applied (a silent no-op here is the whole failure mode)
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      # Present in its patched form...
+      grep -qF 'loop_once(10)' /usr/share/perl5/INetSim/DNS.pm
+      # ...and the croaking call is gone. `replace` reports success when its
+      # regexp matches nothing, so without this an upstream rename would leave
+      # DNS broken and the deploy green.
+      ! grep -qE '^[[:space:]]*\$server->main_loop;' /usr/share/perl5/INetSim/DNS.pm
+  changed_when: false
+
 # -------------------------------------------------------------------------
 # Log and report directories
 # -------------------------------------------------------------------------
@@ -108,9 +166,62 @@
 # Enable and start
 # -------------------------------------------------------------------------
 
+# The unit is generated from a SysV script whose `stop` kills only the PID in
+# the pidfile and never removes it (init script line 81: `#rm -f $PIDFILE`).
+# When the main process dies without cleanup the pidfile outlives it, the
+# service children keep their ports, and every later start is a no-op that
+# reports success. Observed here: the unit read `inactive` for 19 days while
+# four children served traffic, and the #459 deploy could not restart over it.
+# Full supervision fix is #463; this clears the specific state that makes a
+# restart silently do nothing.
+
+- name: Clear a wedged INetSim (stale pidfile, orphaned service children)
+  ansible.builtin.shell:
+    cmd: |
+      pid=$(cat /var/run/inetsim.pid 2>/dev/null || true)
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+          echo healthy
+          exit 0
+      fi
+      rm -f /var/run/inetsim.pid
+      pkill -f '^inetsim_' 2>/dev/null || true
+      echo cleaned
+  register: inetsim_wedge
+  changed_when: inetsim_wedge.stdout is search('cleaned')
+
 - name: Enable and start inetsim service
   ansible.builtin.systemd:
     name: inetsim
     state: started
     enabled: true
     daemon_reload: true
+
+- name: Flush handlers so the check below tests the restarted service
+  ansible.builtin.meta: flush_handlers
+
+# The guard that matters. `systemctl is-active` was wrong in both directions on
+# this host — `inactive` while four children served traffic, then `active` with
+# no DNS at all — and a config file with the right port in it proves nothing.
+# Ask the question the rest of the platform depends on: does a query get an
+# answer? This is the check that would have caught #456 on day one.
+
+- name: Verify INetSim DNS actually answers
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      dig +short +tries=1 +time=3 -p {{ inetsim_dns_port }}
+      @{{ detonation_gateway }} inetsim-deploy-probe.invalid
+      | grep -Eo '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' | head -1
+    executable: /bin/bash
+  register: inetsim_dns_probe
+  changed_when: false
+  failed_when: false
+  # `dig +short` prints connection failures to stdout, so the grep is what makes
+  # an empty result mean "nothing answered" rather than "answered with an error
+  # string". failed_when: false because a non-answer must drive the retry below,
+  # not abort on the first attempt.
+  retries: 6
+  delay: 3
+  until: inetsim_dns_probe.stdout | trim == inetsim_dns_default_ip
+  # .invalid is reserved (RFC 2606), so a real resolver could never answer this
+  # and a pass cannot come from anywhere but INetSim.
