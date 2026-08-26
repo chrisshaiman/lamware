@@ -39,12 +39,36 @@ fi
 mkdir -p "$OUTPUT_DIR"
 
 # Container is read-only with targeted writable tmpfs mounts for
-# Volatility's cache and temp files. Memory dump directory mounted
-# directly (read-only) — no copy, since dumps are multi-GB.
+# Volatility's cache and temp files. The dump is mounted directly (read-only)
+# — no copy, since dumps are multi-GB.
+#
+# --group-add keep-groups: Cape writes memory.dmp as cape:lamware with an ACL,
+# and `pipeline` reads it via the lamware group. Rootless podman drops
+# supplementary groups by default, so without this the container cannot read
+# the dump and Volatility reports "File does not exist" about a file that
+# plainly exists. Requires crun (verified in use on this host).
+#
+# That failure was load-bearing, not cosmetic: stages/volatility.py falls back
+# to the Cape path whenever its ramdisk copy does not happen
+# (`active_dump = ramdisk_dump if ramdisk_dump else dump_path`), and two
+# concurrent analyses do not fit in the 12g ramdisk. The fallback made EVERY
+# plugin fail, not just one.
+#
+# The mount is the FILE, not its directory. With supplementary groups now
+# carried in, mounting the directory would expose the whole analysis tree —
+# measured at 24 files including the pcap. Mounting one file keeps the
+# container to exactly what it needs, which is strictly narrower than the
+# directory mount this replaces.
+#
+# CAUTION: keep-groups means any mount added here inherits lamware read access
+# to whatever it covers. That group owns ~68k paths under
+# /opt/CAPEv2/storage/analyses, including extracted payloads. Do not mount the
+# storage root.
 # Use timeout(1) instead of --timeout — Podman 4.x rootless timeout is unreliable
 timeout --kill-after=60 {{ volatility_container_timeout }} \
 podman run --rm \
     --network=none \
+    --group-add keep-groups \
     --read-only \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
@@ -55,7 +79,7 @@ podman run --rm \
     --tmpfs /home:size=100m \
     --tmpfs /var/cache:size=100m \
     -v "{{ volatility_install_dir }}/cache:/vol-cache:ro" \
-    -v "$DUMP_DIR:/dump:ro" \
+    -v "$DUMP_PATH:/dump/$DUMP_NAME:ro" \
     -v "{{ volatility_symbols_dir }}:/symbols:ro" \
     -v "$OUTPUT_DIR:/output:rw" \
     --workdir /output \
