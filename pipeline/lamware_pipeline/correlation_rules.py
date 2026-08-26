@@ -139,14 +139,99 @@ def _gather_buffer_samples(report: dict) -> dict:
     return samples
 
 
+def _vad_containing(vadinfo: list, pid, address: int) -> dict | None:
+    """The VAD of `pid` that contains `address`, or None.
+
+    Containment, not equality. The old rule required Cape's injection address to
+    EQUAL malfind's Start VPN, which is a coincidence rather than a relation: a
+    cross-process write lands wherever the allocation happens to be, not at a VAD
+    boundary. Measured on task 1043 — 31 buffers against 399 malfind regions —
+    equality matched 0 and containment matched 0, because malfind reports only
+    RWX VADs and these writes went into PAGE_NOACCESS (10) and
+    PAGE_EXECUTE_WRITECOPY (16). vadinfo returns every VAD, and containment
+    against it matched 27 of 31.
+    """
+    for vad in vadinfo:
+        if not isinstance(vad, dict) or vad.get("PID") != pid:
+            continue
+        start, end = vad.get("Start VPN"), vad.get("End VPN")
+        if isinstance(start, int) and isinstance(end, int) and start <= address <= end:
+            return vad
+    return None
+
+
+def _gather_vad_samples(report: dict) -> tuple[dict, str | None]:
+    """Memory bytes at each injection address, from the VAD dumps vadinfo wrote.
+
+    Keyed 'target_pid:injection_address' to match `buffer_samples`, so the rule
+    compares two hex strings gathered the same way — Cape's bytes at write time
+    against the same offset in memory at capture time.
+
+    Returns (samples, reason_it_is_empty). The reason is what stops a missing
+    dump from reading as "the bytes were identical" (#452).
+    """
+    samples: dict[str, str] = {}
+    vol = report.get("volatility")
+    if not isinstance(vol, dict):
+        return samples, None
+    vadinfo = (vol.get("plugins") or {}).get("vadinfo")
+    if not isinstance(vadinfo, list):
+        return samples, "vadinfo did not run"
+    dump_dir = vol.get("vad_dump_dir")
+    if not dump_dir:
+        return samples, "vadinfo ran but dumped no regions"
+    if not _within_allowed_root(dump_dir):
+        return samples, "vad dump directory outside the allowed read root"
+
+    unresolved = 0
+    for buf in report.get("cape", {}).get("injection_buffers", []):
+        pid = buf.get("target_pid")
+        addr_s = buf.get("injection_address", "")
+        try:
+            addr = int(str(addr_s), 16)
+        except (ValueError, TypeError):
+            continue
+        vad = _vad_containing(vadinfo, pid, addr)
+        if vad is None:
+            # The write landed somewhere vadinfo has no VAD for — most often a
+            # process that exited before capture. Counted, not silently dropped.
+            unresolved += 1
+            continue
+        name = vad.get("File output")
+        if not isinstance(name, str) or not name or name.lower() == "disabled":
+            unresolved += 1
+            continue
+        path = os.path.join(dump_dir, os.path.basename(name))
+        if not _within_allowed_root(path):
+            continue
+        offset = addr - vad["Start VPN"]
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(offset)
+                data = fh.read(_BUFFER_SAMPLE_BYTES)
+        except OSError:
+            unresolved += 1
+            continue
+        if data:
+            samples[f"{pid}:{addr_s}"] = data.hex()
+
+    reason = None
+    if unresolved and not samples:
+        reason = f"no injection address resolved to a dumped VAD ({unresolved} unresolved)"
+    return samples, reason
+
+
 def enrich_correlation_inputs(report: dict) -> dict:
     """Populate report['_correlation_inputs'] from the filesystem. Idempotent:
     overwrites wholesale so replay re-runs are safe. Returns the (mutated) report."""
     dropped_files, dropped_unavailable = _gather_dropped_files(report)
+    vad_samples, vad_unavailable = _gather_vad_samples(report)
     report["_correlation_inputs"] = {
         "dropped_files": dropped_files,
         "dropped_files_unavailable": dropped_unavailable,
         "buffer_samples": _gather_buffer_samples(report),
+        "vad_samples": vad_samples,
+        "vad_samples_unavailable": vad_unavailable,
     }
     return report
 
@@ -220,63 +305,66 @@ def rule_dropped_file_loaded(report: dict) -> list[dict]:
 
 
 def rule_shellcode_self_modified(report: dict) -> list[dict]:
-    """Injected shellcode that differs in memory (Volatility malfind) from the
-    bytes Cape captured at injection time → self-modification.
+    """Injected bytes that differ in memory from what Cape captured at write time.
 
-    Byte-comparison preserved from the original: the gathered sample (<=128B) is
-    trimmed to the malfind hexdump length, so the compare is identical to the old
-    `f.read(len(malfind_bytes))` (malfind hexdumps are always far shorter than 128).
+    Joins on VAD CONTAINMENT via `windows.vadinfo`, not on equality with
+    malfind's Start VPN. The old rule required Cape's injection address to equal
+    a malfind region's start, and measured against task 1043 that matched 0 of
+    31 — not because the tools disagree, but because malfind reports only
+    PAGE_EXECUTE_READWRITE VADs by design, and these writes land in
+    PAGE_NOACCESS (10 of 27) and PAGE_EXECUTE_WRITECOPY (16 of 27): a region
+    allocated non-executable and flipped later, or a copy-on-write patch of a
+    mapped module. Stock malfind returns 0 on that dump even with no time limit,
+    so the 120s cap was never the cause.
+
+    `windows.vadinfo --pid <targets>` returns every VAD regardless of protection
+    and takes 2.84s for two processes in one invocation, which is cheaper than
+    the malfind run it replaces.
+
+    Both sides are read at the same offset: Cape's bytes at the moment of the
+    write, against `injection_address - Start VPN` within the dumped VAD.
     """
     findings = []
-    cape = report.get("cape", {})
-    buffer_samples = report.get("_correlation_inputs", {}).get("buffer_samples", {})
-    injection_bufs = cape.get("injection_buffers", [])
-    malfind = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
-    if not (isinstance(malfind, list) and injection_bufs):
+    inputs = report.get("_correlation_inputs", {})
+    cape_samples = inputs.get("buffer_samples", {})
+    vad_samples = inputs.get("vad_samples", {})
+    if not (cape_samples and vad_samples):
         return findings
 
-    for buf in injection_bufs:
-        target_pid = buf.get("target_pid", 0)
-        inject_addr = buf.get("injection_address", "")
-        sample_hex = buffer_samples.get(f"{target_pid}:{inject_addr}", "")
-        if not sample_hex:
+    for buf in report.get("cape", {}).get("injection_buffers", []):
+        pid = buf.get("target_pid")
+        addr = buf.get("injection_address", "")
+        key = f"{pid}:{addr}"
+        cape_hex, mem_hex = cape_samples.get(key), vad_samples.get(key)
+        if not (cape_hex and mem_hex):
             continue
-        cape_sample = bytes.fromhex(sample_hex)
+        try:
+            cape_bytes = bytes.fromhex(cape_hex)
+            mem_bytes = bytes.fromhex(mem_hex)
+        except ValueError:
+            continue
 
-        for region in malfind:
-            region_pid = region.get("PID", 0)
-            region_start = region.get("Start VPN", 0)
-            if isinstance(region_start, int):
-                region_start_hex = f"0x{region_start:08x}"
-            else:
-                region_start_hex = str(region_start)
-            if region_pid != target_pid or inject_addr != region_start_hex:
-                continue
+        # Compare only the overlap. Cape truncates its capture (the pipeline logs
+        # "injection buffer TRUNCATED by Cape: captured 256 of 336 bytes"), so the
+        # shorter side bounds the comparison — otherwise every truncated buffer
+        # reads as modified.
+        n = min(len(cape_bytes), len(mem_bytes))
+        if n == 0 or cape_bytes[:n] == mem_bytes[:n]:
+            continue
 
-            hexdump = region.get("Hexdump", "")
-            try:
-                malfind_bytes = bytes(
-                    int(h, 16) for h in hexdump.split()
-                    if h and len(h) == 2 and all(c in "0123456789abcdefABCDEF" for c in h)
-                ) if hexdump else b""
-            except (ValueError, TypeError):
-                malfind_bytes = b""
-
-            cape_bytes = cape_sample[:len(malfind_bytes)]
-            if cape_bytes and malfind_bytes and cape_bytes != malfind_bytes[:len(cape_bytes)]:
-                findings.append({
-                    "type": "shellcode_self_modified",
-                    "severity": "high",
-                    "title": f"Injected shellcode self-modified in PID {target_pid} at {inject_addr}",
-                    "detail": "Memory content differs from what was originally injected.",
-                    "before": cape_bytes[:64].hex(),
-                    "after": malfind_bytes[:64].hex(),
-                    "pid": target_pid,
-                    "address": inject_addr,
-                    "sources": ["Cape", "Volatility"],
-                    "mitre": "T1027 — Obfuscated Files or Information",
-                })
-            break
+        findings.append({
+            "type": "shellcode_self_modified",
+            "severity": "high",
+            "title": f"Injected shellcode self-modified in PID {pid} at {addr}",
+            "detail": (f"Cape captured {len(cape_bytes)} bytes at write time; memory at "
+                       f"the same address differs within the first {n} bytes."),
+            "before": cape_bytes[:64].hex(),
+            "after": mem_bytes[:64].hex(),
+            "pid": pid,
+            "address": addr,
+            "sources": ["Cape", "Volatility"],
+            "mitre": "T1027 — Obfuscated Files or Information",
+        })
     return findings
 
 
@@ -704,6 +792,21 @@ def _volatility_warnings(report: dict) -> list[str]:
             warnings.append(
                 f"Cape dropped-file manifest unavailable ({reason}) — could not "
                 f"evaluate {_PLUGIN_CONSUMERS['dlllist']}"
+            )
+
+    # vadinfo deliberately is NOT in _PLUGIN_CONSUMERS. Those entries warn
+    # whenever the plugin is absent, but the stage only runs vadinfo when Cape
+    # captured injection buffers — so declaring it would warn on every sample
+    # that has nothing to inject, which is most of them. A warning that fires on
+    # ordinary runs is how a channel gets ignored (#453).
+    #
+    # Gated on there being something to check instead.
+    if report.get("cape", {}).get("injection_buffers"):
+        reason = report.get("_correlation_inputs", {}).get("vad_samples_unavailable")
+        if reason:
+            warnings.append(
+                f"Injection-address memory unavailable ({reason}) — could not "
+                f"evaluate whether injected bytes were modified after the write"
             )
     return warnings
 
