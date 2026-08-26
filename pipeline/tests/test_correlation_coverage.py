@@ -263,3 +263,53 @@ def test_the_volatility_warnings_still_work_alongside():
     warnings = correlation_warnings(report)
     assert any("malfind" in w for w in warnings)
     assert not any("Cape stage" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# A plugin's declared purpose must match what still reads it (#467)
+# ---------------------------------------------------------------------------
+
+def _rule_body_source(func_name: str) -> str:
+    """Source of a rule function with its docstring removed.
+
+    The docstring is excluded deliberately: rule_shellcode_self_modified
+    discusses malfind at length — why it was abandoned, what it reports, what it
+    measured — while its code never touches it. Grepping the whole function
+    would read that explanation as a dependency and pass for the wrong reason.
+    """
+    import ast
+    tree = ast.parse(SOURCE)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            body = node.body
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                body = body[1:]
+            return "\n".join(ast.unparse(n) for n in body)
+    raise AssertionError(f"{func_name} not found")
+
+
+def test_shellcode_rule_does_not_read_malfind():
+    """#458 moved this rule onto vadinfo. If it ever reads malfind again, the
+    consumer description below has to change back with it."""
+    assert "malfind" not in _rule_body_source("rule_shellcode_self_modified")
+
+
+def test_malfind_is_not_credited_with_self_modification():
+    """The stale-description defect (#467).
+
+    malfind's entry claimed it covered "whether injected shellcode
+    self-modified" for months after #458 removed that dependency. A malfind
+    timeout therefore announced that self-modification could not be evaluated
+    while vadinfo evaluated it fine in the same run — a warning asserting a gap
+    that is not there. That costs the same credibility as a gap reported clean,
+    which is the failure this whole module exists to prevent.
+    """
+    purpose = _PLUGIN_CONSUMERS["malfind"]
+    assert "self-modif" not in purpose.lower(), (
+        f"malfind no longer establishes self-modification: {purpose!r}")
+    # It does still establish this one — rule_injection_corroborated reads it,
+    # and that rule has never fired without it.
+    assert "corroborated" in purpose.lower()
+    assert "malfind" in _rule_body_source("rule_injection_corroborated")
