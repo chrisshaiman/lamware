@@ -531,69 +531,122 @@ def test_cross_correlate_pops_inputs_so_bytes_are_not_persisted(tmp_path, monkey
 
 
 # --- rule_c2_live_in_memory ---
+#
+# Re-based off windows.netscan (#469). netscan selects structure definitions by
+# Windows build, tops out at 20348, and these guests are build 26100 — so it
+# scanned with Server 2022 offsets and returned 0 rows on 17 of 17 runs while
+# logging success. Upstream has no table for any Windows 11 build, and netstat
+# builds its structures from netscan, so no Volatility version can read socket
+# state here. The rule now looks for the C2 host as a string in dumped VAD
+# memory, which needs bytes rather than kernel structures.
 
-def test_c2_live_in_memory_fires_when_config_ip_in_netscan():
-    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
-    report = {
-        "cape": {"extracted_configs": [{"C2": "203.0.113.7", "version": "1.2"}]},
-        "volatility": {"plugins": {"netscan": [
-            {"ForeignAddr": "203.0.113.7", "PID": 1337, "State": "ESTABLISHED"}
-        ]}},
+
+def _c2_report(tmp_path, monkeypatch, configs, blobs):
+    """A report whose vadinfo rows point at real files under the allowed root.
+
+    blobs: {pid: bytes} — written as one dumped VAD region per pid.
+    """
+    import lamware_pipeline.correlation_rules as cr
+    root = tmp_path / "reports"
+    root.mkdir(exist_ok=True)
+    monkeypatch.setattr(cr, "_PIPELINE_REPORTS_ROOT", str(root))
+    dump_dir = root / "vol_vadinfo"
+    dump_dir.mkdir(exist_ok=True)
+    vadinfo = []
+    for pid, data in blobs.items():
+        name = f"pid.{pid}.dmp"
+        (dump_dir / name).write_bytes(data)
+        vadinfo.append({"PID": pid, "Start VPN": 0x1000, "End VPN": 0x2000,
+                        "File output": name})
+    return {
+        "cape": {"extracted_configs": configs},
+        "volatility": {"plugins": {"vadinfo": vadinfo}, "vad_dump_dir": str(dump_dir)},
     }
+
+
+def test_c2_host_found_in_memory(tmp_path, monkeypatch):
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "evil-c2.example", "version": "1.2"}],
+                        {1337: b"\x00" * 64 + b"GET / HTTP/1.1 Host: evil-c2.example\r\n"})
     findings = rule_c2_live_in_memory(report)
     assert len(findings) == 1
     assert findings[0]["type"] == "c2_live_in_memory"
-    assert findings[0]["severity"] == "high"
-    assert findings[0]["indicator"] == "203.0.113.7"
+    assert findings[0]["indicator"] == "evil-c2.example"
     assert findings[0]["pid"] == 1337
+    # medium, not high: a string proves the host was known to the process, not
+    # that a connection happened. The old netscan join could claim the latter.
+    assert findings[0]["severity"] == "medium"
 
 
-def test_c2_live_in_memory_silent_when_ip_not_connected():
+def test_c2_host_found_as_utf16(tmp_path, monkeypatch):
+    """Windows APIs carry hostnames as wide strings; ASCII-only would miss them."""
     from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
-    report = {
-        "cape": {"extracted_configs": [{"C2": "203.0.113.7"}]},
-        "volatility": {"plugins": {"netscan": [
-            {"ForeignAddr": "127.0.0.1", "PID": 1, "State": "LISTENING"}
-        ]}},
-    }
+    wide = "evil-c2.example".encode("utf-16-le")
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"c2_url": "evil-c2.example"}],
+                        {99: b"\xcc" * 32 + wide})
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1 and findings[0]["pid"] == 99
+
+
+def test_silent_when_c2_absent_from_memory(tmp_path, monkeypatch):
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "evil-c2.example"}],
+                        {1: b"nothing interesting here at all"})
     assert rule_c2_live_in_memory(report) == []
 
 
-def test_c2_live_in_memory_silent_when_c2_ip_is_skipped_address():
+def test_one_finding_per_indicator_not_per_region(tmp_path, monkeypatch):
     from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
-    report = {
-        "cape": {"extracted_configs": [{"C2": "0.0.0.0"}]},
-        "volatility": {"plugins": {"netscan": [
-            {"ForeignAddr": "0.0.0.0", "PID": 1, "State": "ESTABLISHED"}
-        ]}},
-    }
+    hay = b"evil-c2.example"
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "evil-c2.example"}],
+                        {100: hay, 200: hay})
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1
+    assert findings[0]["pid"] in (100, 200)
+
+
+def test_unroutable_c2_addresses_are_not_hunted(tmp_path, monkeypatch):
+    """Everything resolves to the INetSim gateway during detonation (#464), so
+    192.168.100.1 is in every dump by construction and proves nothing."""
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "192.168.100.1"}],
+                        {1: b"connect 192.168.100.1 now"})
     assert rule_c2_live_in_memory(report) == []
 
 
-def test_c2_live_in_memory_dedups_multiple_connections_to_same_c2():
+def test_routable_c2_ip_is_hunted(tmp_path, monkeypatch):
     from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
-    report = {
-        "cape": {"extracted_configs": [{"C2": "203.0.113.7"}]},
-        "volatility": {"plugins": {"netscan": [
-            {"ForeignAddr": "203.0.113.7", "PID": 100, "State": "ESTABLISHED"},
-            {"ForeignAddr": "203.0.113.7", "PID": 200, "State": "ESTABLISHED"},
-        ]}},
-    }
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "203.0.113.7"}],
+                        {5: b"beacon to 203.0.113.7:443"})
     findings = rule_c2_live_in_memory(report)
-    assert len(findings) == 1
+    assert len(findings) == 1 and findings[0]["indicator"] == "203.0.113.7"
 
 
-def test_c2_live_in_memory_fires_from_network_hosts_list():
+def test_short_indicators_are_ignored(tmp_path, monkeypatch):
+    """A short string matches by accident in gigabytes of process memory."""
     from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
-    report = {
-        "cape": {"network": {"hosts": ["198.51.100.9", "8.8.8.8"]}},
-        "volatility": {"plugins": {"netscan": [
-            {"ForeignAddr": "198.51.100.9", "PID": 77, "State": "ESTABLISHED"}
-        ]}},
-    }
-    findings = rule_c2_live_in_memory(report)
-    assert len(findings) == 1
-    assert findings[0]["indicator"] == "198.51.100.9"
+    report = _c2_report(tmp_path, monkeypatch,
+                        [{"C2": "a.io"}],
+                        {1: b"xxx a.io xxx"})
+    assert rule_c2_live_in_memory(report) == []
+
+
+def test_no_vad_dumps_is_reported_not_treated_as_clean(tmp_path, monkeypatch):
+    """Coverage is bounded by which regions vadinfo dumped, and the stage only
+    dumps for injection target PIDs. Nothing to search must stay distinguishable
+    from searched-and-clean."""
+    import lamware_pipeline.correlation_rules as cr
+    report = {"cape": {"extracted_configs": [{"C2": "evil-c2.example"}]},
+              "volatility": {"plugins": {"vadinfo": []}}}
+    hits, reason = cr._gather_vad_string_hits(report, {"evil-c2.example"})
+    assert hits == {}
+    assert reason and "no dumped VAD regions" in reason
 
 
 # --- rule_injection_corroborated ---

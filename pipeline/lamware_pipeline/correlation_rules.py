@@ -256,6 +256,8 @@ def enrich_correlation_inputs(report: dict) -> dict:
         "vad_samples": vad_samples,
         "vad_samples_unavailable": vad_unavailable,
         "vad_samples_unresolved": vad_unresolved,
+        "c2_scan_unavailable": _gather_vad_string_hits(
+            report, _cape_c2_string_indicators(report.get("cape", {})))[1],
     }
     return report
 
@@ -569,35 +571,208 @@ def _cape_c2_ip_indicators(cape: dict) -> set:
     return ips
 
 
+# Scanning bounds for the C2-in-memory search. VAD dumps ran to 182MB for a
+# single analysis, and every needle is checked against every byte, so this is
+# capped. A truncated scan is REPORTED, never silent — "we stopped looking" must
+# not read as "we looked and found nothing" (#460).
+_VAD_SCAN_MAX_BYTES = 512 * 1024 * 1024
+_VAD_SCAN_CHUNK = 8 * 1024 * 1024
+
+#: An indicator has to be this long before it is worth hunting in memory. Short
+#: strings match by accident in 8 GiB of process memory; "1.1.1.1" would hit
+#: inside any longer number.
+_MIN_INDICATOR_LEN = 7
+
+#: Matching these in memory proves nothing. Everything resolves to the INetSim
+#: gateway during detonation (#464), so it is in every dump by construction, and
+#: RFC1918/loopback literals are ambient in any Windows image.
+_UNROUTABLE_PREFIXES = ("10.", "127.", "169.254.", "192.168.", "0.", "255.")
+
+
+def _is_routable_ip(value: str) -> bool:
+    if not _is_ip_literal(value):
+        return False
+    if value.startswith(_UNROUTABLE_PREFIXES):
+        return False
+    if value.startswith("172."):
+        try:
+            second = int(value.split(".")[1])
+        except (IndexError, ValueError):
+            return False
+        return not (16 <= second <= 31)
+    return True
+
+
+def _cape_c2_string_indicators(cape: dict) -> set[str]:
+    """C2 hosts worth hunting for in process memory.
+
+    Deliberately narrower than the DNS/host lists. Every query resolves to the
+    INetSim gateway, so `network.hosts` is dominated by 192.168.100.1, and the
+    domain list carries whatever the sample's OS asked for — telemetry, CDNs,
+    certificate checks. Hunting those in memory would produce a finding on every
+    sample and mean nothing.
+
+    Config-extracted values are the high-confidence source: Cape only populates
+    them when it has decoded a family's configuration, and the key hints already
+    filter to C2-ish fields. Domains are included here where the IP-only rule
+    excluded them, because a domain string is exactly what survives in memory
+    when the resolution itself went nowhere.
+    """
+    out: set[str] = set()
+
+    def _consume(value):
+        if isinstance(value, str):
+            v = value.strip()
+            if len(v) < _MIN_INDICATOR_LEN:
+                return
+            if _is_ip_literal(v):
+                if _is_routable_ip(v):
+                    out.add(v)
+            elif "." in v and " " not in v and len(v) <= 253:
+                out.add(v.lower())
+        elif isinstance(value, list):
+            for item in value:
+                _consume(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                _consume(item)
+
+    for cfg in cape.get("extracted_configs", []):
+        if not isinstance(cfg, dict):
+            continue
+        for key, value in cfg.items():
+            if any(hint in key.lower() for hint in _C2_CONFIG_KEY_HINTS):
+                _consume(value)
+    return out
+
+
+def _vad_dump_files(report: dict) -> list[tuple]:
+    """(pid, path) for every VAD region vadinfo actually dumped."""
+    vol = report.get("volatility")
+    if not isinstance(vol, dict):
+        return []
+    vadinfo = (vol.get("plugins") or {}).get("vadinfo")
+    dump_dir = vol.get("vad_dump_dir")
+    if not isinstance(vadinfo, list) or not dump_dir or not _within_allowed_root(dump_dir):
+        return []
+    out = []
+    for vad in vadinfo:
+        if not isinstance(vad, dict):
+            continue
+        name = vad.get("File output")
+        if not isinstance(name, str) or not _is_dump_filename(name):
+            continue
+        path = os.path.join(dump_dir, os.path.basename(name))
+        if _within_allowed_root(path):
+            out.append((vad.get("PID"), path))
+    return out
+
+
+def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | None]:
+    """Which indicators appear verbatim in dumped process memory, and in whose.
+
+    Searches both ASCII and UTF-16LE: Windows APIs carry hostnames as wide
+    strings, so an ASCII-only search misses the common case.
+
+    Returns (hits, reason_it_is_empty) — the reason is what keeps "no VAD dumps
+    existed" distinguishable from "the C2 host was not in memory".
+    """
+    if not needles:
+        return {}, None
+    files = _vad_dump_files(report)
+    if not files:
+        return {}, "no dumped VAD regions to search"
+
+    encoded = {}
+    for n in needles:
+        raw = n.encode("utf-8", "ignore")
+        encoded[n] = (raw.lower(), n.encode("utf-16-le", "ignore").lower())
+    longest = max((max(len(a), len(b)) for a, b in encoded.values()), default=0)
+
+    hits: dict = {}
+    scanned = 0
+    truncated = False
+    for pid, path in files:
+        if scanned >= _VAD_SCAN_MAX_BYTES:
+            truncated = True
+            break
+        try:
+            with open(path, "rb") as fh:
+                tail = b""
+                while scanned < _VAD_SCAN_MAX_BYTES:
+                    chunk = fh.read(_VAD_SCAN_CHUNK)
+                    if not chunk:
+                        break
+                    scanned += len(chunk)
+                    window = (tail + chunk).lower()
+                    for needle, (ascii_b, wide_b) in encoded.items():
+                        if ascii_b and ascii_b in window:
+                            hits.setdefault(needle, set()).add(pid)
+                        elif wide_b and wide_b in window:
+                            hits.setdefault(needle, set()).add(pid)
+                    tail = window[-longest:] if longest else b""
+        except OSError:
+            continue
+
+    reason = None
+    if truncated:
+        reason = (f"memory scan stopped at {_VAD_SCAN_MAX_BYTES // (1024 * 1024)}MB "
+                  f"of dumped VADs; regions past that were not searched")
+    return {k: sorted(v, key=lambda x: (x is None, x)) for k, v in hits.items()}, reason
+
+
 def rule_c2_live_in_memory(report: dict) -> list[dict]:
-    """Cape-identified C2 IP that is also an active foreign connection in
-    Volatility netscan → the C2 channel was live at capture. IP-literal match only
-    (domain->IP resolution is future work)."""
+    """A Cape-extracted C2 host that is also present, verbatim, in process memory.
+
+    This used to join Cape's C2 IPs against `windows.netscan` foreign addresses.
+    That join could never match on this platform. netscan selects its structure
+    definitions by Windows build, and when none matches it does not fail — it
+    logs `going with latest: netscan-win10-20348-x64` at DEBUG and scans with
+    Server 2022 offsets. The analysis guests are Windows 11 build 26100, so
+    netscan returned 0 rows on 17 of 17 runs while reporting success, and this
+    rule was the one correlation that never fired (#469).
+
+    netstat is no escape: it reads only PartitionTable/PartitionCount from
+    tcpip.pdb and builds its structures from netscan
+    (netstat.py:636 create_netscan_symbol_table), inheriting the same ceiling.
+    Upstream's newest table is build 20348 — there is none for any Windows 11
+    build, so no version of Volatility can read socket structures here.
+
+    So this asks a question the available evidence can answer. "The C2 channel
+    was live" needed sockets; "Cape decoded C2 host X, and X is present in this
+    process's memory" needs only bytes, and it is still a genuine cross-tool
+    claim — Cape decoded the config, Volatility supplied the memory, and neither
+    alone establishes it.
+
+    Weaker than the original in one specific way, stated rather than hidden: a
+    string in memory shows the host was *known* to the process, not that a
+    connection was established. Severity is medium, not high, for that reason.
+
+    Coverage is bounded by which regions vadinfo dumped, and the stage only
+    dumps for Cape's injection target PIDs — so a sample with C2 but no
+    injection has nothing to search. That is reported, not silently treated as
+    a clean result.
+    """
     findings = []
     cape = report.get("cape", {})
-    netscan = report.get("volatility", {}).get("plugins", {}).get("netscan", [])
-    if not isinstance(netscan, list) or not netscan:
+    indicators = _cape_c2_string_indicators(cape)
+    if not indicators:
         return findings
 
-    c2_ips = _cape_c2_ip_indicators(cape)
-    if not c2_ips:
-        return findings
-
-    seen_ips = set()
-    for conn in netscan:
-        foreign = conn.get("ForeignAddr", "")
-        if foreign in _SKIP_FOREIGN or foreign not in c2_ips or foreign in seen_ips:
-            continue
-        seen_ips.add(foreign)
+    hits, _reason = _gather_vad_string_hits(report, indicators)
+    for indicator in sorted(hits):
+        pids = [p for p in hits[indicator] if p is not None]
+        where = ", ".join(str(p) for p in pids[:5]) or "an unattributed region"
         findings.append({
             "type": "c2_live_in_memory",
-            "severity": "high",
-            "title": f"C2 endpoint {foreign} was live in memory",
-            "detail": (f"Cape config/network identified {foreign} as C2; Volatility "
-                       f"netscan shows an active connection to it "
-                       f"(PID {conn.get('PID', '?')}, {conn.get('State', '?')})."),
-            "indicator": foreign,
-            "pid": conn.get("PID", 0),
+            "severity": "medium",
+            "title": f"C2 host {indicator} found in process memory",
+            "detail": (f"Cape decoded {indicator} from the sample's configuration; "
+                       f"the same string is present in memory dumped from PID(s) "
+                       f"{where}. Presence establishes the host was known to the "
+                       f"process, not that a connection was made."),
+            "indicator": indicator,
+            "pid": pids[0] if pids else 0,
             "sources": ["Cape", "Volatility"],
             "mitre": "T1071 — Application Layer Protocol",
         })
@@ -690,7 +865,10 @@ _PLUGIN_CONSUMERS = {
     # costs the same credibility as a gap reported as clean (#467).
     "malfind": "whether injection is corroborated in memory",
     "cmdline": "whether a process spoofed its command line",
-    "netscan": "whether a Cape-identified C2 was live at capture",
+    # netscan is NOT listed. It has no structure table for the Windows 11 build
+    # these guests run and returns 0 rows while reporting success (#469), so it
+    # no longer runs at all and nothing consumes it. Declaring it would warn
+    # about a plugin whose absence costs nothing.
 }
 
 
@@ -857,6 +1035,18 @@ def _volatility_warnings(report: dict) -> list[str]:
                 f"{attempted} addresses had no readable VAD dump (most often a "
                 f"process that exited before capture) — those writes were not "
                 f"compared, so an absence of findings does not cover them"
+            )
+
+    # C2-in-memory coverage. Gated on Cape having decoded a C2 host at all: with
+    # nothing to hunt for, having nothing to hunt in is not a gap. When there IS
+    # an indicator and no dumped memory to search it in, silence would read as
+    # "the C2 host was not in memory" when the truth is nobody looked (#460).
+    if _cape_c2_string_indicators(report.get("cape", {})):
+        reason = report.get("_correlation_inputs", {}).get("c2_scan_unavailable")
+        if reason:
+            warnings.append(
+                f"C2-in-memory search unavailable ({reason}) — could not evaluate "
+                f"whether a Cape-decoded C2 host is present in process memory"
             )
     return warnings
 
