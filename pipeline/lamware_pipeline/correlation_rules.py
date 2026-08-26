@@ -160,28 +160,43 @@ def _vad_containing(vadinfo: list, pid, address: int) -> dict | None:
     return None
 
 
-def _gather_vad_samples(report: dict) -> tuple[dict, str | None]:
+# vadinfo's "File output" column is a status, not always a path. Besides
+# "Disabled" it reports "Error outputting file" — which is what a VAD larger
+# than --maxsize returns. Treating that as a filename builds a bogus path and
+# leans on OSError to notice; naming the sentinels says what is actually true.
+_VAD_NON_DUMP = ("disabled", "error outputting file")
+
+
+def _is_dump_filename(name: str) -> bool:
+    return bool(name) and name.strip().lower() not in _VAD_NON_DUMP
+
+
+def _gather_vad_samples(report: dict) -> tuple[dict, str | None, int]:
     """Memory bytes at each injection address, from the VAD dumps vadinfo wrote.
 
     Keyed 'target_pid:injection_address' to match `buffer_samples`, so the rule
     compares two hex strings gathered the same way — Cape's bytes at write time
     against the same offset in memory at capture time.
 
-    Returns (samples, reason_it_is_empty). The reason is what stops a missing
-    dump from reading as "the bytes were identical" (#452).
+    Returns (samples, reason_it_is_empty, unresolved_count). The reason is what
+    stops a missing dump from reading as "the bytes were identical" (#452); the
+    count is the same argument one level finer. A buffer we could not read is
+    not evidence of an unmodified buffer, so every bail-out below is counted
+    rather than dropped, and a non-zero count is reported even when other
+    addresses resolved fine (#460).
     """
     samples: dict[str, str] = {}
     vol = report.get("volatility")
     if not isinstance(vol, dict):
-        return samples, None
+        return samples, None, 0
     vadinfo = (vol.get("plugins") or {}).get("vadinfo")
     if not isinstance(vadinfo, list):
-        return samples, "vadinfo did not run"
+        return samples, "vadinfo did not run", 0
     dump_dir = vol.get("vad_dump_dir")
     if not dump_dir:
-        return samples, "vadinfo ran but dumped no regions"
+        return samples, "vadinfo ran but dumped no regions", 0
     if not _within_allowed_root(dump_dir):
-        return samples, "vad dump directory outside the allowed read root"
+        return samples, "vad dump directory outside the allowed read root", 0
 
     unresolved = 0
     for buf in report.get("cape", {}).get("injection_buffers", []):
@@ -190,19 +205,23 @@ def _gather_vad_samples(report: dict) -> tuple[dict, str | None]:
         try:
             addr = int(str(addr_s), 16)
         except (ValueError, TypeError):
+            # An address Cape wrote that we cannot parse is still a write we did
+            # not compare.
+            unresolved += 1
             continue
         vad = _vad_containing(vadinfo, pid, addr)
         if vad is None:
             # The write landed somewhere vadinfo has no VAD for — most often a
-            # process that exited before capture. Counted, not silently dropped.
+            # process that exited before capture.
             unresolved += 1
             continue
         name = vad.get("File output")
-        if not isinstance(name, str) or not name or name.lower() == "disabled":
+        if not isinstance(name, str) or not _is_dump_filename(name):
             unresolved += 1
             continue
         path = os.path.join(dump_dir, os.path.basename(name))
         if not _within_allowed_root(path):
+            unresolved += 1
             continue
         offset = addr - vad["Start VPN"]
         try:
@@ -212,26 +231,31 @@ def _gather_vad_samples(report: dict) -> tuple[dict, str | None]:
         except OSError:
             unresolved += 1
             continue
-        if data:
-            samples[f"{pid}:{addr_s}"] = data.hex()
+        if not data:
+            # Seeking past the end of a truncated dump reads b"". Silently
+            # dropping it would let a short dump read as an unmodified buffer.
+            unresolved += 1
+            continue
+        samples[f"{pid}:{addr_s}"] = data.hex()
 
     reason = None
     if unresolved and not samples:
         reason = f"no injection address resolved to a dumped VAD ({unresolved} unresolved)"
-    return samples, reason
+    return samples, reason, unresolved
 
 
 def enrich_correlation_inputs(report: dict) -> dict:
     """Populate report['_correlation_inputs'] from the filesystem. Idempotent:
     overwrites wholesale so replay re-runs are safe. Returns the (mutated) report."""
     dropped_files, dropped_unavailable = _gather_dropped_files(report)
-    vad_samples, vad_unavailable = _gather_vad_samples(report)
+    vad_samples, vad_unavailable, vad_unresolved = _gather_vad_samples(report)
     report["_correlation_inputs"] = {
         "dropped_files": dropped_files,
         "dropped_files_unavailable": dropped_unavailable,
         "buffer_samples": _gather_buffer_samples(report),
         "vad_samples": vad_samples,
         "vad_samples_unavailable": vad_unavailable,
+        "vad_samples_unresolved": vad_unresolved,
     }
     return report
 
@@ -802,11 +826,31 @@ def _volatility_warnings(report: dict) -> list[str]:
     #
     # Gated on there being something to check instead.
     if report.get("cape", {}).get("injection_buffers"):
-        reason = report.get("_correlation_inputs", {}).get("vad_samples_unavailable")
+        inputs = report.get("_correlation_inputs", {})
+        reason = inputs.get("vad_samples_unavailable")
+        unresolved = inputs.get("vad_samples_unresolved") or 0
         if reason:
             warnings.append(
                 f"Injection-address memory unavailable ({reason}) — could not "
                 f"evaluate whether injected bytes were modified after the write"
+            )
+        elif unresolved:
+            # A PARTIAL read is not a clean result. Analysis 1072 compared 27 of
+            # 32 addresses and reported no warning at all, so those 5 buffers
+            # were indistinguishable from "checked and unmodified" — the #452
+            # argument one level finer.
+            #
+            # Worded as coverage rather than failure, because a process exiting
+            # before capture is ordinary and this fires on most runs that inject
+            # anything. It says what was not compared and why; it does not imply
+            # something is broken. An alarming warning on a routine event is how
+            # a channel gets tuned out (#453).
+            attempted = unresolved + len(inputs.get("vad_samples") or {})
+            warnings.append(
+                f"Injection-address memory partially covered: {unresolved} of "
+                f"{attempted} addresses had no readable VAD dump (most often a "
+                f"process that exited before capture) — those writes were not "
+                f"compared, so an absence of findings does not cover them"
             )
     return warnings
 
