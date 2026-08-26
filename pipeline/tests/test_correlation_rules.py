@@ -771,3 +771,46 @@ def test_a_matching_cmdline_is_not_flagged_either_way():
     }
     assert rule_cmdline_spoofing(same) == []
     assert rule_cmdline_spoofing(_round_trip(same)) == []
+
+
+def test_c2_indicators_are_found_under_the_family_key():
+    """Cape nests each config under its family name (#469 follow-up).
+
+        {"Latrodectus": {"C2": [["https://host/work/", ...]]}}
+
+    Matching hints against the top level only ever saw the family name. Across
+    25 retained analyses, 4 had configs and 0 produced an indicator — so no
+    config-derived C2 had ever reached a rule.
+    """
+    from lamware_pipeline.correlation_rules import _cape_c2_string_indicators
+    cape = {"extracted_configs": [
+        {"Latrodectus": {"C2": [["https://oasioncounertstrike.com/work/",
+                                 "https://levovestrigerklobis.com/work/"]],
+                         "Group name": ["Aquila"]}}]}
+    assert _cape_c2_string_indicators(cape) == {
+        "oasioncounertstrike.com", "levovestrigerklobis.com"}
+
+
+def test_urls_reduce_to_hostnames():
+    """A path may not sit contiguously in memory; the host is the robust needle."""
+    from lamware_pipeline.correlation_rules import _cape_c2_string_indicators
+    cape = {"extracted_configs": [{"Fam": {"c2_url": "https://evil.example/a/b/c?x=1"}}]}
+    assert _cape_c2_string_indicators(cape) == {"evil.example"}
+
+
+def test_packed_config_fields_are_split():
+    """Cobalt Strike packs host and URI into one value; whole, it matches nothing."""
+    from lamware_pipeline.correlation_rules import _cape_c2_string_indicators
+    cape = {"extracted_configs": [
+        {"CobaltStrikeBeacon": {"C2Server": ["104.207.140.119,/jquery-3.3.1.min.woff2"]}}]}
+    assert _cape_c2_string_indicators(cape) == {"104.207.140.119"}
+
+
+def test_non_c2_config_keys_are_ignored():
+    """The RC4 key and Strings blob are long and dotted; they must not become needles."""
+    from lamware_pipeline.correlation_rules import _cape_c2_string_indicators
+    cape = {"extracted_configs": [
+        {"Latrodectus": {"RC4 key": ["lQmggHtZsmO0R4ZXvWb7O7SFmzyi2ODA"],
+                         "Version": ["2.75"],
+                         "Strings": [["a.b.c.d.e", "x.y.z"]]}}]}
+    assert _cape_c2_string_indicators(cape) == set()

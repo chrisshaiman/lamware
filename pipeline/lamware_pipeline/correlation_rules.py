@@ -14,6 +14,7 @@ import ipaddress
 import json
 import os
 import re
+from urllib.parse import urlsplit
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
 _PIPELINE_REPORTS_ROOT = "/opt/pipeline/reports"
@@ -540,36 +541,6 @@ def _is_ip_literal(value: str) -> bool:
         return False
 
 
-def _cape_c2_ip_indicators(cape: dict) -> set:
-    """IP literals from Cape config keys that suggest C2 (key-hint match) plus the network hosts list."""
-    ips: set[str] = set()
-
-    def _consume(value):
-        if isinstance(value, str) and _is_ip_literal(value):
-            ips.add(value)
-        elif isinstance(value, list):
-            for item in value:
-                _consume(item)
-        elif isinstance(value, dict):
-            for v in value.values():
-                _consume(v)
-
-    for cfg in cape.get("extracted_configs", []):
-        if not isinstance(cfg, dict):
-            continue
-        for key, value in cfg.items():
-            if any(hint in key.lower() for hint in _C2_CONFIG_KEY_HINTS):
-                _consume(value)
-
-    network = cape.get("network", {})
-    if isinstance(network, dict):
-        for host in network.get("hosts", []):
-            if isinstance(host, dict):
-                _consume(host.get("ip", ""))
-            else:
-                _consume(host)
-    return ips
-
 
 # Scanning bounds for the C2-in-memory search. VAD dumps ran to 182MB for a
 # single analysis, and every needle is checked against every byte, so this is
@@ -603,6 +574,20 @@ def _is_routable_ip(value: str) -> bool:
     return True
 
 
+#: A hostname's last label is alphabetic. This is what separates a C2 domain
+#: from the URI fragments families pack alongside it — "jquery-3.3.1.min.woff2"
+#: has dots and no spaces and would otherwise pass as a host, then match nothing
+#: in memory while looking like a real indicator.
+_TLD_RE = re.compile(r"\A[a-z]{2,24}\Z", re.IGNORECASE)
+
+
+def _looks_like_hostname(value: str) -> bool:
+    labels = value.split(".")
+    if len(labels) < 2 or not all(labels):
+        return False
+    return bool(_TLD_RE.match(labels[-1]))
+
+
 def _cape_c2_string_indicators(cape: dict) -> set[str]:
     """C2 hosts worth hunting for in process memory.
 
@@ -620,16 +605,37 @@ def _cape_c2_string_indicators(cape: dict) -> set[str]:
     """
     out: set[str] = set()
 
+    def _add(raw: str):
+        # Cobalt Strike packs several fields into one string:
+        #   "104.207.140.119,/jquery-3.3.1.min.woff2"
+        # Kept whole it is a needle that cannot match anything in memory, so
+        # split on the separators families use before deciding what each part is.
+        if any(sep in raw for sep in ",;|"):
+            for part in re.split(r"[,;|]", raw):
+                _add(part)
+            return
+        v = raw.strip()
+        if not v:
+            return
+        # A C2 value is very often a full URL. The hostname is the better needle:
+        # a path may not sit contiguously in memory, and the same host appears
+        # across every URL a family carries.
+        if "://" in v:
+            host = urlsplit(v).hostname or ""
+            if host:
+                v = host
+        v = v.strip("/")
+        if len(v) < _MIN_INDICATOR_LEN:
+            return
+        if _is_ip_literal(v):
+            if _is_routable_ip(v):
+                out.add(v)
+        elif " " not in v and len(v) <= 253 and _looks_like_hostname(v):
+            out.add(v.lower())
+
     def _consume(value):
         if isinstance(value, str):
-            v = value.strip()
-            if len(v) < _MIN_INDICATOR_LEN:
-                return
-            if _is_ip_literal(v):
-                if _is_routable_ip(v):
-                    out.add(v)
-            elif "." in v and " " not in v and len(v) <= 253:
-                out.add(v.lower())
+            _add(value)
         elif isinstance(value, list):
             for item in value:
                 _consume(item)
@@ -637,12 +643,32 @@ def _cape_c2_string_indicators(cape: dict) -> set[str]:
             for item in value.values():
                 _consume(item)
 
-    for cfg in cape.get("extracted_configs", []):
-        if not isinstance(cfg, dict):
-            continue
-        for key, value in cfg.items():
-            if any(hint in key.lower() for hint in _C2_CONFIG_KEY_HINTS):
-                _consume(value)
+    def _walk(node):
+        """Find hint-matching keys at ANY depth.
+
+        Cape nests each config under its family name:
+
+            {"Latrodectus": {"C2": [["https://host/work/", ...]]}}
+
+        Matching hints against the top level only ever saw "Latrodectus",
+        "CobaltStrikeBeacon", "Quickbind" — never "C2". Measured across 25
+        retained analyses, 4 had extracted_configs and 0 produced a single
+        indicator, so no config-derived C2 has EVER reached a correlation rule.
+        The IP-only predecessor had the same defect and was carried over
+        unnoticed, because its `network.hosts` fallback kept it looking alive.
+        """
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(key, str) and any(
+                    hint in key.lower() for hint in _C2_CONFIG_KEY_HINTS
+                ):
+                    _consume(value)
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(cape.get("extracted_configs", []))
     return out
 
 
