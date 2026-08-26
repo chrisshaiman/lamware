@@ -77,24 +77,53 @@
 # guard — that is the live query at the end of this file, because a file that
 # looks right is not a DNS server that answers.
 
+# DNS.pm is ISO-8859, not UTF-8: one byte, 0xfc, the 'ü' in the German comment
+# "IP-Adressen für MX in Additional Section". ansible.builtin.replace and
+# lineinfile both decode the whole file as UTF-8 and abort:
+#
+#   'utf-8' codec can't decode byte 0xfc in position 7746: invalid start byte
+#
+# sed edits bytes, so it does not care. LC_ALL=C keeps it that way — under a
+# UTF-8 locale, GNU tools can treat a file with an invalid sequence as binary
+# and quietly decline to match.
+
 - name: Patch INetSim DNS to use loop_once instead of main_loop (#464)
-  ansible.builtin.replace:
-    path: /usr/share/perl5/INetSim/DNS.pm
-    regexp: '^(\s*)\$server->main_loop;\s*$'
-    replace: '\1while (1) { $server->loop_once(10); }'
-    backup: true
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      export LC_ALL=C
+      f=/usr/share/perl5/INetSim/DNS.pm
+      if grep -qF 'loop_once(10)' "$f"; then
+          echo unchanged
+          exit 0
+      fi
+      # Only reached when unpatched, so the backup is always of a pristine file
+      # — including after an apt upgrade restores the original.
+      cp -a "$f" "$f.lamware.bak"
+      # '#' is the s/// delimiter here because ansible-lint's risky-shell-pipe
+      # heuristic reads a vertical bar anywhere in a shell task as a pipeline
+      # and demands pipefail — misleading to add to a task with no pipe in it.
+      sed -i 's#^\([[:space:]]*\)\$server->main_loop;[[:space:]]*$#\1while (1) { $server->loop_once(10); }#' "$f"
+      # sed exits 0 when its pattern matches nothing. That silent no-op is the
+      # entire failure mode this task exists to avoid, so confirm the edit.
+      grep -qF 'loop_once(10)' "$f"
+      echo patched
+    executable: /bin/bash
+  register: inetsim_dns_patch
+  changed_when: inetsim_dns_patch.stdout is search('patched')
   notify: Restart inetsim
 
 - name: Assert the DNS patch applied (a silent no-op here is the whole failure mode)
   ansible.builtin.shell:
     cmd: |
-      set -e
+      set -eu
+      export LC_ALL=C
+      f=/usr/share/perl5/INetSim/DNS.pm
       # Present in its patched form...
-      grep -qF 'loop_once(10)' /usr/share/perl5/INetSim/DNS.pm
-      # ...and the croaking call is gone. `replace` reports success when its
-      # regexp matches nothing, so without this an upstream rename would leave
-      # DNS broken and the deploy green.
-      ! grep -qE '^[[:space:]]*\$server->main_loop;' /usr/share/perl5/INetSim/DNS.pm
+      grep -qF 'loop_once(10)' "$f"
+      # ...and the croaking call is gone.
+      ! grep -qE '^[[:space:]]*\$server->main_loop;' "$f"
+    executable: /bin/bash
   changed_when: false
 
 # -------------------------------------------------------------------------
