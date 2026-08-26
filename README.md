@@ -96,7 +96,7 @@ The payload boundary is worth stating precisely, because it is narrower than "ca
 |---|---|
 | **Triage** | YARA, ssdeep, FLOSS, entropy, PE metadata — and the routing decision |
 | **Dynamic** | CAPEv2 detonation in Windows guests: behavioral signatures, API traces, memory dump, dropped files, network capture, injection traces |
-| **Memory** | Volatility 3 over the dump — 6 standard plugins plus trigger-gated extras: injected regions, command lines, connections, mutexes, anomalous parents |
+| **Memory** | Volatility 3 over the dump — 5 standard plugins plus trigger-gated extras: injected regions, command lines, mutexes, anomalous parents |
 | **Static** | Routed by binary type across 8 analyzers (see below) |
 | **Correlation** | Deterministic rules joining observations no single tool produces alone |
 | **Investigation** | LLM reads the static analysis through bounded tools and explains the evidence |
