@@ -29,7 +29,12 @@ inetsim = yes
 inetsim_server = {{ detonation_gateway }}
 
 # DNS port INetSim listens on (default 53). Matches inetsim.conf.
-inetsim_dnsport = 53
+# Must track roles/inetsim (dns_bind_port). libvirt's dnsmasq owns :53 on the
+# detonation gateway, so INetSim's DNS binds elsewhere and a PREROUTING redirect
+# sends guest :53 there (#456). Inert under `route = none` — Cape installs no
+# routing of its own — but it is read the moment anyone sets `route = inetsim`,
+# and a hardcoded 53 would point Cape at dnsmasq instead of the simulator.
+inetsim_dnsport = {{ inetsim_dns_port }}
 
 [inetsim]
 # No additional INetSim-specific Cape options needed; the global

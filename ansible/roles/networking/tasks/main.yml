@@ -283,6 +283,56 @@
     comment: "INetSim: guest DNS (TCP)"
   when: networking_inp_dns_tcp.rc != 0
 
+# The two rules above match --dport 53, which the PREROUTING redirect has
+# already rewritten to {{ inetsim_dns_port }} by the time a guest packet
+# reaches INPUT. They are kept because they are what applies if the redirect is
+# ever removed, but on their own they no longer cover guest DNS.
+#
+# The comment at the top of this section is explicit that these ACCEPT rules
+# exist for the day "the hardening role or a future policy tightens the
+# default". That is exactly the day a redirect with no matching rule stops
+# resolving — silently, since a dropped query is indistinguishable from the
+# empty answers this whole change exists to fix (#456). INPUT is ACCEPT today,
+# so these are inert now and load-bearing later.
+
+- name: "Check INPUT rule — virbr-det DNS UDP (INetSim alternate port)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p udp --dport {{ inetsim_dns_port }} -j ACCEPT
+  register: networking_inp_dns_udp_alt
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det DNS UDP (INetSim alternate port)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: udp
+    destination_port: "{{ inetsim_dns_port }}"
+    jump: ACCEPT
+    action: insert
+    rule_num: 1
+    comment: "INetSim: guest DNS (UDP, post-redirect)"
+  when: networking_inp_dns_udp_alt.rc != 0
+
+- name: "Check INPUT rule — virbr-det DNS TCP (INetSim alternate port)"
+  ansible.builtin.command: >
+    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport {{ inetsim_dns_port }} -j ACCEPT
+  register: networking_inp_dns_tcp_alt
+  changed_when: false
+  failed_when: false
+
+- name: "Insert INPUT rule — virbr-det DNS TCP (INetSim alternate port)"
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: tcp
+    destination_port: "{{ inetsim_dns_port }}"
+    jump: ACCEPT
+    action: insert
+    rule_num: 2
+    comment: "INetSim: guest DNS (TCP, post-redirect)"
+  when: networking_inp_dns_tcp_alt.rc != 0
+
 - name: "Check INPUT rule — virbr-det HTTP (80)"
   ansible.builtin.command: >
     iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 80 -j ACCEPT
