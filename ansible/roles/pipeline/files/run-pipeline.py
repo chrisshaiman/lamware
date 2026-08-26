@@ -162,7 +162,12 @@ VOLATILITY_STANDARD_PLUGINS = [
     "windows.pstree",
     "windows.malfind",
     "windows.cmdline",
-    "windows.netscan",
+    # windows.netscan removed (#469). It picks structure definitions by Windows
+    # build, tops out at 20348, and these guests are build 26100 — so it scanned
+    # with Server 2022 offsets, returned 0 rows on every run since this platform
+    # was built, and logged success. ~46s per triggered analysis for a
+    # guaranteed empty result. Upstream has no table for any Windows 11 build,
+    # so this is not waiting on an upgrade.
     "windows.dlllist",
 ]
 

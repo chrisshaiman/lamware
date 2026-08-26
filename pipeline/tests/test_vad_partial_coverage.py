@@ -158,3 +158,30 @@ def test_maxsize_skipped_vads_are_recognised_not_guessed_at(dump_root):
 ])
 def test_dump_filename_sentinels(name, is_dump):
     assert cr._is_dump_filename(name) is is_dump
+
+
+def test_c2_indicator_with_no_dumped_memory_is_reported(dump_root):
+    """A C2 host Cape decoded, and nothing to search it in.
+
+    Silence here would read as "the C2 host was not in memory" when the truth is
+    that nothing was searched — the same substitution #460 fixed for injection
+    addresses. Coverage is bounded because the stage dumps VADs only for Cape's
+    injection target PIDs, so a sample with C2 but no injection has nothing.
+    """
+    report = {
+        "cape": {"extracted_configs": [{"C2": "evil-c2.example"}]},
+        "volatility": {"plugins": {"vadinfo": []}},
+    }
+    cr.enrich_correlation_inputs(report)
+    warnings = cr.correlation_warnings(report)
+    hit = [w for w in warnings if "C2-in-memory search unavailable" in w]
+    assert hit, f"expected a coverage warning, got {warnings!r}"
+    assert "no dumped VAD regions" in hit[0]
+
+
+def test_no_c2_indicator_means_no_c2_warning(dump_root):
+    """The #453 constraint: most samples have no decoded C2, and having nothing
+    to search in is not a gap when there is nothing to search for."""
+    report = {"cape": {"extracted_configs": []}, "volatility": {"plugins": {"vadinfo": []}}}
+    cr.enrich_correlation_inputs(report)
+    assert not [w for w in cr.correlation_warnings(report) if "C2-in-memory" in w]
