@@ -31,7 +31,6 @@
   "evasion_hunter_enabled": {{ (pipeline_evasion_hunter_enabled | default(true)) | to_json }},
   "evasion_max_signatures": {{ pipeline_evasion_max_signatures | default(5) }},
   "evasion_min_binary_size": {{ pipeline_evasion_min_binary_size | default(51200) }},
-  "volatility_ramdisk": {{ (pipeline_volatility_ramdisk | default('')) | to_json }},
   "volatility_parallel_workers": {{ pipeline_volatility_parallel_workers | default(3) }},
 
   "interpret": {

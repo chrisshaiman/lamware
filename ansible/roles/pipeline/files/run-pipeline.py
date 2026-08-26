@@ -151,7 +151,6 @@ EVASION_MAX_SIGNATURES = _PIPELINE_CONFIG.evasion_max_signatures
 EVASION_MIN_BINARY_SIZE = _PIPELINE_CONFIG.evasion_min_binary_size
 
 # Volatility performance — ramdisk and parallel execution
-VOLATILITY_RAMDISK = _PIPELINE_CONFIG.volatility_ramdisk
 VOLATILITY_PARALLEL_WORKERS = _PIPELINE_CONFIG.volatility_parallel_workers
 
 # Volatility trigger signatures — Cape signature names that trigger Stage 3
@@ -471,7 +470,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 cape_has_injection_buffers=any(
                     c.get("source") == "cape_injection"
                     for c in cape_injection_candidates),
-                ramdisk_path=VOLATILITY_RAMDISK,
                 parallel_workers=VOLATILITY_PARALLEL_WORKERS,
             )
         except TimeoutError:

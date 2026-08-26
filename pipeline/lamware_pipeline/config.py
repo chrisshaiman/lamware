@@ -72,7 +72,6 @@ class PipelineConfig(BaseModel):
     evasion_hunter_enabled: bool
     evasion_max_signatures: int
     evasion_min_binary_size: int
-    volatility_ramdisk: str
     volatility_parallel_workers: int
 
     # Phase 2b-2 — collections

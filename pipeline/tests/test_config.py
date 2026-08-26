@@ -44,7 +44,6 @@ _VALID = {
     "evasion_hunter_enabled": True,
     "evasion_max_signatures": 10,
     "evasion_min_binary_size": 51200,
-    "volatility_ramdisk": "/opt/pipeline/ramdisk",
     "volatility_parallel_workers": 7,
     # Phase 2b-2 — collections
     "interpret": {

@@ -59,8 +59,12 @@ def _matches(cmdline: str, patterns: list[str]) -> str | None:
 PIPELINE_REAL = [
     "/opt/pipeline/venv/bin/python /opt/pipeline/run-pipeline.py /opt/pipeline/verify/25d18a2b.exe",
     "/bin/bash /usr/local/bin/run-pipeline /opt/pipeline/verify/25d18a2b.exe --task-id verify",
-    "/bin/bash /opt/volatility3/run-volatility /opt/pipeline/ramdisk/memory.dmp windows.malfind",
-    "/bin/bash /opt/volatility3/run-volatility /opt/pipeline/ramdisk/memory.dmp windows.netscan",
+    # Dump path is Cape's storage now, not a ramdisk copy (#470). The pattern
+    # these anchor on is '/bin/bash /opt/*/run-*', which matches the wrapper and
+    # ignores its arguments, so the change could not break the allowlist — but
+    # these lines claim to be observed command lines, so they should be true.
+    "/bin/bash /opt/volatility3/run-volatility /opt/CAPEv2/storage/analyses/1047/memory.dmp windows.malfind",
+    "/bin/bash /opt/volatility3/run-volatility /opt/CAPEv2/storage/analyses/1047/memory.dmp windows.netscan",
     "/bin/bash /opt/ghidra/run-ghidra /opt/CAPEv2/storage/analyses/1030/files/4b07 /opt/pipeline/reports/x",
     "/bin/bash /opt/interpret/run-interpret",
     "/bin/bash /opt/triage/run-triage /opt/pipeline/verify/25d18a2b.exe",
