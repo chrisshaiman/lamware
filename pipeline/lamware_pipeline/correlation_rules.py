@@ -681,8 +681,14 @@ def evaluate_rules(report: dict) -> list[dict]:
 #: fails rather than silently going unreported.
 _PLUGIN_CONSUMERS = {
     "dlllist": "whether a dropped file was loaded into a process",
-    "malfind": ("whether injected shellcode self-modified, and whether injection "
-                "is corroborated in memory"),
+    # NOT self-modification any more. #458 moved rule_shellcode_self_modified
+    # onto vadinfo, which returns every VAD regardless of protection; malfind
+    # reports only PAGE_EXECUTE_READWRITE and matched 0 of 31 buffers. Leaving
+    # the old wording here meant a malfind timeout announced that
+    # self-modification could not be evaluated while vadinfo was evaluating it
+    # fine in the same run — a warning asserting a gap that is not there, which
+    # costs the same credibility as a gap reported as clean (#467).
+    "malfind": "whether injection is corroborated in memory",
     "cmdline": "whether a process spoofed its command line",
     "netscan": "whether a Cape-identified C2 was live at capture",
 }
