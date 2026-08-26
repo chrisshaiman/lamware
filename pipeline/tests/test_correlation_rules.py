@@ -169,33 +169,83 @@ def test_path_separator_and_case_differences_still_correlate():
 
 # --- rule_shellcode_self_modified ---
 
-def test_shellcode_self_modified_fires_when_bytes_differ():
-    # Cape captured 'AAAA'; malfind shows 'BBBB' at the same pid+addr.
-    report = {
-        "_correlation_inputs": {"dropped_files": [], "buffer_samples": {"99:0x00410000": (b"AAAA").hex()}},
-        "cape": {"injection_buffers": [{"target_pid": 99, "injection_address": "0x00410000", "path": "x"}]},
-        "volatility": {"plugins": {"malfind": [
-            {"PID": 99, "Start VPN": 0x00410000, "Hexdump": "42 42 42 42"}
-        ]}},
+def _inj(pid=99, addr="0x24ff4c9d820", cape=b"AAAA", mem=b"BBBB"):
+    """A report whose enrichment is pre-populated, so the rule is tested alone."""
+    return {
+        "cape": {"injection_buffers": [{"target_pid": pid, "injection_address": addr}]},
+        "_correlation_inputs": {
+            "dropped_files": [],
+            "buffer_samples": {f"{pid}:{addr}": cape.hex()} if cape is not None else {},
+            "vad_samples": {f"{pid}:{addr}": mem.hex()} if mem is not None else {},
+        },
     }
-    findings = rule_shellcode_self_modified(report)
+
+
+def test_shellcode_self_modified_fires_when_bytes_differ():
+    findings = rule_shellcode_self_modified(_inj(cape=b"AAAA", mem=b"BBBB"))
     assert len(findings) == 1
     assert findings[0]["type"] == "shellcode_self_modified"
-    # before/after are capped at 64B in production; these 4-byte inputs are
-    # always shorter, so the cap is a no-op here.
-    assert findings[0]["before"] == (b"AAAA").hex()
-    assert findings[0]["after"] == (b"BBBB").hex()
+    assert findings[0]["severity"] == "high"
+    assert findings[0]["before"] == b"AAAA".hex()
+    assert findings[0]["after"] == b"BBBB".hex()
 
 
 def test_shellcode_self_modified_silent_when_bytes_equal():
-    report = {
-        "_correlation_inputs": {"dropped_files": [], "buffer_samples": {"99:0x00410000": (b"BBBB").hex()}},
-        "cape": {"injection_buffers": [{"target_pid": 99, "injection_address": "0x00410000", "path": "x"}]},
-        "volatility": {"plugins": {"malfind": [
-            {"PID": 99, "Start VPN": 0x00410000, "Hexdump": "42 42 42 42"}
-        ]}},
-    }
-    assert rule_shellcode_self_modified(report) == []
+    assert rule_shellcode_self_modified(_inj(cape=b"BBBB", mem=b"BBBB")) == []
+
+
+def test_a_truncated_cape_capture_is_not_reported_as_modified():
+    """Cape truncates: the pipeline logs "captured 256 of 336 bytes". Comparing
+    past the overlap would make every truncated buffer look self-modified, which
+    is most of them on a real sample."""
+    assert rule_shellcode_self_modified(_inj(cape=b"AAAA", mem=b"AAAAZZZZZZZZ")) == []
+
+
+def test_a_difference_inside_the_overlap_still_fires():
+    """The mirror: truncation must not become a blanket excuse."""
+    assert len(rule_shellcode_self_modified(_inj(cape=b"AAAA", mem=b"AAAB" + b"Z" * 8))) == 1
+
+
+def test_no_finding_without_memory_bytes():
+    """A missing VAD dump must not read as "the bytes were identical" — that is
+    the silent-clean failure #452 closed one layer up."""
+    assert rule_shellcode_self_modified(_inj(mem=None)) == []
+
+
+def test_no_finding_without_cape_bytes():
+    assert rule_shellcode_self_modified(_inj(cape=None)) == []
+
+
+def test_the_rule_no_longer_reads_malfind():
+    """THE change. It joined Cape's injection address against malfind's Start VPN
+    by equality; measured on task 1043 that matched 0 of 31, because malfind
+    reports only PAGE_EXECUTE_READWRITE VADs and these writes land in
+    PAGE_NOACCESS and PAGE_EXECUTE_WRITECOPY. Containment against vadinfo
+    matched 27 of 31.
+    """
+    import inspect
+    src = inspect.getsource(rule_shellcode_self_modified)
+    body = src.split('"""', 2)[-1]          # strip the docstring, which cites malfind
+    assert "malfind" not in body, "the rule still reads malfind"
+    assert "vad_samples" in body
+
+
+def test_containment_beats_equality():
+    """_vad_containing must accept an address INSIDE a VAD, not only its start."""
+    vads = [{"PID": 2768, "Start VPN": 0x24FF4C90000, "End VPN": 0x24FF4C9FFFF,
+             "Protection": "PAGE_NOACCESS"}]
+    assert cr._vad_containing(vads, 2768, 0x24FF4C9D820) is not None, "inside the VAD"
+    assert cr._vad_containing(vads, 2768, 0x24FF4C90000) is not None, "at the start"
+    assert cr._vad_containing(vads, 2768, 0x24FF4C9FFFF) is not None, "at the end"
+    assert cr._vad_containing(vads, 2768, 0x24FF4CA0000) is None, "past the end"
+    assert cr._vad_containing(vads, 8424, 0x24FF4C9D820) is None, "wrong pid"
+
+
+def test_protections_malfind_would_have_skipped_are_still_matched():
+    """The whole point: these are the protections the real sample used."""
+    for prot in ("PAGE_NOACCESS", "PAGE_EXECUTE_WRITECOPY", "PAGE_READWRITE"):
+        vads = [{"PID": 1, "Start VPN": 0x1000, "End VPN": 0x1FFF, "Protection": prot}]
+        assert cr._vad_containing(vads, 1, 0x1800) is not None, prot
 
 
 # --- rule_cmdline_spoofing ---

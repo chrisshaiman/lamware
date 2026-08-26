@@ -516,6 +516,7 @@ def run_volatility(cape_data: dict, output_dir: Path,
                    get_cape_signatures_fn,
                    cape_injection_pids: list[int] | None = None,
                    cape_has_injection_buffers: bool = False,
+                   vadinfo_max_dump_bytes: int = 4 * 1024 * 1024,
                    ramdisk_path: str = "",
                    parallel_workers: int = 3) -> dict:
     """Run Volatility 3 plugins on the memory dump.
@@ -615,6 +616,42 @@ def run_volatility(cape_data: dict, output_dir: Path,
                     else:
                         result["_malfind_selected"] = selected_regions
                         result["_malfind_dump_dir"] = ""
+
+        # Injection-address VADs — the input rule_shellcode_self_modified needs.
+        #
+        # That rule used to join Cape's injection address against malfind's
+        # Start VPN by equality. Measured on task 1043 (31 buffers, 399 malfind
+        # regions) that matched 0, and so did containment: malfind reports only
+        # PAGE_EXECUTE_READWRITE VADs by design, while these writes landed in
+        # PAGE_NOACCESS and PAGE_EXECUTE_WRITECOPY. Stock malfind returns 0 on
+        # that dump even with no time limit, so the 120s cap was never the cause.
+        #
+        # vadinfo returns every VAD regardless of protection: containment matched
+        # 27 of 31. One invocation for all target pids took 2.84s — `--pid` walks
+        # the VAD tree rather than scanning the dump, so this is cheaper than the
+        # malfind run above, not an addition to it.
+        if cape_injection_pids and active_dump.exists():
+            vad_pids = sorted(set(cape_injection_pids))
+            vad_dir = output_dir / "vol_vadinfo"
+            vad_dir.mkdir(parents=True, exist_ok=True)
+            print(f"    Running vadinfo --dump for {len(vad_pids)} injection target pid(s)...")
+            # ONE --pid taking a list. vadinfo declares `--pid [PID ...]`
+            # (nargs="*"), so repeating the flag overrides rather than
+            # accumulates: `--pid 2768 --pid 8424` returned 0 VADs where
+            # `--pid 2768 8424` returned 519.
+            vad_args = ["--dump", "--maxsize", str(vadinfo_max_dump_bytes), "--pid"]
+            vad_args += [str(pid) for pid in vad_pids]
+            vad_out = run_single_plugin(
+                active_dump, "windows.vadinfo", vad_dir, volatility_cmd, extra_args=vad_args)
+            result["plugins"]["vadinfo"] = vad_out
+            if isinstance(vad_out, list):
+                result["vad_dump_dir"] = str(vad_dir)
+                print(f"    vadinfo: {len(vad_out)} VAD(s) across pids {vad_pids}")
+            else:
+                # Left absent on failure rather than pointing at an empty dir:
+                # _gather_vad_samples reports "vadinfo ran but dumped no regions"
+                # for a missing dir, which is the honest reading (#452).
+                print(f"    vadinfo: FAILED ({vad_out})")
 
         # Dump hollowed process images — when Cape detected injection, use
         # Volatility's pslist --dump to reconstruct PE images from the memory dump.
