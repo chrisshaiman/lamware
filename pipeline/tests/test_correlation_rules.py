@@ -558,10 +558,14 @@ def _c2_report(tmp_path, monkeypatch, configs, blobs):
         (dump_dir / name).write_bytes(data)
         vadinfo.append({"PID": pid, "Start VPN": 0x1000, "End VPN": 0x2000,
                         "File output": name})
-    return {
+    report = {
         "cape": {"extracted_configs": configs},
         "volatility": {"plugins": {"vadinfo": vadinfo}, "vad_dump_dir": str(dump_dir)},
     }
+    # The scan runs in enrich, once, rather than per-rule — reading the whole
+    # memory image twice for one boolean would be a real cost on an 8.6GB dump.
+    cr.enrich_correlation_inputs(report)
+    return report
 
 
 def test_c2_host_found_in_memory(tmp_path, monkeypatch):
@@ -814,3 +818,98 @@ def test_non_c2_config_keys_are_ignored():
                          "Version": ["2.75"],
                          "Strings": [["a.b.c.d.e", "x.y.z"]]}}]}
     assert _cape_c2_string_indicators(cape) == set()
+
+
+# --- full memory image scan (#469) ---
+#
+# The VAD scan only covers regions vadinfo dumped, and the stage dumps only for
+# Cape's injection target PIDs. Across the retained corpus the intersection of
+# "plaintext C2" and "has injection buffers" was EMPTY — Cobalt Strike had
+# buffers but an obfuscated config, Latrodectus and Quickbind had plain C2 and
+# no injection. The rule was correct and could never fire.
+
+
+def _image_report(tmp_path, monkeypatch, configs, image_bytes, vadinfo=None, dump_dir=None):
+    """A report whose cape task id points at a real memory.dmp under the root."""
+    import lamware_pipeline.correlation_rules as cr
+    storage = tmp_path / "cape"
+    (storage / "77").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(storage))
+    (storage / "77" / "memory.dmp").write_bytes(image_bytes)
+    report = {
+        "cape": {"task_id": 77, "extracted_configs": configs},
+        "volatility": {"plugins": {"vadinfo": vadinfo or []},
+                       "vad_dump_dir": dump_dir or ""},
+    }
+    cr.enrich_correlation_inputs(report)
+    return report
+
+
+def test_c2_found_in_image_with_no_vad_dumps(tmp_path, monkeypatch):
+    """The case that made the rule inert: plaintext C2, no injection, so no VADs."""
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _image_report(tmp_path, monkeypatch,
+                           [{"Latrodectus": {"C2": ["https://oasioncounertstrike.com/work/"]}}],
+                           b"\x00" * 100 + b"GET oasioncounertstrike.com HTTP" + b"\x00" * 100)
+    findings = rule_c2_live_in_memory(report)
+    assert len(findings) == 1
+    assert findings[0]["indicator"] == "oasioncounertstrike.com"
+    # No dumped VAD matched, so no owning process was established. Say so
+    # rather than reporting a PID we did not determine.
+    assert findings[0]["pid"] == 0
+    assert "no owning process established" in findings[0]["detail"]
+
+
+def test_image_scan_finds_utf16(tmp_path, monkeypatch):
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _image_report(tmp_path, monkeypatch,
+                           [{"F": {"c2": ["evil-host.example"]}}],
+                           b"\xcc" * 40 + "evil-host.example".encode("utf-16-le"))
+    assert len(rule_c2_live_in_memory(report)) == 1
+
+
+def test_absent_from_image_stays_silent(tmp_path, monkeypatch):
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    report = _image_report(tmp_path, monkeypatch,
+                           [{"F": {"c2": ["evil-host.example"]}}],
+                           b"nothing of interest" * 100)
+    assert rule_c2_live_in_memory(report) == []
+
+
+def test_missing_image_and_no_vads_is_reported(tmp_path, monkeypatch):
+    """Cleanup deletes memory.dmp after an analysis. A replay with no dumped
+    VADs either has searched nothing, and must not read as clean."""
+    import lamware_pipeline.correlation_rules as cr
+    storage = tmp_path / "cape"
+    storage.mkdir()
+    monkeypatch.setattr(cr, "_CAPE_STORAGE_ROOT", str(storage))
+    report = {"cape": {"task_id": 99, "extracted_configs": [{"F": {"c2": ["evil-host.example"]}}]},
+              "volatility": {"plugins": {"vadinfo": []}}}
+    cr.enrich_correlation_inputs(report)
+    reason = report["_correlation_inputs"]["c2_scan_unavailable"]
+    assert reason and "memory image not present" in reason
+    assert [w for w in cr.correlation_warnings(report) if "C2-in-memory" in w]
+
+
+def test_one_available_source_is_not_a_gap(tmp_path, monkeypatch):
+    """Image searched, no VADs dumped: that is a real answer, not a coverage
+    gap. Warning here would fire on every non-injecting sample (#453)."""
+    import lamware_pipeline.correlation_rules as cr
+    report = _image_report(tmp_path, monkeypatch,
+                           [{"F": {"c2": ["evil-host.example"]}}],
+                           b"clean memory image")
+    assert report["_correlation_inputs"]["c2_scan_unavailable"] is None
+    assert not [w for w in cr.correlation_warnings(report) if "C2-in-memory" in w]
+
+
+def test_match_across_a_chunk_boundary(tmp_path, monkeypatch):
+    """A needle straddling the read boundary must still match — the bug that
+    would make this quietly unreliable on exactly the large inputs it is for."""
+    import lamware_pipeline.correlation_rules as cr
+    from lamware_pipeline.correlation_rules import rule_c2_live_in_memory
+    monkeypatch.setattr(cr, "_VAD_SCAN_CHUNK", 64)
+    needle = b"straddle-host.example"
+    blob = b"\x00" * (64 - 8) + needle + b"\x00" * 64
+    report = _image_report(tmp_path, monkeypatch,
+                           [{"F": {"c2": ["straddle-host.example"]}}], blob)
+    assert len(rule_c2_live_in_memory(report)) == 1

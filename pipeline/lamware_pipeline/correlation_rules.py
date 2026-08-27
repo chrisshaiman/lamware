@@ -250,15 +250,27 @@ def enrich_correlation_inputs(report: dict) -> dict:
     overwrites wholesale so replay re-runs are safe. Returns the (mutated) report."""
     dropped_files, dropped_unavailable = _gather_dropped_files(report)
     vad_samples, vad_unavailable, vad_unresolved = _gather_vad_samples(report)
+
+    # Computed once here, not per-rule: the image scan reads the whole dump, and
+    # doing it twice would read ~8.6GB twice for one boolean.
+    c2_indicators = _cape_c2_string_indicators(report.get("cape", {}))
+    c2_vad_hits, c2_vad_reason = _gather_vad_string_hits(report, c2_indicators)
+    c2_image_hits, c2_image_reason = _gather_memory_image_hits(report, c2_indicators)
+    # Only a gap when NEITHER source could be searched. Either one alone is a
+    # real answer, so warning then would be noise on an ordinary run (#453).
+    c2_unavailable = None
+    if c2_indicators and c2_vad_reason and c2_image_reason:
+        c2_unavailable = f"{c2_vad_reason}; {c2_image_reason}"
     report["_correlation_inputs"] = {
         "dropped_files": dropped_files,
         "dropped_files_unavailable": dropped_unavailable,
         "buffer_samples": _gather_buffer_samples(report),
+        "c2_vad_hits": {k: list(v) for k, v in c2_vad_hits.items()},
+        "c2_image_hits": sorted(c2_image_hits),
+        "c2_scan_unavailable": c2_unavailable,
         "vad_samples": vad_samples,
         "vad_samples_unavailable": vad_unavailable,
         "vad_samples_unresolved": vad_unresolved,
-        "c2_scan_unavailable": _gather_vad_string_hits(
-            report, _cape_c2_string_indicators(report.get("cape", {})))[1],
     }
     return report
 
@@ -547,6 +559,9 @@ def _is_ip_literal(value: str) -> bool:
 # capped. A truncated scan is REPORTED, never silent — "we stopped looking" must
 # not read as "we looked and found nothing" (#460).
 _VAD_SCAN_MAX_BYTES = 512 * 1024 * 1024
+#: Whole-image budget. Dumps run ~8.6GB; 32GB leaves headroom for a
+#: larger guest without letting a corrupt file spin forever.
+_IMAGE_SCAN_MAX_BYTES = 32 * 1024 * 1024 * 1024
 _VAD_SCAN_CHUNK = 8 * 1024 * 1024
 
 #: An indicator has to be this long before it is worth hunting in memory. Short
@@ -694,6 +709,93 @@ def _vad_dump_files(report: dict) -> list[tuple]:
     return out
 
 
+def _encode_needles(needles: set) -> dict:
+    """Each needle as (ascii, utf-16le), lowercased.
+
+    Both encodings matter: Windows APIs carry hostnames as wide strings, so an
+    ASCII-only search misses the common case.
+    """
+    out = {}
+    for n in needles:
+        out[n] = (n.encode("utf-8", "ignore").lower(),
+                  n.encode("utf-16-le", "ignore").lower())
+    return out
+
+
+def _scan_stream(fh, encoded: dict, budget: int) -> tuple[set, int]:
+    """Which needles appear in fh, and how many bytes were read.
+
+    Chunked with an overlap of the longest needle, so a match straddling a
+    chunk boundary is not missed — the bug that would make this quietly
+    unreliable on exactly the large inputs it exists for.
+    """
+    longest = max((max(len(a), len(b)) for a, b in encoded.values()), default=0)
+    found: set = set()
+    read = 0
+    tail = b""
+    while read < budget:
+        chunk = fh.read(min(_VAD_SCAN_CHUNK, budget - read))
+        if not chunk:
+            break
+        read += len(chunk)
+        window = (tail + chunk).lower()
+        for needle, (ascii_b, wide_b) in encoded.items():
+            if needle in found:
+                continue
+            if (ascii_b and ascii_b in window) or (wide_b and wide_b in window):
+                found.add(needle)
+        tail = window[-longest:] if longest else b""
+    return found, read
+
+
+def _memory_image_path(report: dict) -> tuple[str | None, str | None]:
+    """(path, reason_it_is_unavailable) for Cape's full memory image."""
+    cape = report.get("cape")
+    if not isinstance(cape, dict) or not cape:
+        return None, None
+    task_id = cape.get("task_id")
+    if not task_id:
+        return None, "no Cape task id in report"
+    path = os.path.join(_CAPE_STORAGE_ROOT, str(task_id), "memory.dmp")
+    if not _within_allowed_root(path):
+        return None, "memory image path outside the allowed storage root"
+    if not os.path.isfile(path):
+        # Cleanup removes memory.dmp after an analysis completes, so a replay
+        # legitimately has none. Reported, not silently treated as searched.
+        return None, "memory image not present (removed by cleanup, or memory capture was off)"
+    return path, None
+
+
+def _gather_memory_image_hits(report: dict, needles: set) -> tuple[set, str | None]:
+    """Indicators present anywhere in the full memory image.
+
+    The VAD scan below only covers regions vadinfo dumped, and the stage dumps
+    only for Cape's injection target PIDs — so a sample with C2 but no injection
+    had nothing searched at all. Measured across the retained corpus, the
+    intersection of "plaintext C2" and "has injection buffers" was EMPTY, which
+    made the rule correct and inert (#469).
+
+    Scanning the image needs bytes rather than VAD structure, covers every
+    process, and costs about one sequential read — /opt is NVMe and measured
+    ~2.1 GB/s in #470, so single-digit seconds for an 8.6GB image.
+
+    The cost is attribution: a hit here has no PID. The rule keeps VAD-derived
+    PIDs when a dumped region also matched and reports presence without one
+    otherwise, rather than inventing an owner.
+    """
+    if not needles:
+        return set(), None
+    path, reason = _memory_image_path(report)
+    if not path:
+        return set(), reason
+    try:
+        with open(path, "rb") as fh:
+            found, _read = _scan_stream(fh, _encode_needles(needles), _IMAGE_SCAN_MAX_BYTES)
+    except OSError as exc:
+        return set(), f"memory image unreadable ({exc.__class__.__name__})"
+    return found, None
+
+
 def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | None]:
     """Which indicators appear verbatim in dumped process memory, and in whose.
 
@@ -709,12 +811,7 @@ def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | Non
     if not files:
         return {}, "no dumped VAD regions to search"
 
-    encoded = {}
-    for n in needles:
-        raw = n.encode("utf-8", "ignore")
-        encoded[n] = (raw.lower(), n.encode("utf-16-le", "ignore").lower())
-    longest = max((max(len(a), len(b)) for a, b in encoded.values()), default=0)
-
+    encoded = _encode_needles(needles)
     hits: dict = {}
     scanned = 0
     truncated = False
@@ -724,19 +821,10 @@ def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | Non
             break
         try:
             with open(path, "rb") as fh:
-                tail = b""
-                while scanned < _VAD_SCAN_MAX_BYTES:
-                    chunk = fh.read(_VAD_SCAN_CHUNK)
-                    if not chunk:
-                        break
-                    scanned += len(chunk)
-                    window = (tail + chunk).lower()
-                    for needle, (ascii_b, wide_b) in encoded.items():
-                        if ascii_b and ascii_b in window:
-                            hits.setdefault(needle, set()).add(pid)
-                        elif wide_b and wide_b in window:
-                            hits.setdefault(needle, set()).add(pid)
-                    tail = window[-longest:] if longest else b""
+                found, read = _scan_stream(fh, encoded, _VAD_SCAN_MAX_BYTES - scanned)
+                scanned += read
+                for needle in found:
+                    hits.setdefault(needle, set()).add(pid)
         except OSError:
             continue
 
@@ -780,23 +868,27 @@ def rule_c2_live_in_memory(report: dict) -> list[dict]:
     a clean result.
     """
     findings = []
-    cape = report.get("cape", {})
-    indicators = _cape_c2_string_indicators(cape)
-    if not indicators:
-        return findings
+    inputs = report.get("_correlation_inputs", {})
+    vad_hits = inputs.get("c2_vad_hits") or {}
+    image_hits = set(inputs.get("c2_image_hits") or [])
 
-    hits, _reason = _gather_vad_string_hits(report, indicators)
-    for indicator in sorted(hits):
-        pids = [p for p in hits[indicator] if p is not None]
-        where = ", ".join(str(p) for p in pids[:5]) or "an unattributed region"
+    for indicator in sorted(set(vad_hits) | image_hits):
+        pids = [p for p in vad_hits.get(indicator, []) if p is not None]
+        if pids:
+            where = (f"memory dumped from PID(s) "
+                     f"{', '.join(str(p) for p in pids[:5])}")
+        else:
+            # Found in the image but not in any dumped VAD. Say so plainly
+            # rather than reporting a PID we did not establish.
+            where = "the memory image (no owning process established)"
         findings.append({
             "type": "c2_live_in_memory",
             "severity": "medium",
             "title": f"C2 host {indicator} found in process memory",
             "detail": (f"Cape decoded {indicator} from the sample's configuration; "
-                       f"the same string is present in memory dumped from PID(s) "
-                       f"{where}. Presence establishes the host was known to the "
-                       f"process, not that a connection was made."),
+                       f"the same string is present in {where}. Presence "
+                       f"establishes the host was known to the process, not that "
+                       f"a connection was made."),
             "indicator": indicator,
             "pid": pids[0] if pids else 0,
             "sources": ["Cape", "Volatility"],
