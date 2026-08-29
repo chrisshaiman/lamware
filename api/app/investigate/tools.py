@@ -558,13 +558,17 @@ def _search_analyses(args: dict, session: Session) -> dict:
 def _get_network_events(args: dict, session: Session) -> dict:
     # Schema columns: id, analysis_id, event_type, dns_query, dns_type,
     # dns_answers, http_method, http_url, http_host, http_status,
-    # http_user_agent, src_ip, src_port, dst_ip, dst_port, timestamp
+    # http_user_agent, src_ip, src_port, dst_ip, dst_port, attempts, timestamp
+    # `attempts` is selected because without it a tcp row is ambiguous: NULL
+    # means one connection, a number means a destination reached that many
+    # times, and an investigator counting rows across that boundary would be
+    # comparing two different things (#488).
     # Optional event_type filter bound as NULL = no filter (static query).
     sql = text(
         """
         SELECT event_type, dns_query, dns_type, dns_answers,
                http_method, http_url, http_host, http_status, http_user_agent,
-               src_ip, src_port, dst_ip, dst_port, timestamp
+               src_ip, src_port, dst_ip, dst_port, attempts, timestamp
         FROM network_events
         WHERE analysis_id = :aid
           AND (:etype IS NULL OR event_type = :etype)
@@ -589,7 +593,8 @@ def _get_network_events(args: dict, session: Session) -> dict:
                 "src_port": r[10],
                 "dst_ip": r[11],
                 "dst_port": r[12],
-                "timestamp": r[13].isoformat() if r[13] else None,
+                "attempts": r[13],
+                "timestamp": r[14].isoformat() if r[14] else None,
             }
             for r in rows
         ],

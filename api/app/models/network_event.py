@@ -57,6 +57,12 @@ class NetworkEvent(SQLModel, table=True):
     src_port: int | None = Field(default=None)
     dst_ip: str | None = Field(default=None, max_length=45)
     dst_port: int | None = Field(default=None)
+    # NULL = this row is one CONNECTION (reports written before #479).
+    # A number = this row is a DESTINATION reached that many times.
+    # Nullable and undefaulted: a default of 1 would make every historical row
+    # claim to be a destination contacted once, which is the misreading the
+    # column exists to prevent (#488).
+    attempts: int | None = Field(default=None)
 
     # Common
     timestamp: datetime | None = Field(default=None)

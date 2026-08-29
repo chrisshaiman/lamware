@@ -587,6 +587,94 @@ def render_triage(report: dict) -> str:
     return html
 
 
+# Cape's tcp list changed shape in #479: it was a truncated list of CONNECTIONS
+# (one row per connection, capped at 50, with an ephemeral `src` that made
+# identical destinations look distinct) and became a list of DESTINATIONS each
+# carrying an `attempts` count. Reports written before 2026-08-29 06:39 UTC
+# still hold the old shape, so the renderer asks which one it has rather than
+# assuming the new one.
+#
+# Assuming cost a wrong label on fifteen reports: "TCP Destinations (50)" above
+# fifty rows that were two destinations. Wrong three ways at once — 50 is not
+# the destination count, it is not the connection count either (it is a cap),
+# and the rows below it visibly repeat in a way the label denies (#488).
+_LEGACY_TCP_CAP = 50
+
+
+def _tcp_rows(network: dict) -> list:
+    return [c for c in (network.get("tcp_connections") or []) if isinstance(c, dict)]
+
+
+def tcp_shape(network: dict) -> str:
+    """Which convention wrote this report's `tcp_connections`.
+
+    "destinations" — post-#479: one row per destination, `attempts` per row
+    "connections"  — pre-#479, under the cap: one row per connection, complete
+    "truncated"    — pre-#479 and at the cap, so the real total is unrecoverable
+    "none"         — no tcp data
+
+    `tcp_attempts_total` is checked as well as per-row `attempts` because a
+    single-destination sample contacted once carries `attempts: 1`, which is
+    truthful but indistinguishable from a legacy row on its own.
+    """
+    tcp = _tcp_rows(network)
+    if not tcp:
+        return "none"
+    if network.get("tcp_attempts_total") is not None:
+        return "destinations"
+    if any(c.get("attempts") is not None for c in tcp):
+        return "destinations"
+    return "truncated" if len(tcp) >= _LEGACY_TCP_CAP else "connections"
+
+
+def tcp_heading(network: dict) -> str:
+    """Section heading that says what the rows below it actually are.
+
+    The unique-destination count is derived for the legacy shapes too. It is the
+    number a reader wants, it survives truncation, and without it a legacy report
+    shows twenty near-identical lines under a heading that denies they repeat.
+    """
+    tcp = _tcp_rows(network)
+    shape = tcp_shape(network)
+    if shape == "none":
+        return ""
+    if shape == "destinations":
+        head = f"TCP Destinations ({len(tcp)})"
+        total = network.get("tcp_attempts_total")
+        if total:
+            head += f" — {total} connection attempts"
+        return head
+    uniq = len({c.get("dst", "") for c in tcp})
+    noun = "destination" if uniq == 1 else "destinations"
+    if shape == "truncated":
+        return (f"TCP Connections ({len(tcp)} shown, truncated at "
+                f"{_LEGACY_TCP_CAP} — {uniq} {noun}, total attempts not recorded)")
+    return f"TCP Connections ({len(tcp)} — {uniq} {noun})"
+
+
+def tcp_display_rows(network: dict) -> list:
+    """(destination, count-suffix) pairs to render, one per destination.
+
+    Legacy reports are collapsed here rather than printed raw: twenty repetitions
+    of one address carry no more information than one line saying how many there
+    were, and the raw form is what made the old section unreadable. Counts from a
+    truncated report are fenced with ≥, because the rows that survived the cap
+    are a floor and not a measurement.
+    """
+    tcp = _tcp_rows(network)
+    shape = tcp_shape(network)
+    if shape == "destinations":
+        return [(c.get("dst", ""), f"×{c['attempts']}" if c.get("attempts") else "")
+                for c in tcp]
+    counts: dict = {}
+    for c in tcp:
+        dst = c.get("dst", "")
+        counts[dst] = counts.get(dst, 0) + 1
+    fence = "≥" if shape == "truncated" else ""
+    return [(dst, f"×{fence}{n}")
+            for dst, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
 def render_cape(report: dict) -> str:
     """Render Cape dynamic analysis summary."""
     cape = report.get("cape", {})
@@ -648,21 +736,15 @@ def render_cape(report: dict) -> str:
                 html += '<br/>'
             html += '</div>\n'
 
-        tcp = network.get("tcp_connections", [])
-        if tcp:
-            # Destinations, not connections: the list is deduplicated upstream.
-            # Show the attempt total too, so a reader is not left inferring
-            # volume from a row count that no longer represents it.
-            total = network.get("tcp_attempts_total")
-            head = f"TCP Destinations ({len(tcp)})"
-            if total:
-                head += f" — {total} connection attempts"
-            html += f'<p><strong>{head}:</strong></p>\n'
+        if network.get("tcp_connections"):
+            # Two conventions live in the report corpus (#479, #488), so the
+            # heading and the rows are both derived from which one wrote this
+            # report rather than assumed to be the current one.
+            html += f'<p><strong>{escape_html(tcp_heading(network))}:</strong></p>\n'
             html += '<div style="font-size: 9px; font-family: monospace;">'
-            for c in tcp[:20]:
-                n = c.get("attempts")
-                suffix = f' &times;{n}' if n else ''
-                html += f'{escape_html(c.get("dst", ""))}{suffix}<br/>'
+            for dst, suffix in tcp_display_rows(network)[:20]:
+                shown = f' {escape_html(suffix)}' if suffix else ''
+                html += f'{escape_html(dst)}{shown}<br/>'
             html += '</div>\n'
 
         http = network.get("http_requests", [])
