@@ -650,10 +650,19 @@ def render_cape(report: dict) -> str:
 
         tcp = network.get("tcp_connections", [])
         if tcp:
-            html += f'<p><strong>TCP Connections ({len(tcp)}):</strong></p>\n'
+            # Destinations, not connections: the list is deduplicated upstream.
+            # Show the attempt total too, so a reader is not left inferring
+            # volume from a row count that no longer represents it.
+            total = network.get("tcp_attempts_total")
+            head = f"TCP Destinations ({len(tcp)})"
+            if total:
+                head += f" — {total} connection attempts"
+            html += f'<p><strong>{head}:</strong></p>\n'
             html += '<div style="font-size: 9px; font-family: monospace;">'
-            for c in tcp[:10]:
-                html += f'{escape_html(c.get("src", ""))} → {escape_html(c.get("dst", ""))}<br/>'
+            for c in tcp[:20]:
+                n = c.get("attempts")
+                suffix = f' &times;{n}' if n else ''
+                html += f'{escape_html(c.get("dst", ""))}{suffix}<br/>'
             html += '</div>\n'
 
         http = network.get("http_requests", [])

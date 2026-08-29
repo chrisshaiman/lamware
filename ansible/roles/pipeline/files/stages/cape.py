@@ -312,6 +312,49 @@ def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]
     return deduped
 
 
+def dedupe_tcp_connections(tcp: list, limit: int = 200) -> tuple:
+    """(destinations, attempt_total, unique_count) from Cape's raw tcp list.
+
+    Deduplicated by destination, because the raw list is almost entirely
+    repetition. Measured across the 12-sample corpus after the DNS fix: 1540
+    connection rows resolved to 24 unique destinations — exactly TWO per sample,
+    since INetSim answers every lookup with the detonation gateway so all
+    traffic lands on :80 and :443 of one address.
+
+    The previous `tcp[:50]` stored fifty near-identical rows to convey two facts
+    and silently dropped the rest. Every one of the 12 samples exceeded 50
+    (87-219 rows), where before the DNS fix none reached it at all because
+    nothing could resolve. A truncated list that reads as a count is the same
+    substitution this pipeline keeps finding.
+
+    Deduplicating is smaller AND says more: `attempt_total` survives, where
+    truncation hid it.
+
+    `src` is dropped. Ephemeral source ports differ per connection, which is
+    what made the rows look distinct while carrying nothing; they are not an
+    IOC and no consumer reads them.
+
+    A destination that is NOT the detonation gateway means the sample reached
+    for a hardcoded address, bypassing DNS entirely. Deduplication is what keeps
+    that visible instead of buried under hundreds of gateway rows — so no cap
+    is applied before dedup, only after, and 200 distinct destinations is far
+    beyond anything observed.
+
+    Attempts count retries as well as intent: INetSim never completes a real C2
+    handshake, so a sample that keeps retrying inflates this. It is not a beacon
+    interval and must not be read as one.
+    """
+    attempts: dict = {}
+    for c in tcp:
+        if not isinstance(c, dict):
+            continue
+        dst = f"{c.get('dst', '')}:{c.get('dport', '')}"
+        attempts[dst] = attempts.get(dst, 0) + 1
+    ordered = [{"dst": dst, "attempts": n}
+               for dst, n in sorted(attempts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return ordered[:limit], len(tcp), len(attempts)
+
+
 def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
     """Extract rich intelligence from Cape's full analysis report.
 
@@ -419,11 +462,10 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
 
     tcp = net.get("tcp", [])
     if tcp:
-        network_iocs["tcp_connections"] = [
-            {"dst": f"{c.get('dst', '')}:{c.get('dport', '')}",
-             "src": f"{c.get('src', '')}:{c.get('sport', '')}"}
-            for c in tcp[:50]
-        ]
+        conns, total, uniq = dedupe_tcp_connections(tcp)
+        network_iocs["tcp_connections"] = conns
+        network_iocs["tcp_attempts_total"] = total
+        network_iocs["tcp_destinations_total"] = uniq
 
     if network_iocs:
         intel["network"] = network_iocs

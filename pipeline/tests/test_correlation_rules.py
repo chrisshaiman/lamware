@@ -913,3 +913,65 @@ def test_match_across_a_chunk_boundary(tmp_path, monkeypatch):
     report = _image_report(tmp_path, monkeypatch,
                            [{"F": {"c2": ["straddle-host.example"]}}], blob)
     assert len(rule_c2_live_in_memory(report)) == 1
+
+
+# --- Cape network extraction: dedup by destination (#478 follow-up) ---
+
+
+def _extract(tcp_rows):
+    """Run the real dedup helper over synthetic Cape tcp rows.
+
+    extract_cape_intel reads the report from disk by task id, so the shaping
+    logic lives in a pure function that can be exercised directly.
+    """
+    import importlib.util
+    import pathlib
+    p = pathlib.Path(__file__).resolve().parents[2] / "ansible/roles/pipeline/files/stages/cape.py"
+    spec = importlib.util.spec_from_file_location("cape_stage", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    conns, total, uniq = mod.dedupe_tcp_connections(tcp_rows)
+    return {"tcp_connections": conns, "tcp_attempts_total": total,
+            "tcp_destinations_total": uniq}
+
+
+def test_tcp_connections_dedup_by_destination():
+    """1540 rows across the corpus resolved to 24 destinations — two per sample,
+    because INetSim answers every lookup with the gateway. Fifty near-identical
+    rows conveyed two facts and hid the total."""
+    rows = ([{"dst": "192.168.100.1", "dport": 443, "src": "192.168.100.10", "sport": p}
+             for p in range(49000, 49097)] +
+            [{"dst": "192.168.100.1", "dport": 80, "src": "192.168.100.10", "sport": p}
+             for p in range(50000, 50097)])
+    net = _extract(rows)
+    conns = net["tcp_connections"]
+    assert len(conns) == 2, f"expected 2 destinations, got {len(conns)}"
+    assert {c["dst"] for c in conns} == {"192.168.100.1:443", "192.168.100.1:80"}
+    assert all(c["attempts"] == 97 for c in conns)
+
+
+def test_attempt_total_survives_where_truncation_hid_it():
+    """The old cap stored 50 rows and lost the fact that 194 attempts happened."""
+    rows = [{"dst": "192.168.100.1", "dport": 443, "src": "x", "sport": p}
+            for p in range(194)]
+    net = _extract(rows)
+    assert net["tcp_attempts_total"] == 194
+    assert net["tcp_destinations_total"] == 1
+    assert len(net["tcp_connections"]) == 1
+
+
+def test_a_destination_that_is_not_the_gateway_is_visible():
+    """Everything resolves to the gateway, so a destination that is NOT it means
+    the sample reached for a hardcoded IP, bypassing DNS. That must not be
+    buried under repetition of the gateway rows."""
+    rows = ([{"dst": "192.168.100.1", "dport": 443, "src": "x", "sport": p} for p in range(300)] +
+            [{"dst": "104.207.140.119", "dport": 443, "src": "x", "sport": 1}])
+    conns = _extract(rows)["tcp_connections"]
+    assert "104.207.140.119:443" in {c["dst"] for c in conns}
+
+
+def test_src_is_dropped():
+    """Ephemeral source ports are not IOCs; they are what made identical
+    destinations look like distinct rows."""
+    net = _extract([{"dst": "1.2.3.4", "dport": 80, "src": "192.168.100.10", "sport": 5}])
+    assert "src" not in net["tcp_connections"][0]

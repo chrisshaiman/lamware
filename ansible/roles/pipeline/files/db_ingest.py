@@ -477,9 +477,14 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 VALUES (%s, 'http', %s, %s, %s)
             """, (analysis_id, h.get("method", ""), h.get("url", ""), h.get("host", "")))
 
+        # tcp_connections is deduplicated by destination upstream, so this now
+        # writes one row per DESTINATION rather than one per connection — two
+        # rows for a sample that made 194 attempts. `src` is gone with the
+        # dedup: an ephemeral source port is not an IOC and was only ever
+        # varying noise that made identical destinations look distinct.
         for c in cape_net.get("tcp_connections", []):
             dst = c.get("dst", "")
-            src = c.get("src", "")
+            src = ""
             dst_ip, dst_port = (dst.rsplit(":", 1) + ["0"])[:2] if ":" in dst else (dst, "0")
             src_ip, src_port = (src.rsplit(":", 1) + ["0"])[:2] if ":" in src else (src, "0")
             cur.execute("""
