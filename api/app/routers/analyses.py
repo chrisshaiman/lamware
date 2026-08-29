@@ -291,6 +291,7 @@ def get_analysis(
             "src_port": ne.src_port,
             "dst_ip": ne.dst_ip,
             "dst_port": ne.dst_port,
+            "attempts": ne.attempts,
             "timestamp": ne.timestamp,
         }
         for ne in session.exec(

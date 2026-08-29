@@ -228,6 +228,97 @@ def _calculate_llm_cost(report: dict) -> float:
     return total_cost if has_usage else 0.50
 
 
+def network_events_has_attempts(cur) -> bool:
+    """Whether the deployed schema has `network_events.attempts` yet (#488).
+
+    The column arrives in an Alembic migration, which the `postgres` role runs;
+    this file ships with the `pipeline` role. `make deploy TAGS=pipeline` is the
+    most-used deploy command in this project, so the two can legitimately be out
+    of step for a while.
+
+    Without this probe that window ends in an UndefinedColumn inside the ingest's
+    blanket `except`, which discards the WHOLE analysis — IOCs, techniques,
+    signatures and correlations included, not merely the tcp rows (#450). One
+    catalogue query per analysis is cheaper than that.
+    """
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'network_events' AND column_name = 'attempts'"
+    )
+    return cur.fetchone() is not None
+
+
+def tcp_event_rows(cape_net: dict) -> list:
+    """(src_ip, src_port, dst_ip, dst_port, attempts) per `network_events` row.
+
+    Two conventions live in the report corpus (#479, #488). Reports written
+    before 2026-08-29 06:39 UTC carry one entry per CONNECTION, capped at fifty,
+    each with a real ephemeral `src`. Later ones carry one entry per DESTINATION
+    with an `attempts` count and no `src` at all.
+
+    `attempts` is what tells them apart, and it is NULL for the old shape on
+    purpose: a NULL says "this row is one connection", a number says "this row
+    is a destination reached that many times". Without it `count(*)` over
+    network_events silently changes meaning by a factor of ~25 across the
+    deploy — and it changes DOWNWARD, which reads as network activity having
+    stopped in the days right after the DNS fix made it start.
+
+    The old shape's `src` is preserved rather than discarded. It is not an IOC
+    and nothing queries it, but it exists in those reports, and dropping data
+    during a re-ingest to match a newer convention would make the old rows
+    describe something they are not.
+    """
+    rows = []
+    for c in cape_net.get("tcp_connections", []):
+        if not isinstance(c, dict):
+            continue
+        dst = c.get("dst", "") or ""
+        src = c.get("src", "") or ""
+        dst_ip, dst_port = (dst.rsplit(":", 1) + ["0"])[:2] if ":" in dst else (dst, "0")
+        src_ip, src_port = (src.rsplit(":", 1) + ["0"])[:2] if ":" in src else (src, "0")
+        attempts = c.get("attempts")
+        rows.append((
+            src_ip,
+            int(src_port) if src_port.isdigit() else 0,
+            dst_ip,
+            int(dst_port) if dst_port.isdigit() else 0,
+            int(attempts) if isinstance(attempts, int) else None,
+        ))
+    return rows
+
+
+def insert_tcp_events(cur, analysis_id: int, cape_net: dict) -> int:
+    """Write this analysis's tcp rows; return how many. Extracted so the choice
+    between the two INSERTs is testable — a branch that only exists inside
+    ingest_to_db is one no test reaches without a live database, which is how a
+    mis-wired helper passes its own unit tests while doing nothing.
+    """
+    rows = tcp_event_rows(cape_net)
+    if not rows:
+        return 0
+    has_attempts = network_events_has_attempts(cur)
+    if not has_attempts and any(r[4] is not None for r in rows):
+        # Say so rather than silently write destination rows that become
+        # indistinguishable from the pre-#479 connection rows they are not.
+        print("    WARNING: network_events.attempts is missing — run the postgres "
+              "role (alembic 0004). These tcp rows are destinations but will be "
+              "stored looking like connections.")
+    for src_ip, src_port, dst_ip, dst_port, attempts in rows:
+        if has_attempts:
+            cur.execute("""
+                INSERT INTO network_events
+                    (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts)
+                VALUES (%s, 'tcp', %s, %s, %s, %s, %s)
+            """, (analysis_id, src_ip, src_port, dst_ip, dst_port, attempts))
+        else:
+            cur.execute("""
+                INSERT INTO network_events
+                    (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port)
+                VALUES (%s, 'tcp', %s, %s, %s, %s)
+            """, (analysis_id, src_ip, src_port, dst_ip, dst_port))
+    return len(rows)
+
+
 def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     """Write structured analysis data to PostgreSQL.
 
@@ -477,21 +568,11 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 VALUES (%s, 'http', %s, %s, %s)
             """, (analysis_id, h.get("method", ""), h.get("url", ""), h.get("host", "")))
 
-        # tcp_connections is deduplicated by destination upstream, so this now
-        # writes one row per DESTINATION rather than one per connection — two
-        # rows for a sample that made 194 attempts. `src` is gone with the
-        # dedup: an ephemeral source port is not an IOC and was only ever
-        # varying noise that made identical destinations look distinct.
-        for c in cape_net.get("tcp_connections", []):
-            dst = c.get("dst", "")
-            src = ""
-            dst_ip, dst_port = (dst.rsplit(":", 1) + ["0"])[:2] if ":" in dst else (dst, "0")
-            src_ip, src_port = (src.rsplit(":", 1) + ["0"])[:2] if ":" in src else (src, "0")
-            cur.execute("""
-                INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port)
-                VALUES (%s, 'tcp', %s, %s, %s, %s)
-            """, (analysis_id, src_ip, int(src_port) if src_port.isdigit() else 0,
-                  dst_ip, int(dst_port) if dst_port.isdigit() else 0))
+        # One row per DESTINATION for post-#479 reports and one row per
+        # CONNECTION for older ones, with `attempts` recording which — see
+        # tcp_event_rows. A bare count of these rows is not comparable across
+        # that boundary and must not be read as one (#488).
+        insert_tcp_events(cur, analysis_id, cape_net)
 
         # --- Insert IOC-technique mappings ---
         for mapping in report.get("ioc_technique_mappings", []):
