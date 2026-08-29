@@ -145,6 +145,53 @@ def tool_output_text(out_dir: Path) -> str:
                     for r in records if isinstance(r, dict))
 
 
+def correlated_evidence(report: dict) -> dict:
+    """The evidence an arm with evidence="correlated" is additionally shown (#420).
+
+    Deliberately narrow. Everything here is already computed by the pipeline and
+    already shown to the SUMMARY writer; the only change is that the investigating
+    agent sees it too. Nothing is derived specially for the eval, so a positive
+    result is actionable — it says move cross_correlate ahead of stage 4.5 in
+    production, not "build something new".
+
+    Returns {} when the report carries none of it, which keeps `+corr` byte-identical
+    to its base arm on those samples. That is a feature: such samples become a
+    negative control showing the two arms agree when the evidence is the same.
+    """
+    out: dict = {}
+    cc = report.get("cross_correlations") or []
+    if cc:
+        out["cross_correlations"] = cc
+    warn = report.get("correlation_warnings") or []
+    if warn:
+        # Shown deliberately. A rule that could not run is evidence about coverage,
+        # and withholding it would let the agent read an empty finding list as a
+        # clean sample — the substitution the warnings exist to prevent.
+        out["correlation_warnings"] = warn
+    cape = report.get("cape") or {}
+    sigs = cape.get("signatures") or []
+    if sigs:
+        out["cape_signatures"] = sigs
+    vol = (report.get("volatility") or {}).get("insights")
+    if vol:
+        out["volatility_insights"] = vol
+    return out
+
+
+def evidence_for(arm: Arm, report: dict) -> dict:
+    """What THIS arm is shown beyond the Ghidra dump.
+
+    A separate function because the failure it guards is silent: if a
+    "correlated" arm receives nothing, both arms get identical prompts and the
+    experiment reports "no difference" while having tested nothing. That is
+    indistinguishable from a real null result in the output, so it has to be
+    unit-testable rather than buried in run_arm.
+    """
+    if arm.evidence != "correlated":
+        return {}
+    return correlated_evidence(report)
+
+
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
             interpret_cmd: str, ghidra_cmd: str) -> dict:
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
@@ -168,15 +215,33 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     if archived is not None:
         print(f"    [eval] previous cell archived -> {archived}", flush=True)
     out.mkdir(parents=True, exist_ok=True)
+    evidence = evidence_for(arm, report)
+    if arm.evidence == "correlated":
+        print(f"    [eval] correlated evidence: {sorted(evidence) or 'NONE (identical to base arm)'}",
+              flush=True)
     t0 = time.time()
-    res = run_interpret(gr, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd)
+    res = run_interpret(gr, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd,
+                        extra_evidence=evidence or None)
     secs = round(time.time() - t0, 1)
     analysis = res.get("analysis", {}) or {}
     usage = res.get("usage", {}) or {}
     cost = 0.0 if arm.re_backend == "local" else _rough_cost(arm.model, usage)
     # Grounding corpus = the initial Ghidra dump PLUS everything the tools
     # returned, i.e. the full set of bytes the model actually saw.
+    #
+    # For a "correlated" arm that includes the extra evidence, because it is part
+    # of what the model saw. Omitting it would score claims the agent drew from
+    # correlation findings as FABRICATED, which would penalise the arm for using
+    # exactly what the experiment gave it.
+    #
+    # The consequence is that grounded_ratio is NOT comparable across the evidence
+    # axis: the "correlated" arm has a strictly larger corpus, so more of its
+    # claims find a match and the ratio rises without the analysis improving
+    # (#420). Compare ABSOLUTE grounded findings and fabrication counts across
+    # arms, never the ratio.
     source = json.dumps(gr) + " " + tool_output_text(out)
+    if evidence:
+        source += " " + json.dumps(evidence)
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess

@@ -568,7 +568,7 @@ def check_prompt_influence(analysis: dict) -> bool:
 def run_interpret(ghidra_result: dict, output_dir: Path,
                   interpret_cmd: str, interpret_enabled: bool,
                   interpret_timeout: int, interpret_config: dict,
-                  ghidra_cmd: str) -> dict:
+                  ghidra_cmd: str, extra_evidence: dict | None = None) -> dict:
     """Run the agentic LLM interpretation loop.
 
     Starts the interpret container (long-running, stdin/stdout pipes),
@@ -605,6 +605,11 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     }
     if ghidra_result.get("bazaar_family"):
         init_payload["bazaar_family"] = ghidra_result["bazaar_family"]
+    # Cross-tool evidence for the investigating agent (#420). Optional and absent
+    # by default, so production behaviour is unchanged until the experiment says
+    # otherwise — this ships the capability, not a decision.
+    if extra_evidence:
+        init_payload["correlated_evidence"] = extra_evidence
     init_msg = json.dumps(init_payload)
     proc.stdin.write(init_msg + "\n")
     proc.stdin.flush()
