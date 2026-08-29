@@ -5,7 +5,15 @@
 
 keycloak_enabled: true
 keycloak_install_dir: /opt/keycloak
-keycloak_image: "quay.io/keycloak/keycloak:26.1"
+# 26.1 was vulnerable to CVE-2026-18963 (CVSS 9.1, unauthenticated account
+# takeover via reset-credentials, disclosed 2026-08-18). Fixed in 26.4.15 /
+# 26.6.6 / 26.7.2 / 26.8.0 — of those only 26.7.2 is published as a pullable
+# tag on quay.io (checked; 26.1 used as the control for that check).
+#
+# Keycloak migrates its schema on startup and does NOT support downgrade, so
+# changing this tag back does not roll back an upgrade. Recovery is a database
+# restore — see docs/KEYCLOAK_RECOVERY.md, which was tested before this bump.
+keycloak_image: "quay.io/keycloak/keycloak:26.7.2"
 keycloak_port: 8080
 keycloak_listen_address: "127.0.0.1"
 keycloak_db_user: "keycloak"
