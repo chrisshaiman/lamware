@@ -17,6 +17,21 @@ _LOCAL_MODEL = "local-qwen-llamacpp-re"
 SEEDS: tuple[int, ...] = (42, 1337, 8675309)
 
 
+#: Evidence the agent is given, ORTHOGONAL to the model axis (#420).
+#:
+#: "ghidra"     — report["ghidra"] only. What every arm has always received.
+#: "correlated" — the same, plus cross_correlations, Cape behavioural signatures
+#:                and Volatility insights: the evidence the platform already
+#:                computes and, until now, showed only to the summary writer.
+#:
+#: The thesis this exists to test is "correlation before generation". Correlation
+#: runs AFTER the agent in run_pipeline, so the agent has never seen a correlation
+#: finding. The eval harness inherited that: run_arm passes report["ghidra"] and
+#: nothing else. So the value question was never measured on the architecture the
+#: project describes — a different hypothesis was.
+EVIDENCE_MODES: tuple[str, ...] = ("ghidra", "correlated")
+
+
 @dataclass
 class Arm:
     name: str
@@ -24,6 +39,7 @@ class Arm:
     re_backend: str | None  # "local" routes via the LiteLLM router; None = cloud passthrough
     max_tool_calls: int
     seed: int | None = None  # None = server default; unpinned, so runs are not reproducible
+    evidence: str = "ghidra"
 
 
 _REGISTRY: dict[str, Arm] = {
@@ -107,10 +123,37 @@ def _register_seed_variants(registry: dict[str, Arm]) -> None:
         for seed in SEEDS:
             name = f"{base.name}:s{seed}"
             registry[name] = Arm(
-                name, f"{_LOCAL_MODEL}-s{seed}", "local", base.max_tool_calls, seed=seed
+                name, f"{_LOCAL_MODEL}-s{seed}", "local", base.max_tool_calls, seed=seed,
+                # Carried explicitly. Defaulting here would make a seeded +corr arm
+                # silently ghidra-only, so the pair would stop differing and the
+                # experiment would compare an arm against itself.
+                evidence=base.evidence,
             )
 
 
+def _register_evidence_variants(registry: dict[str, Arm]) -> None:
+    """`<arm>+corr` for every arm: same model, same depth, richer evidence.
+
+    Registered as a suffix rather than a separate arm so the pair differs in
+    exactly one variable. Comparing `qwen@10` against `qwen@10+corr` is the
+    experiment; comparing it against a differently-named arm would not be.
+
+    PAIRING MATTERS MORE THAN n HERE. The local model is deterministic within a
+    llama.cpp server session, so a same-sample pair has no sampling noise to
+    overcome and a difference is the evidence effect. But determinism does NOT
+    survive a server restart, so the two arms of a pair must run BACK TO BACK on
+    each sample. Running every `ghidra` cell and then every `correlated` cell
+    would put a restart between the halves and confound the only variable being
+    tested — the same defect that made an earlier sweep's cells incomparable
+    across restarts.
+    """
+    for base in [a for a in list(registry.values()) if a.evidence == "ghidra"]:
+        name = f"{base.name}+corr"
+        registry[name] = Arm(name, base.model, base.re_backend, base.max_tool_calls,
+                             seed=base.seed, evidence="correlated")
+
+
+_register_evidence_variants(_REGISTRY)
 _register_seed_variants(_REGISTRY)
 
 

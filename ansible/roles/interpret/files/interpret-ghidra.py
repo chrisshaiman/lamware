@@ -167,6 +167,62 @@ INETSIM_EVASION_NOTE = (
 )
 
 
+def _correlated_evidence_context(init_msg: dict) -> str:
+    """Cross-tool observations for the investigating agent (#420).
+
+    Absent unless the caller supplies `correlated_evidence`, so production and
+    every existing arm are unaffected.
+
+    WORDING IS PART OF THE EXPERIMENT. These are presented as OBSERVATIONS TO
+    INVESTIGATE, not as conclusions. Phrasing them as established findings would
+    invite the model to restate them, which raises grounded counts without the
+    analysis improving — measuring recitation and calling it comprehension. It
+    would also risk the failure mode worth knowing about: correlation findings
+    anchoring the agent onto a conclusion instead of prompting it to look.
+
+    So the instruction is to CORROBORATE OR CONTRADICT in the decompiled code,
+    and disagreement is explicitly welcomed. A run where the agent overturns a
+    correlation finding is a better outcome than one where it echoes it.
+    """
+    ev = init_msg.get("correlated_evidence") or {}
+    if not ev:
+        return ""
+    parts = ["CROSS-TOOL OBSERVATIONS (from sandbox detonation and memory analysis):"]
+
+    for f in ev.get("cross_correlations", [])[:20]:
+        parts.append(
+            f"  - [{f.get('severity','?')}] {f.get('title','?')} "
+            f"(sources: {', '.join(f.get('sources', []) or ['?'])})\n"
+            f"    {str(f.get('detail',''))[:400]}"
+        )
+    sigs = ev.get("cape_signatures", [])
+    if sigs:
+        names = [str(x.get("name", x))[:60] if isinstance(x, dict) else str(x)[:60]
+                 for x in sigs[:25]]
+        parts.append("  Sandbox behavioural signatures: " + ", ".join(names))
+    vol = ev.get("volatility_insights")
+    if vol:
+        parts.append("  Memory analysis: " + json.dumps(vol)[:600])
+    warn = ev.get("correlation_warnings", [])
+    if warn:
+        # Coverage limits, not findings. Without these an empty finding list reads
+        # as a clean sample rather than as a check that could not run.
+        parts.append("  Coverage limits on the above (a check that could not run is "
+                     "NOT evidence of absence):")
+        for w in warn[:6]:
+            parts.append(f"    - {str(w)[:220]}")
+
+    parts.append(
+        "These come from other tools, not from the code you are reading. Treat them "
+        "as leads to CORROBORATE OR CONTRADICT in the decompiled code, not as "
+        "conclusions to repeat. If the code disagrees with an observation, say so "
+        "and explain why — a contradiction you can evidence is more valuable than "
+        "agreement you cannot. Do not report any of these as your own finding "
+        "unless you can point to the code that supports it."
+    )
+    return "\n".join(parts) + "\n\n"
+
+
 def _bazaar_context(init_msg: dict) -> str:
     """Build context prefix from MalwareBazaar metadata if available."""
     parts = []
@@ -3089,7 +3145,9 @@ Technical summary: {executive}"""
         emit_status(f"RE routed to local backend via router: {model}", 0)
 
     # Build initial conversation
-    initial_text = _bazaar_context(init_msg) + build_initial_message(ghidra_data, config)
+    initial_text = (_bazaar_context(init_msg)
+                    + _correlated_evidence_context(init_msg)
+                    + build_initial_message(ghidra_data, config))
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": initial_text},
     ]
