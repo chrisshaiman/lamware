@@ -13,7 +13,20 @@ keycloak_install_dir: /opt/keycloak
 # Keycloak migrates its schema on startup and does NOT support downgrade, so
 # changing this tag back does not roll back an upgrade. Recovery is a database
 # restore — see docs/KEYCLOAK_RECOVERY.md, which was tested before this bump.
-keycloak_image: "quay.io/keycloak/keycloak:26.7.2"
+# REVERTED to 26.1. 26.7.2 crash-loops on this database:
+#   ERROR: Cannot lazily initialize collection of role
+#   'org.keycloak.models.jpa.entities.RealmEntity.components'
+#   with key 9b2422b0-50f6-4dc9-979a-64d268cc953a (no session)
+# — that key is the master realm. Auth returned 502 on every endpoint.
+#
+# Do NOT re-pin 26.7.2 without first reproducing this against a COPY of the
+# production database. The schema migration itself succeeded (87 -> 100 tables)
+# and the data survived intact, so the failure is in startup, not migration.
+#
+# CVE-2026-18963 is NOT unmitigated meanwhile: reset-credentials is refused
+# server-side because both realms have resetPasswordAllowed=false, verified from
+# the 26.1 source and confirmed live. See #457.
+keycloak_image: "quay.io/keycloak/keycloak:26.1"
 keycloak_port: 8080
 keycloak_listen_address: "127.0.0.1"
 keycloak_db_user: "keycloak"
