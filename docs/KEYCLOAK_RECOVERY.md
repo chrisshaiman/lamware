@@ -20,16 +20,58 @@ Recovery is a database restore, and it has to be known-good beforehand.
 
 | Situation | Recovery |
 |---|---|
-| Upgrade fails, Keycloak will not start | Restore DB + revert image tag |
-| Admin account lost or password unknown | Restore DB |
+| Upgrade fails, Keycloak will not start | Revert image tag, then restore DB |
+| Admin password lost or account locked | `kc.sh bootstrap-admin user` |
 | Realm/client config damaged | Restore DB |
 
-**The bootstrap admin does not help.** `--bootstrap-admin-*` is, per its own
-help text, *"used only when the master realm is created"*. On an existing
-database the master realm already exists, so the option is inert. It is not an
-admin-lockout recovery mechanism for this deployment.
+### Two different "bootstrap admin" things — do not confuse them
 
-The database restore is the recovery path. There is no second one.
+An earlier version of this document said the database restore was the only
+recovery path. That was **wrong**, and it was wrong in the way that matters:
+it would have sent someone to a destructive procedure when a non-destructive
+one exists.
+
+**The env vars are inert here.** `KC_BOOTSTRAP_ADMIN_USERNAME` /
+`KC_BOOTSTRAP_ADMIN_PASSWORD` (and the older `KEYCLOAK_ADMIN*`) are, per
+Keycloak's own help, *"used only when the master realm is created"*. Master
+already exists on this deployment, so setting them changes nothing.
+
+**The CLI command is not.** `kc.sh bootstrap-admin` works against an existing
+database:
+
+```
+kc.sh bootstrap-admin user      Add an admin user with a password
+kc.sh bootstrap-admin service   Add an admin service account
+```
+
+So an admin lockout does **not** require a restore. Add a temporary admin,
+log in, fix the real account, then remove the temporary one.
+
+This distinction was found while actually locked out — the earlier claim came
+from reading the env-var help and generalising from it.
+
+### Before assuming a lockout, read the error
+
+Keycloak names the failure precisely, and the names mean different things:
+
+| `error=` in the journal | Meaning |
+|---|---|
+| `user_not_found` | The username does not exist **in that realm** |
+| `invalid_user_credentials` | Right user, wrong password |
+| `user_temporarily_disabled` | Brute-force lock (in-memory under `KC_CACHE=local`; a restart clears it) |
+
+```bash
+sudo journalctl -u keycloak --since '30 min ago' -o cat \
+  | grep LOGIN_ERROR | tail -3 | tr ',' '\n' | grep -E 'error=|username=|realmId='
+```
+
+Check fail2ban too — repeated failures ban the source IP, which looks like a
+Keycloak problem but is not:
+
+```bash
+sudo fail2ban-client status keycloak-auth          # 10 retries / 600s / 3600s ban
+sudo fail2ban-client set keycloak-auth unbanip <ip>
+```
 
 ## Deployment facts
 
@@ -129,6 +171,21 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 ## Upgrade prerequisites
 
+- [ ] **Rehearse the upgrade against a copy of the production database.** This
+      is the step whose absence caused an outage on 2026-08-29: 26.7.2 deployed,
+      crash-looped on `RealmEntity.components` in the master realm, and returned
+      502 on every endpoint including the admin console. Every piece needed to
+      catch it beforehand already existed — a verified dump, a tested restore, a
+      scratch database — and was never assembled. Preparedness is not assurance;
+      none of the other prerequisites say anything about whether the new version
+      can *start* on this data.
+
+      ```bash
+      sudo -u postgres psql -c 'CREATE DATABASE keycloak_upgradetest OWNER keycloak;'
+      sudo -u postgres pg_restore -d keycloak_upgradetest --no-owner --role=keycloak <dump>
+      # start the NEW image against keycloak_upgradetest, not the live database
+      # only schedule the real upgrade if it starts clean
+      ```
 - [ ] Fresh dump taken **and** restore-verified on the day of the upgrade
 - [ ] `keycloak.env` still sets `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD`,
       which 26.x deprecated in favour of `KC_BOOTSTRAP_ADMIN_USERNAME` /
@@ -139,3 +196,25 @@ curl -s -o /dev/null -w '%{http_code}\n' \
       after the upgrade is not the first time anyone notices
 - [ ] Confirm the CVE probe returns something other than a processing 400
       afterwards (see #457)
+
+## A schema note, learned the hard way
+
+26.7.2's migration was **purely additive** — 13 tables added, none removed
+(`auth_session`, `root_auth_session`, `login_failure`, `single_use_object`,
+`cluster_event`, `server_config`, `outbox_entry`, `org_invitation`,
+`workflow_state`, and four verifiable-credential tables). Several are state
+26.1 keeps in Infinispan that later versions moved into the database.
+
+Consequently **26.1.5 started cleanly against the migrated 100-table schema**
+after the tag was reverted — auth and admin console both returned 200 with no
+errors. That was not expected; the assumption going in was that an old version
+could not read a newer schema at all.
+
+Do not read that as permission to stay on a hybrid schema. The additive check
+rules out *dropped* tables; it says nothing about *altered columns* on the
+tables that remain. "No symptoms" is not "supported". Restore to the matching
+baseline.
+
+It does mean a failed upgrade is less catastrophic than assumed: the service
+may come back on the old image before the restore, which buys time to do the
+restore carefully rather than under pressure.
