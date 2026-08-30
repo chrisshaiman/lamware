@@ -248,3 +248,43 @@ def test_an_unreadable_report_does_not_stop_the_others(tmp_path, mod, capsys,
     assert mod.main() == 0
     assert json.loads(good.read_text())["ghidra"]["program_name"] == PRESENT
     assert "read-fail" in capsys.readouterr().out
+
+
+# --- the path a repair writes has to outlive cleanup.sh ---
+
+
+def test_report_paths_are_resolved_before_candidates_are_built(tmp_path, mod,
+                                                               monkeypatch,
+                                                               capsys):
+    """A relative report path yields a relative project candidate, which cannot
+    resolve inside the verifier's container — so it fails, the search falls
+    through, and the repair lands on the task directory instead of the copy
+    beside the report. Correct today; gone in seven days when cleanup.sh runs.
+    """
+    corpus = tmp_path / "sample"
+    corpus.mkdir()
+    (corpus / "report.json").write_text(json.dumps(_report(corpus)))
+
+    seen: list[str] = []
+
+    def verify(project, program):
+        seen.append(project)
+        return project == str(corpus / "project") and program == PRESENT
+
+    monkeypatch.setattr(mod, "make_ghidra_verifier", lambda cmd, **kw: verify)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["repair", "--apply", "sample/report.json"])
+    assert mod.main() == 0
+
+    assert all(Path(p).is_absolute() for p in seen), seen
+    written = json.loads((corpus / "report.json").read_text())["ghidra"]
+    assert written["project_dir"] == str(corpus / "project")
+
+
+def test_the_copy_beside_the_report_wins_over_the_task_directory(tmp_path, mod):
+    """Both hold the program. The neighbour is the durable one."""
+    task = tmp_path / "task"
+    r = _report(tmp_path, task_dir=str(task))
+    out = mod.diagnose(r, tmp_path / "report.json",
+                       lambda project, program: program == PRESENT)
+    assert out["new"][0] == str(tmp_path / "project")

@@ -152,7 +152,13 @@ def main() -> int:
     verify = make_ghidra_verifier(args.ghidra_cmd)
     counts: dict = {}
     for raw in args.reports:
-        path = Path(raw)
+        # Absolute, always. The verifier hands the project path to a container
+        # with its own working directory, so a relative candidate cannot resolve
+        # there — it fails silently and the search moves on to the next
+        # candidate. That is how a first run repaired four reports to
+        # /opt/pipeline/reports/<task>/project instead of the copy beside them:
+        # correct today, and gone in seven days when cleanup.sh runs.
+        path = Path(raw).resolve()
         try:
             report = json.loads(path.read_text())
         except (OSError, ValueError) as e:
