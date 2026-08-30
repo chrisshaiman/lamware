@@ -32,6 +32,22 @@ def cell_error(res: dict, analysis: dict) -> str | None:
     return err
 
 
+def technique_hits(claimed: list[str], available: list[str]) -> list[str]:
+    """Claimed technique IDs that Cape independently observed (#491).
+
+    A sub-technique counts against its parent — claiming `T1055.003` when Cape
+    saw `T1055` is a more specific version of the same finding, and penalising
+    precision is not the point.
+
+    The reverse deliberately does NOT count. Claiming `T1055` when Cape saw only
+    `T1055.003` is a LESS specific claim, and crediting it would make the metric
+    generous in both directions, which is another way of saying unfalsifiable.
+    """
+    have = set(available or [])
+    return [t for t in (claimed or [])
+            if t in have or t.split(".")[0] in have]
+
+
 def ghidra_warnings_for(gr: dict) -> list[str]:
     """The analysis warnings for a cell, resolved identically live and offline.
 
@@ -63,7 +79,8 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                  tool_metrics: dict, error: str | None,
                  seed: int | None = None, sampling: dict | None = None,
                  ghidra_warnings: list[str] | None = None,
-                 evidence_text: str | None = None) -> dict:
+                 evidence_text: str | None = None,
+                 cape_techniques: list[str] | None = None) -> dict:
     """Compose one scorecard cell.
 
     `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
@@ -98,6 +115,9 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                if evidence_text else g)
     techniques = (analysis or {}).get("attack_techniques") or []
     capabilities = (analysis or {}).get("capabilities") or []
+    claimed_ids = sorted({t.get("id") for t in techniques
+                          if isinstance(t, dict) and t.get("id")})
+    hits = technique_hits(claimed_ids, cape_techniques or [])
     return {
         "arm": arm_name,
         "seed": seed,
@@ -137,6 +157,17 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # one holds still — which is what the pilot's +corr arm did, 3 -> 6.
         "techniques": len(techniques),
         "capabilities": len(capabilities),
+        # Scored against Cape's MITRE observations, which no arm is shown
+        # (#491). Precision is the trustworthy half: Cape's list is broad and
+        # itself noisy, so a low recall says as much about the answer key as
+        # about the model, while a claim that Cape never observed is a claim
+        # nothing supports.
+        "techniques_hit": len(hits),
+        "technique_precision": (round(len(hits) / len(claimed_ids), 3)
+                                if claimed_ids else None),
+        "technique_recall": (round(len(hits) / len(cape_techniques), 3)
+                             if cape_techniques else None),
+        "cape_techniques": len(cape_techniques or []),
         "completed": tool_metrics.get("completed"),
         # Reported separately because "finished, but the answer was unparseable"
         # is neither success nor error, and folding it into either hides it.
@@ -155,6 +186,12 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "wall_seconds": wall_seconds, "cost_usd": cost_usd,
         "error": error,
     }
+
+
+def _mean(values: list) -> float | None:
+    """None over an empty set rather than 0.0: a rate computed over nothing is
+    not a score of zero, and the two must not render alike."""
+    return round(sum(values) / len(values), 3) if values else None
 
 
 def aggregate(cells: list[dict]) -> dict:
@@ -204,6 +241,13 @@ def aggregate(cells: list[dict]) -> dict:
             "total_unscoreable": sum(c.get("unscoreable") or 0 for c in valid),
             # Unscored by grounding, so shown rather than trusted.
             "total_techniques": sum(c.get("techniques") or 0 for c in valid),
+            "total_techniques_hit": sum(c.get("techniques_hit") or 0 for c in valid),
+            "mean_technique_precision": _mean(
+                [c["technique_precision"] for c in valid
+                 if c.get("technique_precision") is not None]),
+            "mean_technique_recall": _mean(
+                [c["technique_recall"] for c in valid
+                 if c.get("technique_recall") is not None]),
             "completed_rate": (
                 round(sum(1 for c in valid if c["completed"]) / n_valid, 3)
                 if n_valid else None

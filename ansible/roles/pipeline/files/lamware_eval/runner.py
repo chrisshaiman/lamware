@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run one (sample x arm) through the agentic RE loop; return a scorecard cell."""
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -164,6 +165,56 @@ def tool_output_text(out_dir: Path) -> str:
                     for r in records if isinstance(r, dict))
 
 
+#: A MITRE technique ID, with or without a sub-technique.
+_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
+
+
+def held_out_techniques(report: dict) -> list[str]:
+    """CAPE's MITRE observations, which NO arm is shown (#491).
+
+    These are the answer key. Cape derives them from behaviour it watched during
+    detonation, independently of anything Ghidra saw, which is what makes them
+    usable as ground truth (#314) — and holding them out is what makes a
+    technique claim something an arm has to earn rather than repeat.
+
+    Before this, `+corr` was handed `T1059 — Execution` and `T1055 — Process
+    Injection` on the correlations and then scored on nothing at all, because
+    `attack_techniques` was unscored entirely. On the pilot it claimed both.
+    """
+    ttps = (report.get("cape") or {}).get("mitre_ttps") or []
+    return sorted({t.get("id") for t in ttps
+                   if isinstance(t, dict) and t.get("id")})
+
+
+def strip_technique_ids(obj):
+    """Remove every MITRE ID from an evidence payload. Returns (obj, removed).
+
+    The `mitre` field on a correlation is dropped outright; the finding's title
+    and detail carry its meaning without naming the answer. Any ID surviving
+    elsewhere is REDACTED rather than left, and counted rather than hidden — a
+    non-zero count on a sample means something leaks the answer key by another
+    route, which is a bug to find, not a number to bury.
+    """
+    removed = 0
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k == "mitre":
+                removed += len(_TECHNIQUE_ID.findall(str(v)))
+                continue
+            sub, n = strip_technique_ids(v)
+            out[k] = sub
+            removed += n
+        return out, removed
+    if isinstance(obj, list):
+        pairs = [strip_technique_ids(v) for v in obj]
+        return [p[0] for p in pairs], sum(p[1] for p in pairs)
+    if isinstance(obj, str):
+        redacted, n = _TECHNIQUE_ID.subn("[held out]", obj)
+        return redacted, n
+    return obj, removed
+
+
 def correlated_evidence(report: dict) -> dict:
     """The evidence an arm with evidence="correlated" is additionally shown (#420).
 
@@ -194,6 +245,10 @@ def correlated_evidence(report: dict) -> dict:
     vol = (report.get("volatility") or {}).get("insights")
     if vol:
         out["volatility_insights"] = vol
+    # The MITRE IDs come out before the agent sees any of this. They are the
+    # answer key both arms are scored against (#491), and an arm shown the key
+    # is not being measured on the same thing as one that is not.
+    out, _ = strip_technique_ids(out)
     return out
 
 
@@ -283,4 +338,5 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
                         extract_metrics(res), err, evidence_text=evidence_text,
                         seed=arm.seed,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
-                        ghidra_warnings=ghidra_warnings_for(gr))
+                        ghidra_warnings=ghidra_warnings_for(gr),
+                        cape_techniques=held_out_techniques(report))
