@@ -586,6 +586,55 @@
     mode: "0640"
     force: false
 
+# The force:false above is right and stays. What was wrong is that it was the
+# ONLY path: the curated selection in the repo could never reach a host that had
+# ever run the eval, so `53b260c eval: select the corpus for what it exercises`
+# changed the repo and nothing else. The deployed manifest stayed on its
+# 2026-07-24 seven-sample version, in which every sample produces ZERO
+# cross-tool correlations — the one corpus on the box that cannot test #420,
+# and the default one (#487).
+#
+# Two files, two owners. corpus.json belongs to the operator; corpus.repo.json
+# is Ansible's and is always current.
+- name: Ship the curated eval corpus manifest (Ansible owns this path outright)
+  ansible.builtin.copy:
+    src: eval/corpus.json
+    dest: "{{ pipeline_install_dir }}/eval/corpus.repo.json"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+    force: true
+
+- name: Read the operator's eval corpus manifest, if the host has one
+  ansible.builtin.slurp:
+    src: "{{ pipeline_install_dir }}/eval/corpus.json"
+  register: pipeline_corpus_deployed
+  failed_when: false
+  changed_when: false
+
+# Say it out loud. A stale corpus is not a deploy failure — the operator's file
+# is legitimately theirs — but a run against a manifest that silently differs
+# from the repo produces a scorecard nobody can interpret later (#486).
+- name: Report when the operator corpus diverges from the shipped one (#487)
+  ansible.builtin.debug:
+    msg: >-
+      eval corpus DIVERGES: {{ pipeline_install_dir }}/eval/corpus.json has
+      {{ pipeline_corpus_operator_shas | length }} sample(s), the shipped
+      corpus.repo.json has {{ pipeline_corpus_repo_shas | length }}.
+      Only in the repo: {{ pipeline_corpus_repo_shas | difference(pipeline_corpus_operator_shas) | map("truncate", 12, true, "") | list }}.
+      Only on the host: {{ pipeline_corpus_operator_shas | difference(pipeline_corpus_repo_shas) | map("truncate", 12, true, "") | list }}.
+      Pass --corpus .../eval/corpus.repo.json to use the curated one.
+  vars:
+    pipeline_corpus_repo_shas: >-
+      {{ (lookup("file", role_path + "/files/eval/corpus.json") | from_json).samples
+         | map(attribute="sha256") | sort | list }}
+    pipeline_corpus_operator_shas: >-
+      {{ (pipeline_corpus_deployed.content | b64decode | from_json).samples
+         | map(attribute="sha256") | sort | list }}
+  when:
+    - pipeline_corpus_deployed.content is defined
+    - pipeline_corpus_operator_shas != pipeline_corpus_repo_shas
+
 # -------------------------------------------------------------------------
 # MOTIF corpus permissions (#392)
 #
