@@ -120,6 +120,28 @@
     value: "{{ cape_result_ip }}"
     mode: "0640"
 
+# Cape's processing step resolves every domain a sample queried, from THIS host,
+# and writes the answer into `domains[].ip` (network.py:554 ->
+# _dns_gethostbyname -> resolve()). An operator watching authoritative DNS for
+# their own C2 domain therefore sees a lookup from our egress shortly after each
+# detonation, which says "this netblock is analysing our malware".
+#
+# It also puts an address into the report that the sandbox never contacted:
+# 242 of 338 ipv4-addr IOCs in the database came from here, not from the
+# detonation (#497). Domain -> IP enrichment belongs at report time against a
+# passive source (#480), not live from the analysis host.
+#
+# Managed here rather than left at CAPE's default so it cannot drift back on an
+# upgrade.
+- name: Disable Cape's host-side DNS resolution (#497)
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/cuckoo.conf"
+    section: processing
+    option: resolve_dns
+    value: "off"
+    mode: "0640"
+  notify: Restart Cape services
+
 # Cache procdumps so the pipeline can scan them for .NET payloads
 # extracted from dropper scenarios (process hollowing, injection).
 - name: Enable procdump caching in processing.conf
