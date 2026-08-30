@@ -727,13 +727,12 @@ def render_cape(report: dict) -> str:
         if domains:
             html += f'<p><strong>Contacted Domains ({len(domains)}):</strong></p>\n'
             html += '<div style="font-size: 9px; font-family: monospace;">'
+            # The `ip` Cape stores beside each domain is its own host-side
+            # lookup, not something the sandbox observed (#497). Rendering
+            # "domain → ip" under a "Contacted Domains" heading told the reader
+            # the detonation reached that address. It did not.
             for d in domains[:15]:
-                domain = d.get("domain", "")
-                ip = d.get("ip", "")
-                html += f'{escape_html(domain)}'
-                if ip:
-                    html += f' → {escape_html(ip)}'
-                html += '<br/>'
+                html += f'{escape_html(d.get("domain", ""))}<br/>'
             html += '</div>\n'
 
         if network.get("tcp_connections"):

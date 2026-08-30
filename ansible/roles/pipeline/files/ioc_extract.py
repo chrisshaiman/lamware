@@ -295,14 +295,21 @@ def extract_iocs(report: dict) -> list[dict]:
             ctx = "DNS query (no resolution)" if not answers else f"DNS query → {answers}"
             add_ioc("domain-name", domain, "Cape", ctx)
 
-    # Resolved domains with IPs
+    # Domains the sample contacted. The DOMAIN is an observation; the `ip`
+    # beside it is not — Cape resolved it from the analysis host at processing
+    # time, so it is our resolver's answer, not an address the sandbox reached
+    # (#497). It was emitted as an `ipv4-addr` IOC attributed to "Cape" and
+    # accounted for 242 of the 338 ipv4 IOCs in the database.
+    #
+    # Not emitted at all rather than emitted with a caveat: an IOC list is a
+    # list of things this sample did, and an address it never contacted does not
+    # belong in it however it is labelled. Domain -> IP enrichment has a place,
+    # at report time against a passive source (#480), where it is labelled as
+    # enrichment and costs the operator no signal.
     for d in _dicts(network.get("domains")):
         domain = d.get("domain", "")
-        ip = d.get("ip", "")
         if domain:
-            add_ioc("domain-name", domain, "Cape", f"Contacted domain{' → ' + ip if ip else ''}")
-        if ip:
-            add_ioc("ipv4-addr", ip, "Cape", f"Resolved from {domain}")
+            add_ioc("domain-name", domain, "Cape", "Contacted domain")
 
     # Host IPs
     for h in network.get("hosts", []) if isinstance(network.get("hosts"), list) else []:
