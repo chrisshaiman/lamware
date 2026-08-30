@@ -73,8 +73,27 @@ def cell_out_dir(sample: CorpusSample, arm: Arm) -> Path:
     of this path expression would silently stop finding results the moment either
     copy changed, and the symptom would be "no consensus data", not an error.
     """
-    safe = arm.name.replace("/", "_").replace("@", "_").replace(":", "_")
-    return Path(sample.corpus_dir) / "eval" / safe
+    return Path(sample.corpus_dir) / "eval" / cell_dir_name(arm.name)
+
+
+def cell_dir_name(arm_name: str) -> str:
+    """Directory-safe form of an arm name."""
+    return arm_name.replace("/", "_").replace("@", "_").replace(":", "_")
+
+
+def arm_name_from_cell_dir(dirname: str) -> str | None:
+    """The arm a persisted cell directory belongs to, or None.
+
+    An exact reverse lookup rather than a `endswith("+corr")` guess. The offline
+    re-scorer needs to know an arm's EVIDENCE MODE to score it the way the sweep
+    did, and inferring that from a directory name would be the same class of
+    proxy check that #490 turned on.
+    """
+    from lamware_eval.arms import registered_arms
+    for name in registered_arms():
+        if cell_dir_name(name) == dirname:
+            return name
+    return None
 
 
 # Cells whose name starts with this are bookkeeping, not results. Readers that walk
@@ -229,19 +248,25 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # Grounding corpus = the initial Ghidra dump PLUS everything the tools
     # returned, i.e. the full set of bytes the model actually saw.
     #
-    # For a "correlated" arm that includes the extra evidence, because it is part
-    # of what the model saw. Omitting it would score claims the agent drew from
-    # correlation findings as FABRICATED, which would penalise the arm for using
-    # exactly what the experiment gave it.
+    # The evidence is passed SEPARATELY, not concatenated here, so the scorecard
+    # can tell the two apart (#491).
     #
-    # The consequence is that grounded_ratio is NOT comparable across the evidence
-    # axis: the "correlated" arm has a strictly larger corpus, so more of its
-    # claims find a match and the ratio rises without the analysis improving
-    # (#420). Compare ABSOLUTE grounded findings and fabrication counts across
-    # arms, never the ratio.
+    # It has to be part of the grounding corpus: omitting it would score claims
+    # the agent drew from correlation findings as FABRICATED, penalising the arm
+    # for using exactly what the experiment gave it. But folding it in silently
+    # made `grounded` unreadable in the other direction — a claim copied out of
+    # the prompt scored identically to one derived from decompiled code.
+    #
+    # This comment used to say "compare ABSOLUTE grounded findings, never the
+    # ratio". That advice was wrong: the absolute count inflates the same way.
+    # The #420 pilot on 25d18a2b made it unmissable — with the tool layer dead,
+    # `+corr` scored 7 grounded / 0 fabricated by restating its own evidence
+    # while the base arm, able to read nothing, honestly said nothing.
+    #
+    # `grounded_novel` is the comparable figure: grounded in the Ghidra dump and
+    # tool output, WITHOUT the evidence. `grounded_recited` is the difference.
     source = json.dumps(gr) + " " + tool_output_text(out)
-    if evidence:
-        source += " " + json.dumps(evidence)
+    evidence_text = json.dumps(evidence) if evidence else None
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess
@@ -255,7 +280,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     err = cell_error(res, analysis)
 
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
-                        extract_metrics(res), err,
+                        extract_metrics(res), err, evidence_text=evidence_text,
                         seed=arm.seed,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
                         ghidra_warnings=gr.get("analysis_warnings"))

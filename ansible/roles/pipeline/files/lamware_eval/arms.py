@@ -157,6 +157,12 @@ _register_evidence_variants(_REGISTRY)
 _register_seed_variants(_REGISTRY)
 
 
+def registered_arms() -> list[str]:
+    """Every arm name the registry knows. Public so callers that need to map a
+    persisted cell directory back to its arm do not reach into `_REGISTRY`."""
+    return sorted(_REGISTRY)
+
+
 def resolve_arm(name: str) -> Arm:
     if name not in _REGISTRY:
         raise KeyError(f"unknown arm: {name}. Known: {sorted(_REGISTRY)}")
