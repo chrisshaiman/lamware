@@ -20,13 +20,14 @@ from lamware_eval.metrics import (
     compose_cell,
     ghidra_warnings_for,
 )
+from lamware_eval.provenance import gather as gather_provenance
 from lamware_eval.runner import (
     _RATES,
     arm_name_from_cell_dir,
     evidence_for,
     tool_output_text,
 )
-from lamware_eval.scorecard import render_scorecard
+from lamware_eval.scorecard import render_scorecard, write_scorecard
 
 
 def _tool_call_metrics(arm_dir: Path) -> dict:
@@ -113,7 +114,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     cell_error(res, analysis),
                     ghidra_warnings=ghidra_warnings_for(gr),
                     evidence_text=evidence_text))
-    return render_scorecard(label, cells, aggregate(cells)), cells
+    provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
+    return render_scorecard(label, cells, aggregate(cells), provenance), cells
 
 
 def main() -> None:
@@ -121,11 +123,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="lamware_eval.rebuild")
     ap.add_argument("--corpus", default="/opt/pipeline/eval/corpus.json")
     ap.add_argument("--label", default="rebuild")
+    ap.add_argument("--force", action="store_true",
+                    help="replace an existing scorecard of the same label")
     ap.add_argument("--out-dir", default="/opt/pipeline/eval-corpus/results")
     args = ap.parse_args()
     md, cells = rebuild(args.corpus, args.label)
     out = Path(args.out_dir) / f"{args.label}.md"
-    out.write_text(md)
+    write_scorecard(out, md, args.force)
     print(f"[rebuild] {len(cells)} cells -> {out}")
     print(md)
 
