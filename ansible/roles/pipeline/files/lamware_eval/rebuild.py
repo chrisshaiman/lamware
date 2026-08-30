@@ -25,6 +25,7 @@ from lamware_eval.runner import (
     _RATES,
     arm_name_from_cell_dir,
     evidence_for,
+    held_out_techniques,
     tool_output_text,
 )
 from lamware_eval.scorecard import render_scorecard, write_scorecard
@@ -113,7 +114,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                      **_tool_call_metrics(arm_dir)},
                     cell_error(res, analysis),
                     ghidra_warnings=ghidra_warnings_for(gr),
-                    evidence_text=evidence_text))
+                    evidence_text=evidence_text,
+                    cape_techniques=held_out_techniques(report)))
     provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
     return render_scorecard(label, cells, aggregate(cells), provenance), cells
 
