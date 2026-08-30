@@ -300,14 +300,39 @@ def run_tool(project_dir: Path, program_name: str, tool_name: str, args_json: st
                     "raw": payload,
                 }
 
-    # No TOOL_RESULT line found — surface Ghidra's output for debugging
-    return {
-        "error": "GhidraTool.java did not emit TOOL_RESULT",
+    # No TOOL_RESULT line found. "did not emit TOOL_RESULT" is a symptom;
+    # Ghidra almost always says why on its own stdout, and burying that in a
+    # 3000-character field cost a whole eval run to diagnose — every tool call
+    # failing while the report showed 63 analyzed files and no warning (#490).
+    # Lift its ERROR line into `error` so the cause travels with the failure.
+    detail = ""
+    for line in (result.stdout or "").splitlines():
+        if "ERROR" in line and "Abort due to" in line:
+            detail = line.split("ERROR", 1)[1].strip()
+            # Ghidra appends "(HeadlessAnalyzer) java.io.IOException: ..." — the
+            # message before it is the readable half.
+            cut = detail.find(" (HeadlessAnalyzer)")
+            if cut > 0:
+                detail = detail[:cut]
+            break
+
+    error = "GhidraTool.java did not emit TOOL_RESULT"
+    if detail:
+        error = f"{error}: {detail}"
+
+    out = {
+        "error": error,
         "tool_name": tool_name,
         "ghidra_stdout": result.stdout[-3000:] if result.stdout else "",
         "ghidra_stderr": result.stderr[-2000:] if result.stderr else "",
         "ghidra_returncode": result.returncode,
     }
+    # A distinct flag, because this failure is not "Ghidra broke" — it is "this
+    # project does not contain this program", which is a caller error with a
+    # different fix, and the caller can select differently if it can see it.
+    if "program file(s) not found" in detail:
+        out["program_not_in_project"] = True
+    return out
 
 
 def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0") -> dict:
