@@ -280,12 +280,15 @@ def test_rebuild_actually_derives_for_legacy_reports():
     argument away left the whole suite green until this test existed, which is
     the same gap the detector itself had in #372.
     """
-    from lamware_eval.rebuild import _ghidra_warnings
+    # Lifted out of rebuild.py and shared with the live path (#496): only
+    # the re-scorer had it, so a live run reported 0 where a re-score of
+    # the same cell reported 2.
+    from lamware_eval.metrics import ghidra_warnings_for
 
     legacy = {"analyzed_files": [
         {"program_name": "old.exe", "analysis_success": True, "functions_count": 1}]}
 
-    out = _ghidra_warnings(legacy)
+    out = ghidra_warnings_for(legacy)
 
     assert out, "rebuild did not derive; legacy reports still score zero"
     assert out[0].startswith("old.exe:")
@@ -294,14 +297,17 @@ def test_rebuild_actually_derives_for_legacy_reports():
 
 def test_rebuild_prefers_recorded_warnings_over_derived_ones():
     """A report that HAS the detector's output must not be second-guessed."""
-    from lamware_eval.rebuild import _ghidra_warnings
+    # Lifted out of rebuild.py and shared with the live path (#496): only
+    # the re-scorer had it, so a live run reported 0 where a re-score of
+    # the same cell reported 2.
+    from lamware_eval.metrics import ghidra_warnings_for
 
     recorded = {"analysis_warnings": ["x.exe: something the detector said"],
                 "analyzed_files": [
                     {"program_name": "x.exe", "analysis_success": True,
                      "functions_count": 1}]}
 
-    out = _ghidra_warnings(recorded)
+    out = ghidra_warnings_for(recorded)
 
     assert out == ["x.exe: something the detector said"]
     assert not any("derived" in w for w in out)

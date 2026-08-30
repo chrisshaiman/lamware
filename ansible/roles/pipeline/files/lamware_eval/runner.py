@@ -12,7 +12,7 @@ from stages.interpret import run_interpret
 
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
-from lamware_eval.metrics import cell_error, compose_cell
+from lamware_eval.metrics import cell_error, compose_cell, ghidra_warnings_for
 
 # Harness backstop. MUST stay ABOVE the interpret container's own --timeout
 # (10800s) so the container is the thing that reaps a stuck run and we get a
@@ -283,4 +283,4 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
                         extract_metrics(res), err, evidence_text=evidence_text,
                         seed=arm.seed,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
-                        ghidra_warnings=gr.get("analysis_warnings"))
+                        ghidra_warnings=ghidra_warnings_for(gr))
