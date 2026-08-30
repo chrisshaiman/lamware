@@ -4,6 +4,7 @@
 from collections import defaultdict
 
 from grounding_check import grounding_scorecard
+from stages.ghidra import collect_analysis_warnings
 
 from lamware_eval.corpus import CorpusSample
 
@@ -29,6 +30,32 @@ def cell_error(res: dict, analysis: dict) -> str | None:
     if err and stderr_tail:
         err = f"{err} | container stderr: {stderr_tail[-1500:]}"
     return err
+
+
+def ghidra_warnings_for(gr: dict) -> list[str]:
+    """The analysis warnings for a cell, resolved identically live and offline.
+
+    Top-level list when the report has one, otherwise derived from the per-file
+    records. Reports written before #367 carry warnings only on each analysed
+    file, and the eval NEVER analyses a sample — it runs against persisted
+    corpus reports, which are precisely those older ones. So the fallback is not
+    an offline nicety; it is the normal case.
+
+    It lived only in `rebuild.py`, so a live run reported 0 where a re-score of
+    the same cell reported 2 — on `unclassified_42b9c406`, two analysed files
+    that recovered zero functions each (#496). `cells_with_ghidra_warnings`
+    exists so a cell built on an analysis that read nothing is not mistaken for
+    a cell where the model had nothing to say, and on the live path it read zero
+    for every corpus sample.
+
+    Shared for the same reason `cell_error` below is: a re-score must not
+    disagree with the sweep that produced the cell (#380).
+    """
+    top = gr.get("analysis_warnings")
+    if top:
+        return list(top)
+    return collect_analysis_warnings(gr.get("analyzed_files") or [],
+                                     derive_when_absent=True)
 
 
 def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_text: str,
