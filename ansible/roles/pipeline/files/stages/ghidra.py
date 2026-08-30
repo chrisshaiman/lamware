@@ -280,8 +280,102 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
     return analysis
 
 
+def _pick_openable(ranked: list[dict], host_project_of, verify, warnings):
+    """Best-ranked candidate the verifier says is openable.
+
+    The verifier is TRI-STATE, and that is the whole design:
+
+      True  — opened it
+      False — the project definitively does not hold this program
+      None  — could not tell (probe failed to run, timed out, answered
+              something unrecognised)
+
+    Only a definitive False rejects a candidate. An inconclusive probe must not,
+    because then any transient failure — a busy container, a timeout under load,
+    a wrapper too old to report the distinction — would throw away a working
+    project and tell the interpret stage Ghidra is unavailable. That trades a
+    silent failure for a louder one, which is not the same as fixing it.
+
+    An unverified candidate is still used, and still said out loud. With no
+    verifier at all this is `ranked[0]`, the historical behaviour, kept so the
+    selection stays pure for callers that cannot run Ghidra.
+    """
+    if verify is None:
+        return ranked[0] if ranked else None
+
+    unverified = None
+    for i, af in enumerate(ranked):
+        name = af.get("program_name") or ""
+        project = host_project_of(af)
+        if not name or not project:
+            continue
+        verdict = verify(project, name)
+        if verdict is True:
+            if i and warnings is not None:
+                warnings.append(
+                    f"Ghidra: canonical program fell back to {name[:16]} "
+                    f"({af.get('functions_count')} functions) — "
+                    f"{i} better-ranked candidate(s) could not be opened")
+            return af
+        if verdict is False:
+            if warnings is not None:
+                warnings.append(
+                    f"Ghidra: {name[:16]} claims {af.get('functions_count')} "
+                    f"functions but is not in {project} — tool calls against it "
+                    f"would all fail")
+            continue
+        if unverified is None:
+            unverified = af
+
+    if unverified is not None:
+        if warnings is not None:
+            warnings.append(
+                f"Ghidra: could not verify that {str(unverified.get('program_name'))[:16]} "
+                f"is openable — using it unverified; tool calls may all fail")
+        return unverified
+    return None
+
+
+def make_ghidra_verifier(ghidra_cmd: str, timeout: int = 180):
+    """A tri-state `verify(project_dir, program_name)` that asks Ghidra directly.
+
+    The probe is `list_functions` with a filter matched by nothing: opening the
+    program is the expensive part and the part under test, while serialising a
+    result is neither — an 18k-function listing would cost seconds and prove no
+    more than an empty one.
+
+    Returns False ONLY for the failure this exists to catch, recognised two
+    ways so it works against an un-redeployed wrapper as well as a current one:
+    the `program_not_in_project` flag, or Ghidra's own "program file(s) not
+    found" text wherever it surfaces. Every other failure returns None — the
+    probe could not answer, which is not evidence that the program is missing.
+    """
+    def verify(project_dir: str, program_name: str):
+        try:
+            proc = subprocess.run(
+                [ghidra_cmd, "--tool", project_dir, program_name,
+                 "list_functions", json.dumps({"filter": "__lamware_open_probe__"})],
+                capture_output=True, text=True, timeout=timeout,
+            )
+            payload = json.loads(proc.stdout)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if not payload.get("error"):
+            return True
+        if payload.get("program_not_in_project"):
+            return False
+        haystack = f"{payload.get('error', '')} {payload.get('ghidra_stdout', '')}"
+        return False if "program file(s) not found" in haystack else None
+    return verify
+
+
 def propagate_project_dir(analyzed_files: list[dict],
-                          output_dir: Path) -> tuple[str | None, str | None]:
+                          output_dir: Path,
+                          verify=None,
+                          warnings: list | None = None,
+                          ) -> tuple[str | None, str | None]:
     """Resolve the canonical host project_dir/program_name for the interpret stage.
 
     run-ghidra.py runs *inside* the container and records the container mount
@@ -313,7 +407,16 @@ def propagate_project_dir(analyzed_files: list[dict],
     appended first — 15 functions on a payload the raw loader decompiled into
     127. Selection is by function count instead.
 
-    Returns (None, None) if no successful analysis produced a project.
+    **Name a program the project cannot open.** Selection ranks by function
+    count, but the project retains only one program while `analyzed_files`
+    claims five or six successes, so the highest-ranked candidate is often
+    absent. Ghidra answers "Requested project program file(s) not found" and
+    every tool call fails; the report meanwhile says `triggered: true` with 63
+    analyzed files and no warning (#490). Pass `verify` to check, and
+    `warnings` to collect what was rejected.
+
+    Returns (None, None) if no successful analysis produced a project, or if a
+    verifier rejected every candidate.
     """
     def _host_project(af: dict) -> str | None:
         # Prefer the recorded host directory. Fall back to output_dir for
@@ -326,8 +429,23 @@ def propagate_project_dir(analyzed_files: list[dict],
     if not usable:
         return None, None
 
-    best = max(usable, key=lambda af: (af.get("functions_count") or 0,
-                                       len(af.get("imports") or [])))
+    # Preference order, best first. `max()` would name one candidate; the
+    # ordering exists because the best-looking candidate is not always the one
+    # the project can actually open (#490).
+    ranked = sorted(usable,
+                    key=lambda af: (af.get("functions_count") or 0,
+                                    len(af.get("imports") or [])),
+                    reverse=True)
+
+    best = _pick_openable(ranked, _host_project, verify, warnings)
+    if best is None:
+        # Every candidate was rejected by the verifier. Returning the top one
+        # anyway would hand the interpret stage a pairing known to fail, and it
+        # would spend its whole tool budget discovering that one call at a time.
+        # `run_ghidra_tool` turns an empty pair into an explicit "unavailable",
+        # which is the honest answer and the one a reader can act on.
+        return None, None
+
     host_project = _host_project(best)
     best["project_dir"] = host_project
 
@@ -468,12 +586,20 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     # project_dir from the container mount path to the host path (see
     # propagate_project_dir); the native-PE interpret path brokers off that
     # per-file dict, so leaving it as "/output/project" breaks every tool call.
-    project_dir, program_name = propagate_project_dir(result["analyzed_files"], output_dir)
+    # Verified, not assumed. The pairing is what the interpret stage brokers
+    # every tool call through, and a claimed-successful analysis is not proof
+    # that its program is still retrievable from the shared project (#490).
+    selection_warnings: list[str] = []
+    project_dir, program_name = propagate_project_dir(
+        result["analyzed_files"], output_dir,
+        verify=make_ghidra_verifier(ghidra_cmd),
+        warnings=selection_warnings)
     if project_dir:
         result["project_dir"] = project_dir
         result["program_name"] = program_name
 
-    result["analysis_warnings"] = collect_analysis_warnings(result["analyzed_files"])
+    result["analysis_warnings"] = (collect_analysis_warnings(result["analyzed_files"])
+                                   + selection_warnings)
 
     return result
 

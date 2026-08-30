@@ -176,7 +176,12 @@ def test_run_ghidra_reports_no_warnings_for_a_clean_run(tmp_path, monkeypatch):
     import stages.ghidra as mod
 
     ghidra_cmd = tmp_path / "run-ghidra"
-    ghidra_cmd.write_text("#!/bin/sh\n")
+    # The stub answers the canonical-program probe (#490). run_ghidra now
+    # verifies that the program it is about to publish can actually be opened,
+    # so a wrapper that returns nothing is an UNVERIFIED run, not a clean one —
+    # and a clean run warning about nothing is exactly what this asserts.
+    ghidra_cmd.write_text('#!/bin/sh\necho \'{"count": 0, "functions": []}\'\n')
+    ghidra_cmd.chmod(0o755)
     (tmp_path / "900" / "CAPE").mkdir(parents=True)
     (tmp_path / "900" / "CAPE" / ("b" * 64)).write_bytes(b"MZ\x90\x00" + b"\x00" * 8192)
 
