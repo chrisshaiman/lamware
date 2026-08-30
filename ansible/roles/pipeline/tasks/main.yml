@@ -551,6 +551,9 @@
     - attack_catalog.json   # #318 — pinned catalog; attack_check is useless without it
     - llm_ab_singleshot.py
     - llm_ab_re.py
+    # #490 — one-off repair for reports whose canonical Ghidra program is not
+    # in its project. Dry-run by default; --apply backs the report up first.
+    - repair_ghidra_pairing.py
 
 - name: Deploy lamware_eval package (LLM eval harness)
   # Reusable on-demand benchmark harness (RE first). Plain importable Python;
