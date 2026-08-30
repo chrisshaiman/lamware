@@ -35,7 +35,8 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                  claude_family: str | None, wall_seconds: float, cost_usd: float,
                  tool_metrics: dict, error: str | None,
                  seed: int | None = None, sampling: dict | None = None,
-                 ghidra_warnings: list[str] | None = None) -> dict:
+                 ghidra_warnings: list[str] | None = None,
+                 evidence_text: str | None = None) -> dict:
     """Compose one scorecard cell.
 
     `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
@@ -49,8 +50,27 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
     recovered from a 150KB binary (#367). A cell built on an analysis that read
     nothing is not a cell where the model had nothing to say, and without this
     the two are identical in the scorecard.
+
+    `source_text` is the Ghidra dump and tool output. `evidence_text` is what an
+    evidence-fed arm was ADDITIONALLY shown, and it is passed separately so the
+    two can be told apart. Grounding is computed twice:
+
+      grounded          against source + evidence — what the model could support
+      grounded_novel    against source ALONE — what it got from the CODE
+      grounded_recited  the difference — claims that only its prompt supports
+
+    Without the split, restating the prompt scored identically to reading the
+    binary. On the #420 pilot with a dead tool layer, the evidence-fed arm
+    reported 7 grounded / 0 fabricated claims having read nothing at all, and no
+    column in the scorecard could say so (#491).
     """
-    g = grounding_scorecard(analysis or {}, source_text)
+    g = grounding_scorecard(analysis or {}, source_text + " " + (evidence_text or ""))
+    # Same claims, smaller corpus. Skipped entirely when there is no evidence,
+    # where the two are identical by construction.
+    g_novel = (grounding_scorecard(analysis or {}, source_text)
+               if evidence_text else g)
+    techniques = (analysis or {}).get("attack_techniques") or []
+    capabilities = (analysis or {}).get("capabilities") or []
     return {
         "arm": arm_name,
         "seed": seed,
@@ -77,6 +97,19 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "claude_family": claude_family,
         "grounded": g["grounded"], "total": g["total"],
         "fabricated": g["fabricated"], "grounded_ratio": g["grounded_ratio"],
+        # The comparable figure across the evidence axis (#491).
+        "grounded_novel": g_novel["grounded"],
+        "grounded_recited": g["grounded"] - g_novel["grounded"],
+        # Both are computed by grounding_scorecard and neither was ever shown.
+        # A cell citing two Ghidra auto-generated DAT_ labels scored 1.00 and
+        # outranked one citing three concrete addresses at 0.75.
+        "bare_symbols": len(g.get("bare_symbol_claims") or []),
+        "unscoreable": len(g.get("unscoreable") or []),
+        # NOT scored by grounding_scorecard, which reads code_level_ioc only.
+        # Counted so an unscored field cannot quietly double while the scored
+        # one holds still — which is what the pilot's +corr arm did, 3 -> 6.
+        "techniques": len(techniques),
+        "capabilities": len(capabilities),
         "completed": tool_metrics.get("completed"),
         # Reported separately because "finished, but the answer was unparseable"
         # is neither success nor error, and folding it into either hides it.
@@ -136,6 +169,14 @@ def aggregate(cells: list[dict]) -> dict:
                 if scored else None
             ),
             "total_fabricated": sum(len(c["fabricated"]) for c in valid),
+            # Compare THESE across the evidence axis. total_grounded includes
+            # claims an arm could only have got from its own prompt (#491).
+            "total_grounded_novel": sum(c.get("grounded_novel") or 0 for c in valid),
+            "total_grounded_recited": sum(c.get("grounded_recited") or 0 for c in valid),
+            "total_bare_symbols": sum(c.get("bare_symbols") or 0 for c in valid),
+            "total_unscoreable": sum(c.get("unscoreable") or 0 for c in valid),
+            # Unscored by grounding, so shown rather than trusted.
+            "total_techniques": sum(c.get("techniques") or 0 for c in valid),
             "completed_rate": (
                 round(sum(1 for c in valid if c["completed"]) / n_valid, 3)
                 if n_valid else None

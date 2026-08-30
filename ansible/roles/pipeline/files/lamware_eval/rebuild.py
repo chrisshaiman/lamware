@@ -13,9 +13,15 @@ from pathlib import Path
 from llm_ab_re import TOOL_LAYER_BROKEN_THRESHOLD, analysis_completed, is_tool_error
 from stages.ghidra import collect_analysis_warnings
 
+from lamware_eval.arms import resolve_arm
 from lamware_eval.corpus import load_corpus
 from lamware_eval.metrics import aggregate, cell_error, compose_cell
-from lamware_eval.runner import _RATES, tool_output_text
+from lamware_eval.runner import (
+    _RATES,
+    arm_name_from_cell_dir,
+    evidence_for,
+    tool_output_text,
+)
 from lamware_eval.scorecard import render_scorecard
 
 
@@ -91,6 +97,16 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 model = res.get("model_final") or ""
                 local = "qwen" in arm_dir.name or "local" in model
                 source = json.dumps(gr) + " " + tool_output_text(arm_dir)
+                # The sweep scored an evidence-fed arm against its evidence too.
+                # A re-score that did not would call those claims FABRICATED and
+                # disagree with the run that produced the cell — the defect #380
+                # already found in the tool figures here. Resolved by an exact
+                # reverse lookup, not by matching on "+corr" in the directory
+                # name.
+                arm_name = arm_name_from_cell_dir(arm_dir.name)
+                evidence = (evidence_for(resolve_arm(arm_name), report)
+                            if arm_name else {})
+                evidence_text = json.dumps(evidence) if evidence else None
                 cells.append(compose_cell(
                     arm_dir.name, sample, analysis, source, claude_family,
                     res.get("duration_seconds") or 0.0,
@@ -105,7 +121,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                      "tool_calls_used": res.get("tool_calls_used"),
                      **_tool_call_metrics(arm_dir)},
                     cell_error(res, analysis),
-                    ghidra_warnings=_ghidra_warnings(gr)))
+                    ghidra_warnings=_ghidra_warnings(gr),
+                    evidence_text=evidence_text))
     return render_scorecard(label, cells, aggregate(cells)), cells
 
 
