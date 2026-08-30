@@ -573,6 +573,7 @@
     - arms.py
     - consensus.py
     - metrics.py
+    - provenance.py         # #486 — corpus/deploy/guest-image stamp
     - scorecard.py
     - trail.py
     - runner.py

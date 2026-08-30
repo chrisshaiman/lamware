@@ -1,10 +1,40 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 """Render the composite eval scorecard as markdown for analyst adjudication."""
+from pathlib import Path
+
+from lamware_eval.provenance import render as render_provenance
 
 
-def render_scorecard(label: str, cells: list[dict], summary: dict) -> str:
-    lines = [f"# RE Eval — {label}\n", "## Summary (per arm)\n"]
+def write_scorecard(out: Path, md: str, force: bool) -> None:
+    """Write it, refusing to silently replace a different run's scorecard.
+
+    The path is derived from `--label`, which defaults to a fixed string in both
+    entry points, so a second run overwrote the first with no backup and no way
+    to tell what it destroyed — #405, one directory over. Refusing is the right
+    default because the destroyed file is usually the one somebody wanted.
+    """
+    if out.exists() and not force:
+        raise SystemExit(
+            f"refusing to overwrite {out}\n"
+            f"  it already holds a scorecard, and the numbers in it may not be\n"
+            f"  comparable to this run's (#486). Pass --force to replace it, or\n"
+            f"  --label something else to keep both.")
+    out.write_text(md)
+
+
+def render_scorecard(label: str, cells: list[dict], summary: dict,
+                     provenance: dict | None = None) -> str:
+    # The title used to be the whole of a scorecard's identity, and `label` is
+    # whatever an operator typed. Two runs against different corpora, or either
+    # side of a fix that changed what a sample means, were indistinguishable
+    # (#486). The block goes directly under the title because a reader who
+    # scrolls past it has already started reading the numbers.
+    lines = [f"# RE Eval — {label}\n"]
+    block = render_provenance(provenance)
+    if block:
+        lines.append(block)
+    lines.append("## Summary (per arm)\n")
     # n_with_claims/total_claims sit next to the ratio on purpose: a ratio over
     # zero claims is not a good score, it is an absent one.
     # parse_failures sits beside completed_rate for the same reason

@@ -10,8 +10,9 @@ from lamware_eval.arms import parse_arms
 from lamware_eval.consensus import consensus, render_consensus
 from lamware_eval.corpus import filter_samples, load_corpus
 from lamware_eval.metrics import aggregate
+from lamware_eval.provenance import gather as gather_provenance
 from lamware_eval.runner import cell_out_dir, run_arm
-from lamware_eval.scorecard import render_scorecard
+from lamware_eval.scorecard import render_scorecard, write_scorecard
 
 
 def _failed_cell(arm_name: str, sample, err: str, seed: int | None = None) -> dict:
@@ -112,6 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--arms", required=True)
     ap.add_argument("--label", default="eval")
+    ap.add_argument("--force", action="store_true",
+                    help="replace an existing scorecard of the same label")
     ap.add_argument("--samples", default="",
                     help="comma-separated sha256 prefixes or family names; "
                          "default is the whole corpus")
@@ -158,7 +161,8 @@ def main() -> None:
                 cells.append(run_arm(s, a, base_cfg, args.interpret_cmd, args.ghidra_cmd))
             except Exception as e:
                 cells.append(_failed_cell(a.name, s, f"{type(e).__name__}: {e}", a.seed))
-    md = render_scorecard(args.label, cells, aggregate(cells))
+    provenance = gather_provenance(args.corpus, [c["sample"] for c in cells])
+    md = render_scorecard(args.label, cells, aggregate(cells), provenance)
     # Explicit request only. This used to trigger on `any(a.seed is not None)`, so a
     # seeded arm silently added a section nobody asked for — and that section was the
     # one reporting 100% agreement over identical runs (#292).
@@ -168,7 +172,7 @@ def main() -> None:
                                args.consensus_k)
     os.makedirs(args.out_dir, exist_ok=True)
     out = Path(args.out_dir) / f"{args.label}.md"
-    out.write_text(md)
+    write_scorecard(out, md, args.force)
     print(f"[eval] wrote {out}")
     print(md)
 
