@@ -46,8 +46,31 @@ def refang(text: str) -> str:
 
 
 def normalize(text: str) -> str:
-    """Lowercase, refang common IOC obfuscations, and collapse whitespace."""
-    return re.sub(r"\s+", " ", refang((text or "").lower())).strip()
+    r"""Lowercase, refang common IOC obfuscations, collapse whitespace and
+    backslash runs.
+
+    The backslash collapse exists because the source is assembled with
+    `json.dumps`, which DOUBLES every backslash, while a claim arrives as an
+    ordinary Python string carrying single ones. A Windows path present verbatim
+    in the evidence could therefore never match:
+
+        claim   C:\Windows\System32\config\systemprofile\...\ffmpeg.dll
+        source  C:\\Windows\\System32\\config\\systemprofile\\...\\ffmpeg.dll
+
+    So every path-bearing claim scored FABRICATED however faithfully it quoted
+    its input. On the #420 stage-2 run that produced one phantom fabrication in
+    each arm, and it bites hardest wherever the source carries the most paths —
+    which is the evidence-fed arm, so the metric was biased against exactly the
+    thing the experiment was there to measure.
+
+    Runs are COLLAPSED rather than unescaped. Both the claim and the source pass
+    through here, so `\\` and `\` compare equal in either direction without
+    either side having to know how the other was serialised. A UNC
+    `\\server\share` normalises like any other path, which loses a distinction
+    no comparison here depends on.
+    """
+    flattened = re.sub(r"\\+", lambda _: "\\", refang((text or "").lower()))
+    return re.sub(r"\s+", " ", flattened).strip()
 
 
 def _ioc_value(ioc: object) -> str:
