@@ -1,6 +1,7 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
 """Per-cell metric composition + per-arm aggregation for the eval scorecard."""
+import json
 from collections import defaultdict
 
 from grounding_check import grounding_scorecard
@@ -79,7 +80,7 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                  tool_metrics: dict, error: str | None,
                  seed: int | None = None, sampling: dict | None = None,
                  ghidra_warnings: list[str] | None = None,
-                 evidence_text: str | None = None,
+                 evidence: dict | None = None,
                  cape_techniques: list[str] | None = None) -> dict:
     """Compose one scorecard cell.
 
@@ -95,9 +96,11 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
     nothing is not a cell where the model had nothing to say, and without this
     the two are identical in the scorecard.
 
-    `source_text` is the Ghidra dump and tool output. `evidence_text` is what an
-    evidence-fed arm was ADDITIONALLY shown, and it is passed separately so the
-    two can be told apart. Grounding is computed twice:
+    `source_text` is the Ghidra dump and tool output. `evidence` is what an
+    evidence-fed arm was ADDITIONALLY shown, passed as the dict rather than as
+    pre-serialised text so the SIZE recorded on the cell and the text appended
+    to the grounding corpus cannot drift apart (#502). Grounding is computed
+    twice:
 
       grounded          against source + evidence — what the model could support
       grounded_novel    against source ALONE — what it got from the CODE
@@ -108,6 +111,7 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
     reported 7 grounded / 0 fabricated claims having read nothing at all, and no
     column in the scorecard could say so (#491).
     """
+    evidence_text = json.dumps(evidence) if evidence else None
     g = grounding_scorecard(analysis or {}, source_text + " " + (evidence_text or ""))
     # Same claims, smaller corpus. Skipped entirely when there is no evidence,
     # where the two are identical by construction.
@@ -162,6 +166,17 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # itself noisy, so a low recall says as much about the answer key as
         # about the model, while a claim that Cape never observed is a claim
         # nothing supports.
+        # How much treatment this cell actually received (#502). Zero on a base
+        # arm, which puts the pairing on the row itself. Without it two cells in
+        # one table can differ by more than an order of magnitude — measured
+        # across the stage-2 corpus, four samples got 26-30KB and latrodectus
+        # got 1.4KB — and the reader cannot tell, so "did correlation help or
+        # did more text help" is unanswerable from the output.
+        "evidence_bytes": len(evidence_text or ""),
+        "evidence_keys": len(evidence or {}),
+        # Separate from total volume because THIS is the variable the thesis is
+        # about. Cape signatures and Volatility insights ride along with it.
+        "correlations_shown": len((evidence or {}).get("cross_correlations") or []),
         "techniques_hit": len(hits),
         "technique_precision": (round(len(hits) / len(claimed_ids), 3)
                                 if claimed_ids else None),
@@ -241,6 +256,9 @@ def aggregate(cells: list[dict]) -> dict:
             "total_unscoreable": sum(c.get("unscoreable") or 0 for c in valid),
             # Unscored by grounding, so shown rather than trusted.
             "total_techniques": sum(c.get("techniques") or 0 for c in valid),
+            "total_evidence_bytes": sum(c.get("evidence_bytes") or 0 for c in valid),
+            "total_correlations_shown": sum(c.get("correlations_shown") or 0
+                                            for c in valid),
             "total_techniques_hit": sum(c.get("techniques_hit") or 0 for c in valid),
             "mean_technique_precision": _mean(
                 [c["technique_precision"] for c in valid

@@ -321,7 +321,6 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # `grounded_novel` is the comparable figure: grounded in the Ghidra dump and
     # tool output, WITHOUT the evidence. `grounded_recited` is the difference.
     source = json.dumps(gr) + " " + tool_output_text(out)
-    evidence_text = json.dumps(evidence) if evidence else None
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess
@@ -335,7 +334,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     err = cell_error(res, analysis)
 
     return compose_cell(arm.name, sample, analysis, source, claude_family, secs, cost,
-                        extract_metrics(res), err, evidence_text=evidence_text,
+                        extract_metrics(res), err, evidence=evidence,
                         seed=arm.seed,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
                         ghidra_warnings=ghidra_warnings_for(gr),

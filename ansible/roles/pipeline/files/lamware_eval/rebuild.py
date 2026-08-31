@@ -98,7 +98,6 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 arm_name = arm_name_from_cell_dir(arm_dir.name)
                 evidence = (evidence_for(resolve_arm(arm_name), report)
                             if arm_name else {})
-                evidence_text = json.dumps(evidence) if evidence else None
                 cells.append(compose_cell(
                     arm_dir.name, sample, analysis, source, claude_family,
                     res.get("duration_seconds") or 0.0,
@@ -114,7 +113,7 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                      **_tool_call_metrics(arm_dir)},
                     cell_error(res, analysis),
                     ghidra_warnings=ghidra_warnings_for(gr),
-                    evidence_text=evidence_text,
+                    evidence=evidence,
                     cape_techniques=held_out_techniques(report)))
     provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
     return render_scorecard(label, cells, aggregate(cells), provenance), cells
