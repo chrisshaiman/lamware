@@ -31,8 +31,10 @@ SAMPLE = CorpusSample("42b9c406d556" + "0" * 52, "unclassified", "/tmp/x")
 # What the model could have read out of the binary.
 CODE = json.dumps({"functions": ["FUN_1000bd79"], "data": ["DAT_1006bde0"]})
 # What an evidence-fed arm was additionally handed.
-EVIDENCE = json.dumps({"cross_correlations": [
-    {"title": "Dropped file 'ffmpeg.dll' was loaded and executed"}]})
+# Passed as the dict, not pre-serialised text: compose_cell serialises it
+# itself so the size it records and the text it appends cannot drift (#502).
+EVIDENCE = {"cross_correlations": [
+    {"title": "Dropped file 'ffmpeg.dll' was loaded and executed"}]}
 
 
 def _analysis(*iocs, techniques=(), capabilities=()):
@@ -44,9 +46,9 @@ def _analysis(*iocs, techniques=(), capabilities=()):
     }
 
 
-def _cell(analysis, evidence_text=None, arm="qwen@10"):
+def _cell(analysis, evidence=None, arm="qwen@10"):
     return compose_cell(arm, SAMPLE, analysis, CODE, None, 1.0, 0.0,
-                        {"completed": True}, None, evidence_text=evidence_text)
+                        {"completed": True}, None, evidence=evidence)
 
 
 # --- the split ---
@@ -54,21 +56,21 @@ def _cell(analysis, evidence_text=None, arm="qwen@10"):
 
 def test_a_claim_only_the_prompt_supports_is_grounded_but_not_novel():
     """THE bug, in one assertion."""
-    c = _cell(_analysis("ffmpeg.dll"), evidence_text=EVIDENCE)
+    c = _cell(_analysis("ffmpeg.dll"), evidence=EVIDENCE)
     assert c["grounded"] == 1, "the evidence must still count as support"
     assert c["grounded_novel"] == 0, "but it is not something read from the code"
     assert c["grounded_recited"] == 1
 
 
 def test_a_claim_the_code_supports_counts_as_novel():
-    c = _cell(_analysis("FUN_1000bd79"), evidence_text=EVIDENCE)
+    c = _cell(_analysis("FUN_1000bd79"), evidence=EVIDENCE)
     assert c["grounded"] == 1
     assert c["grounded_novel"] == 1
     assert c["grounded_recited"] == 0
 
 
 def test_the_two_add_up():
-    c = _cell(_analysis("FUN_1000bd79", "ffmpeg.dll"), evidence_text=EVIDENCE)
+    c = _cell(_analysis("FUN_1000bd79", "ffmpeg.dll"), evidence=EVIDENCE)
     assert c["grounded"] == c["grounded_novel"] + c["grounded_recited"] == 2
 
 
@@ -82,7 +84,7 @@ def test_without_evidence_novel_equals_grounded():
 
 def test_an_invented_claim_is_still_fabricated_with_evidence_present():
     """Widening the corpus must not turn fabrication into support."""
-    c = _cell(_analysis("0xdeadbeef"), evidence_text=EVIDENCE)
+    c = _cell(_analysis("0xdeadbeef"), evidence=EVIDENCE)
     assert c["grounded"] == 0
     assert len(c["fabricated"]) == 1
 
@@ -92,8 +94,8 @@ def test_the_pilot_shape_is_now_readable():
     Before this the two read as 0 grounded against 3 grounded."""
     base = _cell(_analysis(), arm="qwen@10")
     corr = _cell(_analysis("ffmpeg.dll", "unclassified.tmp", "Grape.exe"),
-                 evidence_text=json.dumps({"cross_correlations": [
-                     {"detail": "ffmpeg.dll unclassified.tmp Grape.exe"}]}),
+                 evidence={"cross_correlations": [
+                     {"detail": "ffmpeg.dll unclassified.tmp Grape.exe"}]},
                  arm="qwen@10+corr")
     assert corr["grounded"] == 3
     assert corr["grounded_novel"] == 0, "none of it came from the code"
@@ -135,12 +137,12 @@ def test_unscored_fields_are_counted_even_though_they_are_not_scored():
 ])
 def test_the_arm_summary_carries_the_new_figures(key):
     cells = [_cell(_analysis("ffmpeg.dll", techniques=("T1055",)),
-                   evidence_text=EVIDENCE, arm="qwen@10+corr")]
+                   evidence=EVIDENCE, arm="qwen@10+corr")]
     assert key in aggregate(cells)["qwen@10+corr"]
 
 
 def test_the_summary_sums_recitation_across_cells():
-    cells = [_cell(_analysis("ffmpeg.dll"), evidence_text=EVIDENCE,
+    cells = [_cell(_analysis("ffmpeg.dll"), evidence=EVIDENCE,
                    arm="qwen@10+corr") for _ in range(3)]
     summary = aggregate(cells)["qwen@10+corr"]
     assert summary["total_grounded_recited"] == 3
@@ -151,7 +153,7 @@ def test_the_scorecard_actually_renders_them():
     """#380's lesson: a number nobody can see is not a fix. Asserting on the
     cell dict alone would pass with the scorecard's column list untouched."""
     cells = [_cell(_analysis("ffmpeg.dll", techniques=("T1055",)),
-                   evidence_text=EVIDENCE, arm="qwen@10+corr")]
+                   evidence=EVIDENCE, arm="qwen@10+corr")]
     md = render_scorecard("t", cells, aggregate(cells))
     for col in ("grounded_novel", "grounded_recited", "bare_symbols",
                 "unscoreable", "techniques"):
