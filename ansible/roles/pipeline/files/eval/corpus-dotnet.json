@@ -1,0 +1,82 @@
+{
+  "_selection": {
+    "modality": "dotnet",
+    "criterion": "Samples are selected for whether they EXERCISE the pipeline, not for family diversity. The previous corpus was chosen on family labels and produced zero cross-tool correlations on all 7 samples; the MOTIF corpus (n=29) likewise produced zero, with Volatility never triggering. See #426.",
+    "split": "Split from the single curated manifest on 2026-08-31. A .NET cell and a native-PE cell are not the same measurement, so they are TWO experiments and are never pooled (#505). Splitting the manifest rather than relying on a convention is what makes pooling impossible: the provenance stamp records which corpus produced a scorecard and its hash changes when the manifest does (#486).",
+    "modality_note": "Routed to ILSpy/de4dot by run-pipeline.py:630, so `ghidra.analyzed_files` is empty BY DESIGN and is not a failure. Two of the five carry correlations (warzonerat 3, quasarrat 1), which makes this the thinner of the two experiments, not the richer one.",
+    "excluded_from_both": [
+      {
+        "sample": "982a0d1b819d",
+        "reason": "raccoonstealer \u2014 Cape extracted no PE and the sample is not .NET, so neither analyser produced anything to read"
+      },
+      {
+        "sample": "c26e8e9bce27",
+        "reason": "icedid \u2014 same: 'no PE files found', not .NET routed"
+      }
+    ],
+    "inherited_measurement": {
+      "cape_reports_on_disk": 1016,
+      "with_extractable_injection_buffers": 92,
+      "of_those_also_tripping_volatility_triggers": 92,
+      "unique_samples_after_sha256_dedup": 55,
+      "binaries_still_retained": 55
+    },
+    "build": "corpus_dir entries do not exist until built. Each requires a full pipeline run (detonation, Volatility, Ghidra) with the resulting report.json and persisted Ghidra project copied into corpus_dir. The interpret stage can be disabled for the build; the eval harness supplies its own.",
+    "roles": {
+      "positive": "expected to produce >= 1 cross-tool correlation",
+      "negative-control": "expected to produce zero; retained deliberately"
+    }
+  },
+  "samples": [
+    {
+      "sha256": "72b2bb12dedd3cc8b5d9a977adb6f8b68b3ce3a26bc20c277fa49f1b59048f9a",
+      "mb_family": "warzonerat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/warzonerat_72b2bb12",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 943 recorded 14 extractable cross-process injection write(s) and 29 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 943,
+      "expected_injection_buffers": 14
+    },
+    {
+      "sha256": "1f2b22638ddb587f86f508aaffebc0f0eb1acdbcf783b92260e819d2be9cca2e",
+      "mb_family": "quasarrat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/quasarrat_1f2b2263",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 785 recorded 4 extractable cross-process injection write(s) and 36 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 785,
+      "expected_injection_buffers": 4
+    },
+    {
+      "sha256": "fd55e57a095fc22e451fd7288ec7d450ab4d55a57a76adea5fd812175e127b8b",
+      "mb_family": "xworm",
+      "corpus_dir": "/opt/pipeline/eval-corpus/xworm_fd55e57a",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 176 recorded 8 extractable cross-process injection write(s) and 35 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 176,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "2fb2ef88e05e8dff44e3efa3220a15be55ec847fa6702c14f8f81c05758477d4",
+      "mb_family": "agenttesla",
+      "corpus_dir": "/opt/pipeline/eval-corpus/agenttesla_2fb2ef88",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 695 recorded 8 extractable cross-process injection write(s) and 27 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 695,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "5b4f596d3cf54c94c57934ccc75e31d7f5999df9abb1b77ff6f8cff007da8d74",
+      "mb_family": "formbook",
+      "corpus_dir": "/opt/pipeline/eval-corpus/formbook_5b4f596d",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 560 recorded 2 extractable cross-process injection write(s) and 34 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 560,
+      "expected_injection_buffers": 2
+    }
+  ]
+}
