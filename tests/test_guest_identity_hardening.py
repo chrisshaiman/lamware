@@ -83,18 +83,38 @@ def test_no_qemu_or_seabios_strings_survive():
         assert not offenders, f"{tell!r} left in the SMBIOS identity: {offenders}"
 
 
-def test_every_guest_has_its_own_serial():
+def test_every_guest_is_asked_for_its_own_serial():
     """Two machines sharing a serial number is itself an anomaly.
 
-    Explicit in the vars rather than derived in the template: the repo's other
-    domain tests render with plain Jinja2, where Ansible's `hash` filter does
-    not exist — deriving it there broke three of them."""
+    Asserted against `main.yml.example`, because the real `ansible/vars/main.yml`
+    is GITIGNORED — my first version read it and passed locally while failing in
+    CI on a file that is not in the repo. An operator's actual vars file cannot
+    be checked from here at all; what can be checked is that the shape is
+    documented for whoever writes one.
+
+    Explicit in vars rather than derived in the template: the repo's other domain
+    tests render with plain Jinja2, where Ansible's `hash` filter does not exist
+    — deriving it there broke three of them.
+    """
     import yaml
-    guests = yaml.safe_load(
-        (ROOT / "ansible/vars/main.yml").read_text(encoding="utf-8"))["cape_guests"]
-    serials = [g.get("smbios_serial") for g in guests]
-    assert all(serials), [g.get("name") for g in guests if not g.get("smbios_serial")]
-    assert len(set(serials)) == len(serials), serials
+    example = ROOT / "ansible/vars/main.yml.example"
+    guests = yaml.safe_load(example.read_text(encoding="utf-8"))["cape_guests"]
+    missing = [g.get("name") for g in guests if not g.get("smbios_serial")]
+    assert not missing, f"guests with no smbios_serial in the example: {missing}"
+
+
+def test_the_local_vars_file_is_not_what_ci_checks():
+    """A guard against reintroducing the mistake: `ansible/vars/main.yml` is
+    gitignored, so a test reading it is one that cannot fail in CI for the
+    reason it was written."""
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "ansible/vars/main.yml" in ignored
+    # The needle is built at runtime. Spelled literally it would appear in this
+    # file and the assertion would find itself — a test failing on its own text
+    # is not a test of anything.
+    needle = 'ROOT / "ansible/vars/' + 'main.yml"'
+    src = Path(__file__).read_text(encoding="utf-8")
+    assert needle not in src, "a test reads the gitignored vars file again"
 
 
 def test_the_template_renders_without_a_serial():
