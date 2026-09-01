@@ -118,6 +118,7 @@ cape_guests:
   - name: clean
     disk_path: "{{ cape_guest_image_dir }}/windows10-guest.qcow2"
     snapshot: clean
+    smbios_serial: "CHANGEME"   # SMBIOS service tag, MUST differ per guest (#517)
     ip: "{{ detonation_dhcp_start }}"   # 192.168.100.10 — first DHCP address
     mac: "3C:97:0E:4A:B2:10"   # Intel NIC OUI — realistic, not VM-identifiable
     # tags: empty — clean is the default machine for untagged submissions
@@ -134,6 +135,7 @@ cape_guests:
   - name: office
     disk_path: "{{ cape_guest_image_dir }}/windows10-office.qcow2"
     snapshot: office
+    smbios_serial: "CHANGEME"   # SMBIOS service tag, MUST differ per guest (#517)
     ip: "192.168.100.11"
     mac: "3C:97:0E:4A:B2:11"   # Intel NIC OUI — realistic, not VM-identifiable
     # tags: office — matched when the submitter includes tag "office".
