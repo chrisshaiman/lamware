@@ -252,9 +252,9 @@
                xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
       <!-- Placeholder hostname; renamed to the real value by configure-system.ps1
            after Packer WinRM connects. -->
-      <ComputerName>DESKTOP-PKRBLD</ComputerName>
+      <ComputerName>DESKTOP-4RJ9K2M</ComputerName>
       <TimeZone>Eastern Standard Time</TimeZone>
-      <RegisteredOrganization>Contoso Ltd</RegisteredOrganization>
+      <RegisteredOrganization>Northwind Systems</RegisteredOrganization>
       <RegisteredOwner>John Smith</RegisteredOwner>
     </component>
 

@@ -67,7 +67,51 @@
     <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
     <nvram template='/usr/share/OVMF/OVMF_VARS_4M.fd'>/var/lib/libvirt/qemu/nvram/{{ item.name }}_VARS.fd</nvram>
     <boot dev='hd'/>
+    <!-- Without this the <sysinfo> block below is inert: libvirt only feeds it
+         to the guest's DMI tables when smbios mode is 'sysinfo'. -->
+    <smbios mode='sysinfo'/>
   </os>
+
+  <!-- SMBIOS identity (#517).
+       Until now there was NO sysinfo block at all, so the guest's DMI tables
+       reported QEMU/SeaBIOS defaults — the string `antivm_generic_bios` reads,
+       and the one identity surface here that was still stock while CPU, TPM,
+       MAC OUI, RAM and resolution had all been chosen deliberately (ADR-012).
+
+       Values describe a plausible business desktop. The serial is per-guest so
+       two VMs do not share one, which is itself a tell. The UUID must match the
+       domain UUID above or libvirt rejects the definition.
+
+       This does NOT make the guest undetectable. It removes one stock string
+       from a surface 0.8% of the corpus probes directly and many more read in
+       passing; the point is that a default is a free win for the sample. -->
+  <sysinfo type='smbios'>
+    <bios>
+      <entry name='vendor'>Dell Inc.</entry>
+      <entry name='version'>2.18.0</entry>
+      <entry name='date'>04/12/2024</entry>
+    </bios>
+    <system>
+      <entry name='manufacturer'>Dell Inc.</entry>
+      <entry name='product'>OptiPlex 7090</entry>
+      <entry name='version'>Not Specified</entry>
+{% if item.smbios_serial is defined %}
+      <entry name='serial'>{{ item.smbios_serial }}</entry>
+{% endif %}
+{% if cape_guest_uuid_map is defined and cape_guest_uuid_map.get(item.name) %}
+      <entry name='uuid'>{{ cape_guest_uuid_map[item.name] }}</entry>
+{% endif %}
+      <entry name='family'>OptiPlex</entry>
+    </system>
+    <baseBoard>
+      <entry name='manufacturer'>Dell Inc.</entry>
+      <entry name='product'>0K1RTX</entry>
+      <entry name='version'>A00</entry>
+{% if item.smbios_serial is defined %}
+      <entry name='serial'>{{ item.smbios_serial }}</entry>
+{% endif %}
+    </baseBoard>
+  </sysinfo>
 
   <features>
     <acpi/>
