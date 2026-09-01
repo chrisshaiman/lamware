@@ -119,3 +119,29 @@ def test_both_paths_resolve_modality_the_same_way(module):
     called = {n.func.id for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert "init_payload_for" in called, f"{module} resolves the payload its own way"
+
+
+# --- routing: a local arm must be local on BOTH paths ---
+
+
+def test_a_local_arm_selects_the_local_backend_on_both_interpret_paths():
+    """The interpret container reads `re_backend` for the agentic loop and
+    `single_shot_backend` for .NET/Java/PowerShell/Go. Setting only the first
+    sent every .NET cell to the Anthropic passthrough, which 404s for a local
+    model alias — the stage2-dotnet run died 10 cells for 10.
+
+    Invisible until an arm is BOTH local and single-shot, which is exactly what
+    #505 created.
+    """
+    import ast
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+           / "files" / "lamware_eval" / "runner.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "run_arm")
+    assigned = {t.slice.value for t in ast.walk(fn)
+                if isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
+                and isinstance(t.ctx, ast.Store) and isinstance(t.slice.value, str)}
+    assert "re_backend" in assigned
+    assert "single_shot_backend" in assigned, (
+        "a local arm still reaches the cloud on the single-shot path")

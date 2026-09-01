@@ -316,7 +316,20 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
            "escalation_model": arm.model,
            "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384)}
     if arm.re_backend == "local":
+        # TWO keys, because the interpret container has two paths and they read
+        # different ones. The agentic RE loop checks `re_backend`
+        # (interpret-ghidra.py:3142); the single-shot paths — .NET, Java,
+        # PowerShell, Go, Office, PyInstaller — check `single_shot_backend`
+        # (:2874). Setting only the first sent every .NET cell to the Anthropic
+        # passthrough, which 404s for a local model alias, and the whole
+        # stage2-dotnet run died 10 cells for 10 with
+        # `NotFoundError: model: local-qwen-llamacpp-re`.
+        #
+        # `llm_ab_singleshot.py:39` has always set the single-shot key. This
+        # harness never needed it until it learned to read .NET (#505), and the
+        # omission is invisible until an arm is BOTH local and single-shot.
         cfg["re_backend"] = "local"
+        cfg["single_shot_backend"] = "local"
     out = cell_out_dir(sample, arm)
     # Start from an empty cell: see archive_previous_cell for why overwriting is not
     # enough. Stale per-tool-call artifacts would otherwise be scored as this run's
