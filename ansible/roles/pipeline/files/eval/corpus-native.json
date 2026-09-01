@@ -1,0 +1,82 @@
+{
+  "_selection": {
+    "modality": "native_pe",
+    "criterion": "Samples are selected for whether they EXERCISE the pipeline, not for family diversity. The previous corpus was chosen on family labels and produced zero cross-tool correlations on all 7 samples; the MOTIF corpus (n=29) likewise produced zero, with Volatility never triggering. See #426.",
+    "split": "Split from the single curated manifest on 2026-08-31. A .NET cell and a native-PE cell are not the same measurement, so they are TWO experiments and are never pooled (#505). Splitting the manifest rather than relying on a convention is what makes pooling impossible: the provenance stamp records which corpus produced a scorecard and its hash changes when the manifest does (#486).",
+    "modality_note": "Ghidra decompiles these. This is the corpus behind the #420 stage-2 result.",
+    "excluded_from_both": [
+      {
+        "sample": "982a0d1b819d",
+        "reason": "raccoonstealer \u2014 Cape extracted no PE and the sample is not .NET, so neither analyser produced anything to read"
+      },
+      {
+        "sample": "c26e8e9bce27",
+        "reason": "icedid \u2014 same: 'no PE files found', not .NET routed"
+      }
+    ],
+    "inherited_measurement": {
+      "cape_reports_on_disk": 1016,
+      "with_extractable_injection_buffers": 92,
+      "of_those_also_tripping_volatility_triggers": 92,
+      "unique_samples_after_sha256_dedup": 55,
+      "binaries_still_retained": 55
+    },
+    "build": "corpus_dir entries do not exist until built. Each requires a full pipeline run (detonation, Volatility, Ghidra) with the resulting report.json and persisted Ghidra project copied into corpus_dir. The interpret stage can be disabled for the build; the eval harness supplies its own.",
+    "roles": {
+      "positive": "expected to produce >= 1 cross-tool correlation",
+      "negative-control": "expected to produce zero; retained deliberately"
+    }
+  },
+  "samples": [
+    {
+      "sha256": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729",
+      "mb_family": "unclassified",
+      "corpus_dir": "/opt/pipeline/eval-corpus/unclassified_25d18a2b",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 104 recorded 222 extractable cross-process injection write(s) and 24 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 104,
+      "expected_injection_buffers": 222
+    },
+    {
+      "sha256": "42b9c406d5569b9619c980b336d3236ac7f7789db57ba3b31cd79c463e6f2ca2",
+      "mb_family": "unclassified",
+      "corpus_dir": "/opt/pipeline/eval-corpus/unclassified_42b9c406",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 746 recorded 81 extractable cross-process injection write(s) and 49 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 746,
+      "expected_injection_buffers": 81
+    },
+    {
+      "sha256": "d26bc055f0cfdef6b5e80e6e35a0b9512bd7d233579119a0a874228915fe4ed7",
+      "mb_family": "salat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/salat_d26bc055",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 842 recorded 8 extractable cross-process injection write(s) and 42 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 842,
+      "expected_injection_buffers": 8
+    },
+    {
+      "sha256": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1",
+      "mb_family": "cobaltstrikebeacon",
+      "corpus_dir": "/opt/pipeline/eval-corpus/cobaltstrikebeacon_179dcccf",
+      "analyst_label": null,
+      "role": "positive",
+      "selected_because": "CAPE task 31 recorded 5 extractable cross-process injection write(s) and 51 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
+      "source_cape_task": 31,
+      "expected_injection_buffers": 5
+    },
+    {
+      "sha256": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e",
+      "mb_family": "latrodectus",
+      "corpus_dir": "/opt/pipeline/eval-corpus/latrodectus_d22c9656",
+      "analyst_label": null,
+      "role": "negative-control",
+      "selected_because": "Retained from the previous corpus. Produces zero correlations: no cross-process injection writes, and CAPE signatures do not trip the Volatility triggers. A corpus where every sample correlates cannot distinguish 'fires appropriately' from 'fires indiscriminately'.",
+      "source_cape_task": null,
+      "expected_injection_buffers": 0
+    }
+  ]
+}

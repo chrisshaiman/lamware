@@ -26,6 +26,7 @@ from lamware_eval.runner import (
     arm_name_from_cell_dir,
     evidence_for,
     held_out_techniques,
+    init_payload_for,
     tool_output_text,
 )
 from lamware_eval.scorecard import render_scorecard, write_scorecard
@@ -88,7 +89,11 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 usage = res.get("usage") or {}
                 model = res.get("model_final") or ""
                 local = "qwen" in arm_dir.name or "local" in model
-                source = json.dumps(gr) + " " + tool_output_text(arm_dir)
+                # Same resolver as the live path (#380): a re-score that
+                # assumed Ghidra would score a .NET cell against an empty dict
+                # and call every claim it made a fabrication.
+                _init, modality, source_head = init_payload_for(report)
+                source = source_head + " " + tool_output_text(arm_dir)
                 # The sweep scored an evidence-fed arm against its evidence too.
                 # A re-score that did not would call those claims FABRICATED and
                 # disagree with the run that produced the cell — the defect #380
@@ -114,7 +119,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     cell_error(res, analysis),
                     ghidra_warnings=ghidra_warnings_for(gr),
                     evidence=evidence,
-                    cape_techniques=held_out_techniques(report)))
+                    cape_techniques=held_out_techniques(report),
+                    modality=modality))
     provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
     return render_scorecard(label, cells, aggregate(cells), provenance), cells
 

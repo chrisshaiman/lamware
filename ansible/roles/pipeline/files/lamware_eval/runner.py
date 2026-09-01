@@ -10,6 +10,7 @@ from pathlib import Path
 import requests
 from llm_ab_re import extract_metrics
 from stages.interpret import run_interpret
+from stages.single_shot_init import build_dotnet_init
 
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
@@ -266,10 +267,45 @@ def evidence_for(arm: Arm, report: dict) -> dict:
     return correlated_evidence(report)
 
 
+def init_payload_for(report: dict) -> tuple[dict, str, str]:
+    """(init payload, modality, grounding source) for this sample.
+
+    `run_interpret`'s first parameter is named `ghidra_result` but is really an
+    INIT PAYLOAD, and production builds a different one per modality — .NET,
+    Java, PowerShell, Go (run-pipeline.py:800 onward). The eval only ever built
+    the Ghidra one, so five of the twelve curated samples handed the agent an
+    empty dump: they are .NET, routed to ILSpy/de4dot by design, with their
+    decompiled C# sitting unread in `report["dotnet_analysis"]` (#505).
+
+    `build_dotnet_init` is IMPORTED from the same module production uses rather
+    than reimplemented here. Two copies of a payload shape that must match is
+    the #380 pattern, and the thing that would drift is what the agent sees.
+
+    The grounding source moves with the modality. Scoring a .NET cell against
+    `json.dumps(ghidra)` would score it against an empty dict, so every claim it
+    made would be a fabrication.
+
+    Native PE and .NET are TWO EXPERIMENTS and are never pooled — that is
+    enforced by the corpus manifests being separate files (#505), not by this
+    function, which only has to build the right payload for whatever it is given.
+    """
+    dotnet = report.get("dotnet_analysis") or {}
+    if dotnet.get("analysis_success"):
+        cape_sigs = [s.get("name", "") for s in
+                     ((report.get("cape") or {}).get("signatures") or [])]
+        llm_context = ({"bazaar_family": report["bazaar_family"]}
+                       if report.get("bazaar_family") else {})
+        init = build_dotnet_init(dotnet, llm_context, cape_sigs)
+        return init, "dotnet", json.dumps(init.get("decompiled_source", ""))
+    gr = report.get("ghidra") or {}
+    return gr, "native_pe", json.dumps(gr)
+
+
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
             interpret_cmd: str, ghidra_cmd: str) -> dict:
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
-    gr = report["ghidra"]
+    init, modality, source_head = init_payload_for(report)
+    gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
     # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
     # Otherwise the interpret stage escalates into base_cfg's escalation_model
@@ -294,7 +330,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         print(f"    [eval] correlated evidence: {sorted(evidence) or 'NONE (identical to base arm)'}",
               flush=True)
     t0 = time.time()
-    res = run_interpret(gr, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd,
+    res = run_interpret(init, out, interpret_cmd, True, _EVAL_TIMEOUT, cfg, ghidra_cmd,
                         extra_evidence=evidence or None)
     secs = round(time.time() - t0, 1)
     analysis = res.get("analysis", {}) or {}
@@ -320,7 +356,9 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     #
     # `grounded_novel` is the comparable figure: grounded in the Ghidra dump and
     # tool output, WITHOUT the evidence. `grounded_recited` is the difference.
-    source = json.dumps(gr) + " " + tool_output_text(out)
+    # Whatever the agent could have read: the Ghidra dump for a native PE, the
+    # decompiled C# for a .NET sample, plus the tool results either way.
+    source = source_head + " " + tool_output_text(out)
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess
@@ -338,4 +376,5 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
                         seed=arm.seed,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
                         ghidra_warnings=ghidra_warnings_for(gr),
-                        cape_techniques=held_out_techniques(report))
+                        cape_techniques=held_out_techniques(report),
+                        modality=modality)

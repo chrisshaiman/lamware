@@ -81,7 +81,8 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                  seed: int | None = None, sampling: dict | None = None,
                  ghidra_warnings: list[str] | None = None,
                  evidence: dict | None = None,
-                 cape_techniques: list[str] | None = None) -> dict:
+                 cape_techniques: list[str] | None = None,
+                 modality: str = "native_pe") -> dict:
     """Compose one scorecard cell.
 
     `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
@@ -172,6 +173,10 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # across the stage-2 corpus, four samples got 26-30KB and latrodectus
         # got 1.4KB — and the reader cannot tell, so "did correlation help or
         # did more text help" is unanswerable from the output.
+        # Which analyser produced what the agent read. Native PE and .NET are
+        # two experiments and are never pooled (#505); this is on the row so a
+        # scorecard that somehow mixed them would say so out loud.
+        "modality": modality,
         "evidence_bytes": len(evidence_text or ""),
         "evidence_keys": len(evidence or {}),
         # Separate from total volume because THIS is the variable the thesis is

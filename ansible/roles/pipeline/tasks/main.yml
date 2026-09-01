@@ -600,14 +600,32 @@
 #
 # Two files, two owners. corpus.json belongs to the operator; corpus.repo.json
 # is Ansible's and is always current.
-- name: Ship the curated eval corpus manifest (Ansible owns this path outright)
+# Two manifests, not one. A .NET cell and a native-PE cell are not the same
+# measurement, so they are two experiments and are never pooled (#505).
+# Splitting the MANIFEST rather than relying on a convention is what makes
+# pooling impossible: the provenance stamp records which corpus produced a
+# scorecard, and its hash changes when the manifest does (#486). A scorecard
+# would have to misreport its own corpus to mix them.
+- name: Ship the curated eval corpus manifests, one per modality (Ansible owns these)
   ansible.builtin.copy:
-    src: eval/corpus.json
-    dest: "{{ pipeline_install_dir }}/eval/corpus.repo.json"
+    src: "eval/{{ item }}"
+    dest: "{{ pipeline_install_dir }}/eval/{{ item }}"
     owner: pipeline
     group: pipeline
     mode: "0640"
     force: true
+  loop:
+    - corpus-native.json
+    - corpus-dotnet.json
+
+# The pooled manifest is REMOVED rather than left in place. Leaving a manifest
+# that spans both modalities on the host is an invitation to run exactly the
+# comparison the split exists to prevent, and it is Ansible-owned (force:true),
+# so nothing an operator built is at risk.
+- name: Remove the pooled corpus manifest superseded by the split (#505)
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/eval/corpus.repo.json"
+    state: absent
 
 - name: Read the operator's eval corpus manifest, if the host has one
   ansible.builtin.slurp:
@@ -627,10 +645,14 @@
       corpus.repo.json has {{ pipeline_corpus_repo_shas | length }}.
       Only in the repo: {{ pipeline_corpus_repo_shas | difference(pipeline_corpus_operator_shas) | map("truncate", 12, true, "") | list }}.
       Only on the host: {{ pipeline_corpus_operator_shas | difference(pipeline_corpus_repo_shas) | map("truncate", 12, true, "") | list }}.
-      Pass --corpus .../eval/corpus.repo.json to use the curated one.
+      Pass --corpus .../eval/corpus-native.json or corpus-dotnet.json — they are
+      separate experiments and must not be pooled (#505).
   vars:
+    # The union of both shipped manifests. Used ONLY to report what the
+    # operator's file is missing; nothing runs against this union.
     pipeline_corpus_repo_shas: >-
-      {{ (lookup("file", role_path + "/files/eval/corpus.json") | from_json).samples
+      {{ ((lookup("file", role_path + "/files/eval/corpus-native.json") | from_json).samples
+          + (lookup("file", role_path + "/files/eval/corpus-dotnet.json") | from_json).samples)
          | map(attribute="sha256") | sort | list }}
     pipeline_corpus_operator_shas: >-
       {{ (pipeline_corpus_deployed.content | b64decode | from_json).samples
