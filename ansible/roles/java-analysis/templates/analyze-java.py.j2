@@ -94,14 +94,22 @@ def decompile_jar(jar_path: str, output_dir: str) -> dict:
         for sf in source_files:
             combined += f"// === {sf['path']} ===\n{sf['content']}\n\n"
 
-        # Truncate if too large
-        truncated = len(combined) > 100000
+        # Elide binary blobs BEFORE truncating, so the window buys Java rather
+        # than hex. CFR renders unsupported static data the same way ILSpy does
+        # (#511) — this path has no sample in the corpus to verify against, so
+        # the mechanism is shared but its yield here is UNMEASURED.
+        raw_length = len(combined)
+        combined, blob_bytes_elided = elide_binary_blobs(combined, "//")
+
+        truncated = len(combined) > MAX_STORED_SOURCE
         if truncated:
-            combined = combined[:100000] + "\n\n// ... truncated (source too large) ..."
+            combined = (combined[:MAX_STORED_SOURCE]
+                        + "\n\n// ... truncated (source too large) ...")
 
         return {
             "source": combined,
-            "source_length": len(combined) if not truncated else sum(sf["length"] for sf in source_files),
+            "blob_bytes_elided": blob_bytes_elided,
+            "source_length": raw_length,
             "source_files": [{"path": sf["path"], "length": sf["length"]} for sf in source_files],
             "file_count": len(source_files),
             "truncated": truncated,
@@ -161,6 +169,57 @@ def list_jar_contents(jar_path: str) -> list[dict]:
     except (zipfile.BadZipFile, OSError):
         pass
     return files
+
+
+MAX_STORED_SOURCE = 100000
+
+
+# --- Binary blob elision (#511) ---------------------------------------------
+#
+# Decompilers render static data they cannot express as source as long runs of
+# raw hex. ILSpy writes `/* Not supported: data(79 CA BF ...) */`; CFR produces
+# similar walls. Measured on warzonerat: TWO such runs held 46,557 of the
+# 100,041 stored characters — 46.5% — and one was 44,064 characters ending
+# exactly at the truncation point.
+#
+# They also tokenize atrociously, so they cost far more of the model's window
+# than their share of the text. Across a real decompilation the ratio degrades
+# from 1.94 chars/token in the first 10KB to 1.47 by 100KB, entirely because of
+# these runs.
+#
+# ELIDED, NOT REMOVED. Three things depend on those bytes and a plain strip
+# breaks all of them: grounding scores the model's claims against this source,
+# so a cited byte would read as FABRICATED (#503 is that defect in another
+# guise); `yara_suggestion` legitimately draws on byte sequences; and a blob
+# beginning 4D 5A 90 00 is an MZ header, which is a finding. The marker keeps
+# size, offset and a prefix — everything diagnostic — for about twenty tokens
+# instead of forty thousand.
+#
+# The threshold is deliberately high: `byte[] { 0x01, 0x02, 0x03 }` in real code
+# is source, not a blob, and eliding it would hide logic rather than noise.
+MIN_BLOB_BYTES = 64
+_HEX_RUN = re.compile(
+    r"(?:\b[0-9A-Fa-f]{2}\b[ ,\n\t]+){" + str(MIN_BLOB_BYTES) + r",}"
+    r"(?:\b[0-9A-Fa-f]{2}\b)?")
+
+
+def elide_binary_blobs(source, comment="//"):
+    """(source with long hex runs summarised, characters elided).
+
+    Run BEFORE any truncation, or it buys nothing — the blobs are what fills the
+    window in the first place.
+    """
+    elided = [0]
+
+    def _mark(m):
+        run = m.group(0)
+        tokens = run.split()
+        elided[0] += len(run)
+        return (comment + " [binary blob elided: {:,} bytes at offset {}, "
+                "begins {} ...]").format(len(tokens), m.start(),
+                                         " ".join(tokens[:8])) + "\n"
+
+    return _HEX_RUN.sub(_mark, source), elided[0]
 
 
 def extract_classes(source: str) -> list[dict]:
