@@ -10,17 +10,62 @@ pipeline orchestrator (run-pipeline.py) and the local-vs-cloud eval harness
 """
 
 
+#: What the analyser containers store at most. Their own cap, applied before the
+#: report is written, and they mark the text and record `source_length` when it
+#: bites (analyze-dotnet.py.j2:106 and its java/pyinstaller siblings).
+#:
+#: The builders below must not cut BELOW this. They used to halve it — a second,
+#: silent cap that also sliced off the container's truncation marker, so the
+#: model received a prefix ending mid-line that read as a whole program. On
+#: quasarrat that was 50,000 characters of a 4,468,045-character decompilation:
+#: 1.1%, presented as if complete (#507).
+#:
+#: Some cap is unavoidable — 4.4MB of C# does not fit a 131,072-token window —
+#: but it belongs in one place, and it has to say when it bit.
+CONTAINER_SOURCE_CAP = 100_000
+
+
+def capped(text: str, limit: int, comment: str) -> str:
+    """`text` cut to `limit`, marked when the cut happens.
+
+    A prefix that does not say it is a prefix is the defect this exists to stop.
+    The marker uses the target language's comment syntax so it reads as part of
+    the listing rather than as corrupt source.
+    """
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n{comment} ... truncated ({len(text):,} characters total) ..."
+
+
+def _source_provenance(decompilation: dict) -> dict:
+    """What the analyser said about the source it produced.
+
+    `source_length` is the TRUE pre-truncation size and the container has always
+    recorded it. Nothing read it, so a report could say 4,468,045 while the model
+    was shown 50,000 and no consumer could tell (#507).
+    """
+    return {
+        "source_bytes_total": decompilation.get("source_length"),
+        "source_truncated_by_analyser": bool(decompilation.get("truncated")),
+    }
+
+
 def build_dotnet_init(dotnet_data: dict, llm_context: dict, cape_sigs: list[str]) -> dict:
     """Build the .NET (ILSpy C#) single-shot init payload."""
-    dotnet_source = dotnet_data.get("decompilation", {}).get("source", "")
+    decompilation = dotnet_data.get("decompilation", {})
+    dotnet_source = decompilation.get("source", "")
     dotnet_classes = dotnet_data.get("classes", [])
     dotnet_strings = dotnet_data.get("strings_of_interest", [])
     extraction_source = dotnet_data.get("extraction_source")
+    shown = capped(dotnet_source, CONTAINER_SOURCE_CAP, "//")
     return {
         **llm_context,
         "analysis_type": "dotnet",
         "source_language": "csharp",
-        "decompiled_source": dotnet_source[:50000],  # cap for LLM context
+        "decompiled_source": shown,
+        "source_bytes_shown": len(shown),
+        **_source_provenance(decompilation),
         "class_count": len(dotnet_classes),
         "classes": dotnet_classes[:50],
         "strings_of_interest": dotnet_strings,
@@ -54,9 +99,13 @@ def build_ps_init(ps_data: dict, llm_context: dict, cape_sigs: list[str]) -> dic
         **llm_context,
         "analysis_type": "powershell",
         "source_language": "powershell",
-        "original_script": ps_data.get("original_script", "")[:30000],
+        # Marked when they bite, for the same reason the .NET source is: a
+        # prefix that does not say it is a prefix reads as the whole script,
+        # and a deobfuscated PowerShell payload is exactly where a reader would
+        # assume they were seeing all of it (#507).
+        "original_script": capped(ps_data.get("original_script", ""), 30_000, "#"),
         "decoded_layers": ps_data.get("decoded_layers", []),
-        "final_decoded": ps_data.get("final_decoded", "")[:50000],
+        "final_decoded": capped(ps_data.get("final_decoded", ""), 50_000, "#"),
         "layer_count": ps_data.get("layer_count", 0),
         "obfuscation_techniques": ps_data.get("obfuscation_techniques", []),
         "iocs_extracted": ps_data.get("iocs_extracted", {}),
