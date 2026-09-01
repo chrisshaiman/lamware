@@ -1,0 +1,117 @@
+{
+  "captured_at": "2026-09-01T07:31:26.396059+00:00",
+  "corpus_path": "/opt/pipeline/eval/corpus-native.json",
+  "corpus_sha256": "59d62701cae965d3",
+  "guest_images": [
+    {
+      "image": "windows11-guest.qcow2",
+      "mtime": "2026-05-06",
+      "bytes": 18398642176
+    },
+    {
+      "image": "windows11-office.qcow2",
+      "mtime": "2026-05-06",
+      "bytes": 27861712896
+    }
+  ],
+  "primary_metric": "observed_behaviour",
+  "direction": "higher is less evasion",
+  "samples": {
+    "unclassified_25d18a2b": {
+      "observed_behaviour": 37,
+      "signatures": 23,
+      "payloads_extracted": 11,
+      "injected_pids": 3,
+      "processes_seen": 3,
+      "malscore": 9.0,
+      "dns_queries": 3,
+      "tcp_attempts": 50,
+      "tcp_shape": "connections(capped)",
+      "correlations": 2,
+      "mitre_ttps": 10,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_network_adapters"
+      ]
+    },
+    "unclassified_42b9c406": {
+      "observed_behaviour": 62,
+      "signatures": 46,
+      "payloads_extracted": 14,
+      "injected_pids": 2,
+      "processes_seen": 11,
+      "malscore": 9.0,
+      "dns_queries": 2,
+      "tcp_attempts": 50,
+      "tcp_shape": "connections(capped)",
+      "correlations": 2,
+      "mitre_ttps": 25,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "antivm_network_adapters",
+        "stealth_timeout",
+        "stealth_window"
+      ]
+    },
+    "salat_d26bc055": {
+      "observed_behaviour": 48,
+      "signatures": 35,
+      "payloads_extracted": 10,
+      "injected_pids": 3,
+      "processes_seen": 6,
+      "malscore": 10.0,
+      "dns_queries": 7,
+      "tcp_attempts": 50,
+      "tcp_shape": "connections(capped)",
+      "correlations": 1,
+      "mitre_ttps": 14,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "antivm_network_adapters"
+      ]
+    },
+    "cobaltstrikebeacon_179dcccf": {
+      "observed_behaviour": 72,
+      "signatures": 52,
+      "payloads_extracted": 13,
+      "injected_pids": 7,
+      "processes_seen": 35,
+      "malscore": 10.0,
+      "dns_queries": 5,
+      "tcp_attempts": 50,
+      "tcp_shape": "connections(capped)",
+      "correlations": 1,
+      "mitre_ttps": 22,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antisandbox_sleep",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "stealth_timeout"
+      ]
+    },
+    "latrodectus_d22c9656": {
+      "observed_behaviour": 13,
+      "signatures": 10,
+      "payloads_extracted": 3,
+      "injected_pids": 0,
+      "processes_seen": 1,
+      "malscore": 10.0,
+      "dns_queries": 2,
+      "tcp_attempts": 50,
+      "tcp_shape": "connections(capped)",
+      "correlations": 0,
+      "mitre_ttps": 5,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "stealth_network",
+        "stealth_timeout"
+      ]
+    }
+  }
+}
