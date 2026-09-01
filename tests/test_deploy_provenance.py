@@ -71,14 +71,21 @@ def test_the_marker_records_more_than_a_sha():
     distinguishes that from a good deploy is the branch, and whether the tree was
     dirty.
     """
-    writer = next((t for t in _pre_tasks()
-                   if "provenance marker" in (t.get("name") or "").lower()), None)
-    assert writer is not None, "no task writes the provenance marker"
-    content = yaml.dump(writer)
-    for field in ("sha", "branch", "dirty", "tags", "deployed_at"):
-        assert field in content, (
-            f"the marker omits {field!r}; a SHA alone cannot distinguish "
-            f"'deployed from another branch' from a healthy deploy")
+    play = yaml.safe_load(SITE.read_text(encoding="utf-8"))[0]
+    writers = [t for section in ("pre_tasks", "post_tasks")
+               for t in play.get(section, [])
+               if isinstance(t, dict) and "marker" in (t.get("name") or "").lower()
+               and isinstance(t.get("ansible.builtin.copy"), dict)]
+    # Two since #515: a STARTED marker in pre_tasks and a COMPLETED one in
+    # post_tasks. Both must carry the full picture — a half-populated marker
+    # would be a different way of saying nothing.
+    assert len(writers) == 2, [t.get("name") for t in writers]
+    for writer in writers:
+        content = yaml.dump(writer)
+        for field in ("sha", "branch", "dirty", "tags", "deployed_at"):
+            assert field in content, (
+                f"{writer.get('name')!r} omits {field!r}; a SHA alone cannot "
+                f"distinguish 'deployed from another branch' from a healthy deploy")
 
 
 def test_a_dirty_tree_is_recorded_not_blocked():

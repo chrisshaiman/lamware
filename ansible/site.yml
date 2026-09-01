@@ -104,6 +104,19 @@
       become: false
       tags: [always]
 
+    - name: Look at the previous deploy's markers before overwriting them
+      ansible.builtin.stat:
+        path: "/opt/lamware/deploy-{{ item }}.json"
+      register: _prev_markers
+      loop: [started, provenance]
+      tags: [always]
+
+    - name: Name the two previous markers
+      ansible.builtin.set_fact:
+        _prev_started: "{{ _prev_markers.results[0] }}"
+        _prev_completed: "{{ _prev_markers.results[1] }}"
+      tags: [always]
+
     - name: Ensure the provenance directory exists
       ansible.builtin.file:
         path: /opt/lamware
@@ -111,9 +124,15 @@
         mode: "0755"
       tags: [always]
 
-    - name: Write the deploy provenance marker
+    # STARTED, not deployed. This runs before a single role, so it records what
+    # the deploy INTENDED. A play that aborts mid-way leaves this behind and
+    # nothing else — which is how a failed deploy on 2026-09-01 reported the
+    # full tag list while `grep -c single_shot_backend runner.py` returned 0 on
+    # the host (#515). The completed marker is written in post_tasks, where it
+    # can only exist if every role ran.
+    - name: Write the deploy STARTED marker
       ansible.builtin.copy:
-        dest: /opt/lamware/deploy-provenance.json
+        dest: /opt/lamware/deploy-started.json
         mode: "0644"
         content: |
           {{
@@ -127,6 +146,18 @@
               "deployed_by": (lookup("env", "USER") | default("unknown", true)),
             } | to_nice_json
           }}
+      tags: [always]
+
+    - name: Warn when the previous deploy never finished
+      ansible.builtin.debug:
+        msg: >-
+          PREVIOUS DEPLOY DID NOT COMPLETE — a started marker exists with no
+          matching completed one, so the host is in whatever state that play
+          left it. Treat `make provenance` as unverified until this deploy ends.
+      when:
+        - _prev_started.stat.exists
+        - (not _prev_completed.stat.exists)
+          or (_prev_started.stat.mtime > _prev_completed.stat.mtime)
       tags: [always]
 
     - name: Report what is being deployed
@@ -295,3 +326,26 @@
     # 24. Certbot — Let's Encrypt auto-renewal and cert expiry monitoring
     - role: certbot
       tags: [certbot]
+
+  # Only reachable when every role above has run. A play that fails stops here,
+  # leaving the started marker without a partner — which is exactly the state
+  # `make provenance` must be able to see (#515).
+  post_tasks:
+    - name: Write the deploy COMPLETED marker
+      ansible.builtin.copy:
+        dest: /opt/lamware/deploy-provenance.json
+        mode: "0644"
+        content: |
+          {{
+            {
+              "sha": _deploy_sha.stdout,
+              "branch": _deploy_branch.stdout,
+              "dirty": (_deploy_dirty.stdout | length) > 0,
+              "dirty_files": (_deploy_dirty.stdout_lines | default([]))[:20],
+              "tags": (ansible_run_tags | default(["all"])),
+              "deployed_at": (ansible_date_time.iso8601 | default("unknown")),
+              "deployed_by": (lookup("env", "USER") | default("unknown", true)),
+              "completed": true,
+            } | to_nice_json
+          }}
+      tags: [always]

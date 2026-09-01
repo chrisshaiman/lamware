@@ -342,8 +342,25 @@ security-test:
 # -----------------------------------------------------------------------------
 # provenance — is the code I am looking at actually the code that is running? (#151)
 # -----------------------------------------------------------------------------
+# A deploy that aborts mid-play leaves a STARTED marker with no COMPLETED one.
+# Before this existed, the single marker was written in pre_tasks and a failed
+# deploy still reported its full tag list — on 2026-09-01 it claimed the pipeline
+# role had run while the host had none of its changes (#515). Both provenance
+# targets refuse rather than answer from a marker that describes an intention.
+provenance-unfinished-check:
+	@S=$$(ssh $(ANSIBLE_HOST_ALIAS) 'stat -c %Y /opt/lamware/deploy-started.json 2>/dev/null || echo 0'); \
+	C=$$(ssh $(ANSIBLE_HOST_ALIAS) 'stat -c %Y /opt/lamware/deploy-provenance.json 2>/dev/null || echo 0'); \
+	if [ "$$S" != "0" ] && [ "$$S" -gt "$$C" ]; then \
+		echo "    UNFINISHED: a deploy started and never completed."; \
+		echo "    The host is in whatever state that play left it, and the marker below"; \
+		echo "    describes the deploy BEFORE it — not what is running now."; \
+		echo "    Re-run the deploy, or verify the roles you care about by hand."; \
+		exit 1; \
+	fi
+
 provenance:
 	@echo "==> Deploy provenance"
+	@$(MAKE) --no-print-directory provenance-unfinished-check
 	@REMOTE=$$(ssh $(ANSIBLE_HOST_ALIAS) 'cat /opt/lamware/deploy-provenance.json' 2>/dev/null); \
 	if [ -z "$$REMOTE" ]; then \
 		echo "    NO MARKER on the host."; \
@@ -377,6 +394,7 @@ provenance:
 # Is a SPECIFIC commit live? `make provenance-has COMMIT=<sha>`
 provenance-has:
 	@test -n "$(COMMIT)" || { echo "usage: make provenance-has COMMIT=<sha>"; exit 1; }
+	@$(MAKE) --no-print-directory provenance-unfinished-check
 	@DEPLOYED=$$(ssh $(ANSIBLE_HOST_ALIAS) 'cat /opt/lamware/deploy-provenance.json' 2>/dev/null \
 		| python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])'); \
 	if git merge-base --is-ancestor "$(COMMIT)" "$$DEPLOYED" 2>/dev/null; then \
