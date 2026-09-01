@@ -170,9 +170,13 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # Must satisfy the templates' `required_version`. It said ~1.11 while the
+      # templates were pinned to ~> 1.16.0, which would fail every `packer
+      # validate` here — a CI job that cannot pass is not a check, and the two
+      # declarations drifting apart is the thing test_packer_version_pin guards.
       - uses: hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 # v3.4.0
         with:
-          version: "~1.11"
+          version: "~1.16"
 
       # Per file, because `packer validate .` merges the directory into one config
       # and the windows11-* templates each declare `variable "ovmf_vars"`. That

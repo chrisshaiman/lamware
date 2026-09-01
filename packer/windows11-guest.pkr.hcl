@@ -29,7 +29,13 @@
 # =============================================================================
 
 packer {
-  required_version = ">= 1.10"
+  # Pinned to the 1.16 series, not ">= 1.10". The builder version is an
+  # input to the image: a different Packer can produce a different guest,
+  # and nothing recorded which one built the images in use. Same defect as
+  # the floating `sdk:10.0` base tag that broke the dotnet build (#514).
+  # Patch releases inside 1.16.x are allowed so a security fix is not
+  # blocked; a minor bump is a deliberate decision, not a surprise.
+  required_version = "~> 1.16.0"
 
   required_plugins {
     qemu = {
