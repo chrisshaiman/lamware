@@ -35,9 +35,50 @@ def test_dotnet_init_extracted_payload_carries_context():
     assert out["extraction_context"] == {"source_dir": "/d", "sha256": "abc", "cape_signatures": ["sig1", "sig2"]}
 
 
-def test_dotnet_init_caps_source_at_50k():
-    out = build_dotnet_init({"decompilation": {"source": "a" * 60000}, "classes": [], "strings_of_interest": []}, {}, [])
-    assert len(out["decompiled_source"]) == 50000
+def test_dotnet_init_does_not_cut_below_what_the_container_stored():
+    """This used to slice to 50,000 — a second, silent cap below the container's
+    own 100,000, which also sliced off the container's truncation marker. The
+    model got a prefix ending mid-line that read as a whole program: on quasarrat,
+    50,000 characters of a 4,468,045-character decompilation (#507)."""
+    out = build_dotnet_init(
+        {"decompilation": {"source": "a" * 60000}, "classes": [],
+         "strings_of_interest": []}, {}, [])
+    assert out["decompiled_source"] == "a" * 60000, "cut below the container cap"
+    assert out["source_bytes_shown"] == 60000
+
+
+def test_dotnet_init_marks_its_own_truncation():
+    """If this layer ever does cut, it must say so. A prefix that does not say it
+    is a prefix is the whole defect."""
+    out = build_dotnet_init(
+        {"decompilation": {"source": "a" * 150000}, "classes": [],
+         "strings_of_interest": []}, {}, [])
+    src = out["decompiled_source"]
+    assert src.startswith("a" * 100000)
+    assert "truncated" in src and "150,000" in src, src[-120:]
+    assert out["source_bytes_shown"] == len(src)
+
+
+def test_dotnet_init_carries_the_true_size_the_container_recorded():
+    """`source_length` has always been in the report and nothing read it, so a
+    report could say 4,468,045 while the model saw 50,000 and no consumer could
+    tell."""
+    out = build_dotnet_init(
+        {"decompilation": {"source": "a" * 100041, "source_length": 4468045,
+                           "truncated": True},
+         "classes": [], "strings_of_interest": []}, {}, [])
+    assert out["source_bytes_total"] == 4468045
+    assert out["source_truncated_by_analyser"] is True
+
+
+def test_an_untruncated_source_says_so():
+    """Positive control: the flag is not unconditionally true."""
+    out = build_dotnet_init(
+        {"decompilation": {"source": "a" * 500, "source_length": 500,
+                           "truncated": False},
+         "classes": [], "strings_of_interest": []}, {}, [])
+    assert out["source_truncated_by_analyser"] is False
+    assert "truncated" not in out["decompiled_source"]
 
 
 def test_go_init_shape():
@@ -70,8 +111,12 @@ def test_ps_init_shape_and_caps():
     out = build_ps_init(ps_data, {}, ["PowershellDownload"])
     assert out["analysis_type"] == "powershell"
     assert out["source_language"] == "powershell"
-    assert len(out["original_script"]) == 30000   # capped at 30k
-    assert len(out["final_decoded"]) == 50000     # capped at 50k
+    # Cut at the limit and MARKED. A deobfuscated PowerShell payload is exactly
+    # where a reader assumes they are seeing all of it (#507).
+    assert out["original_script"].startswith("o" * 30000)
+    assert "truncated" in out["original_script"]
+    assert out["final_decoded"].startswith("d" * 50000)
+    assert "truncated" in out["final_decoded"]
     assert out["layer_count"] == 3
     assert out["iocs_extracted"] == {"urls": ["http://evil.test/x"]}
     assert out["cape_signatures"] == ["PowershellDownload"]
