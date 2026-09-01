@@ -60,7 +60,13 @@ from stages.powershell import (
 )
 from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
 from stages.script_analysis import is_text_script, read_script_source
-from stages.single_shot_init import build_dotnet_init, build_go_init, build_ps_init
+from stages.single_shot_init import (
+    CONTAINER_SOURCE_CAP,
+    build_dotnet_init,
+    build_go_init,
+    build_ps_init,
+    capped,
+)
 from stages.triage import derive_package_from_triage, derive_tags_from_triage, run_triage
 from stages.volatility import (
     extract_shellcode_artifacts,
@@ -825,7 +831,17 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             **_llm_context,
             "analysis_type": "java_cfr",
             "source_language": "java",
-            "decompiled_source": java_data.get("decompilation", {}).get("source", "")[:50000],
+            # Same silent second cut the .NET builder had (#507): the container
+            # already capped at 100,000 and marked it, and slicing to 50,000
+            # here removed that marker. Java builds its payload inline rather
+            # than through single_shot_init, so fixing the builders alone left
+            # this one behind.
+            "decompiled_source": capped(
+                java_data.get("decompilation", {}).get("source", ""),
+                CONTAINER_SOURCE_CAP, "//"),
+            "source_bytes_total": java_data.get("decompilation", {}).get("source_length"),
+            "source_truncated_by_analyser": bool(
+                java_data.get("decompilation", {}).get("truncated")),
             "main_class": java_data.get("main_class", "?"),
             "class_summary_count": java_data.get("class_summary_count", 0),
             "imports": java_data.get("imports", []),

@@ -25,7 +25,7 @@ pipeline orchestrator (run-pipeline.py) and the local-vs-cloud eval harness
 CONTAINER_SOURCE_CAP = 100_000
 
 
-def _capped(text: str, limit: int, comment: str) -> str:
+def capped(text: str, limit: int, comment: str) -> str:
     """`text` cut to `limit`, marked when the cut happens.
 
     A prefix that does not say it is a prefix is the defect this exists to stop.
@@ -58,7 +58,7 @@ def build_dotnet_init(dotnet_data: dict, llm_context: dict, cape_sigs: list[str]
     dotnet_classes = dotnet_data.get("classes", [])
     dotnet_strings = dotnet_data.get("strings_of_interest", [])
     extraction_source = dotnet_data.get("extraction_source")
-    shown = _capped(dotnet_source, CONTAINER_SOURCE_CAP, "//")
+    shown = capped(dotnet_source, CONTAINER_SOURCE_CAP, "//")
     return {
         **llm_context,
         "analysis_type": "dotnet",
@@ -103,9 +103,9 @@ def build_ps_init(ps_data: dict, llm_context: dict, cape_sigs: list[str]) -> dic
         # prefix that does not say it is a prefix reads as the whole script,
         # and a deobfuscated PowerShell payload is exactly where a reader would
         # assume they were seeing all of it (#507).
-        "original_script": _capped(ps_data.get("original_script", ""), 30_000, "#"),
+        "original_script": capped(ps_data.get("original_script", ""), 30_000, "#"),
         "decoded_layers": ps_data.get("decoded_layers", []),
-        "final_decoded": _capped(ps_data.get("final_decoded", ""), 50_000, "#"),
+        "final_decoded": capped(ps_data.get("final_decoded", ""), 50_000, "#"),
         "layer_count": ps_data.get("layer_count", 0),
         "obfuscation_techniques": ps_data.get("obfuscation_techniques", []),
         "iocs_extracted": ps_data.get("iocs_extracted", {}),
