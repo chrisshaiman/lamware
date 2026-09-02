@@ -174,8 +174,31 @@ exfiltrate, or misuse tools.
 *Threat:* an unauthenticated party submits samples, reads results, or exploits
 the API.
 
-- Cape's UI/API bind to `wg0` only — reachable solely by authenticated
-  WireGuard peers.
+The edge is deliberately split. Stating it plainly, because the previous wording
+implied the whole control plane was WireGuard-only and it is not (#529):
+
+| Path | Public 443 | WireGuard |
+|---|---|---|
+| SPA, `/api/`, `/ws/` | yes — **intentional** | yes |
+| `/auth/` (Keycloak login) | yes | yes |
+| `/auth/admin/` (Keycloak admin console) | **no** | yes |
+| `/docs`, `/redoc`, `/openapi.json` | **no** | yes |
+| Cape UI/API (`:8000`) | never bound publicly | yes |
+
+- Cape's UI/API bind to the WireGuard address only. This is the load-bearing
+  reason WireGuard still exists: Cape v2's web interface is not a hardened
+  internet-facing application, and it can submit samples, read every analysis,
+  and reach the detonation infrastructure. Nothing else stands in front of it.
+- The admin console and the OpenAPI documents are restricted to the WireGuard
+  subnet by `allow`/`deny` in the nginx site config. Both listeners share one
+  `server` block, so the split is per-location on `$remote_addr`.
+- The public SPA is protected by Keycloak (PKCE S256, brute-force lockout after
+  5 failures with a 900 s cap), nginx `limit_req`, and the `keycloak-auth`
+  fail2ban jail. Those are all **in the request path**; WireGuard is not, which
+  is what makes it worth keeping as a second, independent layer on the paths
+  above.
+- SSH does not depend on WireGuard — it listens on `0.0.0.0:22` and is
+  restricted to `admin_cidrs` at the OVH robot firewall.
 - The web app authenticates via Keycloak using the OAuth2 **PKCE** flow.
 - Secrets live only in Ansible Vault (AES-256 at rest); none are committed.
   gitleaks runs in CI and pre-commit.
