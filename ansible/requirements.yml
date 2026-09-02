@@ -23,3 +23,14 @@ collections:
   # wireguard_address. Needs the netaddr Python package on the controller.
   - name: ansible.utils
     version: ">=2.5.0"
+  # openssh_keypair, used by konstruktoid.hardening's sshconfig.yml. NOTHING in
+  # this repo imports it — it is a transitive dependency of the pinned role, and
+  # the role does not declare its own collection requirements, so nobody
+  # installs it for us.
+  #
+  # It was missing here for as long as the role has been pinned. It only
+  # surfaced on a second workstation: `ansible` (the bundle) ships
+  # community.crypto, `ansible-core` does not, and this machine has core 2.21.2.
+  # On the original laptop the dependency was satisfied by accident.
+  - name: community.crypto
+    version: ">=2.20.0"
