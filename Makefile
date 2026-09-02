@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has all image build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
+.PHONY: provenance provenance-has all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -321,7 +321,35 @@ validate:
 
 TAGS ?= api,frontend
 
-deploy:
+# collections-check — fail fast when a declared collection is not installed.
+#
+# NOTE: `ansible-galaxy collection list <name>` exits 0 whether or not the
+# collection is installed -- only its OUTPUT differs. The first version of
+# this check tested the exit code and therefore passed for everything,
+# including the collection whose absence broke the deploy.
+#
+# `make configure` runs ansible-galaxy; `make deploy` never did. On a second
+# workstation that had only ever run deploy, konstruktoid.hardening died
+# mid-play on community.crypto.openssh_keypair — after the play had already
+# started changing the host. This is an offline check, so it costs nothing and
+# does not silently install things during a deploy.
+collections-check:
+	@python3 -c "import yaml,sys; r=yaml.safe_load(open('$(ANSIBLE_DIR)/requirements.yml')); \
+		print('\n'.join(c['name'] for c in (r.get('collections') or [])))" > /tmp/.lamware-colls
+	@missing=""; \
+	while read -r c; do \
+		[ -z "$$c" ] && continue; \
+		ansible-galaxy collection list "$$c" 2>/dev/null | grep -qE "^$$c +[0-9]" \
+			|| missing="$$missing $$c"; \
+	done < /tmp/.lamware-colls; \
+	rm -f /tmp/.lamware-colls; \
+	if [ -n "$$missing" ]; then \
+		echo "ERROR: missing Ansible collections:$$missing"; \
+		echo "  fix: ansible-galaxy install -r $(ANSIBLE_DIR)/requirements.yml"; \
+		exit 1; \
+	fi
+
+deploy: collections-check
 	@echo "==> Deploying roles: $(TAGS)..."
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
