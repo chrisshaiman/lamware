@@ -1,0 +1,5 @@
+---
+# Allow the BMC/IPMI virtual keyboard and mouse through USBGuard so the KVM
+# console stays usable as a recovery path. See tasks/main.yml for the trade-off.
+hardening_usbguard_allow_console_hid: true
+hardening_usbguard_rulefile: /etc/usbguard/rules.conf

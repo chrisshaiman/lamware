@@ -1,0 +1,6 @@
+---
+- name: Restart usbguard
+  ansible.builtin.systemd_service:
+    name: usbguard
+    state: restarted
+  failed_when: false

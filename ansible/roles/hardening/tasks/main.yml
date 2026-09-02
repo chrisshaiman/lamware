@@ -27,3 +27,40 @@
     set_motd: false
     # Do not force a reboot after hardening — operator controls reboots
     system_upgrade: false
+
+# =============================================================================
+# USBGuard: allow the out-of-band console keyboard
+#
+# konstruktoid sets ImplicitPolicyTarget=block and AuthorizedDefault=none but
+# never writes rules.conf, so NOTHING is authorised. On a remote server the only
+# USB device that ever appears is the BMC's virtual keyboard, presented when an
+# operator opens the IPMI/KVM console — and it was blocked:
+#
+#     usb 1-9: Device is not authorized for usage
+#
+# That matters because the KVM console is the documented recovery path when SSH
+# is unavailable (docs/DEPLOYMENT.md). Blocking it removed the last way in, and
+# on 2026-09-01 an operator-laptop key problem escalated to a rescue-mode boot
+# partly for this reason (#524).
+#
+# TRADE-OFF, made deliberately: allowing HID re-opens keystroke-injection
+# ("BadUSB") devices. That attack needs physical access to a rack in an OVH
+# datacentre. Losing console access needs only a bad afternoon. Mass storage
+# (class 08) and everything else stay blocked, so the exfiltration case this
+# control mainly exists for is unaffected.
+# =============================================================================
+
+- name: Allow the BMC virtual keyboard and mouse through USBGuard
+  ansible.builtin.blockinfile:
+    path: "{{ hardening_usbguard_rulefile }}"
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED - out-of-band console HID (#524)"
+    # Keyboards and mice only. NOT 03:*:*, which also covers HID devices that
+    # are not input peripherals, and emphatically not class 08 (mass storage).
+    block: |
+      allow with-interface one-of { 03:00:01 03:00:02 03:01:01 03:01:02 }
+    owner: root
+    group: root
+    mode: "0600"
+  when: hardening_usbguard_allow_console_hid
+  notify: Restart usbguard

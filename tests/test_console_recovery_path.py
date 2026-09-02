@@ -1,0 +1,123 @@
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+"""The only documented recovery path was blocked by our own hardening (#524).
+
+konstruktoid sets `ImplicitPolicyTarget=block` and `AuthorizedDefault=none` but
+never writes `rules.conf`, so nothing is authorised. On a remote server the only
+USB device that ever appears is the BMC's virtual keyboard, presented when an
+operator opens the KVM console — and it was refused:
+
+    usb 1-9: Device is not authorized for usage
+
+`docs/DEPLOYMENT.md` named that console as *the* answer to "SSH locked out", so
+the runbook's single entry did not work. On 2026-09-01 a passphrase-encrypted key
+and an emptied ssh-agent — entirely operator-side — escalated to a rescue-mode
+boot partly for this reason.
+"""
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+ROLE = ROOT / "ansible" / "roles" / "hardening"
+TASKS = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text(encoding="utf-8"))
+DEFAULTS = yaml.safe_load((ROLE / "defaults" / "main.yml").read_text(encoding="utf-8"))
+DOC = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+
+
+def _usbguard_task():
+    for t in TASKS:
+        if "usbguard" in str(t.get("name", "")).lower():
+            return t
+    return None
+
+
+# --- the rule itself ---
+
+
+def test_a_usbguard_rule_is_written_at_all():
+    """konstruktoid points RuleFile at a file it never creates. Configuring the
+    daemon to block everything and then writing no allow rules is what took the
+    console out."""
+    t = _usbguard_task()
+    assert t, "nothing authorises the console keyboard"
+    assert "ansible.builtin.blockinfile" in t
+    assert t["ansible.builtin.blockinfile"].get("create") is True, (
+        "rules.conf does not exist until something creates it")
+
+
+def test_the_rule_allows_input_devices_only():
+    """Parsed from the rendered block, not grepped from the file: the comments
+    above it name both the classes we allow and the one we refuse, so a text
+    search would match whether or not the rule survived."""
+    block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
+    classes = set(re.findall(r"\b(\d{2}):\d{2}:\d{2}\b", block))
+    assert classes == {"03"}, f"expected HID (03) only, got {classes}"
+    assert block.strip().startswith("allow ")
+
+
+@pytest.mark.parametrize("forbidden,why", [
+    ("08", "mass storage - the exfiltration case USBGuard mainly exists for"),
+    ("09", "hubs"),
+    ("e0", "wireless controllers"),
+])
+def test_no_other_device_class_is_allowed(forbidden, why):
+    block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
+    assert forbidden not in re.findall(r"\b(\w{2}):\w{2}:\w{2}\b", block), why
+
+
+def test_the_wildcard_form_is_not_used():
+    """`03:*:*` would cover HID devices that are not input peripherals. The
+    enumerated form is deliberate."""
+    block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
+    assert "*" not in block, "a wildcard interface match is broader than intended"
+
+
+def test_it_is_switchable_and_defaults_on():
+    """A recovery path that has to be remembered is not a recovery path, but the
+    trade-off is real, so it stays a variable someone can turn off."""
+    assert DEFAULTS["hardening_usbguard_allow_console_hid"] is True
+    assert _usbguard_task()["when"] == "hardening_usbguard_allow_console_hid"
+
+
+def test_usbguard_is_reloaded_so_the_rule_takes_effect():
+    """A rule file the daemon has not re-read changes nothing — and the failure
+    mode is silent until the next time somebody needs the console."""
+    assert _usbguard_task().get("notify") == "Restart usbguard"
+    handlers = yaml.safe_load((ROLE / "handlers" / "main.yml").read_text(encoding="utf-8"))
+    assert any(h["name"] == "Restart usbguard" for h in handlers)
+
+
+def test_it_runs_after_the_baseline_that_blocks_it():
+    """Ordering is the whole point: konstruktoid installs USBGuard, so allowing
+    the keyboard before the include would be undone by it."""
+    names = [str(t.get("name", "")) for t in TASKS]
+    assert names.index("Apply konstruktoid.hardening baseline (production settings)") \
+        < next(i for i, n in enumerate(names) if "usbguard" in n.lower())
+
+
+# --- the runbook ---
+
+
+def test_the_runbook_checks_the_client_before_the_server():
+    """The actual 2026-09-01 cause was operator-side. The old entry sent you
+    straight to the KVM console."""
+    section = DOC.split("### SSH stopped accepting a key that used to work")[1]
+    section = section.split("### Recovery ladder")[0]
+    assert "ssh-add -l" in section
+    assert "[preauth]" in section
+    for rung in ("Serial over LAN", "KVM / IPMI", "init=/bin/bash", "rescue"):
+        assert rung in DOC, f"the ladder lost its {rung} rung"
+
+
+def test_the_runbook_still_warns_that_no_console_password_exists():
+    """Rungs 1 and 2 hand you a login prompt. Without this note they read as
+    working recovery paths when they are not."""
+    assert "no console password" in DOC.lower()
+    assert "passwd ubuntu" in DOC
+
+
+def test_the_old_single_line_answer_is_gone():
+    assert "### SSH locked out of OVH server" not in DOC
