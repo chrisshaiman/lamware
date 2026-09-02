@@ -74,3 +74,34 @@ def test_a_missing_cmdlet_is_treated_as_a_pass_not_a_crash():
     that cannot ever pass gets deleted by the next person."""
     assert "SilentlyContinue" in BODY
     assert re.search(r"if \(\$mp\)", BODY), "no branch for the cmdlet being unavailable"
+
+
+def test_it_asserts_on_the_engine_not_the_service_state():
+    """Measured 2026-09-02 after the offline hive edit (#550): Windows resets
+    WinDefend Start from 4 to 3 and runs the service, while reporting
+
+        RealTimeProtectionEnabled = False
+        AntivirusEnabled          = False
+
+    The service running is not the thing that ruins an analysis; scanning is.
+    Failing on the service state was asserting a proxy that disagrees with the
+    property it stands for, so the check reported a usable image as broken."""
+    svc_line = next(l for l in BODY.splitlines() if "WinDefend Start" in l)
+    assert "informational" in svc_line.lower(), "service state must not fail the build"
+    # and the engine assertions must still be failures
+    assert '$problems += "real-time protection is ON"' in BODY
+    assert '$problems += "antivirus engine is ON"' in BODY
+
+
+def test_the_service_state_is_still_reported():
+    """Downgrading it to informational must not mean hiding it -- it is the
+    first thing to look at if a sample behaves oddly."""
+    assert "WinDefend Start" in BODY
+    assert "Get-Service -Name WinDefend" in BODY
+
+
+def test_optional_engine_fields_are_probed_defensively():
+    """AMServiceEnabled and OnAccessProtectionEnabled do not exist on every
+    build. Referencing them blindly would throw and fail a good image."""
+    for field in ("AMServiceEnabled", "OnAccessProtectionEnabled"):
+        assert f"contains '{field}'" in BODY, f"{field} accessed without a guard"

@@ -22,13 +22,15 @@ $problems = @()
 
 # 1. The service. Start=4 is disabled; the specialize pass sets this before
 #    Tamper Protection comes up, and it is the load-bearing mechanism.
+# INFORMATIONAL, not a failure. Windows resets Start=4 to 3 and runs the
+# service even when policy has disabled the engine -- measured on 2026-09-02
+# after the offline hive edit landed. What matters for detonation is whether
+# the engine SCANS, which is asserted below. Failing on the service state was
+# testing a proxy for that, and the proxy disagrees with the real thing.
 $svcStart = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\WinDefend' `
     -Name Start -ErrorAction SilentlyContinue).Start
-Write-Output "  WinDefend Start = $svcStart (4 = disabled)"
-if ($svcStart -ne 4) { $problems += "WinDefend service Start=$svcStart, expected 4" }
-
 $svc = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq 'Running') { $problems += "WinDefend service is Running" }
+Write-Output "  WinDefend Start = $svcStart, status = $(if ($svc) { $svc.Status } else { 'absent' }) (informational)"
 
 # 2. Group Policy keys from the specialize pass.
 $gp = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
@@ -44,8 +46,16 @@ $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
 if ($mp) {
     Write-Output "  RealTimeProtectionEnabled = $($mp.RealTimeProtectionEnabled)"
     Write-Output "  AntivirusEnabled          = $($mp.AntivirusEnabled)"
+    # THE assertions. These are the engine itself reporting whether it scans.
     if ($mp.RealTimeProtectionEnabled) { $problems += "real-time protection is ON" }
     if ($mp.AntivirusEnabled)          { $problems += "antivirus engine is ON" }
+    if ($mp.PSObject.Properties.Name -contains 'AMServiceEnabled' -and $mp.AMServiceEnabled) {
+        $problems += "antimalware service is scanning (AMServiceEnabled)"
+    }
+    if ($mp.PSObject.Properties.Name -contains 'OnAccessProtectionEnabled' -and
+        $mp.OnAccessProtectionEnabled) {
+        $problems += "on-access protection is ON"
+    }
 } else {
     Write-Output "  Get-MpComputerStatus unavailable - consistent with a disabled engine"
 }

@@ -48,19 +48,47 @@ def test_a_usbguard_rule_is_written_at_all():
         "rules.conf does not exist until something creates it")
 
 
+def test_the_hub_carrying_the_keyboard_is_allowed():
+    """Allowing HID alone left the console dead. The BMC presents the keyboard
+    behind 046b:ff01 "Virtual Hub" (class 09), and a blocked hub means the HID
+    never enumerates:
+
+        7: block id 046b:ff01 name "Virtual Hub" via-port "1-9" with-interface 09:00:00
+
+    A hub carries no data of its own and anything behind it still has to match
+    the HID rule, so this does not widen the exposure the HID rule already
+    accepted."""
+    block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
+    classes = set(re.findall(r"\b(\d{2}):\d{2}:\d{2}\b", block))
+    assert "09" in classes, "the BMC virtual hub is blocked; the keyboard cannot appear"
+
+
+def test_mass_storage_stays_blocked_even_with_the_hub_allowed():
+    """Verified on the host after the change: 046b:ff20 "Virtual Cdrom Device"
+    (08:06:50) and 046b:ffb0 "Virtual Ethernet" remained blocked. Allowing the
+    hub must not become allowing everything plugged into it."""
+    block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
+    classes = set(re.findall(r"\b(\w{2}):\w{2}:\w{2}\b", block))
+    assert "08" not in classes, "virtual media / mass storage would be authorised"
+    assert "02" not in classes and "0a" not in classes, "virtual ethernet would be authorised"
+
+
 def test_the_rule_allows_input_devices_only():
     """Parsed from the rendered block, not grepped from the file: the comments
     above it name both the classes we allow and the one we refuse, so a text
     search would match whether or not the rule survived."""
     block = _usbguard_task()["ansible.builtin.blockinfile"]["block"]
     classes = set(re.findall(r"\b(\d{2}):\d{2}:\d{2}\b", block))
-    assert classes == {"03"}, f"expected HID (03) only, got {classes}"
+    assert classes <= {"03", "09"}, f"expected HID and hubs only, got {classes}"
     assert block.strip().startswith("allow ")
 
 
+# 09 (hubs) was in this list until the console was actually tested. The BMC
+# hangs its keyboard off a virtual hub, so forbidding hubs forbade the keyboard.
+# Changed on evidence, not to make a test pass: mass storage and wireless stay
+# forbidden, and both were confirmed still blocked on the host afterwards.
 @pytest.mark.parametrize("forbidden,why", [
     ("08", "mass storage - the exfiltration case USBGuard mainly exists for"),
-    ("09", "hubs"),
     ("e0", "wireless controllers"),
 ])
 def test_no_other_device_class_is_allowed(forbidden, why):
