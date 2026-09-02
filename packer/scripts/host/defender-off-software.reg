@@ -1,0 +1,22 @@
+Windows Registry Editor Version 5.00
+
+; THE load-bearing key. With Tamper Protection on, Windows reverts every other
+; value here on first boot -- which is exactly what happened to the specialize
+; pass in #548. Offline, nothing is defending it.
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Features]
+"TamperProtection"=dword:00000000
+"TamperProtectionSource"=dword:00000002
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows Defender]
+"DisableAntiSpyware"=dword:00000001
+"DisableAntiVirus"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection]
+"DisableRealtimeMonitoring"=dword:00000001
+"DisableBehaviorMonitoring"=dword:00000001
+"DisableOnAccessProtection"=dword:00000001
+"DisableScanOnRealtimeEnable"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows Defender\Spynet]
+"SpynetReporting"=dword:00000000
+"SubmitSamplesConsent"=dword:00000002

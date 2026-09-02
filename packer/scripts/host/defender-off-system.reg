@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+
+; Offline edit of the SYSTEM hive. "CurrentControlSet" is a runtime alias that
+; does not exist in an offline hive, so the real control set is named directly.
+; Start=4 is SERVICE_DISABLED.
+[HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Services\WinDefend]
+"Start"=dword:00000004
+
+[HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Services\WdNisSvc]
+"Start"=dword:00000004
+
+[HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Services\Sense]
+"Start"=dword:00000004
