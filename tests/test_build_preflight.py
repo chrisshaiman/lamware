@@ -139,3 +139,40 @@ def test_a_real_looking_value_is_still_accepted():
     for real in ("Packer@Build1", "3.12.10",
                  "fdfe385b94f5b8785a0226a886979527fd26eb65defdbf29992fd22cc4b0e31e"):
         assert not re.search(pat, real, re.I), f"{real!r} wrongly rejected"
+
+
+def test_required_variables_are_derived_not_restated():
+    """The first version hardcoded six variable names and printed "Ready" while
+    guest_password was still TODO. windows11-base actually declares NINE
+    variables with no default. A list maintained by hand drifts from the
+    template; parsing it cannot."""
+    assert "windows11-base.pkr.hcl" in BODY, "the required list must come from the template"
+    base = BASE.read_text(encoding="utf-8")
+    declared = {m.group(1) for m in re.finditer(
+        r'variable "([^"]+)"\s*\{(.*?)\n\}', base, re.S)
+        if not re.search(r"^\s*default\s*=", m.group(2), re.M)}
+    assert len(declared) >= 9, declared
+    # Assert on the MECHANISM: the loop must iterate the parsed list. Checking
+    # only for quoted variable names missed a mutation that swapped in a bare
+    # `for var in win11_iso_path winrm_password ...` -- the test passed against
+    # its own blind spot, which is the defect this whole script is about.
+    assert re.search(r"for\s+var\s+in\s+\$required\b", BODY), (
+        "the loop no longer iterates the list parsed from the template")
+    stripped = re.sub(r"^\s*#.*$", "", BODY, flags=re.M)
+    # win11_iso_path is named once on purpose: it gets an extra file-exists check.
+    hardcoded = {v for v in declared
+                 if re.search(rf"(?<![\w$]){re.escape(v)}(?![\w])", stripped)}
+    assert hardcoded <= {"win11_iso_path"}, (
+        f"restated in the script instead of parsed: {hardcoded - {'win11_iso_path'}}")
+
+
+def test_a_comment_saying_no_default_is_not_mistaken_for_one():
+    """`guest_password` carries the comment "# No default - set in
+    packer.auto.pkrvars.hcl". A check for the word `default` matches that and
+    concludes the variable is optional, which is exactly what went wrong."""
+    base = BASE.read_text(encoding="utf-8")
+    block = base.split('variable "guest_password"')[1].split("\n}")[0]
+    assert "default" in block, "the comment this guards against is gone; re-confirm the parser"
+    assert not re.search(r"^\s*default\s*=", block, re.M), "guest_password gained a real default"
+    assert "default[[:space:]]*=" in BODY or "default[[:space:]]*=" in BODY.replace("\\", ""), \
+        "the script must match an assignment, not the bare word"
