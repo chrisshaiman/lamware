@@ -42,7 +42,7 @@ server {
 
     # Everything else → HTTPS
     location / {
-        return 301 https://$host$request_uri;
+        return 301 https://{{ frontend_server_name }}$request_uri;
     }
 }
 
@@ -163,16 +163,43 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # OpenAPI docs proxy
+    # OpenAPI docs proxy - WireGuard only (#529)
     location /docs {
+        # Management surface: WireGuard peers only (#529).
+        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
+        # These four paths are not part of that: /docs, /redoc and /openapi.json
+        # enumerate every endpoint and its schema for an unauthenticated reader,
+        # and /auth/admin/ is the Keycloak admin console - the highest-value target
+        # on the host. Both listeners share this server block, so the split is per
+        # location on $remote_addr rather than per listener.
+        allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
+        deny all;
         proxy_pass http://{{ frontend_api_upstream }};
         proxy_set_header Host $host;
     }
     location /redoc {
+        # Management surface: WireGuard peers only (#529).
+        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
+        # These four paths are not part of that: /docs, /redoc and /openapi.json
+        # enumerate every endpoint and its schema for an unauthenticated reader,
+        # and /auth/admin/ is the Keycloak admin console - the highest-value target
+        # on the host. Both listeners share this server block, so the split is per
+        # location on $remote_addr rather than per listener.
+        allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
+        deny all;
         proxy_pass http://{{ frontend_api_upstream }};
         proxy_set_header Host $host;
     }
     location /openapi.json {
+        # Management surface: WireGuard peers only (#529).
+        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
+        # These four paths are not part of that: /docs, /redoc and /openapi.json
+        # enumerate every endpoint and its schema for an unauthenticated reader,
+        # and /auth/admin/ is the Keycloak admin console - the highest-value target
+        # on the host. Both listeners share this server block, so the split is per
+        # location on $remote_addr rather than per listener.
+        allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
+        deny all;
         proxy_pass http://{{ frontend_api_upstream }};
         proxy_set_header Host $host;
     }
@@ -189,6 +216,15 @@ server {
     #
     # Must appear before /auth/ so nginx matches the more specific prefix.
     location /auth/admin/ {
+        # Management surface: WireGuard peers only (#529).
+        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
+        # These four paths are not part of that: /docs, /redoc and /openapi.json
+        # enumerate every endpoint and its schema for an unauthenticated reader,
+        # and /auth/admin/ is the Keycloak admin console - the highest-value target
+        # on the host. Both listeners share this server block, so the split is per
+        # location on $remote_addr rather than per listener.
+        allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
+        deny all;
         limit_req zone=admin burst=100 nodelay;
         proxy_pass http://127.0.0.1:{{ keycloak_port | default(8080) }};
         proxy_set_header Host $host;
