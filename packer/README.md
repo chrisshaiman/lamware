@@ -30,14 +30,38 @@ Every `*.pkr.hcl` declares `required_version = "~> 1.16.0"`, so Packer itself
 refuses a mismatched builder. Patch releases inside 1.16.x are allowed, so a
 security fix is not blocked; a minor bump is a deliberate decision.
 
-## Still not pinned
+## Still not fully pinned: the qemu plugin
 
-`packer init` fetches the `qemu` plugin (`~> 1.1`) from GitHub on first run.
-That constraint is loose and the fetch needs network.
+`packer init` fetches the `qemu` plugin from GitHub on first run. The constraint
+is `~> 1.1`, so any 1.x release satisfies it.
 
-Packer writes a `.pkr.hcl.lock` file recording the exact plugin version and its
-checksums. **Commit it after the first `packer init`** — that is the mechanism
-that makes the plugin reproducible, and this note stands in for it until then.
+**Packer has no plugin lockfile.** An earlier version of this file said to commit
+a `.pkr.hcl.lock` after the first `packer init` — that is a Terraform concept and
+does not exist in Packer. Verified: `packer init windows11-base.pkr.hcl` installs
+the plugin and writes no lock file anywhere, with `required_plugins` correctly
+declared.
+
+So the constraint *is* the pin, and `~> 1.1` is too loose to reproduce a build.
+What `packer init` actually installed is recorded under
+`~/.config/packer/plugins/github.com/hashicorp/qemu/`, alongside a
+`..._SHA256SUM` file:
+
+```
+packer-plugin-qemu_v1.1.6_x5.0_linux_amd64
+packer-plugin-qemu_v1.1.6_x5.0_linux_amd64_SHA256SUM
+```
+
+To make the plugin reproducible, tighten the constraint to the exact version in
+every template that declares it:
+
+```hcl
+required_plugins {
+  qemu = {
+    source  = "github.com/hashicorp/qemu"
+    version = "1.1.6"
+  }
+}
+```
 
 ## Prerequisites the Makefile does not install
 
