@@ -22,7 +22,12 @@
 
 set -euo pipefail
 
-IMG="${1:-$HOME/packer-output/windows11-base.qcow2}"
+# $HOME under sudo is /root, so the default must come from the INVOKING user.
+# The first run of this script failed with:
+#     ERROR: no image at /root/packer-output/windows11-base.qcow2
+INVOKER="${SUDO_USER:-$(id -un)}"
+INVOKER_HOME="$(getent passwd "$INVOKER" | cut -d: -f6)"
+IMG="${1:-${INVOKER_HOME:-$HOME}/packer-output/windows11-base.qcow2}"
 NBD="${NBD_DEV:-/dev/nbd0}"
 MNT="$(mktemp -d /tmp/win-offline.XXXXXX)"
 HERE="$(cd "$(dirname "$0")" && pwd)"

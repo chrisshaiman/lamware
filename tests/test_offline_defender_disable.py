@@ -29,8 +29,8 @@ SYSTEM = (HOST / "defender-off-system.reg").read_text(encoding="utf-8")
 
 # .reg comments start with ";" -- strip them before asserting, or a test matches
 # the prose explaining the rule instead of the rule.
-SYSTEM_KEYS = "\n".join(l for l in SYSTEM.splitlines() if not l.lstrip().startswith(";"))
-SOFTWARE_KEYS = "\n".join(l for l in SOFTWARE.splitlines() if not l.lstrip().startswith(";"))
+SYSTEM_KEYS = "\n".join(ln for ln in SYSTEM.splitlines() if not ln.lstrip().startswith(";"))
+SOFTWARE_KEYS = "\n".join(ln for ln in SOFTWARE.splitlines() if not ln.lstrip().startswith(";"))
 
 
 def test_tamper_protection_is_disabled():
@@ -88,3 +88,15 @@ def test_it_disconnects_nbd_on_every_exit_path():
     fail with a confusing 'image in use'."""
     assert re.search(r"trap cleanup EXIT", SH)
     assert "qemu-nbd --disconnect" in SH.split("cleanup()")[1][:400]
+
+
+def test_the_default_image_path_survives_sudo():
+    """$HOME under sudo is /root. The first real run failed with
+
+        ERROR: no image at /root/packer-output/windows11-base.qcow2
+
+    so the default must resolve against the INVOKING user's home, not root's."""
+    assert "SUDO_USER" in SH, "the default path will resolve to /root under sudo"
+    assert "getent passwd" in SH
+    # and the bare $HOME default must not be the primary source
+    assert not re.search(r'IMG="\$\{1:-\$HOME/', SH)
