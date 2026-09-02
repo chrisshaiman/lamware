@@ -4,6 +4,11 @@
 security_test_install_dir: /opt/security-test
 security_test_domain: "{{ lamware_domain | default('lamware.example.com') }}"
 security_test_api_url: "https://{{ security_test_domain }}"
+# The WireGuard-side URL for the same nginx. /docs must be checked from BOTH
+# sources since #529: nginx denies it publicly (403) while the API gates it for
+# peers (404). Composed here rather than in the template because the template is
+# rendered by a plain-Jinja test harness that has no ansible.utils filters.
+security_test_wg_url: "https://{{ wireguard_address | ansible.utils.ipaddr('address') }}"
 security_test_keycloak_url: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth"
 security_test_nuclei_version: "3.8.0"
 
