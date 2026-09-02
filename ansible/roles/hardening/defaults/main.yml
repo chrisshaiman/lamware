@@ -3,3 +3,14 @@
 # console stays usable as a recovery path. See tasks/main.yml for the trade-off.
 hardening_usbguard_allow_console_hid: true
 hardening_usbguard_rulefile: /etc/usbguard/rules.conf
+
+# Inbound ports UFW must allow, re-added after konstruktoid's baseline.
+#
+# The role sets `default deny (incoming)` and adds exactly ONE inbound rule —
+# sshd from sshd_admin_net. It offers no variable for anything else, so every
+# `TAGS=hardening` deploy silently removes these. On 2026-09-02 a deploy took
+# the public web tier offline and left WireGuard surviving only on conntrack.
+hardening_ufw_inbound:
+  - {port: "80", proto: tcp, comment: "lamware: public HTTP (ACME + redirect)"}
+  - {port: "443", proto: tcp, comment: "lamware: public HTTPS (SPA/api/ws)"}
+  - {port: "51820", proto: udp, comment: "lamware: WireGuard"}

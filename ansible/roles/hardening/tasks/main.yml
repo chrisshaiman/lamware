@@ -64,3 +64,31 @@
     mode: "0600"
   when: hardening_usbguard_allow_console_hid
   notify: Restart usbguard
+
+# =============================================================================
+# UFW: re-add the inbound ports the baseline removes.
+#
+# konstruktoid sets `default deny (incoming)` and adds one inbound rule, for
+# sshd. It exposes `ufw_outgoing_traffic` but nothing for inbound, so anything
+# else this host must serve is deleted on every hardening run.
+#
+# Found the hard way: a TAGS=hardening deploy on 2026-09-02 rewrote
+# /etc/ufw/user.rules at 00:08 and the public site went dark. nginx was fine and
+# still answering locally; the packets never arrived. WireGuard (51820/udp) was
+# not allowed either and kept working only because conntrack held the flow open
+# — it would have dropped on the next idle gap.
+#
+# SSH stays reachable throughout (22/tcp is the rule the baseline DOES add),
+# which is the only reason this was an outage and not a lockout.
+# =============================================================================
+
+- name: Allow the inbound ports the hardening baseline removes
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    direction: in
+    comment: "{{ item.comment }}"
+  loop: "{{ hardening_ufw_inbound }}"
+  loop_control:
+    label: "{{ item.port }}/{{ item.proto }}"
