@@ -83,11 +83,30 @@ fi
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
 echo "[4/7] Docs endpoint gated..."
-DOCS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/docs")
-if [ "$DOCS_CODE" = "404" ] || [ "$DOCS_CODE" = "401" ]; then
-    pass "/docs returns $DOCS_CODE (not exposed)"
+# There are TWO gates since #529, and this checks both. Previously it checked
+# only the application one and asserted 404, so adding the network layer made a
+# correctly-hardened host fail:
+#
+#   public listener   nginx `deny all`            -> 403, refused before the app
+#   WireGuard peer    LAMWARE_ENABLE_DOCS=false   -> 404, from the API itself
+#
+# 403 is the STRONGER answer, not a regression. The invariant that actually
+# matters is that /docs is never 200 from either source, so that is asserted
+# directly rather than pinning an exact code and calling it security.
+DOCS_PUBLIC=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/docs")
+DOCS_WG=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+    "https://{{ wireguard_address | ansible.utils.ipaddr('address') }}/docs")
+
+if [ "$DOCS_PUBLIC" = "200" ]; then
+    fail "/docs returned 200 on the public listener — it is exposed"
+elif [ "$DOCS_WG" = "200" ]; then
+    fail "/docs returned 200 over WireGuard — LAMWARE_ENABLE_DOCS is on"
+elif [ "$DOCS_PUBLIC" != "403" ]; then
+    # Not fatal: the app gate still held. But the network layer is what makes
+    # this safe if LAMWARE_ENABLE_DOCS is ever flipped on, so say so loudly.
+    fail "/docs returned $DOCS_PUBLIC publicly, expected 403 (nginx allow/deny not applied?)"
 else
-    fail "/docs returned $DOCS_CODE (expected 404 — docs should be gated)"
+    pass "/docs: $DOCS_PUBLIC public (nginx denied), $DOCS_WG over WireGuard (app gated)"
 fi
 
 # -------------------------------------------------------------------------
