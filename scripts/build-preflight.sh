@@ -112,12 +112,22 @@ echo "Build inputs"
 
 if [ -f "$PKRVARS" ]; then
   ok "$PKRVARS"
-  for var in win11_iso_path win11_iso_checksum winrm_password \
-             python_checksum cape_agent_commit cape_agent_sha256; do
+  # Derive the required list from the template rather than restating it here.
+  # The first version hardcoded six names and reported "Ready" while
+  # guest_password was still TODO -- it had been missed because the variable's
+  # comment reads "# No default - set in packer.auto.pkrvars.hcl", and a check
+  # for the word `default` matches that comment. Only an assignment counts.
+  required=$(awk '
+    /^variable "/ { name=$2; gsub(/"/,"",name); has=0; next }
+    /^[[:space:]]*default[[:space:]]*=/ { has=1 }
+    /^\}/ { if (name != "" && !has) print name; name=""; has=0 }
+  ' "$PACKER_DIR/windows11-base.pkr.hcl")
+
+  [ -z "$required" ] && fail "could not parse required variables from windows11-base.pkr.hcl" \
+      "the preflight cannot verify build inputs -- fix the parser before building"
+
+  for var in $required; do
     val=$(grep -oE "^ *$var *= *\"[^\"]*\"" "$PKRVARS" | sed -E 's/.*= *"(.*)"/\1/')
-    # Reject placeholders as well as empties. The first version of this only
-    # knew '<...>' and CHANGEME, so a hand-written "TODO-sha256:" passed as OK —
-    # a check that agreed with a value nobody had filled in yet.
     if [ -z "$val" ] || printf '%s' "$val" \
          | grep -qiE '^<|CHANGEME|TODO|^sha256:$|^your-|FIXME|xxxx'; then
       fail "$var unset in $PKRVARS" "See $PACKER_DIR/packer.auto.pkrvars.hcl.example"
