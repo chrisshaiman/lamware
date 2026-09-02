@@ -55,9 +55,22 @@
     path: "{{ hardening_usbguard_rulefile }}"
     create: true
     marker: "# {mark} ANSIBLE MANAGED - out-of-band console HID (#524)"
+    # TWO rules, because allowing HID alone was not enough. Measured on the
+    # host: the BMC presents 046b:ff01 "Virtual Hub" (class 09) and hangs the
+    # keyboard off it, so with the hub blocked the HID never enumerates and the
+    # console stays dead:
+    #
+    #   7: block id 046b:ff01 name "Virtual Hub" via-port "1-9" with-interface 09:00:00
+    #
+    # Allowing hubs costs little: a hub carries no data of its own, and anything
+    # behind it still has to match the HID rule. Confirmed after the change --
+    # the hub is allowed while 046b:ff20 "Virtual Cdrom Device" (08:06:50) and
+    # 046b:ffb0 "Virtual Ethernet" stay blocked, which is the point.
+    #
     # Keyboards and mice only. NOT 03:*:*, which also covers HID devices that
     # are not input peripherals, and emphatically not class 08 (mass storage).
     block: |
+      allow with-interface one-of { 09:00:00 09:00:01 09:00:02 }
       allow with-interface one-of { 03:00:01 03:00:02 03:01:01 03:01:02 }
     owner: root
     group: root
