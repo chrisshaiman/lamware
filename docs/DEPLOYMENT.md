@@ -70,13 +70,22 @@ make --version
 # OpenSSL (used by `make packer-setup` to hash the build password)
 openssl version
 
-# QEMU (required on the build host for the Windows Packer build — Linux only)
-# apt-get install qemu-system-x86 qemu-utils
+# QEMU, UEFI firmware, TPM emulation and mtools
+# (required on the build host for the Windows Packer build — Linux only)
+# apt-get install qemu-system-x86 qemu-utils ovmf swtpm mtools unzip
 qemu-system-x86_64 --version
+
+# Your user must be able to OPEN /dev/kvm, not merely see it:
+#   sudo usermod -aG kvm $USER    # then restart the session (WSL: wsl --shutdown)
+: < /dev/kvm && echo "kvm ok"
+
+# Packer — a pinned release, NOT the apt repo. See packer/README.md.
+packer version
 ```
 
 > **Note:** Packer Windows guest builds require QEMU and must run on Linux. Use the bare
-> metal host itself (after Phase 7) or any Linux machine with 8 GB+ RAM and 100 GB+ disk.
+> metal host itself (after Phase 7) or any Linux machine with 8 GB+ RAM and 100 GB+ disk
+> free (base 64 GB, plus the guest and office outputs).
 
 ### OVH API credentials
 
@@ -109,16 +118,36 @@ ssh-keygen -t ed25519 -f ~/.ssh/sandbox_ed25519 -C "malware-sandbox"
 cat ~/.ssh/sandbox_ed25519.pub
 ```
 
-### Windows 10 evaluation ISO
+### Windows 11 evaluation ISO
 
-Download the Windows 10 22H2 Enterprise Evaluation ISO from Microsoft:
-<https://www.microsoft.com/en-us/evalcenter/evaluate-windows-10-enterprise>
+Download the **Windows 11 Enterprise Evaluation** ISO from Microsoft. It is a free
+public download — no MSDN or volume-licence account:
+<https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise>
 
-Note the local path and compute its SHA-256 hash (needed in Phase 8):
+Note the local path and compute its SHA-256 hash yourself — the checksum goes in
+`packer/packer.auto.pkrvars.hcl` and is simply the hash of the file you downloaded:
 
 ```bash
-sha256sum /path/to/Win10_22H2_EnterpriseEval.iso
+sha256sum /path/to/Win11_EnterpriseEval.iso
 ```
+
+> **The evaluation licence expires 90 days after the image is built**, not after the
+> ISO is downloaded. An expired guest nags and behaves differently, which shows up as
+> *samples* changing behaviour rather than as the environment being broken — so record
+> the build date and treat any comparison spanning it as suspect.
+
+### Checking the build host
+
+Rather than working through the list above by hand:
+
+```bash
+make build-preflight
+```
+
+It checks the tools, `/dev/kvm` (by opening it, not by looking for the device node),
+the UEFI firmware paths, the variables in `packer.auto.pkrvars.hcl`, and capacity —
+printing the exact fix for anything missing. `make win11-base` runs it first and stops
+before doing any work if something is absent.
 
 ---
 

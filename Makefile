@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has all image win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
+.PHONY: provenance provenance-has all image build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -67,7 +67,8 @@ help:
 	@echo "Malware Sandbox Infrastructure"
 	@echo "================================"
 	@echo ""
-	@echo "  make packer-setup         One-time: generate build password + install Ansible hardening role"
+	@echo "  make build-preflight      Check every prerequisite for the Windows image build"
+	@echo "  make packer-setup         One-time (UBUNTU image only): build password + hardening role"
 	@echo "  make autounattend-floppy  Create autounattend floppy image for Windows 11 builds (run once per XML change)"
 	@echo "  make win11-base           Build Windows 11 base image (WinRM enabled, no cleanup)"
 	@echo "  make win11-guest          Build clean guest from base (cleanup only)"
@@ -146,7 +147,15 @@ autounattend-floppy:
 # Expect 45-90 minutes. Run inside tmux/screen.
 # -----------------------------------------------------------------------------
 
-win11-base: autounattend-floppy
+# build-preflight — check every prerequisite for the Windows build.
+# The requirements were spread across DEPLOYMENT.md, packer/README.md and a
+# comment block inside windows11-base.pkr.hcl, and none was complete. A
+# first-time builder found each missing package by failing on it. The inline
+# checks below stay: they guard the two things this target itself touches.
+build-preflight:
+	@./scripts/build-preflight.sh
+
+win11-base: build-preflight autounattend-floppy
 	@echo "==> Building Windows 11 base image..."
 	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
 		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
