@@ -33,7 +33,7 @@ def test_both_sources_are_probed():
     """Checking only the public URL would pass on a host where the app gate had
     been switched off, because nginx answers 403 before the app is consulted."""
     assert "DOCS_PUBLIC=" in SECTION and "DOCS_WG=" in SECTION
-    assert "wireguard_address" in SECTION, "the WireGuard probe must use the real address"
+    assert "$WG_URL" in SECTION, "the WireGuard probe must use the real address"
 
 
 @pytest.mark.parametrize("var", ["DOCS_PUBLIC", "DOCS_WG"])

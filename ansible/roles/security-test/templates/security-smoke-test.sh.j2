@@ -12,6 +12,7 @@
 set -uo pipefail
 
 API_URL="{{ security_test_api_url }}"
+WG_URL="{{ security_test_wg_url }}"
 KC_URL="{{ security_test_keycloak_url }}"
 DOMAIN="{{ security_test_domain }}"
 NUCLEI="{{ security_test_install_dir }}/nuclei"
@@ -94,8 +95,7 @@ echo "[4/7] Docs endpoint gated..."
 # matters is that /docs is never 200 from either source, so that is asserted
 # directly rather than pinning an exact code and calling it security.
 DOCS_PUBLIC=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/docs")
-DOCS_WG=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
-    "https://{{ wireguard_address | ansible.utils.ipaddr('address') }}/docs")
+DOCS_WG=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/docs")
 
 if [ "$DOCS_PUBLIC" = "200" ]; then
     fail "/docs returned 200 on the public listener — it is exposed"
