@@ -163,4 +163,10 @@ build {
   provisioner "powershell" {
     script = "${path.root}/scripts/windows/cleanup.ps1"
   }
+
+  # Fail the build if Defender survived. A blocked disable script exits 0,
+  # so without this the image ships with live antivirus (#548).
+  provisioner "powershell" {
+    script = "${path.root}/scripts/windows/verify-defender-disabled.ps1"
+  }
 }
