@@ -766,10 +766,79 @@ Run a real `make deploy TAGS=api` from the second machine only after both pass.
 
 ## Troubleshooting
 
-### SSH locked out of OVH server
+### SSH stopped accepting a key that used to work
 
-Use the OVH Manager KVM console: Bare Metal Cloud → Dedicated Servers →
-your server → KVM / IPMI.
+**Check the client before touching the server.** On 2026-09-01 this cost a
+rescue-mode boot. `sandbox_ed25519` is passphrase-protected and lives decrypted
+in `ssh-agent` (`AddKeysToAgent yes` in `~/.ssh/config`); a `wsl --shutdown`
+wiped the agent, and every scripted call used `BatchMode=yes`, which forbids the
+passphrase prompt. The client could offer the key but not sign with it.
+
+```sh
+ssh-add -l                                  # "no identities" is the answer
+ssh-keygen -y -P "" -f ~/.ssh/sandbox_ed25519   # fails => key is encrypted
+ssh-add ~/.ssh/sandbox_ed25519              # the fix
+```
+
+`Permission denied (publickey)` from the client only means *it ran out of
+methods*. It does not mean the server rejected the key.
+
+Read the server's own log before believing otherwise:
+
+```
+Accepted key ED25519 SHA256:... found at /home/ubuntu/.ssh/authorized_keys
+Postponed publickey for ubuntu ... [preauth]
+Connection closed by authenticating user ubuntu ... [preauth]
+```
+
+`Accepted key` means the key **is** authorised. `[preauth]` means the connection
+closed *before* authentication finished, which rules out every session-stage
+cause — `pam_loginuid`, `pam_limits`, `maxlogins`, account expiry. A genuine
+server-side rejection looks different: `Failed publickey`, or an explicit
+`not allowed because none of user's groups are listed in AllowGroups`.
+
+### Recovery ladder, when it really is the server
+
+Work down it; each rung costs more than the one above.
+
+**1. Serial over LAN.** OVH Manager → your server → **Serial over LAN (SoL)**.
+Add an SSH key there and `ssh ipmi@<n>.sol.ipmi.ovh.us`. SoL is a *serial* path,
+so it is unaffected by the USBGuard policy that blocks the KVM applet's virtual
+USB keyboard. It gives you a console — you still need a credential to log in.
+
+**2. KVM / IPMI console.** Bare Metal Cloud → Dedicated Servers → your server →
+KVM / IPMI. Note that USBGuard blocks the virtual keyboard unless
+`hardening_usbguard_allow_console_hid` has been applied (`roles/hardening`); the
+symptom is `usb 1-9: Device is not authorized for usage` on the console and a
+keyboard that does nothing.
+
+**3. Single-user boot.** With a working console keyboard, reboot and press `e`
+at the GRUB menu, append `init=/bin/bash` to the `linux` line, Ctrl+X. That is a
+root shell with no password. Use `init=/bin/bash`, **not**
+`systemd.unit=rescue.target` — rescue.target prompts for the root password, and
+root is locked on this host. Then `mount -o remount,rw /`.
+
+**4. OVH rescue mode.** Manager → **Netboot** → `rescue` → Reboot. OVH emails
+temporary root credentials. This is the only rung that needs no existing
+credential and never executes the installed system's binaries, so it is also the
+right first move if you suspect compromise.
+
+```sh
+ssh root@<server-ip>                  # credentials from OVH's email
+mount -o ro /dev/md3 /mnt             # read-only first: preserve timestamps
+tail -100 /mnt/var/log/auth.log
+ls -ld /mnt/home/ubuntu /mnt/home/ubuntu/.ssh /mnt/home/ubuntu/.ssh/authorized_keys
+df -h
+```
+
+Set netboot back to **hard disk** before rebooting, or it boots rescue again.
+
+> **There is no console password on this host.** `ovh/main.tf` provisions
+> key-only and nothing sets one, so rungs 1 and 2 reach a `login:` prompt you
+> cannot satisfy. Setting one with `passwd ubuntu` while you have a shell costs
+> nothing — SSH stays key-only because `sshd_password_authentication: "no"` is
+> set in `roles/hardening` — and it turns a future lockout into a two-minute SoL
+> login instead of a rescue boot.
 
 ### Ansible fails on kvm-qemu.sh
 
