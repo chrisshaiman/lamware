@@ -67,5 +67,8 @@
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.16",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "browserslist": "^4.28.8"
   }
 }
