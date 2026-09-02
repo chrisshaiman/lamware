@@ -115,7 +115,11 @@ if [ -f "$PKRVARS" ]; then
   for var in win11_iso_path win11_iso_checksum winrm_password \
              python_checksum cape_agent_commit cape_agent_sha256; do
     val=$(grep -oE "^ *$var *= *\"[^\"]*\"" "$PKRVARS" | sed -E 's/.*= *"(.*)"/\1/')
-    if [ -z "$val" ] || printf '%s' "$val" | grep -qE '^<|CHANGEME'; then
+    # Reject placeholders as well as empties. The first version of this only
+    # knew '<...>' and CHANGEME, so a hand-written "TODO-sha256:" passed as OK —
+    # a check that agreed with a value nobody had filled in yet.
+    if [ -z "$val" ] || printf '%s' "$val" \
+         | grep -qiE '^<|CHANGEME|TODO|^sha256:$|^your-|FIXME|xxxx'; then
       fail "$var unset in $PKRVARS" "See $PACKER_DIR/packer.auto.pkrvars.hcl.example"
     elif [ "$var" = win11_iso_path ] && [ ! -f "$val" ]; then
       fail "win11_iso_path points at a file that does not exist" "$val"

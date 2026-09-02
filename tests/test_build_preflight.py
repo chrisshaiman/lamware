@@ -118,3 +118,24 @@ def test_the_guide_points_at_the_preflight_rather_than_a_manual_list():
     doc = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
     assert "make build-preflight" in doc
     assert "usermod -aG kvm" in doc, "the undocumented prerequisite must now be documented"
+
+
+@pytest.mark.parametrize("placeholder", [
+    "TODO", "TODO-sha256:", "<sha256-of-iso>", "CHANGEME", "your-build-password",
+])
+def test_a_placeholder_value_is_not_accepted_as_set(placeholder, tmp_path):
+    """The first version knew only '<...>' and CHANGEME, so a hand-written
+    "TODO-sha256:" was reported OK — the check agreeing with a value nobody had
+    filled in. Anything that is obviously not a real value must fail."""
+    pat = re.search(r"grep -qiE '([^']+)'", BODY)
+    assert pat, "the placeholder pattern is gone"
+    assert re.search(pat.group(1), placeholder, re.I), (
+        f"{placeholder!r} would be accepted as a real value")
+
+
+def test_a_real_looking_value_is_still_accepted():
+    """The guard must not become one that rejects everything."""
+    pat = re.search(r"grep -qiE '([^']+)'", BODY).group(1)
+    for real in ("Packer@Build1", "3.12.10",
+                 "fdfe385b94f5b8785a0226a886979527fd26eb65defdbf29992fd22cc4b0e31e"):
+        assert not re.search(pat, real, re.I), f"{real!r} wrongly rejected"
