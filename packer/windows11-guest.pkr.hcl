@@ -164,6 +164,13 @@ build {
     script = "${path.root}/scripts/windows/cleanup.ps1"
   }
 
+  # The guest inherits its licence state from the base. Check it here too --
+  # this is the image Cape actually boots, and an expired one is shut down
+  # hourly by WLMS mid-analysis (#553).
+  provisioner "powershell" {
+    script = "${path.root}/scripts/windows/verify-license.ps1"
+  }
+
   # Fail the build if Defender survived. A blocked disable script exits 0,
   # so without this the image ships with live antivirus (#548).
   provisioner "powershell" {
