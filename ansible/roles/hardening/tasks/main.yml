@@ -105,3 +105,92 @@
   loop: "{{ hardening_ufw_inbound }}"
   loop_control:
     label: "{{ item.port }}/{{ item.proto }}"
+
+# =============================================================================
+# Console-only recovery account (#552).
+#
+# There is no console credential on this host. ovh/main.tf provisions key-only
+# and nothing sets a password, so SoL and the KVM console both reach a login:
+# prompt nobody can satisfy. On 2026-09-01 an operator-laptop key problem -- a
+# passphrase-protected key whose ssh-agent had been wiped -- became an OVH
+# rescue-mode boot, because neither out-of-band path could be used.
+#
+# "Cannot SSH" is STRUCTURAL here, not configured. sshd carries `AllowGroups
+# sudo`, so an account outside that group is refused before anything else is
+# considered:
+#
+#   User root from 10.200.0.4 not allowed because none of user's groups
+#   are listed in AllowGroups
+#
+# The account still needs root powers, and the obvious way to grant them --
+# adding it to `sudo` -- is exactly what would let it SSH in. So sudo is granted
+# by USERNAME in sudoers.d, leaving group membership free to do the refusing.
+#
+# DenyUsers is added as well. It is redundant against the group rule, and that is
+# the point: two independent reasons, so neither an AllowGroups edit nor a
+# group-membership mistake quietly opens remote access to a password account.
+# =============================================================================
+
+- name: Create the console-only recovery account
+  ansible.builtin.user:
+    name: "{{ hardening_console_user }}"
+    shell: /bin/bash
+    create_home: true
+    # NOT sudo. Group membership is the SSH refusal; see the block comment.
+    groups: []
+    append: false
+    password: "{{ console_recovery_password_hash | mandatory }}"
+  when: hardening_console_user_enabled
+  no_log: true
+
+- name: Grant sudo by username rather than by group
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ hardening_console_user }}"
+    owner: root
+    group: root
+    mode: "0440"
+    content: |
+      # Managed by Ansible (roles/hardening). See tasks/main.yml.
+      # By username on purpose: adding this account to the `sudo` group would
+      # also let it in over SSH, which is the thing it must not do.
+      {{ hardening_console_user }} ALL=(ALL) ALL
+    validate: visudo -cf %s
+  when: hardening_console_user_enabled
+
+- name: Refuse SSH for the console account, and prove sshd still parses
+  when: hardening_console_user_enabled
+  block:
+    - name: Deny the console account over SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/20-lamware-console-user.conf
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Managed by Ansible (roles/hardening). See tasks/main.yml.
+          # Redundant against `AllowGroups sudo` in 01-hardening.conf, and that
+          # is deliberate: two independent reasons this account cannot log in
+          # remotely, so neither an AllowGroups edit nor a group-membership
+          # mistake quietly turns it into a remotely usable password credential.
+          DenyUsers {{ hardening_console_user }}
+      notify: Reload sshd
+
+    # sshd_config.d fragments cannot be validated in isolation -- `sshd -t -f`
+    # on a fragment is not a valid config -- so the MERGED config is checked
+    # after writing. If it does not parse, the fragment is removed again below.
+    # Leaving a host whose sshd cannot start is not an acceptable failure mode
+    # for a change whose entire purpose is preserving a way back in.
+    - name: Verify the merged sshd config still parses
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+  rescue:
+    - name: Remove the drop-in that broke sshd
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/20-lamware-console-user.conf
+        state: absent
+    - name: Fail loudly, with sshd left working
+      ansible.builtin.fail:
+        msg: >-
+          sshd rejected 20-lamware-console-user.conf; it has been removed and
+          sshd is unchanged. Check `DenyUsers {{ hardening_console_user }}`
+          against the other files in /etc/ssh/sshd_config.d/.

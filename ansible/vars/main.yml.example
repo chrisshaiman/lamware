@@ -149,3 +149,16 @@ cape_guests:
       - { key: resultserver_ip,    value: "{{ detonation_gateway }}" }
       - { key: resultserver_port,  value: "{{ cape_resultserver_port }}" }
       - { key: tags,               value: office }
+
+# =============================================================================
+# Console-only recovery account (#552)
+#
+# There is no console credential on this host today: ovh/main.tf provisions
+# key-only and nothing sets a password, so Serial-over-LAN and the KVM console
+# both reach a login: prompt nobody can satisfy. On 2026-09-01 that turned an
+# operator-laptop key problem into an OVH rescue-mode boot.
+#
+# Generate with:   mkpasswd -m sha-512
+# Put the HASH here (or better, in vars/secrets.yml). Never the plaintext.
+# =============================================================================
+console_recovery_password_hash: "CHANGEME"

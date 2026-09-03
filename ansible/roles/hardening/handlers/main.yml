@@ -4,3 +4,8 @@
     name: usbguard
     state: restarted
   failed_when: false
+
+- name: Reload sshd
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
