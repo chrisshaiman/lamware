@@ -424,6 +424,24 @@ build {
 
   # Fail the build if Defender survived. A blocked disable script exits 0,
   # so without this the image ships with live antivirus (#548).
+
+  # Reset the evaluation clock. The media carries a shelf life and the first
+  # build from it produced an already-expired guest (#553); an expired Windows
+  # is shut down hourly by WLMS, truncating analyses.
+  provisioner "powershell" {
+    script = "${path.root}/scripts/windows/rearm-license.ps1"
+  }
+
+  # The new evaluation period only takes effect after a restart.
+  provisioner "windows-restart" {
+    restart_timeout = "30m"
+  }
+
+  # Fail the build if the licence is not usable, rather than discovering it on a
+  # screenshot after the image is already on the sandbox.
+  provisioner "powershell" {
+    script = "${path.root}/scripts/windows/verify-license.ps1"
+  }
   provisioner "powershell" {
     script = "${path.root}/scripts/windows/verify-defender-disabled.ps1"
   }
