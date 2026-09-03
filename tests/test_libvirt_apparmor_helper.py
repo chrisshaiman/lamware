@@ -29,6 +29,13 @@ TASKS = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text(encoding="utf-8")
 HANDLERS = yaml.safe_load((ROLE / "handlers" / "main.yml").read_text(encoding="utf-8"))
 
 
+def _rule_lines(content: str) -> list[str]:
+    """AppArmor rules only -- comments in this block quote the very paths the
+    rules grant, so an unfiltered substring check is satisfied by the prose."""
+    return [ln.strip() for ln in content.splitlines()
+            if ln.strip() and not ln.strip().startswith("#")]
+
+
 def _aa_task():
     for t in TASKS:
         c = t.get("ansible.builtin.copy")
@@ -80,3 +87,35 @@ def test_every_handler_is_actually_notified_by_something(h):
     body = (ROLE / "tasks" / "main.yml").read_text(encoding="utf-8") + \
            (ROLE / "handlers" / "main.yml").read_text(encoding="utf-8")
     assert body.count(h) >= 2, f"{h} is defined but never notified"
+
+
+def test_the_patched_qemu_path_is_executable_by_libvirtd():
+    """cape_qemu_binary is /usr/local/bin/qemu-system-x86_64 (roles/cape
+    defaults) -- deliberately outside /usr/bin, so a qemu-system-x86 package
+    update cannot silently replace the DSDT-patched binary with stock.
+
+    The shipped profile has no /usr/local rules at all, so `virsh define` failed
+    for EVERY guest on 2026-09-03:
+
+        error: Failed to start QEMU binary /usr/local/bin/qemu-system-x86_64
+               for probing: cannot execute binary: Permission denied
+    """
+    # Strip comments first: the path also appears in the explanatory comment,
+    # so a plain substring check passed with the RULE deleted -- verified by
+    # mutating it away.
+    rules = _rule_lines(_aa_task()["ansible.builtin.copy"]["content"])
+    assert any(r.startswith("/usr/local/bin/qemu-system-x86_64") and "PUxr" in r
+               for r in rules), f"no exec rule for the patched qemu; rules={rules}"
+
+
+def test_the_emulator_default_still_points_where_the_rule_grants():
+    """If cape_qemu_binary moves, this rule silently stops covering it and
+    defines start failing again -- so assert the two agree."""
+    import yaml
+    d = yaml.safe_load((ROOT / "ansible" / "roles" / "cape" / "defaults"
+                        / "main.yml").read_text(encoding="utf-8"))
+    emulator = d.get("cape_qemu_binary", "")
+    rules = _rule_lines(_aa_task()["ansible.builtin.copy"]["content"])
+    assert emulator, "cape_qemu_binary has no default"
+    assert any(r.startswith(emulator) for r in rules), (
+        f"cape_qemu_binary is {emulator} but no AppArmor RULE grants it; rules={rules}")

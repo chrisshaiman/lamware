@@ -198,6 +198,19 @@
       # helper at /usr/lib/libvirt/. Without this, no domain can start.
       /usr/lib/libvirt/virt-aa-helper PUxr,
       /usr/lib/libvirt/* PUxr,
+
+      # The patched QEMU lives in /usr/local/bin (cape_qemu_binary), where a
+      # qemu-system-x86 package update cannot silently replace it with stock
+      # and undo the DSDT/brand patching. libvirtd must execute it both to
+      # probe capabilities and to define a domain naming it as <emulator>:
+      #
+      #   error: Failed to start QEMU binary /usr/local/bin/qemu-system-x86_64
+      #          for probing: cannot execute binary: Permission denied
+      #
+      # Without this, `virsh define` fails for EVERY guest, which is how the
+      # 2026-09-03 image install stopped.
+      /usr/local/bin/qemu-system-x86_64 PUxr,
+      /usr/local/bin/qemu-* PUxr,
   notify: Reload libvirtd apparmor profile
 
 # =============================================================================
