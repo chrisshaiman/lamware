@@ -442,9 +442,18 @@ build {
   provisioner "powershell" {
     script = "${path.root}/scripts/windows/verify-license.ps1"
   }
-  provisioner "powershell" {
-    script = "${path.root}/scripts/windows/verify-defender-disabled.ps1"
-  }
+  # verify-defender-disabled.ps1 deliberately does NOT run here.
+  #
+  # This build installs Windows from the ISO, so Defender is live throughout and
+  # blocks disable-defender.ps1 via AMSI (#548). The working fix is an OFFLINE
+  # hive edit applied to the qcow2 after this build finishes -- Tamper Protection
+  # defeats every in-guest approach (#550):
+  #
+  #     sudo packer/scripts/host/disable-defender-offline.sh
+  #
+  # So the check belongs to windows11-guest, which boots the already-corrected
+  # image. Running it here would fail every base build by construction, and a
+  # gate that always fails gets bypassed rather than fixed.
 
   # No cleanup step — this is the builder base image.
   # Cleanup runs in the derived images (windows11-guest.pkr.hcl, windows11-office.pkr.hcl).

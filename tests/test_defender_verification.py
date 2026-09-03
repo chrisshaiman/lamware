@@ -25,12 +25,25 @@ SCRIPT = ROOT / "packer" / "scripts" / "windows" / "verify-defender-disabled.ps1
 BODY = SCRIPT.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("template", ["windows11-base.pkr.hcl", "windows11-guest.pkr.hcl"])
-def test_the_check_runs_in_both_builds(template):
-    """Base is where it must fail — 37 minutes earlier than the guest build.
-    Guest keeps it too, because the guest is what CAPE actually boots."""
-    t = (ROOT / "packer" / template).read_text(encoding="utf-8")
-    assert "verify-defender-disabled.ps1" in t, f"{template} does not verify Defender"
+def test_the_check_runs_in_the_guest_build():
+    """The guest boots the image the OFFLINE hive edit has already corrected, so
+    this is the first point at which the check can meaningfully pass."""
+    t = (ROOT / "packer" / "windows11-guest.pkr.hcl").read_text(encoding="utf-8")
+    assert "verify-defender-disabled.ps1" in t
+
+
+def test_it_does_not_run_in_the_base_build():
+    """The base build installs from the ISO with Defender live, so
+    disable-defender.ps1 is blocked by AMSI and the check could never pass there.
+    A gate that always fails gets bypassed rather than fixed -- and the base
+    build must still produce the artifact the offline fix is applied to.
+
+    The rationale has to stay in the template, or someone re-adds it."""
+    t = (ROOT / "packer" / "windows11-base.pkr.hcl").read_text(encoding="utf-8")
+    assert "verify-defender-disabled.ps1" in t, "the reason must be recorded here"
+    assert 'script = "${path.root}/scripts/windows/verify-defender-disabled.ps1"' not in t, \
+        "base cannot satisfy this check; it belongs to the guest build"
+    assert "disable-defender-offline.sh" in t, "the working fix must be pointed at"
 
 
 @pytest.mark.parametrize("template", ["windows11-base.pkr.hcl", "windows11-guest.pkr.hcl"])
