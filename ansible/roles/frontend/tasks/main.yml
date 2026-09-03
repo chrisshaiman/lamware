@@ -197,3 +197,46 @@
     name: nginx
     state: started
     enabled: true
+
+# =============================================================================
+# nginx must not start before the WireGuard address exists.
+#
+# The site listens on {{ wireguard_address }} as well as the public IP. On the
+# 2026-09-02 reboot nginx started first and died:
+#
+#   nginx: [emerg] bind() to 10.200.0.1:80 failed (99: Cannot assign requested address)
+#
+# `nginx -t` passed and starting it by hand afterwards worked, so the config was
+# never wrong -- it lost a race. Left alone this recurs on EVERY boot, and the
+# symptom is a dead public site with a healthy-looking config.
+#
+# After+Wants rather than Requires: ordering is what is needed, and Requires
+# would also take nginx down whenever the tunnel is restarted for its own
+# reasons. Restart=on-failure covers the case where wg0 is late anyway, so a
+# still-lost race self-heals instead of needing a person.
+# =============================================================================
+
+- name: Ensure the nginx systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Order nginx after the WireGuard interface it binds
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/10-wireguard-ordering.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/frontend). See tasks/main.yml for why.
+      [Unit]
+      After=wg-quick@wg0.service
+      Wants=wg-quick@wg0.service
+
+      [Service]
+      Restart=on-failure
+      RestartSec=5
+  notify: Reload systemd and restart nginx
