@@ -49,8 +49,14 @@ if ($mp) {
     # THE assertions. These are the engine itself reporting whether it scans.
     if ($mp.RealTimeProtectionEnabled) { $problems += "real-time protection is ON" }
     if ($mp.AntivirusEnabled)          { $problems += "antivirus engine is ON" }
-    if ($mp.PSObject.Properties.Name -contains 'AMServiceEnabled' -and $mp.AMServiceEnabled) {
-        $problems += "antimalware service is scanning (AMServiceEnabled)"
+    # AMServiceEnabled is INFORMATIONAL, not an assertion. It reports whether
+    # the antimalware service host is loaded, which is the same proxy as
+    # "WinDefend is Running" above -- and measured on 2026-09-03 it is True on a
+    # guest reporting AntivirusEnabled=False and RealTimeProtectionEnabled=False.
+    # The service being resident does not mean anything is being scanned, and
+    # failing on it rejected an image that was correctly disabled.
+    if ($mp.PSObject.Properties.Name -contains 'AMServiceEnabled') {
+        Write-Output "  AMServiceEnabled          = $($mp.AMServiceEnabled) (informational)"
     }
     if ($mp.PSObject.Properties.Name -contains 'OnAccessProtectionEnabled' -and
         $mp.OnAccessProtectionEnabled) {

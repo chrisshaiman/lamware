@@ -195,6 +195,14 @@ win11-base: build-preflight autounattend-floppy
 # Expect ~5 minutes.
 # -----------------------------------------------------------------------------
 
+# -force here, matching win11-base. Without it packer refuses with
+#
+#   Output directory './output-guest' already exists. It must not exist.
+#
+# which lands AFTER the base build and the offline Defender step -- the two
+# slowest things in the pipeline. The output is fully reproducible from the base
+# image, so refusing to overwrite protects nothing; it just moves the failure to
+# the least convenient moment (#522, same shape).
 win11-guest:
 	@echo "==> Building Windows 11 guest (clean) image from base..."
 	@[ -f "$(BASE_IMAGE)" ] || (echo "ERROR: base image not found at $(BASE_IMAGE)." && \
@@ -203,7 +211,7 @@ win11-guest:
 	@cd $(PACKER_DIR) && \
 		BASE_SHA=$$(sha256sum "$(BASE_IMAGE)" | cut -d' ' -f1) && \
 		packer init windows11-guest.pkr.hcl && \
-		packer build -var-file=packer.auto.pkrvars.hcl \
+		packer build -force -var-file=packer.auto.pkrvars.hcl \
 			-var win11_base_image_path="$(BASE_IMAGE)" \
 			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
 			windows11-guest.pkr.hcl
@@ -221,7 +229,7 @@ win11-office:
 	@cd $(PACKER_DIR) && \
 		BASE_SHA=$$(sha256sum "$(BASE_IMAGE)" | cut -d' ' -f1) && \
 		packer init windows11-office.pkr.hcl && \
-		packer build -var-file=packer.auto.pkrvars.hcl \
+		packer build -force -var-file=packer.auto.pkrvars.hcl \
 			-var win11_base_image_path="$(BASE_IMAGE)" \
 			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
 			windows11-office.pkr.hcl

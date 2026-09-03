@@ -113,8 +113,19 @@ def test_the_service_state_is_still_reported():
     assert "Get-Service -Name WinDefend" in BODY
 
 
+def test_the_service_host_is_not_treated_as_scanning():
+    """AMServiceEnabled says the antimalware service is loaded, not that it is
+    scanning. Measured 2026-09-03: True on a guest reporting AntivirusEnabled
+    False and RealTimeProtectionEnabled False. Asserting on it rejected a
+    correctly-disabled image -- the same service-vs-engine confusion this file
+    already fixed once for WinDefend."""
+    line = next(l for l in BODY.splitlines() if "AMServiceEnabled" in l and "Write-Output" in l)
+    assert "informational" in line.lower()
+    assert '$problems += "antimalware service' not in BODY
+
+
 def test_optional_engine_fields_are_probed_defensively():
     """AMServiceEnabled and OnAccessProtectionEnabled do not exist on every
     build. Referencing them blindly would throw and fail a good image."""
-    for field in ("AMServiceEnabled", "OnAccessProtectionEnabled"):
+    for field in ("OnAccessProtectionEnabled",):
         assert f"contains '{field}'" in BODY, f"{field} accessed without a guard"
