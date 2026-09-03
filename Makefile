@@ -166,7 +166,18 @@ win11-base: build-preflight autounattend-floppy
 	@cd $(PACKER_DIR) && \
 		packer init windows11-base.pkr.hcl && \
 		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-base.pkr.hcl
-	@echo "==> Windows 11 base image complete. Now run: make win11-guest and/or make win11-office"
+	@echo "==> Windows 11 base image complete."
+	@echo ""
+	@echo "    NEXT, and it is not optional: Defender is still ACTIVE in this image."
+	@echo "    The in-guest disable is blocked by AMSI and Tamper Protection (#548),"
+	@echo "    so it is corrected offline against the qcow2 before anything uses it:"
+	@echo ""
+	@echo "        sudo packer/scripts/host/disable-defender-offline.sh"
+	@echo ""
+	@echo "    Then update win11_base_image_checksum in packer.auto.pkrvars.hcl"
+	@echo "    (the edit changes the file), and run: make win11-guest"
+	@echo "    win11-guest verifies both Defender and the licence and will refuse"
+	@echo "    an image where either is wrong."
 
 # win11-guest — production "clean" image (runs cleanup on base)
 # Expect ~5 minutes.
