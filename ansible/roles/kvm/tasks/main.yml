@@ -199,3 +199,36 @@
       /usr/lib/libvirt/virt-aa-helper PUxr,
       /usr/lib/libvirt/* PUxr,
   notify: Reload libvirtd apparmor profile
+
+# =============================================================================
+# Mask the standalone dnsmasq service.
+#
+# libvirt runs its OWN dnsmasq per network, from
+# /var/lib/libvirt/dnsmasq/detonation.conf, and that is the one serving DNS and
+# DHCP on the detonation bridge. The packaged system service listens on all
+# interfaces by default, so it tries to bind the same address and loses:
+#
+#   dnsmasq[...]: failed to create listening socket for 192.168.100.1:
+#                 Address already in use
+#   dnsmasq.service: Failed with result 'exit-code'
+#
+# It has failed on every boot since. Harmless in itself -- libvirt won the race
+# and the guests have DNS -- but a permanently failed unit is noise that trains
+# people to ignore `systemctl --failed`, which is where the NEXT real failure
+# will appear. This host had four genuine failed units after the 2026-09-02
+# reboot and they were harder to spot for it (#528).
+#
+# Masked rather than disabled: masking survives a package update re-enabling it.
+# Masked rather than removing the dnsmasq package: only dnsmasq-base is required
+# (installed above), but the full package was installed by hand on this host and
+# removing packages out from under an operator is a bigger action than silencing
+# a unit we can show is redundant.
+# =============================================================================
+
+- name: Mask the standalone dnsmasq service (libvirt runs its own)
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    enabled: false
+    masked: true
+    state: stopped
+  failed_when: false
