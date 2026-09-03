@@ -79,3 +79,16 @@ def test_the_example_tells_you_not_to_set_them_by_hand():
     assert "stale" in block.lower()
     # and they must stay commented out
     assert not re.search(r"^\s*win11_base_image_path\s*=", EXAMPLE, re.M)
+
+
+@pytest.mark.parametrize("target", ["win11-guest", "win11-office"])
+def test_a_stale_output_directory_does_not_block_the_build(target):
+    """packer refuses to reuse an output directory:
+
+        Output directory './output-guest' already exists. It must not exist.
+
+    That lands AFTER the base build and the offline Defender step -- the two
+    slowest things in the pipeline -- for an image that is fully reproducible
+    from the base. win11-base already used -force; these did not, and it cost a
+    run on 2026-09-03."""
+    assert "packer build -force" in _target(target), f"{target} will fail on a rerun"
