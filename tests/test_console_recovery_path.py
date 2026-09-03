@@ -140,11 +140,16 @@ def test_the_runbook_checks_the_client_before_the_server():
         assert rung in DOC, f"the ladder lost its {rung} rung"
 
 
-def test_the_runbook_still_warns_that_no_console_password_exists():
-    """Rungs 1 and 2 hand you a login prompt. Without this note they read as
-    working recovery paths when they are not."""
-    assert "no console password" in DOC.lower()
-    assert "passwd ubuntu" in DOC
+def test_the_runbook_documents_the_console_account():
+    """This assertion used to be the opposite -- it required the guide to WARN
+    that no console password existed, which was true and important until #552
+    created one. Updated rather than deleted: rungs 1 and 2 hand you a login
+    prompt, and the guide has to say what to type at it, or they read as working
+    recovery paths when they are not."""
+    assert "console-recovery" in DOC, "the console account is undocumented"
+    assert "console_recovery_password_hash" in DOC or "vault" in DOC.lower()
+    # and it must still record WHY it exists, or someone removes it as clutter
+    assert "rescue-mode boot" in DOC or "rescue mode" in DOC.lower()
 
 
 def test_the_old_single_line_answer_is_gone():
