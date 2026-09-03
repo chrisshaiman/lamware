@@ -833,12 +833,37 @@ df -h
 
 Set netboot back to **hard disk** before rebooting, or it boots rescue again.
 
-> **There is no console password on this host.** `ovh/main.tf` provisions
-> key-only and nothing sets one, so rungs 1 and 2 reach a `login:` prompt you
-> cannot satisfy. Setting one with `passwd ubuntu` while you have a shell costs
-> nothing — SSH stays key-only because `sshd_password_authentication: "no"` is
-> set in `roles/hardening` — and it turns a future lockout into a two-minute SoL
-> login instead of a rescue boot.
+### The console account
+
+`roles/hardening` creates **`console-recovery`**: a password account that can log
+in at the console and cannot log in over SSH. Its password hash comes from
+`console_recovery_password_hash` in the vault.
+
+"Cannot SSH" is structural rather than configured. sshd carries
+`AllowGroups sudo`, so an account outside that group is refused outright:
+
+```
+User <name> not allowed because none of user's groups are listed in AllowGroups
+```
+
+It still needs root powers, and the obvious way to grant them — adding it to
+`sudo` — is exactly what would let it in remotely. So sudo is granted by
+*username* in `/etc/sudoers.d/`, leaving group membership free to do the
+refusing. A `DenyUsers` line is added as well: redundant on purpose, so that
+neither an `AllowGroups` edit nor a group-membership mistake quietly turns this
+into a remotely usable password credential.
+
+Verify both halves after deploying — checking the config alone tests the proxy,
+not the property:
+
+```sh
+ssh console-recovery@<host>          # must be refused
+# then log in with the same credentials over SoL, which must work
+```
+
+> Before this existed there was **no console credential at all**, and rungs 1 and
+> 2 above reached a `login:` prompt nobody could satisfy. That is what turned an
+> operator-laptop key problem into a rescue-mode boot on 2026-09-01.
 
 ### Ansible fails on kvm-qemu.sh
 

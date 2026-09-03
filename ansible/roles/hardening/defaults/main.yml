@@ -14,3 +14,10 @@ hardening_ufw_inbound:
   - {port: "80", proto: tcp, comment: "lamware: public HTTP (ACME + redirect)"}
   - {port: "443", proto: tcp, comment: "lamware: public HTTPS (SPA/api/ws)"}
   - {port: "51820", proto: udp, comment: "lamware: WireGuard"}
+
+# Console-only recovery account (#552). Deliberately NOT in the sudo group:
+# sshd carries `AllowGroups sudo`, so group membership is what refuses it over
+# SSH. Sudo rights are granted by username in sudoers.d instead, which keeps the
+# two independent.
+hardening_console_user: console-recovery
+hardening_console_user_enabled: true
