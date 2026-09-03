@@ -4,3 +4,14 @@
   changed_when: true
   # Note: hugepage change in GRUB requires a reboot to take full effect.
   # Runtime sysctl change in tasks/main.yml handles the current session.
+
+- name: Reload libvirtd apparmor profile
+  ansible.builtin.command: apparmor_parser -r /etc/apparmor.d/usr.sbin.libvirtd
+  changed_when: true
+  notify: Restart libvirtd after apparmor reload
+
+- name: Restart libvirtd after apparmor reload
+  ansible.builtin.systemd_service:
+    name: libvirtd
+    state: restarted
+  failed_when: false
