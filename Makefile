@@ -129,6 +129,18 @@ packer-setup:
 
 AUTOUNATTEND_IMG ?= $(PACKER_DIR)/output/autounattend.img
 
+# Where win11-base leaves its artifact. Read from the same pkrvars packer uses,
+# so the two cannot disagree; falls back to packer's default output dir.
+#
+# win11-guest and win11-office need this path AND its sha256. Both were left to
+# be hand-filled in pkrvars after the base build (#522) -- discovered only after
+# the 45-90 minute step, and wrong again the moment the image is touched, which
+# it is: the offline Defender fix (#550) rewrites the hives and changes the hash.
+# Computing it here means it is never stale and never forgotten.
+BASE_OUTPUT_DIR ?= $(shell awk -F'"' '/^[[:space:]]*output_directory[[:space:]]*=/{print $$2; exit}' \
+                     $(PACKER_DIR)/packer.auto.pkrvars.hcl 2>/dev/null)
+BASE_IMAGE      ?= $(if $(BASE_OUTPUT_DIR),$(BASE_OUTPUT_DIR),$(PACKER_DIR)/output)/windows11-base.qcow2
+
 autounattend-floppy:
 	@echo "==> Creating autounattend floppy image at $(AUTOUNATTEND_IMG)..."
 	@command -v mformat >/dev/null 2>&1 || \
@@ -185,9 +197,16 @@ win11-base: build-preflight autounattend-floppy
 
 win11-guest:
 	@echo "==> Building Windows 11 guest (clean) image from base..."
+	@[ -f "$(BASE_IMAGE)" ] || (echo "ERROR: base image not found at $(BASE_IMAGE)." && \
+		echo "       Run 'make win11-base' first, or set BASE_IMAGE=<path>." && exit 1)
+	@echo "==> Hashing $(BASE_IMAGE) (~30s)..."
 	@cd $(PACKER_DIR) && \
+		BASE_SHA=$$(sha256sum "$(BASE_IMAGE)" | cut -d' ' -f1) && \
 		packer init windows11-guest.pkr.hcl && \
-		packer build -var-file=packer.auto.pkrvars.hcl windows11-guest.pkr.hcl
+		packer build -var-file=packer.auto.pkrvars.hcl \
+			-var win11_base_image_path="$(BASE_IMAGE)" \
+			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
+			windows11-guest.pkr.hcl
 	@echo "==> Windows 11 guest image complete."
 
 # win11-office — production "office" image (LibreOffice + cleanup on base)
@@ -196,9 +215,16 @@ win11-guest:
 
 win11-office:
 	@echo "==> Building Windows 11 office image from base..."
+	@[ -f "$(BASE_IMAGE)" ] || (echo "ERROR: base image not found at $(BASE_IMAGE)." && \
+		echo "       Run 'make win11-base' first, or set BASE_IMAGE=<path>." && exit 1)
+	@echo "==> Hashing $(BASE_IMAGE) (~30s)..."
 	@cd $(PACKER_DIR) && \
+		BASE_SHA=$$(sha256sum "$(BASE_IMAGE)" | cut -d' ' -f1) && \
 		packer init windows11-office.pkr.hcl && \
-		packer build -var-file=packer.auto.pkrvars.hcl windows11-office.pkr.hcl
+		packer build -var-file=packer.auto.pkrvars.hcl \
+			-var win11_base_image_path="$(BASE_IMAGE)" \
+			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
+			windows11-office.pkr.hcl
 	@echo "==> Windows 11 office image complete."
 
 # win11-image — build all Windows 11 images (base → guest + office)
