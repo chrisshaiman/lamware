@@ -163,3 +163,39 @@
              '). The modprobe.d file is in place but the module has not been reloaded. ' ~
              'Stop all guests and `modprobe -r kvm_intel && modprobe kvm_intel`, or reboot. (#305)'
       }}
+
+# =============================================================================
+# AppArmor: let libvirtd execute its own helper.
+#
+# The shipped libvirtd profile permits /usr/libexec/* but libvirt-daemon installs
+# virt-aa-helper at /usr/lib/libvirt/virt-aa-helper, and libvirtd invokes it
+# there. When the two disagree, EVERY domain start fails:
+#
+#   error: internal error: cannot load AppArmor profile 'libvirt-<uuid>'
+#   ... cannot execute binary /usr/lib/libvirt/virt-aa-helper: Permission denied
+#
+#   audit: operation="exec" profile="libvirtd"
+#          name="/usr/lib/libvirt/virt-aa-helper" comm="rpc-libvirtd"
+#
+# That is total loss of analysis capability, and it is silent until something
+# tries to start a guest -- Cape's guests are normally shut off, so the host
+# looks healthy. Hit on 2026-09-02 after the libvirt packages were reinstalled to
+# repair the half-replaced source build (#528).
+#
+# A local/ include rather than editing the profile: package updates overwrite the
+# shipped file and would silently drop an inline edit.
+# =============================================================================
+
+- name: Allow libvirtd to execute virt-aa-helper at its packaged path
+  ansible.builtin.copy:
+    dest: /etc/apparmor.d/local/usr.sbin.libvirtd
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/kvm). See tasks/main.yml for why.
+      # The shipped profile allows /usr/libexec/* only; the package installs the
+      # helper at /usr/lib/libvirt/. Without this, no domain can start.
+      /usr/lib/libvirt/virt-aa-helper PUxr,
+      /usr/lib/libvirt/* PUxr,
+  notify: Reload libvirtd apparmor profile
