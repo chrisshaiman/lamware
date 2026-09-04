@@ -100,3 +100,33 @@ def test_the_unmatched_mac_is_documented_not_forgotten():
     test attached -- not an oversight."""
     assert "NOT matched" in BASE and "MAC" in BASE
     assert "verify-license" in BASE
+
+
+def test_every_smbios_field_the_domain_sets_is_also_set_at_build_time():
+    """The point of this profile is that Windows sees no hardware change. A
+    field present in the domain but absent from the build IS a change.
+
+    Found by comparing them on the live host: the domain's system block carries
+    version='Not Specified' and the build's type=1 omitted version entirely."""
+    tpl = (ROOT / "ansible" / "roles" / "cape-guests" / "templates"
+           / "guest-domain.xml.j2").read_text(encoding="utf-8")
+    # Pick the block that actually contains <entry> elements. Splitting on the
+    # bare tag matched a COMMENT discussing sysinfo earlier in the file, which
+    # is how this test first failed with an IndexError rather than a real result.
+    blocks = [b for b in re.findall(r"<sysinfo\b.*?</sysinfo>", tpl, re.S)
+              if "<entry" in b]
+    assert blocks, "no sysinfo block with entries found"
+    sysinfo = blocks[0]
+
+    def entries(section: str) -> set[str]:
+        seg = sysinfo.split(f"<{section}>")[1].split(f"</{section}>")[0]
+        return set(re.findall(r"entry name='([a-z]+)'", seg))
+
+    args = re.findall(r'\["-smbios",\s*"([^"]+)"', BASE)
+    by_type = {a.split(",")[0]: a for a in args}
+    for section, smbios_type in (("system", "type=1"), ("baseBoard", "type=2")):
+        arg = by_type.get(smbios_type, "")
+        missing = {f for f in entries(section) if f"{f}=" not in arg}
+        # uuid is only meaningful on type=1; family/version/serial must all appear
+        assert not missing, (
+            f"{section} sets {sorted(missing)} but the build's {smbios_type} does not")

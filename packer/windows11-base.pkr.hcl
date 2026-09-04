@@ -350,7 +350,7 @@ source "qemu" "windows11_base" {
     # SMBIOS: the same identity the libvirt domain presents, so Windows does not
     # see a hardware change when Cape boots this image (#553).
     ["-smbios", "type=0,vendor=${var.guest_bios_vendor},version=${var.guest_bios_version},date=${var.guest_bios_date}"],
-    ["-smbios", "type=1,manufacturer=${var.guest_smbios_manufacturer},product=${var.guest_smbios_product},serial=${var.guest_smbios_serial},uuid=${var.guest_smbios_uuid},family=OptiPlex"],
+    ["-smbios", "type=1,manufacturer=${var.guest_smbios_manufacturer},product=${var.guest_smbios_product},version=Not Specified,serial=${var.guest_smbios_serial},uuid=${var.guest_smbios_uuid},family=OptiPlex"],
     ["-smbios", "type=2,manufacturer=${var.guest_smbios_manufacturer},product=0K1RTX,version=A00,serial=${var.guest_smbios_serial}"],
 
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
