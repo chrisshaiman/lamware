@@ -118,6 +118,9 @@ _CTX = {
     "detonation_bridge": "virbr-det",
     "cape_guest_memory_kb": 4194304,
     "cape_guest_vcpus": 2,
+    # Deliberately not the real default, so anything asserting on a rendered
+    # CPU model is asserting the template read the variable (#574).
+    "cape_guest_cpu_model": "Nehalem",
 }
 
 

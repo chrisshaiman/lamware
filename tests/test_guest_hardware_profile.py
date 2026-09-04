@@ -1,6 +1,10 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""The image must be built on the hardware it will run on (#553).
+"""The image must be built against the hardware profile it will run under (#553, #574).
+
+Against the *profile*, not the machine. The profile is what these tests pin, and
+pinning all of it is what lets any machine build an image that runs here -- the
+portability property the build is supposed to have.
 
 Windows binds activation to a hardware hash. Building in one VM shape and running
 in another invalidates the licence on first boot in the real domain. Measured
@@ -15,6 +19,21 @@ rebuild existed to remove.
 
 The deltas were large: 4096 vs 8192 MB, 2 vs 4 vCPUs, no SMBIOS vs a full Dell
 block, and `-cpu host` without the hypervisor bit cleared.
+
+Closing those was not enough, because two components were still unpinned.
+Measured 2026-09-04, on the first uncontaminated test -- matched SMBIOS, no
+intermediate boots:
+
+    Notification Reason: 0xC004F00F
+    (hardware ID binding is beyond the level of tolerance)
+
+`-cpu host` names the builder's own silicon, so the two sides agreed only while
+the build machine and the sandbox were the same box; they were not. The NIC MAC
+was unpinned too, and Windows enumerated the domain's card as a second adapter.
+
+The SMBIOS identity, by contrast, changed between the base and guest stages and
+the licence survived it -- which is how we know the CPU is the component that
+decides (#574).
 """
 import re
 from pathlib import Path
@@ -24,7 +43,16 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (ROOT / "packer" / "windows11-base.pkr.hcl").read_text(encoding="utf-8")
+GUEST = (ROOT / "packer" / "windows11-guest.pkr.hcl").read_text(encoding="utf-8")
+OFFICE = (ROOT / "packer" / "windows11-office.pkr.hcl").read_text(encoding="utf-8")
+DOMAIN = (ROOT / "ansible" / "roles" / "cape-guests" / "templates"
+          / "guest-domain.xml.j2").read_text(encoding="utf-8")
 MK = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+# Every stage that BOOTS the guest, not just the one that installs it. The
+# licence broke because windows11-guest ran -cpu host with no -smbios at all,
+# so the image was bound to three machines on its way here (#574).
+STAGES = [("base", BASE), ("guest", GUEST), ("office", OFFICE)]
 DEFAULTS = yaml.safe_load(
     (ROOT / "ansible" / "roles" / "cape-guests" / "defaults" / "main.yml").read_text(encoding="utf-8"))
 
@@ -38,6 +66,30 @@ def _pkr_default(name: str) -> str:
     return m.group(1).split("#")[0].strip()
 
 
+def _target(name: str) -> tuple[str, str]:
+    """(prerequisites, recipe) for the declaration of `name` that has a recipe.
+
+    Parsed rather than regexed out of the whole file: "windows11-base.pkr.hcl"
+    also appears in a comment 300 lines earlier, and `win11-office:` is
+    declared twice (once to set a target-specific GUEST). Both matched first
+    and made these tests fail for the wrong reason."""
+    lines = MK.split("\n")
+    for i, line in enumerate(lines):
+        if not line.startswith(f"{name}:"):
+            continue
+        recipe = []
+        for nxt in lines[i + 1:]:
+            if nxt.startswith("\t"):
+                recipe.append(nxt)
+            elif nxt.strip() == "":
+                continue
+            else:
+                break
+        if recipe:
+            return line.split(":", 1)[1], "\n".join(recipe)
+    raise AssertionError(f"no {name} target with a recipe")
+
+
 def test_memory_matches_the_domain():
     """RAM is in the activation hash, and antivm_checks_available_memory is a
     33% probe in the corpus (#517) -- so a 4 GB build image is wrong twice."""
@@ -48,10 +100,36 @@ def test_vcpus_match_the_domain():
     assert int(_pkr_default("cpus")) == DEFAULTS["cape_guest_vcpus"]
 
 
-def test_the_hypervisor_bit_is_cleared_in_the_build_too():
+def _cpu_arg(src: str) -> str:
+    """The value of the -cpu qemuarg, e.g. '${var.guest_cpu_model},-hypervisor'."""
+    m = re.search(r'\["-cpu",\s*"([^"]+)"\]', src)
+    assert m, "no -cpu qemuarg at all"
+    return m.group(1)
+
+
+@pytest.mark.parametrize("stage,src", STAGES)
+def test_the_hypervisor_bit_is_cleared_in_every_build_stage(stage, src):
     """The domain disables it; a build image that advertises it differs, and it
     is the single most-checked CPU-level VM tell."""
-    assert '"-cpu", "host,-hypervisor"' in BASE
+    assert "-hypervisor" in _cpu_arg(src).split(",")[1:], \
+        f"{stage} does not clear the hypervisor bit: {_cpu_arg(src)}"
+
+
+@pytest.mark.parametrize("stage,src", STAGES)
+def test_no_stage_builds_against_the_build_hosts_own_cpu(stage, src):
+    """`-cpu host` is why the rebuilt image arrived unlicensed (#574): it
+    resolves to the builder's silicon, so the build machine and the sandbox
+    agreed only when they were the same box. Measured, on first boot here:
+
+        Notification Reason: 0xC004F00F
+        (hardware ID binding is beyond the level of tolerance)
+
+    The model must come from the variable, so it is the same value the domain
+    template renders -- a literal here would drift from Ansible silently."""
+    model = _cpu_arg(src).split(",")[0]
+    assert model != "host", f"{stage} still builds against the build host's CPU"
+    assert model == "${var.guest_cpu_model}", \
+        f"{stage} hardcodes a CPU model ({model}) instead of taking the shared one"
 
 
 @pytest.mark.parametrize("smbios_type,field", [
@@ -88,18 +166,76 @@ def test_the_makefile_sources_them_from_the_real_places():
 def test_a_missing_value_stops_the_build_before_it_starts():
     """Failing 70 minutes in, or worse producing an image with the wrong
     identity, is the outcome this guards against."""
-    target = MK.split("win11-base:")[1].split("\n\n")[0]
-    assert 'ERROR: no smbios_serial' in target
-    assert 'could not read the libvirt UUID' in target
-    assert target.index("ERROR") < target.index("packer build")
+    guard = MK.split("guest-profile-check:")[1].split("\n\n")[0]
+    assert 'ERROR: no smbios_serial' in guard
+    assert 'ERROR: no mac' in guard
+    assert 'could not read the libvirt UUID' in guard
+    # and it runs before any packer build, for every stage that boots the guest
+    for stage in ("base", "guest", "office"):
+        prereqs, _ = _target(f"win11-{stage}")
+        assert "guest-profile-check" in prereqs, \
+            f"win11-{stage} can run without the profile guard"
 
 
-def test_the_unmatched_mac_is_documented_not_forgotten():
-    """Packer owns the NIC for WinRM forwarding, so the MAC is the one component
-    still differing. That is a deliberate, recorded decision with an empirical
-    test attached -- not an oversight."""
-    assert "NOT matched" in BASE and "MAC" in BASE
-    assert "verify-license" in BASE
+@pytest.mark.parametrize("stage,src", STAGES)
+def test_every_stage_pins_the_nic_mac(stage, src):
+    """Packer generates its own e1000 for the WinRM forward, so the MAC used to
+    be the one component nothing controlled. Windows enumerated the domain's
+    NIC as a SECOND adapter on first boot -- "Intel(R) PRO/1000 MT Network
+    Connection #2" -- which is both a hash input and a visible tell that the
+    image was built elsewhere.
+
+    -global rather than -device: a second -device on the same netdev will not
+    start."""
+    globals_ = re.findall(r'\["-global",\s*"([^"]+)"\]', src)
+    macs = [g.split("=", 1)[1] for g in globals_ if g.startswith("e1000.mac=")]
+    assert macs, f"{stage} does not pin the NIC MAC; globals={globals_}"
+    assert macs[0] == "${var.guest_mac}", \
+        f"{stage} hardcodes a MAC ({macs[0]}) instead of taking the domain's"
+
+
+def test_the_mac_is_supplied_not_defaulted():
+    """Same reasoning as the serial: a default would build the wrong identity
+    quietly."""
+    assert _pkr_default("guest_mac") == ""
+    assert _pkr_default("guest_cpu_model") == ""
+
+
+def test_the_domain_and_the_build_name_the_same_cpu_model():
+    """The two sides agreeing is the whole point. host-passthrough made them
+    agree only by coincidence of being on one machine."""
+    blocks = re.findall(r"<cpu\b.*?</cpu>", DOMAIN, re.S)
+    assert blocks, "no <cpu> block in the domain template"
+    cpu = blocks[0]
+    assert "host-passthrough" not in cpu, \
+        "the domain still passes the host CPU through; the image cannot match it"
+    m = re.search(r"<model[^>]*>\{\{\s*([a-z_]+)\s*\}\}</model>", cpu)
+    assert m, f"the domain does not render a variable CPU model: {cpu}"
+    assert m.group(1) == "cape_guest_cpu_model"
+    assert "disable" in cpu and "hypervisor" in cpu
+
+
+def test_the_shared_cpu_model_is_a_real_named_model():
+    """Empty or 'host' here defeats every test above."""
+    model = DEFAULTS["cape_guest_cpu_model"]
+    assert model and model not in ("host", "host-passthrough")
+
+
+@pytest.mark.parametrize("stage", ["base", "guest", "office"])
+def test_the_makefile_hands_every_stage_the_whole_profile(stage):
+    """A stage built without the profile is the #574 bug exactly. Resolved
+    through the variable the recipe actually uses, so renaming it fails here."""
+    _, recipe = _target(f"win11-{stage}")
+    build = recipe.rsplit("packer build", 1)
+    assert len(build) == 2, f"win11-{stage} has no packer build"
+    assert f"windows11-{stage}.pkr.hcl" in build[1], \
+        f"win11-{stage} does not build windows11-{stage}.pkr.hcl"
+    assert "$(GUEST_PROFILE_VARS)" in build[1], \
+        f"win11-{stage} does not pass the guest hardware profile to packer"
+    profile = MK.split("GUEST_PROFILE_VARS =")[1].split("\n\n")[0]
+    for var in ("guest_smbios_serial", "guest_smbios_uuid",
+                "guest_mac", "guest_cpu_model"):
+        assert f"-var {var}=" in profile, f"{var} missing from the shared profile"
 
 
 def test_every_smbios_field_the_domain_sets_is_also_set_at_build_time():
