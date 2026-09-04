@@ -12,3 +12,20 @@ cape_guest_image_dir: /var/lib/libvirt/images
 # low values (1-2 vCPUs, 2-4 GB) are a detection signal.
 cape_guest_memory_kb: 8388608   # 8192 MB
 cape_guest_vcpus: 4
+
+# QEMU CPU model presented to guests.
+#
+# Deliberately a named model rather than host-passthrough. Windows binds its
+# licence to a hardware hash, and the CPU is the component that decides it:
+# an image built with -cpu host on a laptop reported 0xC004F00F ("hardware ID
+# binding is beyond the level of tolerance") on its first boot here, because
+# both sides said "host" and "host" is a different CPU on each machine (#573).
+#
+# packer/*.pkr.hcl is given this same value by the Makefile, so the image is
+# built against the CPU it will run on no matter which machine builds it.
+# Changing it invalidates the licence of every already-built image.
+#
+# Skylake-Client is also the more plausible profile for a guest whose SMBIOS
+# claims to be an OptiPlex 7090: host-passthrough was reporting a Xeon E-2388G,
+# a part Dell never shipped in that desktop.
+cape_guest_cpu_model: Skylake-Client-v4

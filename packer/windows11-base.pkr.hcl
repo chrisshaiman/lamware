@@ -225,6 +225,36 @@ variable "efivars_path" {
 # empirically rather than by argument.
 # =============================================================================
 
+variable "guest_cpu_model" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    QEMU CPU model presented to the guest, e.g. "Skylake-Client-v4".
+
+    NOT "host". Windows binds its licence to a hardware hash and the CPU is the
+    decisive component: an image built with -cpu host on one machine reports
+    0xC004F00F ("hardware ID binding is beyond the level of tolerance") the
+    first time it boots on a different one, because "host" resolves to whatever
+    silicon is under the builder. A named model resolves identically everywhere,
+    which is what makes the build portable across machines at all (#573).
+
+    Must match <cpu><model> in the libvirt domain, which is why both read the
+    same value out of ansible/vars/main.yml.
+  EOT
+}
+
+variable "guest_mac" {
+  type        = string
+  default     = ""
+  description = <<-EOT
+    NIC MAC, matching the libvirt domain's. Applied with -global e1000.mac
+    rather than -device: Packer generates its own e1000 for the WinRM port
+    forward, and a second -device bound to the same netdev fails to start.
+
+    Empty means the Makefile did not supply it.
+  EOT
+}
+
 variable "guest_smbios_manufacturer" {
   type    = string
   default = "Dell Inc."
@@ -335,7 +365,12 @@ source "qemu" "windows11_base" {
   qemuargs = [
     # -hypervisor clears the CPUID bit KVM sets, matching the domain's
     # <feature policy='disable' name='hypervisor'/>.
-    ["-cpu", "host,-hypervisor"],
+    #
+    # A named model, never "host" — see the guest_cpu_model description. This
+    # is also the more convincing profile: "host" leaked a Xeon E-2388G into a
+    # machine whose SMBIOS claims to be an OptiPlex 7090 desktop, which is not
+    # a CPU Dell ever shipped in one.
+    ["-cpu", "${var.guest_cpu_model},-hypervisor"],
     ["-vga", "std"],
     # OVMF UEFI firmware — pflash drives for UEFI boot (required by Win11).
     # Code is read-only, vars is writable (stores UEFI boot entries).
@@ -358,6 +393,12 @@ source "qemu" "windows11_base" {
     ["-fda", var.autounattend_img_path],
     # Suppress e1000 PXE ROM to prevent OVMF network boot loops
     ["-global", "e1000.rombar=0"],
+    # Same MAC the domain will present. Without this Packer picks its own and
+    # Windows enumerates the domain's NIC as a second adapter on first boot
+    # ("Intel(R) PRO/1000 MT Network Connection #2"), which is both a hardware
+    # -hash input and a visible artefact of the image having been built
+    # elsewhere.
+    ["-global", "e1000.mac=${var.guest_mac}"],
     # CDROM on ide.1 (same built-in ICH9 as HDD on ide.0).
     # bootindex=0 → OVMF boots CDROM first (no UEFI Shell needed).
     # bootindex=1 on HDD → after "Press any key" times out on subsequent

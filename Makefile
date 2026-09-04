@@ -72,8 +72,8 @@ help:
 	@echo "  make autounattend-floppy  Create autounattend floppy image for Windows 11 builds (run once per XML change)"
 	@echo "  make win11-base           Build Windows 11 base image (WinRM enabled, no cleanup)"
 	@echo "  make win11-guest          Build clean guest from base (cleanup only)"
-	@echo "  make win11-office         Build office guest from base (LibreOffice + cleanup)"
-	@echo "  make win11-image          Build all Win11 images (base + guest + office)"
+	@echo "  make win11-office         Build office guest from ITS OWN base (LibreOffice + cleanup)"
+	@echo "  make win11-image          Print the full two-image build sequence (does not build)"
 	@echo "  make image                Build Ubuntu sandbox base image"
 	@echo "  make infra-ovh            Provision OVH bare metal"
 	@echo "  make configure            Run Ansible against provisioned host"
@@ -84,7 +84,7 @@ help:
 	@echo "  make clean                Remove local build artifacts"
 	@echo ""
 	@echo "  First-time setup order:"
-	@echo "    1. make win11-image"
+	@echo "    1. make win11-image   (prints the image build sequence)"
 	@echo "    2. make infra-ovh"
 	@echo "    3. make configure"
 	@echo ""
@@ -176,13 +176,39 @@ GUEST_SERIAL = $(shell python3 -c "import yaml,sys; \
 	   if x['name']=='$(GUEST)']; print(g[0]['smbios_serial'] if g else '')" 2>/dev/null)
 GUEST_UUID = $(shell ssh -o BatchMode=yes -o ConnectTimeout=8 sandbox \
 	"sudo virsh domuuid $(GUEST) 2>/dev/null" 2>/dev/null | tr -d ' \n')
+GUEST_MAC = $(shell python3 -c "import yaml,sys; \
+	g=[x for x in yaml.safe_load(open('$(ANSIBLE_DIR)/vars/main.yml'))['cape_guests'] \
+	   if x['name']=='$(GUEST)']; print(g[0]['mac'] if g else '')" 2>/dev/null)
+# The CPU model lives with the role defaults because the libvirt domain template
+# reads it from there; packer must be handed the same value (#573).
+GUEST_CPU_MODEL = $(shell python3 -c "import yaml; \
+	print(yaml.safe_load(open('$(ANSIBLE_DIR)/roles/cape-guests/defaults/main.yml')) \
+	      ['cape_guest_cpu_model'])" 2>/dev/null)
 
-win11-base: build-preflight autounattend-floppy
+# Every packer stage boots the guest, so every stage needs the full hardware
+# profile — not just the base. A stage that presents different hardware re-binds
+# the Windows licence and the image arrives here unlicensed (#573).
+GUEST_PROFILE_VARS = \
+	-var guest_smbios_serial="$(GUEST_SERIAL)" \
+	-var guest_smbios_uuid="$(GUEST_UUID)" \
+	-var guest_mac="$(GUEST_MAC)" \
+	-var guest_cpu_model="$(GUEST_CPU_MODEL)"
+
+.PHONY: guest-profile-check
+guest-profile-check:
 	@[ -n "$(GUEST_SERIAL)" ] || (echo "ERROR: no smbios_serial for guest '$(GUEST)' in $(ANSIBLE_DIR)/vars/main.yml" && exit 1)
+	@[ -n "$(GUEST_MAC)" ] || (echo "ERROR: no mac for guest '$(GUEST)' in $(ANSIBLE_DIR)/vars/main.yml" && exit 1)
+	@[ -n "$(GUEST_CPU_MODEL)" ] || (echo "ERROR: cape_guest_cpu_model missing from roles/cape-guests/defaults/main.yml" && exit 1)
+	@case "$(GUEST_CPU_MODEL)" in host|host,*) \
+		echo "ERROR: cape_guest_cpu_model is '$(GUEST_CPU_MODEL)'." && \
+		echo "       'host' resolves to a different CPU on every build machine, which" && \
+		echo "       breaks Windows activation on first boot elsewhere (#573)." && exit 1 ;; esac
 	@[ -n "$(GUEST_UUID)" ] || (echo "ERROR: could not read the libvirt UUID for '$(GUEST)'." && \
 		echo "       The image must carry the same SMBIOS UUID as the domain it will run in (#553)." && \
 		echo "       Check the WireGuard tunnel and that the domain is defined." && exit 1)
-	@echo "==> Building for guest '$(GUEST)': serial=$(GUEST_SERIAL) uuid=$(GUEST_UUID)"
+	@echo "==> Guest '$(GUEST)': serial=$(GUEST_SERIAL) uuid=$(GUEST_UUID) mac=$(GUEST_MAC) cpu=$(GUEST_CPU_MODEL)"
+
+win11-base: build-preflight guest-profile-check autounattend-floppy
 	@echo "==> Building Windows 11 base image..."
 	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
 		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
@@ -193,8 +219,7 @@ win11-base: build-preflight autounattend-floppy
 	@cd $(PACKER_DIR) && \
 		packer init windows11-base.pkr.hcl && \
 		packer build -force -var-file=packer.auto.pkrvars.hcl \
-			-var guest_smbios_serial="$(GUEST_SERIAL)" \
-			-var guest_smbios_uuid="$(GUEST_UUID)" \
+			$(GUEST_PROFILE_VARS) \
 			windows11-base.pkr.hcl
 	@echo "==> Windows 11 base image complete."
 	@echo ""
@@ -221,7 +246,7 @@ win11-base: build-preflight autounattend-floppy
 # slowest things in the pipeline. The output is fully reproducible from the base
 # image, so refusing to overwrite protects nothing; it just moves the failure to
 # the least convenient moment (#522, same shape).
-win11-guest:
+win11-guest: guest-profile-check
 	@echo "==> Building Windows 11 guest (clean) image from base..."
 	@[ -f "$(BASE_IMAGE)" ] || (echo "ERROR: base image not found at $(BASE_IMAGE)." && \
 		echo "       Run 'make win11-base' first, or set BASE_IMAGE=<path>." && exit 1)
@@ -232,6 +257,7 @@ win11-guest:
 		packer build -force -var-file=packer.auto.pkrvars.hcl \
 			-var win11_base_image_path="$(BASE_IMAGE)" \
 			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
+			$(GUEST_PROFILE_VARS) \
 			windows11-guest.pkr.hcl
 	@echo "==> Windows 11 guest image complete."
 
@@ -239,7 +265,11 @@ win11-guest:
 # Expect ~15 minutes.
 # -----------------------------------------------------------------------------
 
-win11-office:
+# The office image carries its own serial, UUID and MAC, so it needs its own
+# base build — it is not a layer on the clean base (#553). A command-line
+# GUEST= still wins over this.
+win11-office: GUEST = office
+win11-office: guest-profile-check
 	@echo "==> Building Windows 11 office image from base..."
 	@[ -f "$(BASE_IMAGE)" ] || (echo "ERROR: base image not found at $(BASE_IMAGE)." && \
 		echo "       Run 'make win11-base' first, or set BASE_IMAGE=<path>." && exit 1)
@@ -250,6 +280,7 @@ win11-office:
 		packer build -force -var-file=packer.auto.pkrvars.hcl \
 			-var win11_base_image_path="$(BASE_IMAGE)" \
 			-var win11_base_image_checksum="sha256:$$BASE_SHA" \
+			$(GUEST_PROFILE_VARS) \
 			windows11-office.pkr.hcl
 	@echo "==> Windows 11 office image complete."
 
@@ -257,8 +288,22 @@ win11-office:
 # Convenience target. Run inside tmux/screen.
 # -----------------------------------------------------------------------------
 
-win11-image: win11-base win11-guest win11-office
-	@echo "==> All Windows 11 images complete."
+# Each image gets its own base: the two guests present different SMBIOS
+# serials, UUIDs and MACs, so a shared base would be licensed against one
+# identity and run under another (#573). The offline Defender step between
+# base and guest needs sudo and is deliberately NOT chained here.
+win11-image:
+	@echo "==> This builds two images from two bases and pauses for the offline"
+	@echo "    Defender step in between. Sequence:"
+	@echo ""
+	@echo "      make win11-base GUEST=clean"
+	@echo "      sudo packer/scripts/host/disable-defender-offline.sh"
+	@echo "      make win11-guest GUEST=clean"
+	@echo ""
+	@echo "      make win11-base GUEST=office"
+	@echo "      sudo packer/scripts/host/disable-defender-offline.sh"
+	@echo "      make win11-office GUEST=office"
+	@exit 1
 
 # -----------------------------------------------------------------------------
 # Packer — build hardened base image

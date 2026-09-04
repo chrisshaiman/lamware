@@ -30,9 +30,17 @@ def _target(name: str) -> str:
     # not look like a target start, the match runs past it, and every assertion
     # below is satisfied by the OTHER target's body -- verified: stripping
     # sha256sum from win11-guest alone still passed.
-    m = re.search(rf"^{name}:.*?(?=\n[A-Za-z0-9_.-]+:|\Z)", MK, re.S | re.M)
-    assert m, f"no {name} target"
-    body = m.group(0)
+    #
+    # A target can also be declared WITHOUT a recipe, to set a target-specific
+    # variable ("win11-office: GUEST = office"). That declaration comes first
+    # and the match stopped dead at it, so every assertion below ran against a
+    # one-line body and passed vacuously. Take the declaration that actually
+    # has a recipe.
+    bodies = [m.group(0) for m in
+              re.finditer(rf"^{name}:.*?(?=\n[A-Za-z0-9_.-]+:|\Z)", MK, re.S | re.M)]
+    bodies = [b for b in bodies if "\n\t" in b]
+    assert bodies, f"no {name} target with a recipe"
+    body = bodies[0]
     other = "win11-office" if name == "win11-guest" else "win11-guest"
     assert f"\n{other}:" not in body, f"{name} body leaked into {other}"
     return body
