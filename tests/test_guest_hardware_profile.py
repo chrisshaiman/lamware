@@ -221,6 +221,46 @@ def test_the_shared_cpu_model_is_a_real_named_model():
     assert model and model not in ("host", "host-passthrough")
 
 
+def test_the_cpu_model_is_a_name_libvirt_can_accept():
+    """qemu and libvirt disagree about which names exist, and only qemu was
+    checked. `qemu-system-x86_64 -cpu Skylake-Client-v4` runs happily; libvirt
+    validates <model> against its own cpu_map, which carries only the
+    unversioned aliases, so the domain died at START with
+
+        internal error: Unknown CPU model Skylake-Client-v4
+
+    after the image had already been built against it. The cpu_map has never
+    contained -vN names, so the shape is checkable here (#573)."""
+    model = DEFAULTS["cape_guest_cpu_model"]
+    assert not re.search(r"-v\d+$", model), (
+        f"{model} is a qemu version name; libvirt's cpu_map holds only aliases "
+        f"(use e.g. Skylake-Client-noTSX-IBRS for Skylake-Client-v3)")
+
+
+def test_the_deploy_rechecks_the_model_against_both_layers():
+    """The shape test above cannot know what THIS host's libvirt and qemu
+    actually carry, so the deploy asserts it before defining any domain --
+    rather than 40 minutes into the next rebuild."""
+    tasks = yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "cape-guests" / "tasks" / "main.yml")
+        .read_text(encoding="utf-8"))
+    asserts = [t for t in tasks if "ansible.builtin.assert" in t]
+    checked = " ".join(str(t["ansible.builtin.assert"].get("that", "")) for t in asserts)
+    assert "cape_libvirt_cpu_models" in checked, "libvirt's cpu_map is not checked"
+    assert "cape_qemu_cpu_model_line" in checked, "the qemu model table is not checked"
+    # naming the variable is not the same as testing the dangerous property:
+    # a machine-type alias resolves to different silicon on different qemu
+    # versions, and merely checking the model EXISTS would pass for one
+    assert "alias configured by machine type" in checked, \
+        "nothing rejects a machine-type-dependent alias"
+
+    # and it must run BEFORE the domains are defined
+    names = [t.get("name", "") for t in tasks]
+    guard = next(i for i, n in enumerate(names) if "libvirt does not know" in n)
+    define = next(i for i, n in enumerate(names) if n.startswith("Define guest libvirt domains"))
+    assert guard < define, "the CPU model is checked after the domains are defined"
+
+
 @pytest.mark.parametrize("stage", ["base", "guest", "office"])
 def test_the_makefile_hands_every_stage_the_whole_profile(stage):
     """A stage built without the profile is the #573 bug exactly. Resolved

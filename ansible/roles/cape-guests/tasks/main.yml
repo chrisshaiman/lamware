@@ -61,6 +61,49 @@
 # domain's UUID. The template omitted it, so libvirt minted a new one and rejected
 # the define on a name collision -- meaning the domain XML could never be updated
 # after first deploy. Found when #327's emulator repoint failed to apply.
+# The CPU model has to exist in BOTH layers, which disagree. qemu accepts
+# Skylake-Client-v4; libvirt validates <model> against its own cpu_map, which
+# carries only the unversioned aliases, and rejects it at domain START -- long
+# after the image was built against it. Checked here, before anything is
+# defined, because the failure otherwise lands 40 minutes into a rebuild.
+- name: Read the CPU models libvirt will accept
+  ansible.builtin.command: virsh cpu-models x86_64
+  register: cape_libvirt_cpu_models
+  changed_when: false
+
+- name: Fail early if libvirt does not know the guest CPU model
+  ansible.builtin.assert:
+    that:
+      - cape_guest_cpu_model in (cape_libvirt_cpu_models.stdout_lines | map('trim') | list)
+    fail_msg: >-
+      cape_guest_cpu_model is '{{ cape_guest_cpu_model }}', which libvirt's
+      cpu_map does not contain, so `virsh start` will fail with "Unknown CPU
+      model". Versioned qemu names (-v1..-v4) are never in the cpu_map; use the
+      alias instead, e.g. Skylake-Client-noTSX-IBRS for Skylake-Client-v3.
+    success_msg: "libvirt accepts CPU model {{ cape_guest_cpu_model }}"
+
+- name: Resolve how QEMU interprets the guest CPU model
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ cape_qemu_binary }} -cpu help | awk -v m="{{ cape_guest_cpu_model }}" '$1 == m { $1=""; print }'
+  args:
+    executable: /bin/bash
+  register: cape_qemu_cpu_model_line
+  changed_when: false
+
+- name: Fail if the CPU model is one QEMU resolves by machine type
+  ansible.builtin.assert:
+    that:
+      - cape_qemu_cpu_model_line.stdout | trim | length > 0
+      - "'alias configured by machine type' not in cape_qemu_cpu_model_line.stdout"
+    fail_msg: >-
+      cape_guest_cpu_model is '{{ cape_guest_cpu_model }}', which this QEMU
+      either does not know or resolves by machine type. A machine-type alias can
+      mean different silicon on different QEMU versions, which silently breaks
+      the licence hardware hash the moment the build host and this host differ.
+      Pin a versioned alias, e.g. Skylake-Client-noTSX-IBRS.
+    success_msg: "QEMU resolves {{ cape_guest_cpu_model }} to:{{ cape_qemu_cpu_model_line.stdout | trim }}"
+
 - name: Read existing domain UUIDs (a redefine must reuse them)
   ansible.builtin.command: "virsh domuuid {{ item.name }}"
   loop: "{{ cape_guests }}"
