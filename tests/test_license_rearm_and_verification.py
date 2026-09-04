@@ -30,15 +30,21 @@ BASE = (ROOT / "packer" / "windows11-base.pkr.hcl").read_text(encoding="utf-8")
 GUEST = (ROOT / "packer" / "windows11-guest.pkr.hcl").read_text(encoding="utf-8")
 
 
-def _order(t, *names):
-    return [t.index(n) for n in names]
+def _script(t: str, name: str) -> int:
+    """Position of the PROVISIONER for a script, not the first mention of its
+    name. Comments in these templates quote script filenames -- anchoring on the
+    bare name matched explanatory prose that sits earlier in the file and
+    inverted the ordering assertions below."""
+    i = t.find(f'script = "${{path.root}}/scripts/windows/{name}"')
+    assert i != -1, f"no provisioner for {name}"
+    return i
 
 
 def test_the_rearm_is_followed_by_a_restart_before_anything_checks_it():
     """ReArmWindows does not take effect until reboot. Verifying first would
     read the OLD state and either pass wrongly or fail wrongly."""
-    r = BASE.index("rearm-license.ps1")
-    v = BASE.index("verify-license.ps1")
+    r = _script(BASE, "rearm-license.ps1")
+    v = _script(BASE, "verify-license.ps1")
     # .index() would find the EARLIER restart (the hostname one), which sits
     # before rearm and would satisfy the ordering for the wrong reason.
     restart = BASE.index('provisioner "windows-restart"', r)
@@ -49,10 +55,10 @@ def test_the_restart_between_them_is_the_one_after_rearm():
     """There is an earlier windows-restart in this template for the hostname
     change. The ordering assertion above must not be satisfied by that one."""
     first = BASE.index('provisioner "windows-restart"')
-    rearm = BASE.index("rearm-license.ps1")
+    rearm = _script(BASE, "rearm-license.ps1")
     assert first < rearm, "expected an earlier restart to exist before rearm"
     after = BASE.index('provisioner "windows-restart"', rearm)
-    assert after < BASE.index("verify-license.ps1")
+    assert after < _script(BASE, "verify-license.ps1")
 
 
 @pytest.mark.parametrize("tpl,name", [("base", "BASE"), ("guest", "GUEST")])

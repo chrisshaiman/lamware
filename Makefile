@@ -167,7 +167,22 @@ autounattend-floppy:
 build-preflight:
 	@./scripts/build-preflight.sh
 
+# The guest hardware profile comes from the SAME place the libvirt domain gets
+# it, so packer and Ansible cannot describe different machines (#553). The UUID
+# lives in libvirt rather than in vars, so it is read from the target host.
+GUEST ?= clean
+GUEST_SERIAL = $(shell python3 -c "import yaml,sys; \
+	g=[x for x in yaml.safe_load(open('$(ANSIBLE_DIR)/vars/main.yml'))['cape_guests'] \
+	   if x['name']=='$(GUEST)']; print(g[0]['smbios_serial'] if g else '')" 2>/dev/null)
+GUEST_UUID = $(shell ssh -o BatchMode=yes -o ConnectTimeout=8 sandbox \
+	"sudo virsh domuuid $(GUEST) 2>/dev/null" 2>/dev/null | tr -d ' \n')
+
 win11-base: build-preflight autounattend-floppy
+	@[ -n "$(GUEST_SERIAL)" ] || (echo "ERROR: no smbios_serial for guest '$(GUEST)' in $(ANSIBLE_DIR)/vars/main.yml" && exit 1)
+	@[ -n "$(GUEST_UUID)" ] || (echo "ERROR: could not read the libvirt UUID for '$(GUEST)'." && \
+		echo "       The image must carry the same SMBIOS UUID as the domain it will run in (#553)." && \
+		echo "       Check the WireGuard tunnel and that the domain is defined." && exit 1)
+	@echo "==> Building for guest '$(GUEST)': serial=$(GUEST_SERIAL) uuid=$(GUEST_UUID)"
 	@echo "==> Building Windows 11 base image..."
 	@[ -f $(PACKER_DIR)/packer.auto.pkrvars.hcl ] || \
 		(echo "ERROR: packer/packer.auto.pkrvars.hcl not found." && exit 1)
@@ -177,7 +192,10 @@ win11-base: build-preflight autounattend-floppy
 	@cp $(OVMF_VARS_TEMPLATE) $(EFIVARS_PATH)
 	@cd $(PACKER_DIR) && \
 		packer init windows11-base.pkr.hcl && \
-		packer build -force -var-file=packer.auto.pkrvars.hcl windows11-base.pkr.hcl
+		packer build -force -var-file=packer.auto.pkrvars.hcl \
+			-var guest_smbios_serial="$(GUEST_SERIAL)" \
+			-var guest_smbios_uuid="$(GUEST_UUID)" \
+			windows11-base.pkr.hcl
 	@echo "==> Windows 11 base image complete."
 	@echo ""
 	@echo "    NEXT, and it is not optional: Defender is still ACTIVE in this image."

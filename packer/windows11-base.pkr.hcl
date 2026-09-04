@@ -145,13 +145,16 @@ variable "disk_size" {
 variable "memory" {
   type        = number
   description = "Guest RAM in MB."
-  default     = 4096  # ADR-012
+  # 8192 to match cape_guest_memory_kb. RAM is part of the activation
+  # hardware hash, and antivm_checks_available_memory is a 33% probe (#517).
+  default     = 8192  # ADR-012
 }
 
 variable "cpus" {
   type        = number
   description = "Guest vCPU count."
-  default     = 2  # ADR-012
+  # 4 to match cape_guest_vcpus.
+  default     = 4  # ADR-012
 }
 
 variable "headless" {
@@ -203,6 +206,62 @@ variable "efivars_path" {
 
 # OVMF firmware paths — these are the standard locations on Debian/Ubuntu.
 # Override if your build host uses different paths.
+# =============================================================================
+# Guest hardware profile — MUST match the libvirt domain this image will run in.
+#
+# Windows binds activation to a hardware hash. Building in one VM shape and
+# running in another invalidates the licence on first boot in the real domain,
+# which is exactly what happened on 2026-09-03: healthy in packer (90 days),
+# "Windows License is expired" the moment Cape booted it (#553).
+#
+# These are passed by the Makefile, read out of ansible/vars/main.yml, so packer
+# and the domain template cannot describe different machines.
+#
+# NOT matched: the NIC MAC. Packer's qemu builder owns the network device for
+# WinRM port forwarding, and overriding it risks breaking the build for one
+# component. Everything else in the hash now matches, so the image differs from
+# its domain by the MAC alone -- a single-component change, which Windows
+# normally tolerates. verify-license.ps1 in the guest build settles it
+# empirically rather than by argument.
+# =============================================================================
+
+variable "guest_smbios_manufacturer" {
+  type    = string
+  default = "Dell Inc."
+}
+
+variable "guest_smbios_product" {
+  type    = string
+  default = "OptiPlex 7090"
+}
+
+variable "guest_smbios_serial" {
+  type        = string
+  default     = ""
+  description = "SMBIOS system + baseboard serial. Empty means the Makefile did not supply it."
+}
+
+variable "guest_smbios_uuid" {
+  type        = string
+  default     = ""
+  description = "SMBIOS system UUID; the libvirt domain UUID for this guest."
+}
+
+variable "guest_bios_vendor" {
+  type    = string
+  default = "Dell Inc."
+}
+
+variable "guest_bios_version" {
+  type    = string
+  default = "2.18.0"
+}
+
+variable "guest_bios_date" {
+  type    = string
+  default = "04/12/2024"
+}
+
 variable "ovmf_code" {
   type        = string
   description = "Path to OVMF_CODE_4M.fd (UEFI firmware code) on the build host."
@@ -274,7 +333,9 @@ source "qemu" "windows11_base" {
   # (different ports), which is critical — a separate AHCI controller splits
   # CDROM partitions and breaks cdboot.efi (RH BZ#1443345).
   qemuargs = [
-    ["-cpu", "host"],
+    # -hypervisor clears the CPUID bit KVM sets, matching the domain's
+    # <feature policy='disable' name='hypervisor'/>.
+    ["-cpu", "host,-hypervisor"],
     ["-vga", "std"],
     # OVMF UEFI firmware — pflash drives for UEFI boot (required by Win11).
     # Code is read-only, vars is writable (stores UEFI boot entries).
@@ -286,6 +347,12 @@ source "qemu" "windows11_base" {
     ["-device", "ide-hd,bus=ide.0,unit=0,drive=hdd0,bootindex=1"],
     ["-drive", "file=${var.output_directory}/windows11-base.qcow2,id=hdd0,format=qcow2,if=none"],
     # QEMU monitor socket — useful for manual debugging (screendumps, etc.)
+    # SMBIOS: the same identity the libvirt domain presents, so Windows does not
+    # see a hardware change when Cape boots this image (#553).
+    ["-smbios", "type=0,vendor=${var.guest_bios_vendor},version=${var.guest_bios_version},date=${var.guest_bios_date}"],
+    ["-smbios", "type=1,manufacturer=${var.guest_smbios_manufacturer},product=${var.guest_smbios_product},serial=${var.guest_smbios_serial},uuid=${var.guest_smbios_uuid},family=OptiPlex"],
+    ["-smbios", "type=2,manufacturer=${var.guest_smbios_manufacturer},product=0K1RTX,version=A00,serial=${var.guest_smbios_serial}"],
+
     ["-monitor", "unix:${var.output_directory}/qemu-monitor.sock,server,nowait"],
     # Virtual floppy (A:) with autounattend.xml — WinPE checks A: first
     ["-fda", var.autounattend_img_path],
