@@ -55,7 +55,7 @@ packer {
 # Identical to windows11-base.pkr.hcl and to the libvirt domain. Every stage
 # that boots this image must present the same machine: Windows re-evaluates its
 # licence hardware hash on each boot, and a stage that differs re-binds it or
-# invalidates it (#574). These are supplied by the Makefile from
+# invalidates it (#573). These are supplied by the Makefile from
 # ansible/vars/main.yml, the same source the domain template reads.
 # =============================================================================
 
@@ -189,7 +189,7 @@ source "qemu" "windows11_guest" {
     # Same hardware the base build presented and the same the domain will
     # present. This stage used to run -cpu host with no -smbios at all, so the
     # image was licensed against three different machines on its way to the
-    # sandbox (#574).
+    # sandbox (#573).
     ["-cpu", "${var.guest_cpu_model},-hypervisor"],
     ["-vga", "std"],
     ["-smbios", "type=0,vendor=${var.guest_bios_vendor},version=${var.guest_bios_version},date=${var.guest_bios_date}"],

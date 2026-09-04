@@ -52,7 +52,7 @@
        CPUID and checks ECX bit 31 (hypervisor present) will see it cleared. -->
   {# Named model, not host-passthrough: packer builds the image against this
      same model, so the licence hardware hash survives the move from whatever
-     machine built the image to this one (#574). host-passthrough made the two
+     machine built the image to this one (#573). host-passthrough made the two
      sides agree only when they happened to be the same physical CPU. #}
   <cpu mode='custom' match='exact' check='none'>
     <model fallback='forbid'>{{ cape_guest_cpu_model }}</model>

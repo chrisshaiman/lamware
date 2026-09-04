@@ -236,7 +236,7 @@ variable "guest_cpu_model" {
     0xC004F00F ("hardware ID binding is beyond the level of tolerance") the
     first time it boots on a different one, because "host" resolves to whatever
     silicon is under the builder. A named model resolves identically everywhere,
-    which is what makes the build portable across machines at all (#574).
+    which is what makes the build portable across machines at all (#573).
 
     Must match <cpu><model> in the libvirt domain, which is why both read the
     same value out of ansible/vars/main.yml.

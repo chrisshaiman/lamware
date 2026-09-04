@@ -180,14 +180,14 @@ GUEST_MAC = $(shell python3 -c "import yaml,sys; \
 	g=[x for x in yaml.safe_load(open('$(ANSIBLE_DIR)/vars/main.yml'))['cape_guests'] \
 	   if x['name']=='$(GUEST)']; print(g[0]['mac'] if g else '')" 2>/dev/null)
 # The CPU model lives with the role defaults because the libvirt domain template
-# reads it from there; packer must be handed the same value (#574).
+# reads it from there; packer must be handed the same value (#573).
 GUEST_CPU_MODEL = $(shell python3 -c "import yaml; \
 	print(yaml.safe_load(open('$(ANSIBLE_DIR)/roles/cape-guests/defaults/main.yml')) \
 	      ['cape_guest_cpu_model'])" 2>/dev/null)
 
 # Every packer stage boots the guest, so every stage needs the full hardware
 # profile — not just the base. A stage that presents different hardware re-binds
-# the Windows licence and the image arrives here unlicensed (#574).
+# the Windows licence and the image arrives here unlicensed (#573).
 GUEST_PROFILE_VARS = \
 	-var guest_smbios_serial="$(GUEST_SERIAL)" \
 	-var guest_smbios_uuid="$(GUEST_UUID)" \
@@ -202,7 +202,7 @@ guest-profile-check:
 	@case "$(GUEST_CPU_MODEL)" in host|host,*) \
 		echo "ERROR: cape_guest_cpu_model is '$(GUEST_CPU_MODEL)'." && \
 		echo "       'host' resolves to a different CPU on every build machine, which" && \
-		echo "       breaks Windows activation on first boot elsewhere (#574)." && exit 1 ;; esac
+		echo "       breaks Windows activation on first boot elsewhere (#573)." && exit 1 ;; esac
 	@[ -n "$(GUEST_UUID)" ] || (echo "ERROR: could not read the libvirt UUID for '$(GUEST)'." && \
 		echo "       The image must carry the same SMBIOS UUID as the domain it will run in (#553)." && \
 		echo "       Check the WireGuard tunnel and that the domain is defined." && exit 1)
@@ -290,7 +290,7 @@ win11-office: guest-profile-check
 
 # Each image gets its own base: the two guests present different SMBIOS
 # serials, UUIDs and MACs, so a shared base would be licensed against one
-# identity and run under another (#574). The offline Defender step between
+# identity and run under another (#573). The offline Defender step between
 # base and guest needs sudo and is deliberately NOT chained here.
 win11-image:
 	@echo "==> This builds two images from two bases and pauses for the offline"

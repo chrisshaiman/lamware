@@ -1,6 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""The image must be built against the hardware profile it will run under (#553, #574).
+"""The image must be built against the hardware profile it will run under (#553, #573).
 
 Against the *profile*, not the machine. The profile is what these tests pin, and
 pinning all of it is what lets any machine build an image that runs here -- the
@@ -33,7 +33,7 @@ was unpinned too, and Windows enumerated the domain's card as a second adapter.
 
 The SMBIOS identity, by contrast, changed between the base and guest stages and
 the licence survived it -- which is how we know the CPU is the component that
-decides (#574).
+decides (#573).
 """
 import re
 from pathlib import Path
@@ -51,7 +51,7 @@ MK = (ROOT / "Makefile").read_text(encoding="utf-8")
 
 # Every stage that BOOTS the guest, not just the one that installs it. The
 # licence broke because windows11-guest ran -cpu host with no -smbios at all,
-# so the image was bound to three machines on its way here (#574).
+# so the image was bound to three machines on its way here (#573).
 STAGES = [("base", BASE), ("guest", GUEST), ("office", OFFICE)]
 DEFAULTS = yaml.safe_load(
     (ROOT / "ansible" / "roles" / "cape-guests" / "defaults" / "main.yml").read_text(encoding="utf-8"))
@@ -117,7 +117,7 @@ def test_the_hypervisor_bit_is_cleared_in_every_build_stage(stage, src):
 
 @pytest.mark.parametrize("stage,src", STAGES)
 def test_no_stage_builds_against_the_build_hosts_own_cpu(stage, src):
-    """`-cpu host` is why the rebuilt image arrived unlicensed (#574): it
+    """`-cpu host` is why the rebuilt image arrived unlicensed (#573): it
     resolves to the builder's silicon, so the build machine and the sandbox
     agreed only when they were the same box. Measured, on first boot here:
 
@@ -223,7 +223,7 @@ def test_the_shared_cpu_model_is_a_real_named_model():
 
 @pytest.mark.parametrize("stage", ["base", "guest", "office"])
 def test_the_makefile_hands_every_stage_the_whole_profile(stage):
-    """A stage built without the profile is the #574 bug exactly. Resolved
+    """A stage built without the profile is the #573 bug exactly. Resolved
     through the variable the recipe actually uses, so renaming it fails here."""
     _, recipe = _target(f"win11-{stage}")
     build = recipe.rsplit("packer build", 1)

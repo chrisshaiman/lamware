@@ -19,7 +19,7 @@ cape_guest_vcpus: 4
 # licence to a hardware hash, and the CPU is the component that decides it:
 # an image built with -cpu host on a laptop reported 0xC004F00F ("hardware ID
 # binding is beyond the level of tolerance") on its first boot here, because
-# both sides said "host" and "host" is a different CPU on each machine (#574).
+# both sides said "host" and "host" is a different CPU on each machine (#573).
 #
 # packer/*.pkr.hcl is given this same value by the Makefile, so the image is
 # built against the CPU it will run on no matter which machine builds it.
