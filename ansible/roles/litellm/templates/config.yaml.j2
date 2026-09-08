@@ -1,15 +1,17 @@
 # The Anthropic entries below are named from interpret_analyst_* — NOT from
-# interpret_model. Those used to be the same variable, so pointing the automated
-# pipeline at a local alias would have emitted
+# interpret_model, which is what the automated pipeline uses.
 #
-#   - model_name: "local-qwen-llamacpp-re"
-#     litellm_params:
-#       model: "anthropic/local-qwen-llamacpp-re"
+# They were the same variable. That meant pointing the pipeline at a local alias
+# would have emitted an Anthropic-backed model_list entry CARRYING THAT LOCAL
+# ALIAS'S NAME, shadowing the real local entry and sending decompiled malware to
+# a third-party API while every config file still read "local".
 #
-# shadowing the real local alias of that name and sending decompiled malware to
-# the cloud, silently, while the config read as "local". Automated runs are local
-# by policy; these entries exist so an analyst can still choose a cloud model in
-# the GUI.
+# (Deliberately described rather than shown: a worked example here would contain
+# the literal entry header that test_litellm_fallbacks.py splits on, and the test
+# would parse this comment instead of the real RE entry. It did.)
+#
+# Automated runs are local by policy; these entries exist so an analyst can still
+# choose a cloud model from the GUI.
 model_list:
   - model_name: "{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
     litellm_params:
