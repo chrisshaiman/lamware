@@ -28,4 +28,20 @@ cape_guest_vcpus: 4
 # Skylake-Client is also the more plausible profile for a guest whose SMBIOS
 # claims to be an OptiPlex 7090: host-passthrough was reporting a Xeon E-2388G,
 # a part Dell never shipped in that desktop.
-cape_guest_cpu_model: Skylake-Client-v4
+#
+# The NAME has to satisfy two layers that disagree about what exists:
+#
+#   qemu     knows Skylake-Client-v1..v4 AND the aliases
+#   libvirt  validates <model> against its own cpu_map, which carries ONLY the
+#            unversioned aliases -- "Skylake-Client-v4" is rejected outright
+#            with "internal error: Unknown CPU model" at domain start
+#
+# So never a -vN name here, however happily `qemu-system-x86_64 -cpu` accepts
+# it. Nor a bare "Skylake-Client": qemu documents that one as "alias configured
+# by machine type", so it can resolve to different silicon on different qemu
+# versions -- exactly the drift this variable exists to prevent (build host runs
+# 10.2.1, this host 9.2.2).
+#
+# Skylake-Client-noTSX-IBRS resolves to Skylake-Client-v3 on both, and is in
+# libvirt's cpu_map. Verified on both hosts; the deploy re-checks it.
+cape_guest_cpu_model: Skylake-Client-noTSX-IBRS

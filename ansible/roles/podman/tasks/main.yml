@@ -38,19 +38,55 @@
 
 # konstruktoid hardening disables unprivileged user namespaces.
 # Podman needs them for rootless container operation.
+# The FILENAME is load-bearing. sysctl.d files are merged by name across
+# /etc, /run and /usr/lib, and konstruktoid drops
+# /usr/lib/sysctl.d/zz-main-hardening.conf (userns = 0) and
+# /usr/lib/sysctl.d/zz-apparmor-hardening.conf (restrict = 1). "zz-" sorts after
+# "99-", so the old 99-podman.conf lost every boot and rootless podman was dead
+# with the file sitting there looking correct (#576). zz-podman.conf sorts after
+# both hardening files ('p' > 'm', 'p' > 'a').
+#
+# TRADE-OFF, deliberate: unprivileged user namespaces are real kernel attack
+# surface and CIS disables them. Every analysis tool is a rootless podman
+# container, so the alternative is running twelve containers as root, which is
+# worse. Rootless plus --cap-drop=ALL --network=none --read-only is the safer
+# side of that trade.
 - name: Enable unprivileged user namespaces for rootless Podman
   ansible.posix.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/99-podman.conf
+    sysctl_file: /etc/sysctl.d/zz-podman.conf
     reload: true
   loop:
     - { key: user.max_user_namespaces, value: "15000" }
     - { key: kernel.unprivileged_userns_clone, value: "1" }
+    # Without this the userns is created and the container still cannot mount
+    # its overlay: "mount ...: permission denied". It is the third of three
+    # independent blocks, and each one masked the next (#576).
+    - { key: kernel.apparmor_restrict_unprivileged_userns, value: "0" }
 
-# Ubuntu 24.04 ships restrictive AppArmor profiles for podman and crun
-# that block shared library loading. Disable them — container isolation
-# is provided by our own --cap-drop=ALL, --network=none, --read-only flags.
+- name: Remove the superseded podman sysctl drop-ins
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/{{ item }}"
+    state: absent
+  loop:
+    - 99-podman.conf
+    - 99-podman-userns.conf
+
+# Ubuntu 24.04 ships NAMING-ONLY AppArmor profiles for podman and crun. They
+# carry flags=(unconfined) and exist purely so the process gets a label other
+# than "unconfined" — their bodies contain no file rules whatsoever. Strip that
+# flag and the same profile becomes deny-everything.
+#
+# That is what happened on 2026-09-02: every profile on the box was put into
+# enforce, /etc/apparmor.d/disable/ was emptied, and podman lost /proc. It then
+# failed with "cannot retrieve cmd line" for root and pipeline alike (#576).
+#
+# aa-disable rather than editing the profile: it is a dpkg conffile, and
+# rewriting it fights the package on every upgrade.
+#
+# Container isolation does not depend on these profiles — it comes from our own
+# --cap-drop=ALL, --network=none, --read-only flags.
 - name: Disable AppArmor profiles for podman and crun
   ansible.builtin.command: aa-disable {{ item }}
   loop:
@@ -58,6 +94,49 @@
     - crun
   changed_when: true
   failed_when: false
+
+# The task above cannot fail — aa-disable exits non-zero when the profile is
+# already disabled, so failed_when: false is required and the task is therefore
+# worthless as a guard. The guard is HERE, and it exercises the real thing
+# rather than a proxy: every analysis tool (triage, ghidra, volatility, dotnet,
+# go, pyinstaller, java, office, powershell, screenshot, pdf, interpret) is a
+# rootless podman container run as `pipeline`.
+#
+# Worth failing the deploy over, because the failure is otherwise invisible:
+# with podman dead the pipeline still exits 0 and writes a CAPE-only report
+# that is indistinguishable from a good one, except that triage no longer sets
+# the filename or package and the sample is submitted as <sha>.bin/auto (#576).
+# NECESSARY, NOT SUFFICIENT. This passed while containers still could not
+# start: with the AppArmor profile disabled but the userns sysctls still zeroed,
+# `podman --version` returned 4.9.3 and `run-triage` died with "cannot clone".
+# Starting a real container is the only check that covers all three layers, and
+# no image exists yet at this point in the play -- the tool roles run later. So
+# that check lives in roles/pipeline; this one catches the profile layer early
+# and cheaply.
+- name: Verify Podman actually runs as the pipeline user
+  become: true
+  become_user: pipeline
+  ansible.builtin.command: podman --version
+  register: podman_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when Podman cannot run
+  ansible.builtin.assert:
+    that:
+      - podman_check.rc == 0
+      - "'cannot retrieve cmd line' not in (podman_check.stdout | default(''))"
+      - "'cannot retrieve cmd line' not in (podman_check.stderr | default(''))"
+    fail_msg: >-
+      podman is installed but will not run as `pipeline`
+      (rc={{ podman_check.rc }}).
+      "cannot retrieve cmd line" means its AppArmor profile is enforcing and
+      denying /proc — check `aa-status | grep podman` and whether
+      /etc/apparmor.d/disable/ still holds the symlinks. Every containerized
+      analysis stage is dead until this is fixed, and none of them will say so
+      (#576).
+    success_msg: >-
+      podman runs as pipeline: {{ podman_check.stdout | default('') | trim }}
 
 # ---------------------------------------------------------------------------
 # Tear down the vestigial cape-user Podman stack (tools moved to the pipeline
