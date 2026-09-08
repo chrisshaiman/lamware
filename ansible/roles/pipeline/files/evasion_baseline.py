@@ -80,9 +80,14 @@ def sample_metrics(report: dict) -> dict:
     }
 
 
-def guest_images(image_dir: Path = GUEST_IMAGE_DIR) -> list:
+def guest_images(image_dir: Path | None = None) -> list:
     """The images this baseline describes. Without them it is a set of numbers
     with no era attached, which is the whole failure #486 exists to prevent."""
+    # Resolved at CALL time, not bound as a default: a default argument freezes
+    # the path at import, which makes the era stamp impossible to exercise in a
+    # test — and this function is the half of the record that says which images
+    # the numbers belong to.
+    image_dir = image_dir or GUEST_IMAGE_DIR
     out = []
     try:
         images = sorted(image_dir.glob("*.qcow2"))
@@ -95,8 +100,34 @@ def guest_images(image_dir: Path = GUEST_IMAGE_DIR) -> list:
             continue
         out.append({"image": img.name,
                     "mtime": datetime.fromtimestamp(st.st_mtime, UTC).date().isoformat(),
+                    "mtime_epoch": st.st_mtime,
                     "bytes": st.st_size})
     return out
+
+
+def era_check(samples: dict, images: list) -> dict:
+    """Do the reports pre-date the images this baseline claims to describe?
+
+    The two halves of this record come from different places: the numbers from
+    STORED reports, the era from the live image directory at capture time. So a
+    re-run over old reports after a rebuild produces a file that says
+    "built 2026-09-04" while describing what the 2026-05-06 images did. It looks
+    exactly like a post-rebuild baseline. Observed on 2026-09-07, on a control
+    run over the pre-rebuild reports.
+
+    A report written before an image existed cannot have been produced on it.
+    That is checkable, so check it rather than trusting whoever ran the tool to
+    remember.
+    """
+    newest = max((i.get("mtime_epoch", 0) for i in images), default=0)
+    stale = sorted(
+        name for name, m in samples.items()
+        if "error" not in m and m.get("report_mtime_epoch", 0) < newest)
+    return {
+        "newest_image_epoch": newest,
+        "stale_reports": stale,
+        "consistent": not stale,
+    }
 
 
 def capture(corpus_path: str) -> dict:
@@ -104,18 +135,29 @@ def capture(corpus_path: str) -> dict:
     samples = {}
     for s in manifest.get("samples", []):
         d = Path(s["corpus_dir"])
+        rp = d / "report.json"
         try:
-            report = json.loads((d / "report.json").read_text())
+            report = json.loads(rp.read_text())
         except (OSError, ValueError) as e:
             samples[d.name] = {"error": f"{type(e).__name__}: {e}"}
             continue
-        samples[d.name] = sample_metrics(report)
+        m = sample_metrics(report)
+        try:
+            st = rp.stat()
+            m["report_mtime"] = datetime.fromtimestamp(st.st_mtime, UTC).date().isoformat()
+            m["report_mtime_epoch"] = st.st_mtime
+        except OSError:
+            m["report_mtime"] = "unknown"
+            m["report_mtime_epoch"] = 0
+        samples[d.name] = m
+    _images = guest_images()
     return {
         "captured_at": datetime.now(UTC).isoformat(),
         "corpus_path": str(corpus_path),
         "corpus_sha256": hashlib.sha256(
             Path(corpus_path).read_bytes()).hexdigest()[:16],
-        "guest_images": guest_images(),
+        "guest_images": _images,
+        "era": era_check(samples, _images),
         "primary_metric": "observed_behaviour",
         "direction": "higher is less evasion",
         "samples": samples,
@@ -136,6 +178,15 @@ def render(base: dict) -> str:
         lines.append("image    *** NONE READABLE — this baseline names no era. "
                      "Re-run as a user that can stat "
                      f"{GUEST_IMAGE_DIR} ***")
+    era = base.get("era") or {}
+    if era.get("stale_reports"):
+        lines.append("")
+        lines.append("*** ERA MISMATCH — these numbers were NOT produced on the "
+                     "images named above ***")
+        lines.append(f"    {len(era['stale_reports'])} report(s) pre-date the newest image: "
+                     f"{', '.join(era['stale_reports'])}")
+        lines.append("    Re-detonate the corpus, or pass --allow-stale-reports "
+                     "if this is deliberate.")
     lines.append("")
     lines.append(f"{'sample':30} {'observed':>8} {'sigs':>5} {'payl':>5} "
                  f"{'inj':>4} {'proc':>5} {'mal':>5} {'ttps':>5} {'corr':>5}")
@@ -159,6 +210,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--out", help="write the JSON baseline here as well")
+    ap.add_argument("--allow-stale-reports", action="store_true",
+                    help="write even when the reports pre-date the images they "
+                         "would be labelled with (deliberate control captures)")
     args = ap.parse_args()
     base = capture(args.corpus)
     print(render(base))
@@ -166,12 +220,18 @@ def main() -> None:
         raise SystemExit(
             "refusing to write a baseline that cannot say which images it "
             "describes — run as a user that can read the image directory")
+    if args.out and base["era"]["stale_reports"] and not args.allow_stale_reports:
+        raise SystemExit(
+            "refusing to write a baseline whose reports pre-date the images it "
+            "names — the numbers would be attributed to the wrong era.\n"
+            "  re-detonate the corpus, or pass --allow-stale-reports.")
     if args.out:
         out = Path(args.out)
         if out.exists():
             raise SystemExit(
                 f"refusing to overwrite {out}\n"
                 f"  a baseline is a record of a moment that cannot be retaken.")
+        base["stale_reports_allowed"] = bool(args.allow_stale_reports)
         out.write_text(json.dumps(base, indent=2))
         print(f"[baseline] wrote {out}")
 
