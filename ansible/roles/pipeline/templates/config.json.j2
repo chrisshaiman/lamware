@@ -35,6 +35,19 @@
 
   "interpret": {
     "model": {{ interpret_model | default('claude-sonnet-4-6') | to_json }},
+    {#- The TRANSPORT switch, and it is not implied by the model name. The agentic
+        RE path uses LiteLLM's /anthropic passthrough, which serves cloud models
+        only; a local alias sent there returns 404 not_found_error. Measured, and
+        documented at the `client = summary_client` line in interpret-ghidra.py:
+
+          local-qwen-llamacpp-re  /anthropic/v1/messages -> 404
+          local-qwen-llamacpp-re  /v1/messages           -> 200
+
+        This template never set it, so re_backend was None and the agentic path
+        stayed on the cloud passthrough no matter what interpret_model said. #582
+        changed the model to a local alias and left this unset, so every run
+        404'd — after sending the decompiled context to the cloud endpoint. #}
+    "re_backend": {{ interpret_re_backend | default('cloud') | to_json }},
     "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
     "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
     "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
