@@ -67,7 +67,12 @@ from stages.single_shot_init import (
     build_ps_init,
     capped,
 )
-from stages.triage import derive_package_from_triage, derive_tags_from_triage, run_triage
+from stages.triage import (
+    derive_package_from_triage,
+    derive_tags_from_triage,
+    run_triage,
+    triage_error,
+)
 from stages.volatility import (
     extract_shellcode_artifacts,
     run_volatility,
@@ -249,6 +254,17 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     with stage_timer("triage"):
         triage_result = run_triage(sample_path, output_dir, triage_cmd=TRIAGE_CMD)
         report.update(triage_result)
+        _triage_err = triage_error(triage_result)
+        if _triage_err:
+            # Loud, because everything downstream degrades QUIETLY: Cape is given
+            # no package (falls back to auto), no derived filename, and no guest
+            # clock — the PE-timestamp anti-evasion needs pe_compile_timestamp.
+            # An analysis produced this way is not comparable to one where triage
+            # ran, and for five days nothing said so (#576).
+            report.setdefault("stage_failures", []).append("triage")
+            log.error(f"  [!!] TRIAGE DID NOT RUN: {_triage_err}")
+            log.error("       Cape gets no package and no guest clock. This "
+                      "analysis is NOT comparable to one with triage working.")
         cape_tags = derive_tags_from_triage(triage_result)
         cape_package = derive_package_from_triage(triage_result, filename=original_name or sample_path.name)
         cape_filename = derive_filename(sample_path, cape_package, original_name)
@@ -1538,12 +1554,30 @@ def main():
         llm_enabled = report.get("llm_interpretation", {}).get("enabled", False)
         llm_family = report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess", "n/a")
 
+        failures = report.get("stage_failures") or []
+
         log.info("\nSummary:")
-        log.info(f"  Triage:     {yara_count} YARA matches")
+        if "triage" in failures:
+            # "0 YARA matches" is what this printed while triage was dead — a
+            # sentence that reads as a finding rather than an outage.
+            log.info(f"  Triage:     FAILED — {report.get('error', 'unknown')}")
+        else:
+            log.info(f"  Triage:     {yara_count} YARA matches")
         log.info(f"  Cape:       {cape_status}")
         log.info(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
         log.info(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
         log.info(f"  LLM:        {llm_family if llm_enabled else 'disabled'}")
+
+        if failures:
+            # Exit non-zero so the outage is visible to whatever ran us.
+            # pipeline-spool.service uses `run-pipeline "$f" && rm -f "$f"`, so
+            # the sample is NOT consumed while the toolchain is broken — which
+            # is the behaviour we want: it can be re-run once it is fixed,
+            # rather than being silently spent on a degraded analysis.
+            log.error(f"\nFAILED STAGES: {', '.join(failures)}")
+            log.error("The report was still written, but do not compare it with "
+                      "one produced by a healthy pipeline.")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
