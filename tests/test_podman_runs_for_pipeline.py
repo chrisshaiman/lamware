@@ -131,6 +131,41 @@ def test_all_three_userns_settings_are_applied():
     }, f"missing a userns setting: {sorted(keys)}"
 
 
+def test_the_probe_overrides_the_image_entrypoint():
+    """`podman run <image> true` does NOT run `true` when the image declares an
+    ENTRYPOINT — the entrypoint runs and the argument is handed to IT.
+
+    The interpret image's entrypoint exits 1 on a missing API key, so the first
+    version of this preflight reported "podman cannot start a container" and
+    aborted a deploy while podman was working perfectly. A guard that cries wolf
+    gets switched off, and then the real outage goes unnoticed again."""
+    task = PIPE_TASKS[_pipe_index("Start a real container")]
+    cmd = str(task.get("ansible.builtin.command", ""))
+    assert "--entrypoint" in cmd, (
+        "the probe runs the image's own entrypoint, so its exit code says "
+        "nothing about whether podman can start a container")
+
+
+def test_only_podmans_own_failure_code_fails_the_deploy():
+    """podman separates the two cases exactly:
+
+        125  podman itself could not run the container   <- the real outage
+        126  the command could not be invoked            <- image property
+        127  the command was not found                   <- image property
+        *    the container ran and exited with its own code
+
+    The broken state returned 125. Asserting rc == 0 instead conflates a
+    container that started and exited non-zero with podman being unable to
+    start one at all."""
+    task = PIPE_TASKS[_pipe_index("Fail when the analysis containers cannot run")]
+    conditions = " ".join(str(c) for c in task["ansible.builtin.assert"]["that"])
+    assert "!= 125" in conditions, (
+        "the assert does not key on podman's own failure code; any container "
+        "exiting non-zero will abort the deploy")
+    assert "== 0" not in conditions.replace("length > 0", ""), (
+        "the assert still requires a zero container exit code")
+
+
 def test_the_pipeline_preflight_starts_a_container():
     """`podman --version` is NOT enough -- measured: it returned 4.9.3 while
     run-triage still died with "cannot clone". Only starting a container
