@@ -153,3 +153,29 @@
   ansible.builtin.file:
     path: "/home/{{ cape_user }}/.local/share/containers"
     state: absent
+
+# ---------------------------------------------------------------------------
+# Silent-outage detection (#580)
+#
+# The deploy-time checks above prove podman works WHEN WE DEPLOY. The local
+# model died on 2026-09-02 and was unreachable for six days between deploys,
+# with every status signal green: container "Up 6 days", unit active, port
+# LISTEN, process alive. Only CPU time — 53 seconds over six days — disagreed.
+#
+# So this runs hourly and checks the two things status cannot: orphan DNAT
+# rules, and whether published ports actually answer.
+# ---------------------------------------------------------------------------
+- name: Deploy the podman port health check
+  ansible.builtin.template:
+    src: check-podman-ports.sh.j2
+    dest: /usr/local/sbin/check-podman-ports.sh
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Run the podman port health check hourly
+  ansible.builtin.cron:
+    name: "podman-port-health"
+    user: root
+    minute: "17"
+    job: "/usr/local/sbin/check-podman-ports.sh >/dev/null"

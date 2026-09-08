@@ -1,0 +1,99 @@
+#!/bin/bash
+# =============================================================================
+# check-podman-ports.sh — catch containers that look healthy and serve nothing
+#
+# On 2026-09-02 the local model became unreachable and stayed that way for six
+# days. Every status-shaped signal was green (#580):
+#
+#   podman ps            llamacpp Up 6 days
+#   systemctl is-active  active, NRestarts=0
+#   ss -lntp             127.0.0.1:11435 LISTEN
+#   podman top           llama-server running
+#   run-pipeline         rc=0
+#
+# The socket was held by conmon and nothing forwarded. A stale CNI DNAT rule,
+# left by a container removed while podman itself was broken (#576), shadowed
+# the live rule and sent every connection to an IP that no longer existed. The
+# only signal telling the truth was CPU time: 53 seconds over six days.
+#
+# So this checks the two things a status read cannot tell you:
+#   1. orphan DNAT rules — a published port aimed at a container that is gone
+#   2. reachability      — an actual connection to every published port
+#
+# NOTE: this is a Jinja template, so the shell below avoids array-length
+# expansion and podman --format Go templates entirely -- both open with
+# braces Jinja claims. A plain counter and `--format json` sidestep it.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -uo pipefail
+
+NTFY_URL="{{ ntfy_url }}/{{ ntfy_topic }}"
+NTFY_TOKEN="{{ ntfy_token | default('') }}"
+PROBE_TIMEOUT="{{ podman_port_probe_timeout | default(10) }}"
+
+# Authenticated publish with a visible failure. A bare `curl -s` swallows a 403
+# and exits 0, producing a notification channel that reports healthy while
+# delivering nothing — the shape of #336, #343 and #352.
+notify() {
+    local title="$1" priority="$2" body="$3"
+    local auth=()
+    [[ -n "$NTFY_TOKEN" ]] && auth=(-H "Authorization: Bearer $NTFY_TOKEN")
+    curl -sS --fail-with-body "${auth[@]}" \
+         -H "Title: $title" -H "Priority: $priority" -H "Tags: warning" \
+         -d "$body" "$NTFY_URL" >/dev/null
+}
+
+PROBLEMS=""
+problem_count=0
+add_problem() {
+    PROBLEMS="${PROBLEMS}$1"$'\n'
+    problem_count=$((problem_count + 1))
+}
+
+# --- 1. orphan DNAT rules -------------------------------------------------
+# Mechanically detectable: a CNI-HOSTPORT-DNAT entry naming a container id
+# podman no longer knows about. Two rules for one port, one aimed at a dead IP,
+# is precisely what six days of silence looked like.
+#
+# The \\? in the pattern is load-bearing. `iptables -S` prints the comment with
+# BACKSLASH-ESCAPED quotes (id: \"abc\"), so a pattern anchored on id: " matches
+# nothing, the loop body never runs, and the check passes on every input --
+# including an orphan rule injected on purpose. Caught by mutation, not review.
+live_ids="$(podman ps -a --no-trunc --quiet 2>/dev/null)"
+while read -r cid; do
+    [ -z "$cid" ] && continue
+    if ! printf '%s\n' "$live_ids" | grep -q "^${cid}$"; then
+        add_problem "orphan DNAT rule for container ${cid:0:12} (no such container)"
+    fi
+done < <(iptables -t nat -S CNI-HOSTPORT-DNAT 2>/dev/null \
+         | grep -oP 'id: \\?"\K[0-9a-f]+' | sort -u)
+
+# --- 2. every published port must answer ----------------------------------
+# A REQUEST, not a status read. `podman ps` said Up throughout.
+while read -r hostport name; do
+    [ -z "$hostport" ] && continue
+    if ! timeout "$PROBE_TIMEOUT" bash -c "exec 3<>/dev/tcp/127.0.0.1/${hostport}" 2>/dev/null; then
+        add_problem "container '${name}' publishes port ${hostport} but nothing answers"
+    fi
+done < <(podman ps --format json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    for c in json.load(sys.stdin):
+        for p in (c.get("Ports") or []):
+            hp = p.get("host_port")
+            if hp:
+                print(hp, (c.get("Names") or ["?"])[0])
+except Exception:
+    pass
+' | sort -u)
+
+if [ "$problem_count" -gt 0 ]; then
+    printf '%s' "$PROBLEMS" >&2
+    notify "Podman: container up but not serving" "high" "$PROBLEMS"
+    exit 1
+fi
+
+echo "podman published ports all answering; no orphan DNAT rules"
