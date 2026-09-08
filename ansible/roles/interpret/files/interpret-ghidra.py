@@ -59,9 +59,11 @@ import httpx
 # them at runtime (`{**DEFAULT_CONFIG, **runtime_config}`).
 
 _BUILTIN_DEFAULTS: dict[str, Any] = {
-    "model": "claude-sonnet-4-6",
+    # Local, matching the role defaults: automated runs never reach a cloud
+    # model on their own, escalation included (#582).
+    "model": "local-qwen-llamacpp-re",
     "escalation_threshold": 5,
-    "escalation_model": "claude-opus-4-6",
+    "escalation_model": "local-qwen-llamacpp-re",
     "max_output_tokens": 4096,
     "max_tool_calls": 10,
     # Bounds how many tool calls are EXECUTED per model turn. `max_tool_calls` caps the

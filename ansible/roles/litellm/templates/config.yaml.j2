@@ -1,17 +1,31 @@
+# The Anthropic entries below are named from interpret_analyst_* — NOT from
+# interpret_model, which is what the automated pipeline uses.
+#
+# They were the same variable. That meant pointing the pipeline at a local alias
+# would have emitted an Anthropic-backed model_list entry CARRYING THAT LOCAL
+# ALIAS'S NAME, shadowing the real local entry and sending decompiled malware to
+# a third-party API while every config file still read "local".
+#
+# (Deliberately described rather than shown: a worked example here would contain
+# the literal entry header that test_litellm_fallbacks.py splits on, and the test
+# would parse this comment instead of the real RE entry. It did.)
+#
+# Automated runs are local by policy; these entries exist so an analyst can still
+# choose a cloud model from the GUI.
 model_list:
-  - model_name: "{{ interpret_model | default('claude-sonnet-4-6') }}"
+  - model_name: "{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
     litellm_params:
-      model: "anthropic/{{ interpret_model | default('claude-sonnet-4-6') }}"
+      model: "anthropic/{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  - model_name: "{{ interpret_summary_model | default('claude-haiku-4-5') }}"
+  - model_name: "{{ interpret_analyst_summary_model | default('claude-haiku-4-5') }}"
     litellm_params:
-      model: "anthropic/{{ interpret_summary_model | default('claude-haiku-4-5') }}"
+      model: "anthropic/{{ interpret_analyst_summary_model | default('claude-haiku-4-5') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  - model_name: "{{ interpret_escalation_model | default('claude-opus-4-6') }}"
+  - model_name: "{{ interpret_analyst_escalation_model | default('claude-opus-4-6') }}"
     litellm_params:
-      model: "anthropic/{{ interpret_escalation_model | default('claude-opus-4-6') }}"
+      model: "anthropic/{{ interpret_analyst_escalation_model | default('claude-opus-4-6') }}"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
   # Current-gen Claude arms for the eval harness (A/B vs local qwen).

@@ -4,18 +4,50 @@
 # Feature toggle
 interpret_enabled: true
 
-# Provider (future: "local" for ollama/vllm)
-interpret_provider: "anthropic"
+# Provider
+interpret_provider: "local"
+
+# ---------------------------------------------------------------------------
+# AUTOMATED RUNS USE THE LOCAL MODEL.
+#
+# The cloud models stay configured and reachable — they are the path for
+# analyst-driven work through the GUI. What changed is that nothing automated
+# reaches for them on its own.
+#
+# The -re aliases exist for exactly this and are the right target: they run on
+# the local llama.cpp server and carry NO cloud fallback by design, because
+# their context holds decompiled malware. See the comments in
+# roles/litellm/templates/config.yaml.j2 and test_litellm_fallbacks.py.
+#
+# -llamacpp- rather than the bare alias: ollama serves the SAME qwen3.6 weights
+# and loading a second ~14GB copy alongside llama-server is what #407 exists to
+# stop.
+# ---------------------------------------------------------------------------
 
 # Model selection — interpret (agentic code analysis)
-interpret_model: "claude-sonnet-4-6"
+interpret_model: "local-qwen-llamacpp-re"
 
 # Model selection — executive summary (structured reformatting, no tools)
-interpret_summary_model: "claude-haiku-4-5"
+interpret_summary_model: "local-qwen-llamacpp"
 
-# Escalation (interpret stage only)
+# Escalation (interpret stage only).
+#
+# Local too. Escalating an automated run to a cloud model would put decompiled
+# malware there without an analyst ever choosing it, which is the decision this
+# block exists to take away from the machine.
 interpret_escalation_threshold: 5
-interpret_escalation_model: "claude-opus-4-6"
+interpret_escalation_model: "local-qwen-llamacpp-re"
+
+# The cloud models an analyst can select from the GUI. NOT used by any automated
+# path. These name the Anthropic entries in the litellm model_list, and they are
+# deliberately separate variables from the interpret_* ones above: while the two
+# were the same variable, pointing the pipeline at a local alias would have
+# emitted an Anthropic entry NAMED after that alias, shadowing the real local one
+# and sending decompiled malware to the cloud with the config still reading
+# "local".
+interpret_analyst_model: "claude-sonnet-4-6"
+interpret_analyst_summary_model: "claude-haiku-4-5"
+interpret_analyst_escalation_model: "claude-opus-4-6"
 
 # Token budgets
 interpret_max_output_tokens: 4096
