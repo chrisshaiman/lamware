@@ -814,12 +814,29 @@
   changed_when: false
   failed_when: false
 
+# --entrypoint, and only rc=125 counts as a failure. Both learned the hard way:
+# this check blocked a deploy on its first run, for the wrong reason.
+#
+# `podman run <image> true` does NOT run `true` when the image declares an
+# ENTRYPOINT — the entrypoint runs and the argument is passed to IT. The
+# interpret image's entrypoint exits 1 on a missing API key, so the probe
+# reported "podman cannot start a container" while podman was working perfectly.
+#
+# podman's exit codes separate the two cases exactly:
+#   125  podman itself could not run the container   <- the outage we care about
+#   126  the command could not be invoked            <- an image property
+#   127  the command was not found                   <- an image property
+#   *    the container ran and exited with its own code
+#
+# The broken state returned 125 ("cannot re-exec process", "cannot clone",
+# overlay permission denied). Anything else means a container started, which is
+# the only thing this check exists to prove.
 - name: Start a real container as the pipeline user
   become: true
   become_user: pipeline
   ansible.builtin.command: >-
-    podman run --rm --network=none
-    {{ pipeline_images.stdout_lines | first }} true
+    podman run --rm --network=none --entrypoint /bin/true
+    {{ pipeline_images.stdout_lines | first }}
   args:
     chdir: "{{ pipeline_install_dir }}"
   register: pipeline_container_check
@@ -831,7 +848,9 @@
   ansible.builtin.assert:
     that:
       - pipeline_images.stdout_lines | length > 0
-      - pipeline_container_check.rc | default(1) == 0
+      # 125 = podman could not run the container. A container that starts and
+      # exits non-zero for its own reasons proves exactly what we need.
+      - pipeline_container_check.rc | default(125) != 125
     fail_msg: >-
       {% if pipeline_images.stdout_lines | length == 0 %}
       No container images are visible to `pipeline`, so the analysis stages
@@ -839,7 +858,8 @@
       tool roles first.
       {% else %}
       podman cannot start a container as `pipeline`
-      (rc={{ pipeline_container_check.rc | default('n/a') }}):
+      (rc={{ pipeline_container_check.rc | default('n/a') }}, which is podman's
+      "could not run the container", not the container's own exit code):
       {{ (pipeline_container_check.stderr | default('')) | trim }}
       "cannot retrieve cmd line" = AppArmor profile enforcing;
       "cannot clone" = userns sysctls zeroed by the hardening drop-ins;
