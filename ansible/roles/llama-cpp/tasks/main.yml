@@ -195,3 +195,54 @@
     ('127.0.0.1:' ~ (llamacpp_port | string)) not in _llamacpp_listeners.stdout
     or ('0.0.0.0:' ~ (llamacpp_port | string)) in _llamacpp_listeners.stdout
     or ('*:' ~ (llamacpp_port | string)) in _llamacpp_listeners.stdout
+
+# ---------------------------------------------------------------------------
+# Liveness by REQUEST, not by status (#580)
+#
+# `podman ps` said "Up 6 days", the unit was active with zero restarts, and the
+# port was LISTENing, while every request was DNAT'd to a container IP that no
+# longer existed. Reading status would have passed throughout the outage. The
+# only check worth having is one that asks the model to answer.
+# ---------------------------------------------------------------------------
+- name: Wait for the model endpoint to accept connections
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llamacpp_port | default(11435) }}/v1/models"
+    status_code: 200
+  register: llamacpp_models
+  retries: "{{ llamacpp_ready_retries | default(30) }}"
+  delay: 10
+  until: llamacpp_models is succeeded
+  changed_when: false
+  failed_when: false
+
+- name: Ask the model to actually generate
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llamacpp_port | default(11435) }}/v1/chat/completions"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ llamacpp_model_name | default('qwen') }}"
+      max_tokens: 1
+      messages:
+        - role: user
+          content: "hi"
+    status_code: 200
+    timeout: 120
+  register: llamacpp_generate
+  changed_when: false
+  failed_when: false
+
+- name: Fail when the model is not actually serving
+  ansible.builtin.assert:
+    that:
+      - llamacpp_models.status | default(0) == 200
+      - llamacpp_generate.status | default(0) == 200
+    fail_msg: >-
+      llama-cpp is not serving
+      (models={{ llamacpp_models.status | default('no response') }},
+      generate={{ llamacpp_generate.status | default('no response') }}).
+      The container and unit can both look healthy while this fails: check for
+      an orphan CNI DNAT rule shadowing the published port with
+      `iptables -t nat -L CNI-HOSTPORT-DNAT -n --line-numbers`, and note that
+      neither `podman network reload` nor restarting the unit removes one (#580).
+    success_msg: "llama-cpp answered a generation request"
