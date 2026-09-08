@@ -38,15 +38,40 @@
 
 # konstruktoid hardening disables unprivileged user namespaces.
 # Podman needs them for rootless container operation.
+# The FILENAME is load-bearing. sysctl.d files are merged by name across
+# /etc, /run and /usr/lib, and konstruktoid drops
+# /usr/lib/sysctl.d/zz-main-hardening.conf (userns = 0) and
+# /usr/lib/sysctl.d/zz-apparmor-hardening.conf (restrict = 1). "zz-" sorts after
+# "99-", so the old 99-podman.conf lost every boot and rootless podman was dead
+# with the file sitting there looking correct (#576). zz-podman.conf sorts after
+# both hardening files ('p' > 'm', 'p' > 'a').
+#
+# TRADE-OFF, deliberate: unprivileged user namespaces are real kernel attack
+# surface and CIS disables them. Every analysis tool is a rootless podman
+# container, so the alternative is running twelve containers as root, which is
+# worse. Rootless plus --cap-drop=ALL --network=none --read-only is the safer
+# side of that trade.
 - name: Enable unprivileged user namespaces for rootless Podman
   ansible.posix.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
-    sysctl_file: /etc/sysctl.d/99-podman.conf
+    sysctl_file: /etc/sysctl.d/zz-podman.conf
     reload: true
   loop:
     - { key: user.max_user_namespaces, value: "15000" }
     - { key: kernel.unprivileged_userns_clone, value: "1" }
+    # Without this the userns is created and the container still cannot mount
+    # its overlay: "mount ...: permission denied". It is the third of three
+    # independent blocks, and each one masked the next (#576).
+    - { key: kernel.apparmor_restrict_unprivileged_userns, value: "0" }
+
+- name: Remove the superseded podman sysctl drop-ins
+  ansible.builtin.file:
+    path: "/etc/sysctl.d/{{ item }}"
+    state: absent
+  loop:
+    - 99-podman.conf
+    - 99-podman-userns.conf
 
 # Ubuntu 24.04 ships NAMING-ONLY AppArmor profiles for podman and crun. They
 # carry flags=(unconfined) and exist purely so the process gets a label other
@@ -81,6 +106,13 @@
 # with podman dead the pipeline still exits 0 and writes a CAPE-only report
 # that is indistinguishable from a good one, except that triage no longer sets
 # the filename or package and the sample is submitted as <sha>.bin/auto (#576).
+# NECESSARY, NOT SUFFICIENT. This passed while containers still could not
+# start: with the AppArmor profile disabled but the userns sysctls still zeroed,
+# `podman --version` returned 4.9.3 and `run-triage` died with "cannot clone".
+# Starting a real container is the only check that covers all three layers, and
+# no image exists yet at this point in the play -- the tool roles run later. So
+# that check lives in roles/pipeline; this one catches the profile layer early
+# and cheaply.
 - name: Verify Podman actually runs as the pipeline user
   become: true
   become_user: pipeline

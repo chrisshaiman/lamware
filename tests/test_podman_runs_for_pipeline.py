@@ -29,6 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TASKS = yaml.safe_load(
     (ROOT / "ansible" / "roles" / "podman" / "tasks" / "main.yml").read_text(encoding="utf-8"))
 NAMES = [t.get("name", "") for t in TASKS]
+PIPE_TASKS = yaml.safe_load(
+    (ROOT / "ansible" / "roles" / "pipeline" / "tasks" / "main.yml").read_text(encoding="utf-8"))
+PIPE_NAMES = [t.get("name", "") for t in PIPE_TASKS]
 
 
 def _index(fragment: str) -> int:
@@ -89,3 +92,60 @@ def test_the_disable_task_is_not_mistaken_for_a_guard():
     task = TASKS[_index("Disable AppArmor profiles")]
     assert task.get("failed_when") is False, \
         "if aa-disable can now fail, re-read whether the separate guard is still needed"
+
+
+def _pipe_index(fragment: str) -> int:
+    for i, n in enumerate(PIPE_NAMES):
+        if fragment.lower() in n.lower():
+            return i
+    raise AssertionError(f"no pipeline task matching {fragment!r}")
+
+
+def test_the_sysctl_file_outsorts_the_hardening_drop_ins():
+    """The filename decides who wins. sysctl.d merges by name across /etc, /run
+    and /usr/lib, and konstruktoid ships zz-main-hardening.conf (userns = 0) and
+    zz-apparmor-hardening.conf (restrict = 1). "99-podman.conf" sorts BEFORE
+    both, so it lost silently on every boot while sitting there looking right."""
+    tasks = yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "podman" / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    sysctl = next(t for t in tasks if "ansible.posix.sysctl" in t)
+    path = sysctl["ansible.posix.sysctl"]["sysctl_file"]
+    name = path.rsplit("/", 1)[-1]
+    for loser in ("zz-main-hardening.conf", "zz-apparmor-hardening.conf"):
+        assert name > loser, (
+            f"{name} sorts before {loser}, so the hardening value wins and "
+            f"rootless podman stays broken")
+
+
+def test_all_three_userns_settings_are_applied():
+    """Three independent blocks, each masking the next. Setting only the two
+    obvious ones leaves containers unable to mount their overlay."""
+    tasks = yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "podman" / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    sysctl = next(t for t in tasks if "ansible.posix.sysctl" in t)
+    keys = {i["key"] for i in sysctl["loop"]}
+    assert keys == {
+        "user.max_user_namespaces",
+        "kernel.unprivileged_userns_clone",
+        "kernel.apparmor_restrict_unprivileged_userns",
+    }, f"missing a userns setting: {sorted(keys)}"
+
+
+def test_the_pipeline_preflight_starts_a_container():
+    """`podman --version` is NOT enough -- measured: it returned 4.9.3 while
+    run-triage still died with "cannot clone". Only starting a container
+    exercises all three layers."""
+    task = PIPE_TASKS[_pipe_index("Start a real container")]
+    cmd = str(task.get("ansible.builtin.command", ""))
+    assert "podman run" in cmd, f"the preflight does not start a container: {cmd}"
+    assert task.get("become_user") == "pipeline"
+
+
+def test_the_preflight_fails_the_deploy_and_refuses_to_pass_vacuously():
+    """No images means the check verified nothing, which must not read as
+    success -- that is the same shape as the bug it guards against."""
+    task = PIPE_TASKS[_pipe_index("Fail when the analysis containers cannot run")]
+    conditions = " ".join(str(c) for c in task["ansible.builtin.assert"]["that"])
+    assert "pipeline_container_check.rc" in conditions, "the container exit code is not asserted"
+    assert "pipeline_images.stdout_lines | length > 0" in conditions, \
+        "an empty image list would pass this preflight without checking anything"

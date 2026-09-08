@@ -784,3 +784,67 @@
     hour: "3"
     minute: "0"
     job: "{{ pipeline_install_dir }}/cleanup.sh"
+
+# ---------------------------------------------------------------------------
+# Container preflight (#576)
+#
+# Twelve analysis stages -- triage, volatility, ghidra, dotnet, go, pyinstaller,
+# java, office-macro, powershell, screenshot, pdf, interpret -- are rootless
+# podman containers run as `pipeline`. On 2026-09-02 all twelve died and stayed
+# dead for five days: the pipeline exits 0 regardless and writes a CAPE-only
+# report that is not obviously wrong. Ten corpus runs were reported as
+# successful before anyone looked.
+#
+# Three independent things had to be true, and each masked the next:
+#   1. podman's AppArmor profile not enforcing   -> "cannot retrieve cmd line"
+#   2. userns sysctls non-zero                   -> "cannot clone"
+#   3. apparmor_restrict_unprivileged_userns=0   -> overlay "permission denied"
+#
+# So the check has to START A CONTAINER. `podman --version` passes at layer 1
+# with 2 and 3 still broken -- measured, not assumed. This runs last in the
+# role, where the tool images already exist.
+# ---------------------------------------------------------------------------
+- name: List container images visible to the pipeline user
+  become: true
+  become_user: pipeline
+  ansible.builtin.command: podman images --quiet --no-trunc
+  args:
+    chdir: "{{ pipeline_install_dir }}"
+  register: pipeline_images
+  changed_when: false
+  failed_when: false
+
+- name: Start a real container as the pipeline user
+  become: true
+  become_user: pipeline
+  ansible.builtin.command: >-
+    podman run --rm --network=none
+    {{ pipeline_images.stdout_lines | first }} true
+  args:
+    chdir: "{{ pipeline_install_dir }}"
+  register: pipeline_container_check
+  changed_when: false
+  failed_when: false
+  when: pipeline_images.stdout_lines | length > 0
+
+- name: Fail when the analysis containers cannot run
+  ansible.builtin.assert:
+    that:
+      - pipeline_images.stdout_lines | length > 0
+      - pipeline_container_check.rc | default(1) == 0
+    fail_msg: >-
+      {% if pipeline_images.stdout_lines | length == 0 %}
+      No container images are visible to `pipeline`, so the analysis stages
+      cannot possibly run and this preflight cannot verify anything. Run the
+      tool roles first.
+      {% else %}
+      podman cannot start a container as `pipeline`
+      (rc={{ pipeline_container_check.rc | default('n/a') }}):
+      {{ (pipeline_container_check.stderr | default('')) | trim }}
+      "cannot retrieve cmd line" = AppArmor profile enforcing;
+      "cannot clone" = userns sysctls zeroed by the hardening drop-ins;
+      overlay "permission denied" = kernel.apparmor_restrict_unprivileged_userns.
+      All twelve analysis stages are dead until this passes, and the pipeline
+      will not say so -- it will exit 0 and write a CAPE-only report (#576).
+      {% endif %}
+    success_msg: "analysis containers start as pipeline"
