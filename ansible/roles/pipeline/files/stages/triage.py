@@ -32,6 +32,24 @@ def run_triage(sample_path: Path, output_dir: Path, triage_cmd: str) -> dict:
         return {"error": "invalid triage output"}
 
 
+def triage_error(triage_result: dict) -> str | None:
+    """The reason triage did not run, or None if it did.
+
+    Every failure path in run_triage returns {"error": ...}, and every consumer
+    below reads .get("triage", {}) — which is an empty dict either way. So a
+    triage that never ran is indistinguishable from one that found nothing,
+    and the pipeline degrades in three places without saying so:
+
+      * derive_package_from_triage falls through to "" and Cape gets package=auto
+      * derive_filename has no type to work from
+      * the guest-clock anti-evasion has no pe_compile_timestamp to offset from
+
+    That ran for five days against a real corpus (#576). Callers must ask.
+    """
+    err = triage_result.get("error")
+    return err if isinstance(err, str) and err else None
+
+
 def derive_tags_from_triage(triage_result: dict) -> list[str]:
     """Extract Cape routing tags from triage results."""
     triage = triage_result.get("triage", {})
