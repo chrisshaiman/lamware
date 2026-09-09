@@ -74,7 +74,22 @@ interpret_max_tool_calls: 10
 # lost: surplus calls are DEFERRED with a message telling the model to re-request them,
 # so it still gets every decompile — just spread across turns.
 interpret_max_tool_calls_per_turn: 3
-interpret_timeout: 300
+
+# Wall-clock budget for the whole agentic loop, and the value that ACTUALLY
+# ships — config.json.j2's `| default(...)` is only a fallback and never applied
+# while this line existed. Raising the template default alone changed nothing on
+# the host, which is why the effective value is asserted now, not the fallback.
+#
+# 300 was sized for Claude, which finished the loop well inside it. The local 35B
+# on llama.cpp (--parallel 1) took 3m26s to reach its FIRST tool call, so 300
+# cut every run short — and because the timeout break shared a message with the
+# EOF break, it was reported as "container exited without final result" (#586).
+interpret_timeout: 1800
+
+# Grace for the forced final once the budget expires. Previously hardcoded to 30s
+# in stages/interpret.py, which a local synthesis can never meet, so the forced
+# final never arrived and every timeout looked like a death.
+interpret_force_final_grace: 300
 
 # Input caps
 interpret_max_imports: 200
