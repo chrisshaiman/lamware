@@ -496,6 +496,26 @@ def audit_filename(analysis_type: str | None) -> str:
 _STDERR_TAIL_CHARS = 4000
 
 
+def _describe_exit(rc) -> str:
+    """Plain words for an exit status, so the report does not need a reader who
+    remembers that -9 is SIGKILL and 137 is how a shell reports the same thing."""
+    if rc is None:
+        return ("process still running at stdout EOF — it closed stdout without "
+                "exiting, so this is not a crash")
+    if rc < 0:
+        import signal
+        try:
+            name = signal.Signals(-rc).name
+        except ValueError:
+            name = f"signal {-rc}"
+        return f"killed by {name}"
+    if rc == 0:
+        return "exited cleanly (0) without sending a final result — a protocol bug, not a crash"
+    if rc == 137:
+        return "exit 137 — SIGKILL via the container runtime, usually an OOM kill"
+    return f"exited with status {rc}"
+
+
 def _start_stderr_reader(proc) -> list:
     """Drain the container's stderr CONTINUOUSLY, into a buffer we still own.
 
@@ -618,6 +638,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
 
     stderr_buf = _start_stderr_reader(proc)
+    eof_returncode: int | None = None
 
     # Send init message (bazaar_family passed through for LLM context)
     init_payload = {
@@ -790,6 +811,11 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                           f"container image (deploy --tags pipeline,interpret together)")
                     trail.event("unhandled_message_type", message_type=msg_type)
 
+        # stdout reached EOF. Record how the process stood RIGHT NOW: the finally
+        # block below terminate()s and kill()s it, so a returncode read afterwards
+        # describes OUR signal, not how the container actually died.
+        eof_returncode = proc.poll()
+
     except Exception as e:
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")
         return {"enabled": True,
@@ -804,9 +830,16 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
 
     # The container died without a final message. This is the case the trail exists for:
     # the in-memory audit log is lost, but the trail is already on disk.
-    trail.event("container_exited_without_final")
+    # HOW it died, not just that it did. stderr came back genuinely empty across
+    # three runs on 2026-09-08 — the container writes nothing before going — so
+    # the exit status is the only remaining signal. None means the process was
+    # still alive at EOF (it closed stdout and kept running); a negative value is
+    # -SIGNUM, so -9 is a kill and -11 a segfault.
+    trail.event("container_exited_without_final", returncode=eof_returncode)
     return {"enabled": True,
             "error": "Interpret container exited without final result",
+            "container_returncode": eof_returncode,
+            "container_exit_note": _describe_exit(eof_returncode),
             "container_stderr": _drain_stderr(proc, stderr_buf),
             "audit": {"turn_trail": str(trail.path)}}
 

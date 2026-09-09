@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from stages.interpret import _drain_stderr, _start_stderr_reader
+from stages.interpret import _describe_exit, _drain_stderr, _start_stderr_reader
 
 
 class _FakeStream:
@@ -114,3 +114,49 @@ def test_every_container_launch_starts_a_reader():
            / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
     assert src.count("subprocess.Popen(") == src.count("_start_stderr_reader(proc)"), \
         "a container is launched without its stderr being captured"
+
+
+# --- how it died, not just that it did -----------------------------------
+# stderr came back genuinely empty across three runs on 2026-09-08: the
+# container writes nothing before going. The exit status is then the only
+# remaining signal, and it must be read BEFORE the orchestrator's own
+# terminate()/kill() overwrites it.
+
+def test_a_still_running_process_is_not_reported_as_a_crash():
+    """None means it closed stdout and kept running — a protocol bug. Calling
+    that a crash sends the next reader looking for the wrong thing."""
+    note = _describe_exit(None)
+    assert "still running" in note
+    assert "not a crash" in note
+
+
+def test_a_signal_death_is_named():
+    assert "SIGKILL" in _describe_exit(-9)
+    assert "SIGSEGV" in _describe_exit(-11)
+
+
+def test_the_oom_shaped_exit_is_called_out():
+    """137 is how the container runtime reports SIGKILL, and OOM is the usual
+    cause — worth saying, since the report is read by whoever is on call."""
+    assert "137" in _describe_exit(137)
+    assert "OOM" in _describe_exit(137)
+
+
+def test_a_clean_exit_without_a_result_is_named_a_protocol_bug():
+    """Exit 0 with no final message is the case most likely to be misread as
+    'the container crashed'."""
+    note = _describe_exit(0)
+    assert "cleanly" in note
+    assert "protocol" in note
+
+
+def test_the_exit_status_is_read_before_the_orchestrator_kills_it():
+    """The ordering is the whole point. proc.poll() must happen inside the try,
+    at stdout EOF — the finally block terminate()s and kill()s, so a read after
+    it describes OUR signal rather than how the container died."""
+    src = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+           / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
+    eof = src.index("eof_returncode = proc.poll()")
+    finally_block = src.index("    finally:", eof - 4000)
+    assert eof < finally_block, \
+        "the exit status is read after the finally block, so it records our own kill"
