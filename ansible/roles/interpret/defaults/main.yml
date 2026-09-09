@@ -84,12 +84,34 @@ interpret_max_tool_calls_per_turn: 3
 # on llama.cpp (--parallel 1) took 3m26s to reach its FIRST tool call, so 300
 # cut every run short — and because the timeout break shared a message with the
 # EOF break, it was reported as "container exited without final result" (#586).
-interpret_timeout: 1800
+#
+# 1800 was not enough either. Measured on salat_d26bc055, 2026-09-09, from the
+# turn trail:
+#
+#   tool phase (10 calls, 4 turns)  973s
+#   final synthesis, ONE request   1041s   <- completed, but past the budget
+#   observed total                ~2014s
+#
+# The synthesis is the expensive part and it grows with the context the tool
+# calls accumulate: four decompiles plus strings, against prompt-eval that falls
+# from 66 to 8.6 tok/s as context grows (#234). It DOES finish — it just finished
+# after we had given up.
+#
+# 3600 is ~1.8x the observed total, which is headroom for a sample that needs one
+# more turn rather than a guess at a round number. The cost is real: a slow sample
+# can now occupy an hour, so a 10-sample corpus run is priced in hours, not
+# minutes.
+interpret_timeout: 3600
 
 # Grace for the forced final once the budget expires. Previously hardcoded to 30s
 # in stages/interpret.py, which a local synthesis can never meet, so the forced
 # final never arrived and every timeout looked like a death.
-interpret_force_final_grace: 300
+#
+# 600 because the forced final is itself a synthesis over the same large context —
+# the thing measured at 1041s above. Note this grace is currently moot when the
+# container is mid-request: it exits 0 without emitting anything, which is a
+# protocol bug (#588), not something a longer grace fixes.
+interpret_force_final_grace: 600
 
 # Input caps
 interpret_max_imports: 200

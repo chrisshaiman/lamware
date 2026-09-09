@@ -202,15 +202,21 @@ def test_the_budget_fits_the_local_model():
     defaults = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "interpret"
          / "defaults" / "main.yml").read_text(encoding="utf-8"))
+    # The threshold encodes a MEASUREMENT, not a round number. salat_d26bc055,
+    # 2026-09-09, from the turn trail: 973s of tool phase plus a single 1041s
+    # final synthesis = ~2014s observed. 1800s was tried and demonstrably cut
+    # the run short, so anything at or below the observed total is known to be
+    # insufficient rather than merely suspicious.
     budget = defaults["interpret_timeout"]
-    assert budget >= 1200, (
-        f"interpret_timeout ships as {budget}s; the local agentic loop needs far "
-        f"longer, and a short budget gets reported as a container death")
+    assert budget >= 2400, (
+        f"interpret_timeout ships as {budget}s. A local run was measured at "
+        f"~2014s (973s tools + 1041s synthesis), so this budget is known to cut "
+        f"runs short — and a cut run gets reported as a timeout, discarding "
+        f"every tool call it made")
     grace = defaults["interpret_force_final_grace"]
-    assert grace >= 120, (
-        f"the forced-final grace ships as {grace}s, which a local synthesis "
-        f"cannot meet — the forced final never arrives and the timeout looks "
-        f"like a crash")
+    assert grace >= 300, (
+        f"the forced-final grace ships as {grace}s. The forced final is itself a "
+        f"synthesis over the same large context, measured at 1041s")
 
 
 def test_the_timeout_and_eof_paths_do_not_share_a_message():
