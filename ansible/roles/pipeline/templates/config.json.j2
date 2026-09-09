@@ -22,7 +22,15 @@
   "pcap_cmd": "{{ pcap_analysis_install_dir | default('/opt/pcap-analysis') }}/run-pcap-analysis",
 
   "interpret_enabled": {{ (interpret_enabled | default(true)) | to_json }},
-  "interpret_timeout": {{ interpret_timeout | default(300) }},
+  {#- 300s was sized for Claude, which finished the agentic loop well inside it.
+      The local 35B on llama.cpp (--parallel 1) took 3m26s to reach its FIRST
+      tool call, so 300s cut every run short and the break was reported as
+      "container exited without final result" — a crash that never happened. #}
+  "interpret_timeout": {{ interpret_timeout | default(1800) }},
+  {#- Grace for the forced final after the budget expires. Must fit the SLOWEST
+      backend: a cloud model answers in seconds, a local synthesis takes minutes.
+      At the previous hardcoded 30s the forced final could never arrive. #}
+  "interpret_force_final_grace": {{ interpret_force_final_grace | default(300) }},
   "reports_dir": {{ pipeline_reports_dir | to_json }},
   "cape_poll_interval": {{ pipeline_cape_poll_interval }},
   "cape_timeout": {{ pipeline_cape_timeout }},

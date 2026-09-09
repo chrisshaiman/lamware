@@ -75,6 +75,11 @@ class PipelineConfig(BaseModel):
     # Phase 2b-1 — scalar tuning knobs
     interpret_enabled: bool
     interpret_timeout: int
+    # Grace for the forced final after interpret_timeout expires. Defaulted so
+    # an older config.json still loads; 300 rather than the previous hardcoded
+    # 30 because a local synthesis takes minutes, and at 30s the forced final
+    # could never arrive — every timeout was reported as a crash.
+    interpret_force_final_grace: int = 300
     reports_dir: str
     cape_poll_interval: int
     cape_timeout: int
