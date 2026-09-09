@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from stages.interpret import _drain_stderr, _start_stderr_reader
+from stages.interpret import _describe_exit, _drain_stderr, _start_stderr_reader
 
 
 class _FakeStream:
@@ -114,3 +114,106 @@ def test_every_container_launch_starts_a_reader():
            / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
     assert src.count("subprocess.Popen(") == src.count("_start_stderr_reader(proc)"), \
         "a container is launched without its stderr being captured"
+
+
+# --- how it died, not just that it did -----------------------------------
+# stderr came back genuinely empty across three runs on 2026-09-08: the
+# container writes nothing before going. The exit status is then the only
+# remaining signal, and it must be read BEFORE the orchestrator's own
+# terminate()/kill() overwrites it.
+
+def test_a_still_running_process_is_not_reported_as_a_crash():
+    """None means it closed stdout and kept running — a protocol bug. Calling
+    that a crash sends the next reader looking for the wrong thing."""
+    note = _describe_exit(None)
+    assert "still running" in note
+    assert "not a crash" in note
+
+
+def test_a_signal_death_is_named():
+    assert "SIGKILL" in _describe_exit(-9)
+    assert "SIGSEGV" in _describe_exit(-11)
+
+
+def test_the_oom_shaped_exit_is_called_out():
+    """137 is how the container runtime reports SIGKILL, and OOM is the usual
+    cause — worth saying, since the report is read by whoever is on call."""
+    assert "137" in _describe_exit(137)
+    assert "OOM" in _describe_exit(137)
+
+
+def test_a_clean_exit_without_a_result_is_named_a_protocol_bug():
+    """Exit 0 with no final message is the case most likely to be misread as
+    'the container crashed'."""
+    note = _describe_exit(0)
+    assert "cleanly" in note
+    assert "protocol" in note
+
+
+def test_the_exit_status_is_read_before_the_orchestrator_kills_it():
+    """The ordering is the whole point. proc.poll() must happen inside the try,
+    at stdout EOF — the finally block terminate()s and kill()s, so a read after
+    it describes OUR signal rather than how the container died."""
+    src = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+           / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
+    eof = src.index("eof_returncode = proc.poll()")
+    finally_block = src.index("    finally:", eof - 4000)
+    assert eof < finally_block, \
+        "the exit status is read after the finally block, so it records our own kill"
+
+
+# --- a timeout is not a crash --------------------------------------------
+# The timeout break and the EOF break both fell through to "Interpret container
+# exited without final result". Measured on salat_d26bc055, 2026-09-08:
+# heartbeat at t=304s, break at t=334s — exactly the 30s grace against a 300s
+# budget, on a container that was alive and working. Three rounds of chasing
+# tracebacks and exit codes went into a crash that never happened.
+
+def _stage_src() -> str:
+    return (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+            / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
+
+
+def test_the_timeout_path_reports_a_timeout_not_a_death():
+    """Anchored on the timeout RETURN BLOCK, not the file. "this is not a crash"
+    also appears in _describe_exit, so a whole-file search passed even after the
+    timeout message was gutted — verified by mutation."""
+    src = _stage_src()
+    start = src.index('if timed_out:')
+    block = src[start:src.index("trail.event(\"container_exited_without_final\"", start)]
+    assert '"timed_out": True' in block, "the timeout path is not distinguished in the result"
+    assert "timed out after" in block, "the timeout message does not say it timed out"
+    assert "not a crash" in block, \
+        "the timeout message does not say it is not a crash — the wording IS the bug"
+
+
+def test_the_budget_fits_the_local_model():
+    """300s was sized for Claude. The local 35B took 3m26s to reach its first
+    tool call, so 300s cut every run short."""
+    import re
+    tmpl = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+            / "templates" / "config.json.j2").read_text(encoding="utf-8")
+    m = re.search(r'"interpret_timeout":\s*\{\{\s*interpret_timeout\s*\|\s*default\((\d+)\)', tmpl)
+    assert m, "interpret_timeout default not found in the template"
+    assert int(m.group(1)) >= 1200, (
+        f"interpret_timeout defaults to {m.group(1)}s; the local agentic loop needs "
+        f"far longer and a short budget is reported as a container death")
+    g = re.search(r'"interpret_force_final_grace":\s*\{\{[^}]*default\((\d+)\)', tmpl)
+    assert g and int(g.group(1)) >= 120, "the forced-final grace is too short for a local synthesis"
+
+
+def test_the_timeout_and_eof_paths_do_not_share_a_message():
+    """They converged. That convergence IS the defect being fixed."""
+    src = _stage_src()
+    ti = src.index('"timed_out": True')
+    eof = src.index('trail.event("container_exited_without_final"')
+    assert ti < eof, "the timeout case must return before the generic exited-without-final path"
+
+
+def test_the_forced_final_grace_is_not_hardcoded_to_thirty_seconds():
+    """30s could never be met by a local synthesis, so the forced final never
+    arrived and every timeout looked like a death."""
+    src = _stage_src()
+    assert "proc.wait(timeout=force_final_grace)" in src, \
+        "the forced-final grace is still hardcoded"
+    assert "force_final_grace: int = 300" in src, "the default grace is not 300s"

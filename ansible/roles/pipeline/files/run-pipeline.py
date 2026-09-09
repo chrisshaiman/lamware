@@ -137,6 +137,7 @@ PCAP_CMD = _PIPELINE_CONFIG.pcap_cmd
 # Interpret (LLM stage) — scalars + the INTERPRET_CONFIG dict (from the nested submodel)
 INTERPRET_ENABLED = _PIPELINE_CONFIG.interpret_enabled
 INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
+FORCE_FINAL_GRACE = _PIPELINE_CONFIG.interpret_force_final_grace
 INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
 
 # Cape + report-output scalars
@@ -829,6 +830,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -871,6 +873,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -908,6 +911,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -929,6 +933,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -961,6 +966,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -995,6 +1001,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -1015,6 +1022,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -1034,6 +1042,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -1119,6 +1128,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
@@ -1254,6 +1264,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_cmd=INTERPRET_CMD,
             interpret_enabled=INTERPRET_ENABLED,
             interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
