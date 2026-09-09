@@ -188,18 +188,29 @@ def test_the_timeout_path_reports_a_timeout_not_a_death():
 
 
 def test_the_budget_fits_the_local_model():
-    """300s was sized for Claude. The local 35B took 3m26s to reach its first
-    tool call, so 300s cut every run short."""
-    import re
-    tmpl = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
-            / "templates" / "config.json.j2").read_text(encoding="utf-8")
-    m = re.search(r'"interpret_timeout":\s*\{\{\s*interpret_timeout\s*\|\s*default\((\d+)\)', tmpl)
-    assert m, "interpret_timeout default not found in the template"
-    assert int(m.group(1)) >= 1200, (
-        f"interpret_timeout defaults to {m.group(1)}s; the local agentic loop needs "
-        f"far longer and a short budget is reported as a container death")
-    g = re.search(r'"interpret_force_final_grace":\s*\{\{[^}]*default\((\d+)\)', tmpl)
-    assert g and int(g.group(1)) >= 120, "the forced-final grace is too short for a local synthesis"
+    """The EFFECTIVE value, not the template fallback.
+
+    The first version of this test asserted config.json.j2's `| default(1800)`.
+    That passed while the host kept running 300s, because roles/interpret sets
+    interpret_timeout explicitly and a Jinja default only applies when the
+    variable is undefined. Raising the fallback changed nothing, and the test
+    said it had. Assert what ships.
+
+    300s was sized for Claude. The local 35B took 3m26s to reach its FIRST tool
+    call, so 300s cut every run short."""
+    import yaml
+    defaults = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "interpret"
+         / "defaults" / "main.yml").read_text(encoding="utf-8"))
+    budget = defaults["interpret_timeout"]
+    assert budget >= 1200, (
+        f"interpret_timeout ships as {budget}s; the local agentic loop needs far "
+        f"longer, and a short budget gets reported as a container death")
+    grace = defaults["interpret_force_final_grace"]
+    assert grace >= 120, (
+        f"the forced-final grace ships as {grace}s, which a local synthesis "
+        f"cannot meet — the forced final never arrives and the timeout looks "
+        f"like a crash")
 
 
 def test_the_timeout_and_eof_paths_do_not_share_a_message():
