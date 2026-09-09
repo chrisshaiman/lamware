@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -495,26 +496,45 @@ def audit_filename(analysis_type: str | None) -> str:
 _STDERR_TAIL_CHARS = 4000
 
 
-def _drain_stderr(proc) -> str:
-    """Read whatever the interpret container wrote to stderr, for the error path.
+def _start_stderr_reader(proc) -> list:
+    """Drain the container's stderr CONTINUOUSLY, into a buffer we still own.
 
-    stderr is a pipe that nothing read, so when the container died its traceback was
-    captured and then thrown away: the 2026-07-27 qwen@30 probe reported only
-    "exited without final result" after 18 successful tool calls, with no way to tell
-    a crash from an OOM from a clean exit. A failure that cannot be diagnosed costs
-    another full run to reproduce — 26 minutes, in that case.
+    Reading it on the error path does not work, and the previous version proved
+    both halves of why. It called proc.stderr.read() — a blocking read to EOF —
+    AFTER the finally block had already terminate()d and kill()ed the process:
 
-    Returns the tail, since a traceback's last lines are the informative ones. Never
-    raises: this runs on the error path, and losing the diagnostic is better than
-    replacing the real error with one from the diagnostic itself.
+      * the read blocked until the pipe finally closed. Measured 2026-09-08: the
+        stdout loop ended at t=334s and the stage did not return until t=952s.
+        Ten minutes of the pipeline sitting silent inside a diagnostic.
+      * and it still returned "", because the writer was gone. The failure it
+        exists to explain arrived with container_stderr empty.
+
+    So the traceback is captured as it is written, by a daemon thread started
+    with the process. Whatever the container said survives being killed.
     """
-    try:
-        if proc.stderr is None or proc.stderr.closed:
-            return ""
-        text = proc.stderr.read() or ""
-    except Exception as e:  # noqa: BLE001 - diagnostics must not mask the real failure
-        return f"<could not read container stderr: {type(e).__name__}: {e}>"
-    text = text.strip()
+    buf: list[str] = []
+
+    def _reader():
+        try:
+            if proc.stderr is None:
+                return
+            for line in proc.stderr:
+                buf.append(line)
+        except Exception:  # noqa: BLE001 - a dead diagnostic must not kill the run
+            pass
+
+    threading.Thread(target=_reader, daemon=True).start()
+    return buf
+
+
+def _drain_stderr(proc, buf: list | None = None) -> str:
+    """The tail of what the container wrote to stderr. Never blocks, never raises.
+
+    A traceback's last lines are the informative ones, so this returns the tail.
+    """
+    if buf is None:
+        return "<stderr was not being captured>"
+    text = "".join(buf).strip()
     if len(text) > _STDERR_TAIL_CHARS:
         return "...[truncated]\n" + text[-_STDERR_TAIL_CHARS:]
     return text
@@ -596,6 +616,8 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         )
     except OSError as e:
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
+
+    stderr_buf = _start_stderr_reader(proc)
 
     # Send init message (bazaar_family passed through for LLM context)
     init_payload = {
@@ -772,7 +794,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")
         return {"enabled": True,
                 "error": f"Interpret loop error: {e}",
-                "container_stderr": _drain_stderr(proc)}
+                "container_stderr": _drain_stderr(proc, stderr_buf)}
     finally:
         try:
             proc.terminate()
@@ -785,7 +807,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     trail.event("container_exited_without_final")
     return {"enabled": True,
             "error": "Interpret container exited without final result",
-            "container_stderr": _drain_stderr(proc),
+            "container_stderr": _drain_stderr(proc, stderr_buf),
             "audit": {"turn_trail": str(trail.path)}}
 
 
@@ -812,6 +834,8 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
     except OSError as e:
         return {"enabled": True, "error": f"Failed to start interpret container: {e}"}
 
+    stderr_buf = _start_stderr_reader(proc)
+
     # Send summarize message — use communicate() to avoid deadlock on
     # large reports (42MB+ when malfind/volatility data is included)
     msg = json.dumps({"type": "summarize", "report": report, "config": interpret_config}, default=str)
@@ -836,10 +860,12 @@ def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,
         stdout, stderr = proc.communicate(input=msg + "\n", timeout=timeout_s)
     except subprocess.TimeoutExpired:
         proc.kill()
-        return {"error": f"Summary generation timed out ({timeout_s}s)"}
+        return {"error": f"Summary generation timed out ({timeout_s}s)",
+                "container_stderr": _drain_stderr(proc, stderr_buf)}
     except Exception as e:
         proc.kill()
-        return {"error": f"Summary communication error: {e}"}
+        return {"error": f"Summary communication error: {e}",
+                "container_stderr": _drain_stderr(proc, stderr_buf)}
 
     # Parse the last JSON line from stdout (container may emit status lines too)
     for line in reversed(stdout.strip().splitlines()):
