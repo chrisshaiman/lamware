@@ -18,6 +18,11 @@ finally block had already killed the process. The read blocked for ten minutes
 buffer is now filled by a reader thread started with the process, which also
 removes the hang risk above rather than merely surviving it.
 """
+import subprocess
+import sys
+import time
+from pathlib import Path
+
 from stages.interpret import _drain_stderr, _start_stderr_reader
 
 
@@ -68,3 +73,44 @@ def test_a_reader_that_dies_never_masks_the_real_failure():
 
 def test_whitespace_only_stderr_is_empty():
     assert _drain_stderr(None, ["   \n", "\n", "  "]) == ""
+
+
+# --- behaviours that actually broke on 2026-09-08 -------------------------
+# The tests above exercise the buffer. These exercise the two properties whose
+# absence produced an unexplained failure and a ten-minute stall.
+
+def test_stderr_survives_the_process_being_killed():
+    """The whole point: the traceback outlives the kill. The old version read
+    the pipe AFTER terminate()/kill() and got ""."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys,time; sys.stderr.write('BOOM traceback line\\n'); "
+         "sys.stderr.flush(); time.sleep(30)"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    buf = _start_stderr_reader(proc)
+    time.sleep(1.0)
+    proc.kill()
+    proc.wait(timeout=5)
+    assert "BOOM traceback line" in _drain_stderr(proc, buf)
+
+
+def test_draining_does_not_block_on_a_live_process():
+    """The ten-minute stall: stdout loop ended at t=334s, stage returned t=952s,
+    all of it inside a blocking read on a pipe still held open."""
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    buf = _start_stderr_reader(proc)
+    start = time.time()
+    _drain_stderr(proc, buf)
+    elapsed = time.time() - start
+    proc.kill()
+    proc.wait(timeout=5)
+    assert elapsed < 2.0, f"draining blocked for {elapsed:.1f}s on a live process"
+
+
+def test_every_container_launch_starts_a_reader():
+    """A Popen without one is a failure that cannot be diagnosed."""
+    src = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
+           / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
+    assert src.count("subprocess.Popen(") == src.count("_start_stderr_reader(proc)"), \
+        "a container is launched without its stderr being captured"
