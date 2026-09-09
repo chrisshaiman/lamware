@@ -10,8 +10,15 @@ without another 26-minute run.
 
 An unread stderr pipe is also a hang risk: once the OS buffer fills, the container
 blocks on write and the loop waits forever on stdout.
+
+Reading it on the ERROR path did not work, and 2026-09-08 showed both halves of
+why: _drain_stderr called proc.stderr.read() — blocking, to EOF — after the
+finally block had already killed the process. The read blocked for ten minutes
+(stdout loop ended t=334s, stage returned t=952s) and still produced "". So the
+buffer is now filled by a reader thread started with the process, which also
+removes the hang risk above rather than merely surviving it.
 """
-from stages.interpret import _drain_stderr
+from stages.interpret import _drain_stderr, _start_stderr_reader
 
 
 class _FakeStream:
@@ -30,31 +37,34 @@ class _FakeProc:
 
 
 def test_returns_container_stderr():
-    proc = _FakeProc(_FakeStream("Traceback (most recent call last):\n  boom\n"))
-    assert "Traceback" in _drain_stderr(proc)
+    assert "Traceback" in _drain_stderr(
+        None, ["Traceback (most recent call last):\n", "  boom\n"])
 
 
 def test_returns_the_tail_of_a_long_traceback():
     """The last lines name the exception — the top is usually framework frames."""
-    text = "noise\n" * 5000 + "AttributeError: the actual cause\n"
-    out = _drain_stderr(_FakeProc(_FakeStream(text)))
+    buf = ["noise\n"] * 5000 + ["AttributeError: the actual cause\n"]
+    out = _drain_stderr(None, buf)
     assert "AttributeError: the actual cause" in out
     assert out.startswith("...[truncated]")
     assert len(out) < 5000
 
 
-def test_missing_or_closed_stderr_is_not_an_error():
-    assert _drain_stderr(_FakeProc(None)) == ""
-    assert _drain_stderr(_FakeProc(_FakeStream("x", closed=True))) == ""
+def test_an_uncaptured_buffer_says_so_rather_than_looking_empty():
+    """"" reads as "the container said nothing", which is what the old version
+    reported for the very failure it existed to explain."""
+    assert _drain_stderr(None, None) == "<stderr was not being captured>"
 
 
-def test_a_failing_read_never_masks_the_real_failure():
-    """This runs on the error path; it must not raise over the original error."""
-    proc = _FakeProc(_FakeStream("", raises=ValueError("pipe gone")))
-    out = _drain_stderr(proc)
-    assert "could not read container stderr" in out
-    assert "ValueError" in out
+def test_a_reader_that_dies_never_masks_the_real_failure():
+    """This runs on the error path; losing the diagnostic beats replacing the
+    original error with one from the diagnostic."""
+    class _Boom:
+        stderr = property(lambda self: (_ for _ in ()).throw(ValueError("pipe gone")))
+    buf = _start_stderr_reader(_Boom())
+    assert buf == []
+    assert _drain_stderr(None, buf) == ""
 
 
 def test_whitespace_only_stderr_is_empty():
-    assert _drain_stderr(_FakeProc(_FakeStream("   \n\n  "))) == ""
+    assert _drain_stderr(None, ["   \n", "\n", "  "]) == ""
