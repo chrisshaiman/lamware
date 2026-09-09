@@ -29,6 +29,17 @@ class InterpretConfig(BaseModel):
     max_string_length: int
     summary_model: str          # model for the executive/kill-chain summary
     plain_english_model: str    # model for the plain-English summary
+    # TRANSPORT for the agentic RE path, and not implied by `model` above.
+    # interpret-ghidra.py picks between LiteLLM's /anthropic passthrough (cloud
+    # models only) and the /v1/messages router (model_list aliases) on
+    # config["re_backend"] == "local". A local alias sent to the passthrough
+    # returns 404 not_found_error on every call.
+    #
+    # Defaulted, not required: an older config.json — and the eval harness passes
+    # whole config dicts through — must still load. The default reproduces the
+    # historical behaviour, which is that the key was absent and the agentic path
+    # used the cloud passthrough.
+    re_backend: str = "cloud"
     # Wall-clock budget for the whole summarize container run. Defaulted rather than
     # required so a config.json written before this key still loads — the eval harness
     # passes whole config dicts through and an older one would fail validation, which

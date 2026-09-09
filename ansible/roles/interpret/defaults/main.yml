@@ -27,6 +27,13 @@ interpret_provider: "local"
 # Model selection — interpret (agentic code analysis)
 interpret_model: "local-qwen-llamacpp-re"
 
+# The TRANSPORT for the agentic path. Must agree with interpret_model: the
+# /anthropic passthrough serves cloud models only, so a local alias sent there
+# returns 404. Setting the model without this is what #582 shipped, and every
+# interpret call failed — silently, because the stage records the error in the
+# report and the pipeline still exits 0.
+interpret_re_backend: "local"
+
 # Model selection — executive summary (structured reformatting, no tools)
 interpret_summary_model: "local-qwen-llamacpp"
 
