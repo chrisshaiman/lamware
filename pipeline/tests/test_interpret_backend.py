@@ -52,8 +52,11 @@ def test_backend_flag_is_a_flag_not_a_client():
 #: Named rather than counted: the previous version asserted `== 3` with no record of
 #: WHICH three or why, so a change could satisfy it by moving one stage in and another
 #: out. It also could not say whether a fourth was an oversight or a decision.
-_WIRED = {"dotnet", "go_goresym", "powershell", "visual_analysis"}
-_NOT_WIRED = {"java_cfr", "office_macro", "pyinstaller", "evasion_hunter"}
+#: EVERY stage is wired now. The four that were not are recorded below with the
+#: reason, as this file asks.
+_WIRED = {"dotnet", "go_goresym", "powershell", "visual_analysis",
+          "java_cfr", "office_macro", "pyinstaller", "evasion_hunter"}
+_NOT_WIRED: set[str] = set()
 
 
 def _client_by_stage() -> dict[str, str]:
@@ -92,24 +95,33 @@ def test_wired_paths_go_through_single_shot_completion():
     assert not wrong, f"these must dispatch via single_shot_completion: {wrong}"
 
 
-def test_unwired_paths_stay_on_the_cloud_client():
-    """The pilot boundary is a decision, not an accident.
+def test_no_stage_is_left_on_the_cloud_client():
+    """The pilot boundary is void, and the reason is recorded here as asked.
 
-    visual_analysis was added to _WIRED on 2026-08-20 on measured grounds: it runs on
-    12 of 13 recorded analyses (screenshots come from CAPE detonation, so every
-    sample), and it is the only stage that transmits base64 screenshots of detonated
-    malware — ransom notes, credential dialogs, C2 panels — which every report on
-    record sent to claude-sonnet-4-6 via the anthropic passthrough.
+    It was a sound trade while `model` was claude-sonnet-4-6: moving rarely-fired,
+    file-type-gated stages would have swapped Sonnet for a 35B with no measurement
+    of the quality cost.
 
-    The remaining four are file-type gated and fired on 0 of those same 13. Moving
-    them would swap Sonnet for a 35B on paths that rarely run, with no measurement of
-    the quality cost. Widen this set only with a reason recorded here.
+    That trade no longer exists. Automated runs use a local model by policy, so
+    `model` is a local alias — and the /anthropic passthrough serves cloud models
+    only. Staying on the cloud client is not "keeping Sonnet"; it is a guaranteed
+
+        NotFoundError: 404 - not_found_error: model: local-qwen-llamacpp-re
+
+    The choice became 35B or nothing, and nothing is worse. Measured: six of ten
+    samples in the 2026-09-09 corpus run produced no analysis for exactly this,
+    and the 404 sat one level down in llm_interpretation.analysis.error where the
+    outer error check never looked — all ten were reported OK (#590).
+
+    If a stage should go back to a cloud model, it needs a cloud model NAME too;
+    a transport flag alone cannot express that.
     """
     found = _client_by_stage()
-    moved = {s: found[s] for s in sorted(_NOT_WIRED) if found.get(s) != "client"}
-    assert not moved, (
-        f"{moved} moved onto the local backend without widening _NOT_WIRED — if that "
-        f"is intended, record why here")
+    stranded = {s: c for s, c in sorted(found.items()) if c == "client"}
+    assert not stranded, (
+        f"{stranded} still dispatch via the anthropic client. With a local "
+        f"interpret_model that can only 404 — wire them through "
+        f"single_shot_completion, or give them an explicit cloud model name")
 
 
 def test_local_re_swaps_to_the_router_client():

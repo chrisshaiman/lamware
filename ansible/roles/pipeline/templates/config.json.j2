@@ -56,6 +56,10 @@
         changed the model to a local alias and left this unset, so every run
         404'd — after sending the decompiled context to the cloud endpoint. #}
     "re_backend": {{ interpret_re_backend | default('cloud') | to_json }},
+    {#- The single-shot paths (.NET, Java, Office, PowerShell) take a SEPARATE
+        transport flag from the agentic path above. Setting only re_backend left
+        them on the cloud passthrough, 404ing on a local model name (#590). #}
+    "single_shot_backend": {{ interpret_single_shot_backend | default('cloud') | to_json }},
     "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
     "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
     "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},

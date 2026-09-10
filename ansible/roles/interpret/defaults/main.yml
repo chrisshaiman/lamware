@@ -34,6 +34,19 @@ interpret_model: "local-qwen-llamacpp-re"
 # report and the pipeline still exits 0.
 interpret_re_backend: "local"
 
+# TRANSPORT for the SINGLE-SHOT paths — .NET, Java, Office macro, PowerShell.
+# A SECOND flag, and setting only re_backend above is what #590 was: the agentic
+# Ghidra path routed local while every single-shot path kept the cloud
+# passthrough and returned 404 not_found_error for a local model name. Six of ten
+# samples in the 2026-09-09 corpus run produced no analysis for this reason, and
+# the 404 sat one level down in llm_interpretation.analysis.error where nothing
+# was looking.
+#
+# Local here also means the OpenAI leg with enable_thinking:false, not merely a
+# different client: on /v1/messages qwen3.6 spends the whole budget reasoning and
+# returns 0 chars. Measured, in single_shot_completion's docstring.
+interpret_single_shot_backend: "local"
+
 # Model selection — executive summary (structured reformatting, no tools)
 interpret_summary_model: "local-qwen-llamacpp"
 
