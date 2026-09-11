@@ -40,6 +40,10 @@ class InterpretConfig(BaseModel):
     # historical behaviour, which is that the key was absent and the agentic path
     # used the cloud passthrough.
     re_backend: str = "cloud"
+    # TRANSPORT for the single-shot paths (.NET, Java, Office, PowerShell), which
+    # is SEPARATE from re_backend above. Defaulted so an older config.json still
+    # loads, and "cloud" reproduces the historical behaviour.
+    single_shot_backend: str = "cloud"
     # Wall-clock budget for the whole summarize container run. Defaulted rather than
     # required so a config.json written before this key still loads — the eval harness
     # passes whole config dicts through and an older one would fail validation, which

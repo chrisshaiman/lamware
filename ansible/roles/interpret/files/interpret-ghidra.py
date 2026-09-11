@@ -2907,28 +2907,31 @@ Technical summary: {executive}"""
     if ghidra_data.get("analysis_type") == "java_cfr":
         emit_status(f"Starting Java analysis with {model}", 0)
         java_text = _ctx + build_java_message(ghidra_data, config)
+        # single_shot_completion, not client.messages.create: this path hardcoded
+        # the anthropic passthrough, which serves cloud models only. Once the
+        # pipeline moved to a local model the call could only 404, and even over
+        # the router it would return 0 chars — qwen3.6 is a thinking model and
+        # nothing disables that on /v1/messages, so the whole budget goes to
+        # reasoning. See the measurements in single_shot_completion (#590).
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_JAVA_SYSTEM,
-                messages=[{"role": "user", "content": java_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_JAVA_SYSTEM, java_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -2938,28 +2941,31 @@ Technical summary: {executive}"""
     if ghidra_data.get("analysis_type") == "office_macro":
         emit_status(f"Starting Office macro analysis with {model}", 0)
         office_text = _ctx + build_office_message(ghidra_data, config)
+        # single_shot_completion, not client.messages.create: this path hardcoded
+        # the anthropic passthrough, which serves cloud models only. Once the
+        # pipeline moved to a local model the call could only 404, and even over
+        # the router it would return 0 chars — qwen3.6 is a thinking model and
+        # nothing disables that on /v1/messages, so the whole budget goes to
+        # reasoning. See the measurements in single_shot_completion (#590).
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_OFFICE_SYSTEM,
-                messages=[{"role": "user", "content": office_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_OFFICE_SYSTEM, office_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -2996,28 +3002,29 @@ Technical summary: {executive}"""
     if ghidra_data.get("analysis_type") == "pyinstaller":
         emit_status(f"Starting PyInstaller analysis with {model}", 0)
         py_text = _ctx + build_pyinstaller_message(ghidra_data, config)
+        # single_shot_completion, not client.messages.create — see the note on the
+        # .NET path. The pilot boundary that kept this stage on the cloud client
+        # is void: `model` is now a local alias, so the passthrough can only
+        # 404 (#590).
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_PYINSTALLER_SYSTEM,
-                messages=[{"role": "user", "content": py_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_PYINSTALLER_SYSTEM, py_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
@@ -3104,28 +3111,29 @@ Technical summary: {executive}"""
         # _ctx already carries INETSIM_CONTEXT; add the evasion disambiguation note so
         # the hunter does not misattribute INetSim-caused quiet to sandbox-evasion.
         evasion_text = _ctx + INETSIM_EVASION_NOTE + "\n\n" + build_evasion_message(ghidra_data, config)
+        # single_shot_completion, not client.messages.create — see the note on the
+        # .NET path. The pilot boundary that kept this stage on the cloud client
+        # is void: `model` is now a local alias, so the passthrough can only
+        # 404 (#590).
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_output_tokens,
-                system=CACHED_EVASION_SYSTEM,
-                messages=[{"role": "user", "content": evasion_text}],
-            )
-            final_text = "".join(
-                b.text for b in response.content if b.type == "text"
-            )
+            final_text, _usage = single_shot_completion(
+                ss_local, client, synth_http, synth_openai_base, api_key,
+                model, CACHED_EVASION_SYSTEM, evasion_text, max_output_tokens,
+                label=ghidra_data.get("analysis_type", "single_shot"))
             analysis = parse_final_response(final_text)
             emit({
                 "type": "final",
                 "analysis": analysis,
                 "model_used": model,
                 "tool_calls_used": 0,
-                "usage": usage_from_response(response),
+                "usage": _usage,
             })
-        except anthropic.APIError as e:
+        # httpx too: the local leg raises transport errors, and without this they
+        # escape the handler and kill the container mid-stage.
+        except (anthropic.APIError, httpx.HTTPError) as e:
             emit({
                 "type": "final",
-                "analysis": {"error": f"Claude API error: {e}"},
+                "analysis": {"error": f"{type(e).__name__}: {e}"},
                 "model_used": model,
                 "tool_calls_used": 0,
             })
