@@ -554,6 +554,11 @@
     # #490 — one-off repair for reports whose canonical Ghidra program is not
     # in its project. Dry-run by default; --apply backs the report up first.
     - repair_ghidra_pairing.py
+    # Scores a finished report: did this sample produce what it SHOULD have.
+    # Separate from the run drivers because their inline checks were wrong twice
+    # — once reading only the outer error (#590), once calling a sample with no
+    # PE a failure. Exits non-zero on any SUSPECT, so it works as a gate.
+    - score_report.py
     # #517 — before/after snapshot for a guest-image rebuild. A rebuild is a
     # one-way door; the before-baseline cannot be retaken afterwards.
     - evasion_baseline.py
