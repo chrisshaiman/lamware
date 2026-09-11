@@ -2383,6 +2383,27 @@ def _to_openai_content(content):
     return out
 
 
+def _tool_names_from(messages: list) -> list[str]:
+    """Tool names the model actually invoked, for a salvaged final.
+
+    A forced final that reports only an error throws away the fact that the run
+    decompiled four functions and read strings at three addresses. That is the
+    most useful thing left when synthesis cannot finish, and it is already in the
+    transcript — it just was not being read out.
+    """
+    names: list[str] = []
+    for m in messages:
+        content = m.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            name = getattr(block, "name", None) if not isinstance(block, dict) else block.get("name")
+            btype = getattr(block, "type", None) if not isinstance(block, dict) else block.get("type")
+            if btype == "tool_use" and name:
+                names.append(name)
+    return names
+
+
 def single_shot_completion(use_local: bool, anthropic_client, http_client,
                            base_url: str, api_key: str, model: str, system,
                            content, max_tokens: int, label: str) -> tuple[str, dict]:
@@ -3601,9 +3622,26 @@ Technical summary: {executive}"""
                     # Local backend: two-phase reasoning-preserving synthesis.
                     # Cloud: one final call without tools.
                     if config.get("re_backend") == "local":
+                        # The cloud branch below has always been wrapped; this one
+                        # was not, and local_synthesize is the expensive call — a
+                        # single one was measured at 1041s. If it raised, nothing
+                        # was emitted at all: the container unwound silently, the
+                        # orchestrator saw stdout EOF with no final, and every tool
+                        # call the run had made was discarded (#588).
+                        #
+                        # A forced final exists to SALVAGE a run that is out of
+                        # time. Failing to salvage must still say what was gathered.
+                        try:
+                            analysis = local_synthesize(messages)
+                        except Exception as e:  # noqa: BLE001 - salvage must not add a new failure
+                            analysis = {
+                                "error": f"forced final: synthesis failed: {type(e).__name__}: {e}",
+                                "partial": True,
+                                "tools_invoked": _tool_names_from(messages),
+                            }
                         emit({
                             "type": "final",
-                            "analysis": local_synthesize(messages),
+                            "analysis": analysis,
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
                             "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
@@ -3637,10 +3675,14 @@ Technical summary: {executive}"""
                             "tool_calls_used": tool_calls_used,
                             "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
                         })
-                    except anthropic.APIError as e:
+                    # httpx too: a transport failure here is as silent as an API
+                    # error, and loses the same salvage (#588).
+                    except (anthropic.APIError, httpx.HTTPError) as e:
                         emit({
                             "type": "final",
-                            "analysis": {"error": f"Claude API error on forced final: {e}"},
+                            "analysis": {"error": f"forced final failed: {type(e).__name__}: {e}",
+                                         "partial": True,
+                                         "tools_invoked": _tool_names_from(messages)},
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
                             "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
