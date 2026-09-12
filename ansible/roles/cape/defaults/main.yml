@@ -13,3 +13,14 @@
 cape_qemu_binary: /usr/local/bin/qemu-system-x86_64
 cape_guest_image_dir: /var/lib/libvirt/images
 cape_resultserver_port: 2042
+
+# Seconds a sample is allowed to run before CAPE ends the analysis.
+#
+# 200 (CAPE's default) is marginal for this corpus: every sample measured begins
+# its payload stage at 179-206s, so the window closed on top of the behaviour we
+# are trying to observe and capture became a coin flip (#518). Raised so the
+# prologue — JIT, unpacking, sleep — finishes well inside the window.
+#
+# Raising this costs wall-clock on every analysis. Lowering it silently costs
+# measurements instead, which is worse and much harder to notice.
+cape_analysis_timeout: 400

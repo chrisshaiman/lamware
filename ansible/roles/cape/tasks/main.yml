@@ -142,6 +142,39 @@
     mode: "0640"
   notify: Restart Cape services
 
+# The analysis window was 200s and the samples in the #518 corpus begin their
+# payload stage at 179-206s, so the window closed exactly where the interesting
+# behaviour started. Measured across three runs of the same three samples:
+#
+#   quasarrat   r3 child spawns 205s | r4 process died 197s | r5 spawns 206s
+#   warzonerat  r3 spawns 203s       | r4 spawns 203s       | r5 spawns 203s
+#   salat       r3 spawns 179s       | r4 179s              | r5 179s, died 201s
+#
+# Whether a sample's children were captured came down to a few seconds of
+# jitter, which is what produced quasarrat scoring 55, 17, 45 on identical
+# images. Those low runs were not measurement noise; they were runs where the
+# window shut before the sample did anything, and averaging them in gave
+# observed_behaviour a +/-15-25 noise floor that left #518 unable to resolve its
+# own question.
+#
+# 400s puts the payload stage comfortably inside the window with room to observe
+# it, rather than a few seconds either side of the edge. .NET samples spend most
+# of that prologue in JIT and unpacking.
+#
+# Cost: up to ~200s more per sample, so ~30 minutes on a 10-sample corpus run.
+# Cheap against a metric that could not distinguish a result from a failed run.
+#
+# The VM is killed at default + critical + stuck_seconds, so this raises the
+# worst case to 400 + 60 + 100 = 560s.
+- name: Set the analysis timeout past the payload stage (#518)
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/cuckoo.conf"
+    section: timeouts
+    option: default
+    value: "{{ cape_analysis_timeout }}"
+    mode: "0640"
+  notify: Restart Cape services
+
 # Cache procdumps so the pipeline can scan them for .NET payloads
 # extracted from dropper scenarios (process hollowing, injection).
 - name: Enable procdump caching in processing.conf
