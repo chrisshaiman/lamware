@@ -8,6 +8,7 @@ License: Apache 2.0
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,34 @@ CAPE_API_URL = _CFG.cape_api_url
 CAPE_API_KEY = os.environ.get("CAPE_API_KEY", "")
 CAPE_POLL_INTERVAL = _CFG.cape_poll_interval
 CAPE_TIMEOUT = _CFG.cape_timeout
+
+#: Emitted by the guest analyzer's complete() for every pid still in INJECT_LIST
+#: — injected, never reported LOADED. Matched against debug.log, which carries
+#: the guest analysis.log verbatim. Anchored on CAPE's literal strings
+#: (analyzer/windows/analyzer.py:350 and :1102); if CAPE rewords either, these
+#: stop matching and the guard goes quiet, which is why
+#: test_detonation_health.py pins both against real captured log text.
+_INJECT_FAILED_RE = re.compile(
+    r"Monitor injection attempted but failed for process (\d+)")
+_MONITOR_LOADED_RE = re.compile(
+    r"Loaded monitor into process with pid (\d+)")
+
+#: CAPE words the two ways a process can leave differently, and the distinction
+#: is the whole signal. "has terminated" follows the NtTerminateProcess hook — a
+#: real exit the monitor witnessed. "appears to have terminated" is the poller
+#: noticing a process is simply gone, with no exit call logged.
+#:
+#: Task 1103 is the second failure mode: the trace stops dead inside .NET JIT
+#: warmup, ten silent seconds pass, the queued memory dump is reported as
+#: "doesn't exist anymore", and the poller then finds the process missing. All
+#: five runs of the 1117-1121 repro logged "has terminated" and none logged
+#: "appears" — so this separates them cleanly.
+#:
+#: Recorded as an observation, NOT a cause. What ends the process is still open.
+_PROCESS_VANISHED_RE = re.compile(
+    r"Process with pid (\d+) appears to have terminated")
+_PROCESS_EXITED_RE = re.compile(
+    r"Process with pid (\d+) has terminated")
 
 
 def cape_headers() -> dict:
@@ -355,6 +384,33 @@ def dedupe_tcp_connections(tcp: list, limit: int = 200) -> tuple:
     return ordered[:limit], len(tcp), len(attempts)
 
 
+def detonation_health(full_report: dict) -> dict:
+    """Did CAPE actually OBSERVE the sample?
+
+    Kept separate from extract_cape_intel so it can be tested against a report
+    dict; extract_cape_intel reads report.json off CAPE's storage by task id.
+    """
+    procs = (full_report.get("behavior") or {}).get("processes") or []
+    info = full_report.get("info") or {}
+    # debug.log is the guest analysis.log verbatim, so the answer travels with
+    # the report and needs no second read of CAPE's storage.
+    analyzer_log = (full_report.get("debug") or {}).get("log") or ""
+    return {
+        "process_count": len(procs),
+        "api_calls_total": sum(len(pr.get("calls") or []) for pr in procs),
+        "duration_s": info.get("duration"),
+        "hit_analysis_timeout": bool(info.get("timeout")),
+        "monitor_injection_failed_pids": sorted(
+            {int(p) for p in _INJECT_FAILED_RE.findall(analyzer_log)}),
+        "monitors_loaded": len(
+            {int(p) for p in _MONITOR_LOADED_RE.findall(analyzer_log)}),
+        "vanished_pids": sorted(
+            {int(p) for p in _PROCESS_VANISHED_RE.findall(analyzer_log)}),
+        "clean_exit_pids": sorted(
+            {int(p) for p in _PROCESS_EXITED_RE.findall(analyzer_log)}),
+    }
+
+
 def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
     """Extract rich intelligence from Cape's full analysis report.
 
@@ -498,25 +554,34 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
         if large_payloads:
             intel["large_payloads"] = large_payloads
 
-    # Detonation health — whether the sample actually RAN, recorded so the report
-    # can be judged without re-reading CAPE's storage.
+    # Detonation health — whether CAPE actually OBSERVED the sample, recorded so
+    # the report can be judged without re-reading CAPE's storage.
     #
-    # observed_behaviour is only meaningful when the sample executed. Across three
-    # #518 corpus runs, quasarrat scored 55, 17, 45 and warzonerat 51, 30, 51 — the
-    # low values were not noise, they were runs where the sample died before
-    # spawning and CAPE ended the analysis with an empty process list. Averaging
-    # those in as measurements is what produced the +/-15-25 noise floor.
+    # observed_behaviour is only a measurement when the sample was instrumented.
+    # Across three #518 corpus runs quasarrat scored 55, 17, 45 and warzonerat
+    # 51, 30, 51; averaging the low values in as data is what produced the
+    # +/-15-25 noise floor.
     #
-    # process_count alone cannot tell them apart: a failed quasarrat and a healthy
-    # xworm both show one process. API call volume can — 2,344 against 24,132.
-    _behavior = full_report.get("behavior", {})
-    _procs = _behavior.get("processes", [])
-    intel["detonation"] = {
-        "process_count": len(_procs),
-        "api_calls_total": sum(len(pr.get("calls") or []) for pr in _procs),
-        "duration_s": (full_report.get("info") or {}).get("duration"),
-        "hit_analysis_timeout": bool((full_report.get("info") or {}).get("timeout")),
-    }
+    # Those low runs are NOT the sample dying. A controlled 5x quasarrat repro on
+    # an idle host (tasks 1117-1121) showed the sample behaving identically every
+    # time: it hollows two children, CreateProcessW succeeds, and the parent runs
+    # 4,112-4,118 calls before a clean NtTerminateProcess. In the one failed run
+    # CAPE injected its monitor into both children and neither ever called back
+    # LOADED, so 45-90k calls of payload behaviour went unrecorded and the
+    # analysis ended with the process list empty. The guest Application event log
+    # holds no crash record, so this is lost instrumentation, not a dead sample.
+    #
+    # Hence two DIRECT signals rather than the api_calls_total heuristic, which
+    # only infers the failure. CAPE names the PIDs it lost:
+    #
+    #   INJECT_LIST gains a pid on injection (analyzer.py:1412) and loses it when
+    #   the injected DLL reports LOADED (analyzer.py:1099). Whatever remains at
+    #   complete() is logged as "Monitor injection attempted but failed".
+    #
+    # monitors_loaded is the companion signal: task 1103 lost a child with NO
+    # injection warning at all, so a run can be under-instrumented without one.
+    # Both are read from debug.log, which is the verbatim guest analysis.log.
+    intel["detonation"] = detonation_health(full_report)
 
     # Process command lines — used by cross_correlate for cmdline spoofing detection
     behavior = full_report.get("behavior", {})
