@@ -24,12 +24,36 @@ import json
 import sys
 from pathlib import Path
 
+#: A detonation this quiet did not happen. Provisional, and derived from n=3
+#: rather than a principled floor — state it rather than hide it:
+#:
+#:     quasarrat, failed run     1 process   2,344 api calls   -> observed 17
+#:     xworm, healthy run        1 process  24,132 api calls   -> observed 17
+#:     quasarrat, healthy run    6 processes ~48,000 api calls -> observed 55
+#:
+#: process_count alone cannot separate those first two, which is why the rule is
+#: on call volume. 5,000 sits an order of magnitude below every healthy run
+#: observed and twice the only failed one. The durable version of this test is
+#: comparative — the same sample across runs — but that needs more than one
+#: report, and this file scores one.
+QUIET_DETONATION_API_CALLS = 5000
+
 
 def score(report: dict) -> tuple[str, str]:
     """(verdict, detail). verdict is OK, SKIPPED or SUSPECT."""
     cape = report.get("cape") or {}
     if cape.get("status") in ("error", None) and not cape.get("malscore"):
         return "SUSPECT", f"cape status={cape.get('status')}"
+
+    # Did the sample actually run? observed_behaviour is only a measurement when
+    # it did. A run where the sample died before spawning scores a low number that
+    # looks like a result and is not one (#518).
+    det = cape.get("detonation") or {}
+    calls = det.get("api_calls_total")
+    if calls is not None and calls < QUIET_DETONATION_API_CALLS:
+        return "SUSPECT", (f"detonation looks failed: {calls} api calls across "
+                           f"{det.get('process_count')} process(es) — the sample "
+                           f"probably died before doing anything")
 
     gh = report.get("ghidra") or {}
     li = report.get("llm_interpretation") or {}
