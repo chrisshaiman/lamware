@@ -142,6 +142,37 @@
     mode: "0640"
   notify: Restart Cape services
 
+# Guest Windows event logs, for diagnosing detonations that end without
+# explanation.
+#
+# quasarrat scored 55, 17, 45 on identical images. In the low run its API trace
+# stops mid-CLR-work — NtAllocateVirtualMemory, CreateThread(clr.dll),
+# NtDelayExecution — with no NtTerminateProcess, where the healthy runs end with
+# a clean NtClose sequence and NtTerminateProcess ExitCode=0. The process was
+# ended rather than exiting; the trace cannot say whether that was a crash, an
+# external kill, or the monitor dropping out. An Application-log WER record
+# settles it in one run.
+#
+# evtx ONLY, deliberately. sysmon_windows and procmon sit beside this key and
+# stay off: they run an agent inside the guest, and a well-known analyst artefact
+# that evasive malware checks for would perturb the very measurements this is
+# meant to stabilise. evtx exports logs Windows already keeps — no new process
+# for a sample to notice.
+#
+# Not free of footprint even so: the analyzer module sets
+# ProcessCreationIncludeCmdLine_Enabled in the guest registry to get command
+# lines into EID 4688. That is a plausible setting on a managed workstation, and
+# the snapshot reverts after each analysis, but it is a guest-visible change and
+# worth knowing about when reading evasion results.
+- name: Capture guest Windows event logs (evtx) for detonation diagnostics
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/auxiliary.conf"
+    section: auxiliary_modules
+    option: evtx
+    value: "{{ 'yes' if cape_capture_evtx else 'no' }}"
+    mode: "0640"
+  notify: Restart Cape services
+
 # Cache procdumps so the pipeline can scan them for .NET payloads
 # extracted from dropper scenarios (process hollowing, injection).
 - name: Enable procdump caching in processing.conf
