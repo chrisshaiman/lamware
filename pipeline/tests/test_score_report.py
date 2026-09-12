@@ -170,29 +170,29 @@ def test_the_detonation_check_precedes_the_interpret_checks():
 # the shape of #584 and #590.
 
 def test_the_cape_stage_records_the_detonation_block():
-    """Parsed, not grepped: the assignment must target intel["detonation"] and
-    carry the field the rule keys on.
+    """Behavioural, not grepped. The rule above keys on api_calls_total, so the
+    cape stage must actually compute it by summing the per-process call lists —
+    an assertion on source text passes for the wrong reasons the moment the
+    block moves, which is what happened when it became a function.
 
-    stages/cape.py cannot be imported here — it reads /opt/pipeline/config.json
-    at import time — so this asserts on the AST."""
-    import ast
-    src = (ROOT / "ansible" / "roles" / "pipeline" / "files" / "stages"
-           / "cape.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        for t in node.targets:
-            if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
-                    and t.value.id == "intel"
-                    and isinstance(t.slice, ast.Constant) and t.slice.value == "detonation"):
-                body = ast.get_source_segment(src, node.value) or ""
-                assert "api_calls_total" in body, \
-                    "the detonation block omits api_calls_total, which the rule keys on"
-                assert "sum(" in body and "calls" in body, \
-                    "api_calls_total is not summed from the per-process call lists"
-                assert "process_count" in body
-                return
-    raise AssertionError(
-        'stages/cape.py never assigns intel["detonation"], so score_report\'s '
-        'failed-detonation rule can never fire')
+    The wiring — that extract_cape_intel still CALLS this — is held by
+    test_detonation_health.test_extract_cape_intel_emits_the_detonation_block.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "ansible" / "roles" / "pipeline" / "files"))
+    from stages.cape import detonation_health
+
+    det = detonation_health({
+        "info": {"duration": 290, "timeout": False},
+        "debug": {"log": ""},
+        "behavior": {"processes": [
+            {"process_id": 1, "calls": [{"api": "NtClose"}] * 7},
+            {"process_id": 2, "calls": [{"api": "NtClose"}] * 5},
+        ]}})
+
+    assert det["api_calls_total"] == 12, \
+        "api_calls_total is not summed from the per-process call lists"
+    assert det["process_count"] == 2
+    # A process whose calls are absent must count as zero, not raise.
+    assert detonation_health(
+        {"behavior": {"processes": [{"process_id": 1}]}})["api_calls_total"] == 0
