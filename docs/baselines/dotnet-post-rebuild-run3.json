@@ -1,0 +1,127 @@
+{
+  "captured_at": "2026-09-12T05:46:54.601236+00:00",
+  "corpus_path": "/opt/pipeline/eval/corpus-dotnet.json",
+  "corpus_sha256": "a23ed6f8b27bf58e",
+  "guest_images": [
+    {
+      "image": "windows11-guest.qcow2",
+      "mtime": "2026-09-04",
+      "mtime_epoch": 1788545707.2686574,
+      "bytes": 14451081216
+    },
+    {
+      "image": "windows11-office.qcow2",
+      "mtime": "2026-05-06",
+      "mtime_epoch": 1778051504.4970624,
+      "bytes": 27861712896
+    }
+  ],
+  "era": {
+    "newest_image_epoch": 1788545707.2686574,
+    "stale_reports": [],
+    "consistent": true
+  },
+  "primary_metric": "observed_behaviour",
+  "direction": "higher is less evasion",
+  "samples": {
+    "warzonerat_72b2bb12": {
+      "observed_behaviour": 51,
+      "signatures": 29,
+      "payloads_extracted": 20,
+      "injected_pids": 2,
+      "processes_seen": 2,
+      "malscore": 10.0,
+      "dns_queries": 2,
+      "tcp_attempts": 117,
+      "tcp_shape": "destinations",
+      "correlations": 3,
+      "mitre_ttps": 19,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory"
+      ],
+      "report_mtime": "2026-09-12",
+      "report_mtime_epoch": 1789192013.5184238
+    },
+    "quasarrat_1f2b2263": {
+      "observed_behaviour": 45,
+      "signatures": 33,
+      "payloads_extracted": 8,
+      "injected_pids": 4,
+      "processes_seen": 6,
+      "malscore": 10.0,
+      "dns_queries": 3,
+      "tcp_attempts": 98,
+      "tcp_shape": "destinations",
+      "correlations": 1,
+      "mitre_ttps": 14,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_network_adapters"
+      ],
+      "report_mtime": "2026-09-12",
+      "report_mtime_epoch": 1789192013.5394242
+    },
+    "xworm_fd55e57a": {
+      "observed_behaviour": 17,
+      "signatures": 14,
+      "payloads_extracted": 2,
+      "injected_pids": 1,
+      "processes_seen": 1,
+      "malscore": 8.0,
+      "dns_queries": 0,
+      "tcp_attempts": 99,
+      "tcp_shape": "destinations",
+      "correlations": 0,
+      "mitre_ttps": 9,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory"
+      ],
+      "report_mtime": "2026-09-12",
+      "report_mtime_epoch": 1789192013.5544243
+    },
+    "agenttesla_2fb2ef88": {
+      "observed_behaviour": 13,
+      "signatures": 11,
+      "payloads_extracted": 1,
+      "injected_pids": 1,
+      "processes_seen": 1,
+      "malscore": 8.0,
+      "dns_queries": 0,
+      "tcp_attempts": 105,
+      "tcp_shape": "destinations",
+      "correlations": 0,
+      "mitre_ttps": 9,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory"
+      ],
+      "report_mtime": "2026-09-12",
+      "report_mtime_epoch": 1789192013.5724244
+    },
+    "formbook_5b4f596d": {
+      "observed_behaviour": 66,
+      "signatures": 41,
+      "payloads_extracted": 21,
+      "injected_pids": 4,
+      "processes_seen": 10,
+      "malscore": 10.0,
+      "dns_queries": 1,
+      "tcp_attempts": 118,
+      "tcp_shape": "destinations",
+      "correlations": 1,
+      "mitre_ttps": 21,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "stealth_network",
+        "stealth_timeout"
+      ],
+      "report_mtime": "2026-09-12",
+      "report_mtime_epoch": 1789192013.5884247
+    }
+  },
+  "stale_reports_allowed": false
+}
