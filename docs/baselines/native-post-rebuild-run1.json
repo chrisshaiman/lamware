@@ -1,0 +1,135 @@
+{
+  "captured_at": "2026-09-08T06:58:30.895250+00:00",
+  "corpus_path": "/opt/pipeline/eval/corpus-native.json",
+  "corpus_sha256": "59d62701cae965d3",
+  "guest_images": [
+    {
+      "image": "windows11-guest.qcow2",
+      "mtime": "2026-09-04",
+      "mtime_epoch": 1788545707.2686574,
+      "bytes": 14451081216
+    },
+    {
+      "image": "windows11-office.qcow2",
+      "mtime": "2026-05-06",
+      "mtime_epoch": 1778051504.4970624,
+      "bytes": 27861712896
+    }
+  ],
+  "era": {
+    "newest_image_epoch": 1788545707.2686574,
+    "stale_reports": [],
+    "consistent": true
+  },
+  "primary_metric": "observed_behaviour",
+  "direction": "higher is less evasion",
+  "samples": {
+    "unclassified_25d18a2b": {
+      "observed_behaviour": 35,
+      "signatures": 22,
+      "payloads_extracted": 10,
+      "injected_pids": 3,
+      "processes_seen": 3,
+      "malscore": 7.0,
+      "dns_queries": 2,
+      "tcp_attempts": 120,
+      "tcp_shape": "destinations",
+      "correlations": 0,
+      "mitre_ttps": 9,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "antivm_network_adapters"
+      ],
+      "report_mtime": "2026-09-08",
+      "report_mtime_epoch": 1788850710.2296119
+    },
+    "unclassified_42b9c406": {
+      "observed_behaviour": 65,
+      "signatures": 46,
+      "payloads_extracted": 15,
+      "injected_pids": 4,
+      "processes_seen": 13,
+      "malscore": 9.0,
+      "dns_queries": 1,
+      "tcp_attempts": 110,
+      "tcp_shape": "destinations",
+      "correlations": 15,
+      "mitre_ttps": 26,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "antivm_network_adapters",
+        "stealth_timeout",
+        "stealth_window"
+      ],
+      "report_mtime": "2026-09-08",
+      "report_mtime_epoch": 1788850710.249612
+    },
+    "salat_d26bc055": {
+      "observed_behaviour": 50,
+      "signatures": 40,
+      "payloads_extracted": 6,
+      "injected_pids": 4,
+      "processes_seen": 15,
+      "malscore": 10.0,
+      "dns_queries": 6,
+      "tcp_attempts": 145,
+      "tcp_shape": "destinations",
+      "correlations": 1,
+      "mitre_ttps": 18,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "antivm_network_adapters",
+        "stealth_timeout"
+      ],
+      "report_mtime": "2026-09-08",
+      "report_mtime_epoch": 1788850710.2706122
+    },
+    "cobaltstrikebeacon_179dcccf": {
+      "observed_behaviour": 75,
+      "signatures": 49,
+      "payloads_extracted": 17,
+      "injected_pids": 9,
+      "processes_seen": 39,
+      "malscore": 10.0,
+      "dns_queries": 4,
+      "tcp_attempts": 137,
+      "tcp_shape": "destinations",
+      "correlations": 1,
+      "mitre_ttps": 23,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "antivm_checks_available_memory",
+        "antivm_display",
+        "stealth_timeout"
+      ],
+      "report_mtime": "2026-09-08",
+      "report_mtime_epoch": 1788850710.2846124
+    },
+    "latrodectus_d22c9656": {
+      "observed_behaviour": 13,
+      "signatures": 9,
+      "payloads_extracted": 4,
+      "injected_pids": 0,
+      "processes_seen": 1,
+      "malscore": 10.0,
+      "dns_queries": 0,
+      "tcp_attempts": 85,
+      "tcp_shape": "destinations",
+      "correlations": 0,
+      "mitre_ttps": 5,
+      "anti_checks": [
+        "antidebug_setunhandledexceptionfilter",
+        "stealth_timeout"
+      ],
+      "report_mtime": "2026-09-08",
+      "report_mtime_epoch": 1788850710.2956126
+    }
+  },
+  "stale_reports_allowed": false
+}
