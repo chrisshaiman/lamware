@@ -13,3 +13,14 @@
 cape_qemu_binary: /usr/local/bin/qemu-system-x86_64
 cape_guest_image_dir: /var/lib/libvirt/images
 cape_resultserver_port: 2042
+
+# Export the guest's Windows event logs with each analysis.
+#
+# On for diagnosis: detonations that end with no NtTerminateProcess leave no
+# evidence of why, and an Application-log crash record answers it (#518 failed
+# detonations). Costs a zip of event logs per analysis.
+#
+# Deliberately NOT accompanied by sysmon_windows or procmon. Those run an agent
+# inside the guest that evasive malware looks for; evtx exports logs Windows
+# already keeps.
+cape_capture_evtx: true
