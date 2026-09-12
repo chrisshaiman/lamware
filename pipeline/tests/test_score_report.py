@@ -102,3 +102,97 @@ def test_a_dead_cape_is_suspect_whatever_interpret_did():
                   "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
                                          "tool_calls_used": 5}})
     assert v == "SUSPECT"
+
+
+# --- failed detonations are not measurements ------------------------------
+# Across three #518 corpus runs quasarrat scored 55, 17, 45 and warzonerat
+# 51, 30, 51. The low values were not noise: they were runs where the sample
+# died before spawning and CAPE ended the analysis with an empty process list.
+# Averaging them in as measurements produced the +/-15-25 noise floor that made
+# the experiment unable to resolve its own question.
+
+_DET_OK = {"process_count": 6, "api_calls_total": 48000, "duration_s": 295}
+
+
+def test_a_dead_detonation_is_suspect():
+    """quasarrat's failed run: one process, 2,344 api calls."""
+    v, detail = score({"cape": dict(_CAPE_OK,
+                                    detonation={"process_count": 1, "api_calls_total": 2344}),
+                       "ghidra": {"triggered": True},
+                       "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
+                                              "tool_calls_used": 3}})
+    assert v == "SUSPECT", "a sample that died before doing anything scored as a measurement"
+    assert "2344" in detail
+
+
+def test_a_busy_single_process_sample_is_not_suspect():
+    """xworm legitimately runs as ONE process and makes 24,132 calls. Judging on
+    process_count would reject it — which is why the rule is on call volume."""
+    v, _ = score({"cape": dict(_CAPE_OK,
+                               detonation={"process_count": 1, "api_calls_total": 24132}),
+                  "ghidra": {"triggered": True},
+                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
+                                         "tool_calls_used": 3}})
+    assert v == "OK", "a healthy single-process sample was rejected"
+
+
+def test_a_healthy_detonation_is_ok():
+    v, _ = score({"cape": dict(_CAPE_OK, detonation=_DET_OK),
+                  "ghidra": {"triggered": True},
+                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
+                                         "tool_calls_used": 3}})
+    assert v == "OK"
+
+
+def test_an_older_report_without_the_field_is_not_penalised():
+    """Reports predating the detonation block must still score. Absent is not zero."""
+    v, _ = score({"cape": _CAPE_OK, "ghidra": {"triggered": True},
+                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
+                                         "tool_calls_used": 3}})
+    assert v == "OK", "a report without detonation stats was treated as a failed detonation"
+
+
+def test_the_detonation_check_precedes_the_interpret_checks():
+    """A failed detonation makes the interpret verdict irrelevant — the sample
+    produced nothing to interpret, and reporting it as an interpret problem sends
+    the next reader to the wrong place."""
+    v, detail = score({"cape": dict(_CAPE_OK,
+                                    detonation={"process_count": 1, "api_calls_total": 100}),
+                       "ghidra": {"triggered": True, "error": "no PE files found"},
+                       "llm_interpretation": {}})
+    assert v == "SUSPECT" and "detonation" in detail
+
+
+# --- the producer must actually produce it --------------------------------
+# The rule above reads cape.detonation. Nothing tested that the cape stage
+# WRITES it, so deleting the producer left every test green while the rule
+# became permanently inert — two halves in two files that must agree, which is
+# the shape of #584 and #590.
+
+def test_the_cape_stage_records_the_detonation_block():
+    """Parsed, not grepped: the assignment must target intel["detonation"] and
+    carry the field the rule keys on.
+
+    stages/cape.py cannot be imported here — it reads /opt/pipeline/config.json
+    at import time — so this asserts on the AST."""
+    import ast
+    src = (ROOT / "ansible" / "roles" / "pipeline" / "files" / "stages"
+           / "cape.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            if (isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name)
+                    and t.value.id == "intel"
+                    and isinstance(t.slice, ast.Constant) and t.slice.value == "detonation"):
+                body = ast.get_source_segment(src, node.value) or ""
+                assert "api_calls_total" in body, \
+                    "the detonation block omits api_calls_total, which the rule keys on"
+                assert "sum(" in body and "calls" in body, \
+                    "api_calls_total is not summed from the per-process call lists"
+                assert "process_count" in body
+                return
+    raise AssertionError(
+        'stages/cape.py never assigns intel["detonation"], so score_report\'s '
+        'failed-detonation rule can never fire')

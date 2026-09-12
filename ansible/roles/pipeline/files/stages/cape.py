@@ -498,6 +498,26 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
         if large_payloads:
             intel["large_payloads"] = large_payloads
 
+    # Detonation health — whether the sample actually RAN, recorded so the report
+    # can be judged without re-reading CAPE's storage.
+    #
+    # observed_behaviour is only meaningful when the sample executed. Across three
+    # #518 corpus runs, quasarrat scored 55, 17, 45 and warzonerat 51, 30, 51 — the
+    # low values were not noise, they were runs where the sample died before
+    # spawning and CAPE ended the analysis with an empty process list. Averaging
+    # those in as measurements is what produced the +/-15-25 noise floor.
+    #
+    # process_count alone cannot tell them apart: a failed quasarrat and a healthy
+    # xworm both show one process. API call volume can — 2,344 against 24,132.
+    _behavior = full_report.get("behavior", {})
+    _procs = _behavior.get("processes", [])
+    intel["detonation"] = {
+        "process_count": len(_procs),
+        "api_calls_total": sum(len(pr.get("calls") or []) for pr in _procs),
+        "duration_s": (full_report.get("info") or {}).get("duration"),
+        "hit_analysis_timeout": bool((full_report.get("info") or {}).get("timeout")),
+    }
+
     # Process command lines — used by cross_correlate for cmdline spoofing detection
     behavior = full_report.get("behavior", {})
     process_cmdlines = {}
