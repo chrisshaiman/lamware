@@ -2,14 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """The admin console and OpenAPI docs were reachable from the internet (#529).
 
-The public 443 listener is deliberate and serves the SPA, `/api/` and `/ws/`.
-`/docs`, `/redoc` and `/openapi.json` were not part of that decision — they
-enumerate every endpoint and its schema for an unauthenticated reader — and
-`/auth/admin/` is the Keycloak admin console, the highest-value target on a host
-that detonates live malware.
+At the time, the public 443 listener was deliberate and served the SPA, `/api/`
+and `/ws/`. `/docs`, `/redoc` and `/openapi.json` were not part of that decision
+— they enumerate every endpoint and its schema for an unauthenticated reader —
+and `/auth/admin/` is the Keycloak admin console, the highest-value target on a
+host that detonates live malware. Both listeners shared one `server` block, so
+the restriction was per-location on `$remote_addr` rather than per-listener.
 
-Both listeners share one `server` block, so the restriction is per-location on
-`$remote_addr` rather than per-listener. These tests parse the location blocks
+#600 has since removed the public TLS listener entirely, so these allow/deny
+rules are no longer the boundary — `test_nginx_vpn_only_listener.py` holds that.
+They are kept, and still tested, because they are what enforced it before and
+would be the only thing standing if a public listener were ever added back.
+
+These tests parse the location blocks
 and assert on their contents; the file's own comments name every path involved,
 so a grep for "deny all" would pass whether or not the guards survived.
 """

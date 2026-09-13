@@ -47,8 +47,19 @@ server {
 }
 
 server {
+    # WireGuard ONLY. The public TLS listener was removed in #600: the UI was
+    # public so friends could see it, nobody did, and it cannot be discussed at
+    # work — so it was pure attack surface. This host is also the malware
+    # detonation host, and a public nginx + Keycloak is probed continuously,
+    # which made web compromise the likeliest path onto the box.
+    #
+    # Keycloak in particular is pinned at 26.1.5 with no upgrade path (26.7.2
+    # dies in its own migration, upstream keycloak#51304), so its exposure was a
+    # standing condition rather than a patchable one.
+    #
+    # The port 80 block ABOVE keeps its public listener, for ACME only — certbot
+    # uses webroot/HTTP-01, so Let's Encrypt must reach public_ip:80 to renew.
     listen {{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ frontend_nginx_port }} ssl;
-    listen {{ public_ip }}:{{ frontend_nginx_port }} ssl;
     server_name {{ frontend_server_name }};
 
     # TLS certificate (Let's Encrypt via certbot auto-renewal)
@@ -166,12 +177,13 @@ server {
     # OpenAPI docs proxy - WireGuard only (#529)
     location /docs {
         # Management surface: WireGuard peers only (#529).
-        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
-        # These four paths are not part of that: /docs, /redoc and /openapi.json
-        # enumerate every endpoint and its schema for an unauthenticated reader,
-        # and /auth/admin/ is the Keycloak admin console - the highest-value target
-        # on the host. Both listeners share this server block, so the split is per
-        # location on $remote_addr rather than per listener.
+        # KEPT as defence in depth after #600 removed the public 443 listener.
+        # The whole server block is now WireGuard-only, so this allow/deny is no
+        # longer the boundary — but it is what enforced the boundary before, and
+        # removing it would silently re-expose these paths if a public listener
+        # is ever added back. /docs, /redoc and /openapi.json enumerate every
+        # endpoint and its schema to an unauthenticated reader, and
+        # /auth/admin/ is the Keycloak admin console.
         allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
         deny all;
         proxy_pass http://{{ frontend_api_upstream }};
@@ -179,12 +191,13 @@ server {
     }
     location /redoc {
         # Management surface: WireGuard peers only (#529).
-        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
-        # These four paths are not part of that: /docs, /redoc and /openapi.json
-        # enumerate every endpoint and its schema for an unauthenticated reader,
-        # and /auth/admin/ is the Keycloak admin console - the highest-value target
-        # on the host. Both listeners share this server block, so the split is per
-        # location on $remote_addr rather than per listener.
+        # KEPT as defence in depth after #600 removed the public 443 listener.
+        # The whole server block is now WireGuard-only, so this allow/deny is no
+        # longer the boundary — but it is what enforced the boundary before, and
+        # removing it would silently re-expose these paths if a public listener
+        # is ever added back. /docs, /redoc and /openapi.json enumerate every
+        # endpoint and its schema to an unauthenticated reader, and
+        # /auth/admin/ is the Keycloak admin console.
         allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
         deny all;
         proxy_pass http://{{ frontend_api_upstream }};
@@ -192,12 +205,13 @@ server {
     }
     location /openapi.json {
         # Management surface: WireGuard peers only (#529).
-        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
-        # These four paths are not part of that: /docs, /redoc and /openapi.json
-        # enumerate every endpoint and its schema for an unauthenticated reader,
-        # and /auth/admin/ is the Keycloak admin console - the highest-value target
-        # on the host. Both listeners share this server block, so the split is per
-        # location on $remote_addr rather than per listener.
+        # KEPT as defence in depth after #600 removed the public 443 listener.
+        # The whole server block is now WireGuard-only, so this allow/deny is no
+        # longer the boundary — but it is what enforced the boundary before, and
+        # removing it would silently re-expose these paths if a public listener
+        # is ever added back. /docs, /redoc and /openapi.json enumerate every
+        # endpoint and its schema to an unauthenticated reader, and
+        # /auth/admin/ is the Keycloak admin console.
         allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
         deny all;
         proxy_pass http://{{ frontend_api_upstream }};
@@ -217,12 +231,13 @@ server {
     # Must appear before /auth/ so nginx matches the more specific prefix.
     location /auth/admin/ {
         # Management surface: WireGuard peers only (#529).
-        # The public 443 listener is deliberate and serves the SPA, /api/ and /ws/.
-        # These four paths are not part of that: /docs, /redoc and /openapi.json
-        # enumerate every endpoint and its schema for an unauthenticated reader,
-        # and /auth/admin/ is the Keycloak admin console - the highest-value target
-        # on the host. Both listeners share this server block, so the split is per
-        # location on $remote_addr rather than per listener.
+        # KEPT as defence in depth after #600 removed the public 443 listener.
+        # The whole server block is now WireGuard-only, so this allow/deny is no
+        # longer the boundary — but it is what enforced the boundary before, and
+        # removing it would silently re-expose these paths if a public listener
+        # is ever added back. /docs, /redoc and /openapi.json enumerate every
+        # endpoint and its schema to an unauthenticated reader, and
+        # /auth/admin/ is the Keycloak admin console.
         allow {{ wireguard_address | ansible.utils.ipaddr('subnet') }};
         deny all;
         limit_req zone=admin burst=100 nodelay;
