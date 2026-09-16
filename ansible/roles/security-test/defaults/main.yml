@@ -9,6 +9,13 @@ security_test_api_url: "https://{{ security_test_domain }}"
 # peers (404). Composed here rather than in the template because the template is
 # rendered by a plain-Jinja test harness that has no ansible.utils filters.
 security_test_wg_url: "https://{{ wireguard_address | ansible.utils.ipaddr('address') }}"
+
+# Bare host:port for openssl s_client, which takes an address rather than a URL.
+# Derived HERE rather than in the template so the template stays filter-free:
+# several tests render it with a plain Jinja environment, and an
+# ansible.utils.* filter in the template breaks them for reasons unrelated to
+# what they assert.
+security_test_wg_address: "{{ wireguard_address | ansible.utils.ipaddr('address') }}"
 security_test_keycloak_url: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth"
 security_test_nuclei_version: "3.8.0"
 

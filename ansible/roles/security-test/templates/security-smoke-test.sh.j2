@@ -50,8 +50,10 @@ fail() {
 # -------------------------------------------------------------------------
 # Test 1: API health endpoint
 # -------------------------------------------------------------------------
-echo "[1/7] API health check..."
-HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/health")
+echo "[1/8] API health check..."
+# $WG_URL, not $API_URL: #604 removed the public TLS listener, so the domain
+# resolves to an address nothing serves. Probing it measured DNS, not the API.
+HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/health")
 if [ "$HTTP_CODE" = "200" ]; then
     pass "API health endpoint returns 200"
 else
@@ -61,7 +63,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
-echo "[2/7] Keycloak health check..."
+echo "[2/8] Keycloak health check..."
 KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
@@ -72,8 +74,8 @@ fi
 # -------------------------------------------------------------------------
 # Test 3: Unauthenticated API access blocked
 # -------------------------------------------------------------------------
-echo "[3/7] Auth enforcement..."
-UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/api/analyses")
+echo "[3/8] Auth enforcement..."
+UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/api/analyses")
 if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
     pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
 else
@@ -83,7 +85,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
-echo "[4/7] Docs endpoint gated..."
+echo "[4/8] Docs endpoint gated..."
 # There are TWO gates since #529, and this checks both. Previously it checked
 # only the application one and asserted 404, so adding the network layer made a
 # correctly-hardened host fail:
@@ -94,26 +96,34 @@ echo "[4/7] Docs endpoint gated..."
 # 403 is the STRONGER answer, not a regression. The invariant that actually
 # matters is that /docs is never 200 from either source, so that is asserted
 # directly rather than pinning an exact code and calling it security.
+# Since #604 there is NO public TLS listener, so a public probe returns 000
+# (refused) and can no longer tell "nginx denied me" from "nothing is
+# listening". Asserting 403 here would fail a host that is strictly safer than
+# the one the assertion was written for.
+#
+# The invariant that matters is unchanged: /docs must never be 200 from either
+# source. That is asserted directly. The public side is now asserted as
+# "refused", which is the stronger property #604 created.
 DOCS_PUBLIC=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$API_URL/docs")
 DOCS_WG=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/docs")
 
 if [ "$DOCS_PUBLIC" = "200" ]; then
-    fail "/docs returned 200 on the public listener — it is exposed"
+    fail "/docs returned 200 on the public address — it is exposed"
 elif [ "$DOCS_WG" = "200" ]; then
     fail "/docs returned 200 over WireGuard — LAMWARE_ENABLE_DOCS is on"
-elif [ "$DOCS_PUBLIC" != "403" ]; then
-    # Not fatal: the app gate still held. But the network layer is what makes
-    # this safe if LAMWARE_ENABLE_DOCS is ever flipped on, so say so loudly.
-    fail "/docs returned $DOCS_PUBLIC publicly, expected 403 (nginx allow/deny not applied?)"
+elif [ "$DOCS_PUBLIC" = "000" ] || [ "$DOCS_PUBLIC" = "403" ]; then
+    pass "/docs: $DOCS_PUBLIC publicly (no listener or denied), $DOCS_WG over WireGuard"
 else
-    pass "/docs: $DOCS_PUBLIC public (nginx denied), $DOCS_WG over WireGuard (app gated)"
+    fail "/docs returned $DOCS_PUBLIC publicly, expected 000 (no listener) or 403"
 fi
 
 # -------------------------------------------------------------------------
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
-echo "[5/7] TLS certificate check..."
-CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ public_ip | default('127.0.0.1') }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+echo "[5/8] TLS certificate check..."
+# WireGuard address: TLS is no longer served publicly (#604). -servername keeps
+# the SNI as the real domain, which is what the certificate is issued for.
+CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ security_test_wg_address }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
 if [ -n "$CERT_EXPIRY" ]; then
     EXPIRY_EPOCH=$(date -d "$CERT_EXPIRY" +%s 2>/dev/null)
     NOW_EPOCH=$(date +%s)
@@ -130,7 +140,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
-echo "[6/7] HTTP redirect check..."
+echo "[6/8] HTTP redirect check..."
 REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
@@ -139,12 +149,45 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# Test 7: Nuclei quick scan
+# Test 7: the UI is NOT served on the public address (#604)
 # -------------------------------------------------------------------------
-echo "[7/7] Nuclei misconfig scan..."
+# Asserted positively, because "the tests stopped failing" is not evidence a
+# listener is gone. Every other test here would still pass if the public TLS
+# listener came back — they probe WireGuard now — so without this the whole
+# point of #604 could regress silently.
+#
+# Port 80 MUST stay public: certbot renews by webroot/HTTP-01, so Let's Encrypt
+# has to reach the challenge. Both halves are checked; removing the port-80
+# listener breaks renewal and would not show up for ~90 days.
+echo "[7/8] Public listener surface..."
+# NO `|| echo 000` here. curl's -w already prints 000 when the connection is
+# refused AND exits non-zero, so the fallback CONCATENATES: the first live run
+# of this check reported "000000", which matches neither branch and reported a
+# returning public listener on a host where TLS was correctly refused.
+PUB_TLS=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://{{ public_ip }}/" 2>/dev/null)
+PUB_TLS=${PUB_TLS:-000}
+PUB_ACME=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+    "http://{{ public_ip }}/.well-known/acme-challenge/smoke-probe" -H "Host: $DOMAIN" 2>/dev/null)
+PUB_ACME=${PUB_ACME:-000}
+
+if [ "$PUB_TLS" != "000" ]; then
+    fail "public TLS listener is back: https://{{ public_ip }}/ returned $PUB_TLS (#604)"
+elif [ "$PUB_ACME" = "000" ]; then
+    fail "public port 80 is not answering ACME — certbot webroot renewal will fail silently"
+else
+    pass "public: TLS refused, ACME reachable ($PUB_ACME for a missing challenge file)"
+fi
+
+# -------------------------------------------------------------------------
+# Test 8: Nuclei quick scan
+# -------------------------------------------------------------------------
+echo "[8/8] Nuclei misconfig scan..."
 if [ -x "$NUCLEI" ]; then
     NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
-    "$NUCLEI" -u "$API_URL" -t http/ -severity high,critical -timeout 10 \
+    # $WG_URL, not $API_URL. After #604 the public address serves no TLS, and a
+    # scanner pointed at a dead address reports zero findings — a false pass
+    # that looks identical to a clean scan. Scan where the app actually is.
+    "$NUCLEI" -u "$WG_URL" -t http/ -severity high,critical -timeout 10 \
         -silent -no-color -o "$NUCLEI_OUT" 2>/dev/null
     NUCLEI_FINDINGS=$(wc -l < "$NUCLEI_OUT" 2>/dev/null || echo "0")
     if [ "$NUCLEI_FINDINGS" -eq 0 ]; then
