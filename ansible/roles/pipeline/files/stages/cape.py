@@ -56,6 +56,21 @@ _PROCESS_VANISHED_RE = re.compile(
 _PROCESS_EXITED_RE = re.compile(
     r"Process with pid (\d+) has terminated")
 
+#: The sample hollowing a child. capemon logs this from the PARENT when the
+#: child's entry point is rewritten, naming the child pid. Every hollowed child
+#: is one CAPE intended to instrument, so this is the denominator: how many
+#: children should have been observed.
+_HOLLOWED_RE = re.compile(
+    r"SetThreadContextHandler: Hollow process entry point reset.*?\(process (\d+)\)")
+
+#: Where the child's image was mapped. Below 0x00400000 -- the default preferred
+#: base for a 32-bit PE -- instrumentation has never once succeeded: 0 of 55
+#: across six malware families, against 148 of 167 (88.6%) at or above it.
+#: ASLR puts ~19% of children below the line, which is what sets the loss rate.
+#: Recorded because it PREDICTS the tier; the mechanism is still unknown (#606).
+_CHILD_IMAGEBASE_RE = re.compile(
+    r"CreateProcessHandler: Injection info set for new process (\d+): .*?ImageBase: (0x[0-9A-Fa-f]+)")
+
 
 def cape_headers() -> dict:
     """Build Cape API auth headers."""
@@ -395,7 +410,44 @@ def detonation_health(full_report: dict) -> dict:
     # debug.log is the guest analysis.log verbatim, so the answer travels with
     # the report and needs no second read of CAPE's storage.
     analyzer_log = (full_report.get("debug") or {}).get("log") or ""
+    hollowed = sorted({int(p) for p in _HOLLOWED_RE.findall(analyzer_log)})
+    loaded = {int(p) for p in _MONITOR_LOADED_RE.findall(analyzer_log)}
+    traced = sorted(p for p in hollowed if p in loaded)
+    lost = sorted(p for p in hollowed if p not in loaded)
+
+    # Tier is a property of OUR OBSERVATION, not of the sample. The malware runs
+    # identically every time -- parent API counts are byte-identical across runs
+    # -- and the tier records how many of its hollowed children CAPE managed to
+    # watch. Conditioning on it turns an apparently +/-8 instrument into +/-0.5,
+    # because the "noise floor" in #518 was tier-mixing, not measurement error.
+    #
+    #   CLEAN     every hollowed child traced    signatures 34.3 +/- 0.7
+    #   PARTIAL   some traced, some lost         signatures 32.2 +/- 0.4
+    #   ALL-LOST  none traced                    signatures 20.8 +/- 0.4
+    #   NO-HOLLOW sample never reached hollowing -- NOT a success, see below
+    #
+    # NO-HOLLOW exists because "every hollowed child was traced" is vacuously
+    # true when nothing was hollowed. That vacuous pass scored three plainly
+    # dead runs as CLEAN before it was caught, which is the same shape as the
+    # defect this whole investigation is about.
+    if not hollowed:
+        tier = "NO-HOLLOW"
+    elif not traced:
+        tier = "ALL-LOST"
+    elif lost:
+        tier = "PARTIAL"
+    else:
+        tier = "CLEAN"
+
+    bases = {int(pid): int(base, 16)
+             for pid, base in _CHILD_IMAGEBASE_RE.findall(analyzer_log)}
+
     return {
+        "tier": tier,
+        "hollowed_pids": hollowed,
+        "traced_pids": traced,
+        "lost_pids": lost,
+        "child_image_bases": {str(p): hex(bases[p]) for p in hollowed if p in bases},
         "process_count": len(procs),
         "api_calls_total": sum(len(pr.get("calls") or []) for pr in procs),
         "duration_s": info.get("duration"),

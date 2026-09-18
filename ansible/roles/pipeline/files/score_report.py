@@ -24,8 +24,9 @@ import json
 import sys
 from pathlib import Path
 
-#: A backstop, not the primary rule. monitor_injection_failed_pids is the direct
-#: signal; this catches the under-instrumented run that produces no warning.
+#: A backstop, not the primary rule. The tier (see score()) is the primary
+#: signal; this catches a run that died before hollowing anything, where there is
+#: no tier evidence to read because nothing got far enough to be lost.
 #:
 #:     quasarrat, task 1103      1 process   2,344 api calls   -> observed 17
 #:     xworm, healthy run        1 process  24,132 api calls   -> observed 17
@@ -62,19 +63,35 @@ def score(report: dict) -> tuple[str, str]:
 
     # Did CAPE actually OBSERVE the sample? observed_behaviour is only a
     # measurement when it did (#518).
-    #
-    # Direct signal first. CAPE names the processes it injected into but never
-    # heard back from, and each one is payload behaviour that happened and went
-    # unrecorded — in the quasarrat repro, 45-90k api calls of it. This is not an
-    # inference from output volume, so it fires even when the lost child would
-    # have pushed the total above any threshold.
     det = cape.get("detonation") or {}
-    lost = det.get("monitor_injection_failed_pids") or []
-    if lost:
+
+    # Tier-based verdict. The old rule rejected any run that lost a hollowed
+    # child, which discarded ~40% of runs — and was wrong, because a PARTIAL run
+    # is not deficient data, it is data from a different measurement condition:
+    #
+    #   CLEAN     signatures 34.3 +/- 0.7    both children traced
+    #   PARTIAL   signatures 32.2 +/- 0.4    one traced, one lost
+    #   ALL-LOST  signatures 20.8 +/- 0.4    neither traced
+    #
+    # Within a tier the instrument is near-deterministic (+/-0.5). ACROSS tiers
+    # the means differ by enough that pooling them produces the +/-15-25 "noise
+    # floor" that made #518 unanswerable — two back-to-back batches of the same
+    # sample averaged 53.5 and 45.7 purely because their tier mix differed.
+    #
+    # So PARTIAL is USABLE and must be kept, but its tier must be recorded so
+    # analysis compares like with like. Only ALL-LOST and NO-HOLLOW are rejected:
+    # in those, the payload behaviour was never observed at all.
+    tier = det.get("tier")
+    lost = det.get("lost_pids") or det.get("monitor_injection_failed_pids") or []
+    if tier == "ALL-LOST":
         return "SUSPECT", (
-            f"lost instrumentation: CAPE injected {len(lost)} process(es) "
-            f"{lost} that never loaded the monitor — their behaviour is missing "
-            f"from this report, so the score understates the sample")
+            f"no payload observed: the sample hollowed {len(det.get('hollowed_pids') or [])} "
+            f"child process(es) {lost} and CAPE instrumented none of them, so this "
+            f"run measures the launcher only (#606)")
+    if tier == "NO-HOLLOW":
+        return "SUSPECT", (
+            "sample never reached its hollowing stage — it died during startup, "
+            "so there is no payload behaviour in this report to measure")
 
     # The heuristic stays as a backstop for the failure mode that produces no
     # warning at all: task 1103 was under-instrumented with an empty

@@ -146,22 +146,45 @@ def _scored(detonation):
                            "detonation": detonation}, **_OK_REST})
 
 
-def test_lost_instrumentation_is_suspect_even_with_high_call_volume():
-    """The point of the direct signal. A run can lose a child and STILL clear
-    the api-call threshold, which is exactly what the heuristic cannot see."""
-    v, detail = _scored({"process_count": 6, "api_calls_total": 60000,
-                         "monitors_loaded": 5,
-                         "monitor_injection_failed_pids": [4208]})
-    assert v == "SUSPECT", "a lost child is invisible when output looks healthy"
-    assert "4208" in detail
+def test_partial_is_usable_not_suspect():
+    """POLICY REVERSAL, deliberate. An earlier version rejected any run that lost
+    a hollowed child, discarding ~40% of runs.
+
+    That was wrong. A PARTIAL run is not damaged data, it is data from a
+    different measurement condition, and a tight one: signatures 32.2 +/- 0.4
+    against CLEAN's 34.3 +/- 0.7. The two children are identical copies, so one
+    of them shows nearly the whole behavioural repertoire; what is lost is
+    duplicate volume, not new behaviour.
+
+    Keeping PARTIAL is only safe BECAUSE the tier is recorded, so analysis can
+    compare like with like instead of pooling two populations (#606)."""
+    v, _ = _scored({"tier": "PARTIAL", "process_count": 6,
+                    "api_calls_total": 60000, "monitors_loaded": 5,
+                    "hollowed_pids": [4208, 4209], "traced_pids": [4209],
+                    "lost_pids": [4208]})
+    assert v == "OK", "PARTIAL runs are usable and must not be discarded"
 
 
-def test_task_1117_is_suspect():
-    v, detail = _scored({"process_count": 1, "api_calls_total": 4114,
-                         "monitors_loaded": 1,
-                         "monitor_injection_failed_pids": [3092, 6680]})
+def test_all_lost_is_suspect():
+    """Task 1117: both hollowed children lost, so the run measures the launcher
+    and nothing else -- 4,114 calls against a CLEAN run's ~129,000."""
+    v, detail = _scored({"tier": "ALL-LOST", "process_count": 1,
+                         "api_calls_total": 4114, "monitors_loaded": 1,
+                         "hollowed_pids": [3092, 6680], "traced_pids": [],
+                         "lost_pids": [3092, 6680]})
     assert v == "SUSPECT"
     assert "3092" in detail and "6680" in detail
+
+
+def test_no_hollow_is_suspect():
+    """The sample died before hollowing anything. 'Every hollowed child was
+    traced' is vacuously true here, which scored three plainly dead runs as
+    CLEAN before the tier gained its hollowed>0 precondition."""
+    v, detail = _scored({"tier": "NO-HOLLOW", "process_count": 1,
+                         "api_calls_total": 2415, "monitors_loaded": 1,
+                         "hollowed_pids": [], "traced_pids": [], "lost_pids": []})
+    assert v == "SUSPECT"
+    assert "hollowing" in detail
 
 
 def test_task_1118_is_ok():
@@ -267,3 +290,73 @@ def test_repro_runs_record_clean_exits_and_no_vanishing():
     det = detonation_health({"debug": {"log": LOG_1118_HEALTHY + LINE_CLEAN_EXIT}})
     assert det["vanished_pids"] == []
     assert det["clean_exit_pids"] == [7548]
+
+
+# --- tier classification ----------------------------------------------------
+# Verbatim fragments from tasks 1158 (CLEAN), 1168 (PARTIAL), 1117 (ALL-LOST).
+# The tier is a property of OUR OBSERVATION, not the sample: the malware runs
+# identically every time (parent API counts are byte-identical across runs) and
+# always hollows two children. The tier records how many CAPE managed to watch.
+
+_HOLLOW = ("2026-09-17 04:07:41,225 [root] DEBUG: 716: SetThreadContextHandler: "
+           "Hollow process entry point reset via NtSetContextThread to 0x000581FE "
+           "(process {pid}).")
+_LOADED = "2026-09-17 04:08:00,972 [root] INFO: Loaded monitor into process with pid {pid}"
+_CREATED = ("2026-09-17 04:07:59,900 [root] DEBUG: 716: CreateProcessHandler: Injection "
+            "info set for new process {pid}: C:\\WINDOWS\\TEMP\\quasarrat.exe, ImageBase: {base}")
+
+
+def _log(children):
+    """children: [(pid, imagebase, traced_bool)]"""
+    lines = []
+    for pid, base, _ in children:
+        lines.append(_CREATED.format(pid=pid, base=base))
+    for pid, _, _ in children:
+        lines.append(_HOLLOW.format(pid=pid))
+    for pid, _, traced in children:
+        if traced:
+            lines.append(_LOADED.format(pid=pid))
+    return "\n".join(lines) + "\n"
+
+
+def test_tier_clean_when_every_hollowed_child_is_traced():
+    det = detonation_health({"debug": {"log": _log([
+        (4660, "0x00C40000", True), (4592, "0x00660000", True)])}})
+    assert det["tier"] == "CLEAN"
+    assert det["hollowed_pids"] == [4592, 4660]
+    assert det["lost_pids"] == []
+
+
+def test_tier_partial_when_one_child_is_lost():
+    det = detonation_health({"debug": {"log": _log([
+        (9884, "0x00350000", False), (6504, "0x00F60000", True)])}})
+    assert det["tier"] == "PARTIAL"
+    assert det["traced_pids"] == [6504]
+    assert det["lost_pids"] == [9884]
+
+
+def test_tier_all_lost_when_no_child_is_traced():
+    det = detonation_health({"debug": {"log": _log([
+        (3092, "0x00170000", False), (6680, "0x001B0000", False)])}})
+    assert det["tier"] == "ALL-LOST"
+    assert det["traced_pids"] == []
+    assert det["lost_pids"] == [3092, 6680]
+
+
+def test_tier_no_hollow_is_not_vacuously_clean():
+    """The bug this precondition exists for. With nothing hollowed, 'every
+    hollowed child was traced' is trivially true, and three plainly dead runs
+    (1144, 1153, 1162 — ~2,400 calls each) were scored CLEAN because of it."""
+    det = detonation_health({"debug": {"log": "nothing hollowed here\n"}})
+    assert det["tier"] == "NO-HOLLOW", "an empty set must not pass as CLEAN"
+
+
+def test_child_image_bases_are_recorded():
+    """The predictor, kept so the tier can be explained after the fact. Below
+    0x00400000 instrumentation has never succeeded: 0 of 55 across six families
+    (#606). The mechanism is unknown, so this is recorded, not acted on."""
+    det = detonation_health({"debug": {"log": _log([
+        (9884, "0x00350000", False), (6504, "0x00F60000", True)])}})
+    assert det["child_image_bases"] == {"9884": "0x350000", "6504": "0xf60000"}
+    lost_base = int(det["child_image_bases"][str(det["lost_pids"][0])], 16)
+    assert lost_base < 0x00400000
