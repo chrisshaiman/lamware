@@ -86,7 +86,7 @@ def _forward_table(*, drop=True, accept_first=False):
     return "\n".join([header, *rows])
 
 
-def _output_table(*, drop=True, drop_first=False, preempt=False, chain="ufw-before-output"):
+def _output_table(*, drop=True, drop_first=False, preempt=False, chain="OUTPUT"):
     """The pipeline allowlist as it appears in ufw's before-output chain.
 
     It used to be surveyed in OUTPUT, where it was unreachable: ufw accepts all
@@ -120,7 +120,7 @@ def _fake_binary(path: Path, forward: str, output: str) -> None:
 {forward}
 EOF
               exit 0 ;;
-            ufw-before-output|ufw6-before-output) cat <<'EOF'
+            OUTPUT) cat <<'EOF'
 {output}
 EOF
               exit 0 ;;
@@ -218,7 +218,7 @@ def test_a_pipeline_allow_below_the_drop_all_is_reported(tmp_path, family):
     """The specific hazard the Ansible tasks carry: `ansible.builtin.iptables`
     APPENDS, so an allow added in a later change lands below the DROP-all. It is
     present, it matches `iptables -C`, and it permits nothing."""
-    out = _problems(_run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True, chain="ufw6-before-output" if family=="v6" else "ufw-before-output")}))
+    out = _problems(_run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True)}))
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"ORDERING: {cmd} pipeline ACCEPT" in out, out
 
@@ -235,9 +235,8 @@ def test_a_foreign_accept_above_the_drop_all_is_reported(tmp_path, family):
     The old survey read only rules commented `pipeline:`, so a terminating
     ACCEPT above them was invisible. Every check reported healthy throughout.
     """
-    chain = "ufw6-before-output" if family == "v6" else "ufw-before-output"
     out = _run(tmp_path, **{**HEALTHY,
-                            f"{family}_output": _output_table(preempt=True, chain=chain)})
+                            f"{family}_output": _output_table(preempt=True)})
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"PREEMPTED: {cmd}" in out, out
 

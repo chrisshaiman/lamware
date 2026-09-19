@@ -27,6 +27,29 @@
     set_motd: false
     # Do not force a reboot after hardening — operator controls reboots
     system_upgrade: false
+    # This host does NOT use ufw. iptables-persistent is the single firewall
+    # mechanism, and the two declare `Breaks:` against each other: installing
+    # one removes the other, so every deploy picked a winner by role order.
+    #
+    # That coin-flip caused three outages on 2026-09-19. With ufw installed:
+    #
+    #   * the pipeline egress DROP sat below ufw's chains and never fired --
+    #     uid 997 reached 1.1.1.1:443 with the rule present and 0 packets on it
+    #   * nothing accepted NEW outbound to virbr-det, so CAPE could not reach
+    #     the guest agent and every detonation timed out with 0 processes
+    #   * CAPE's web UI on 10.200.0.1:8000 had no inbound rule at all
+    #
+    # None of those exist without ufw: the raw rules sit at the top of INPUT,
+    # OUTPUT and FORWARD with nothing in front of them. That ordering is what
+    # the air-gap depends on, and ufw could only have offered it below
+    # LIBVIRT_FWO -- config libvirt rewrites on every network restart.
+    #
+    # THE TRADE-OFF IS REAL AND IS NOT YET PAID FOR: ufw gave default-deny
+    # inbound. /etc/iptables/rules.v4 carries `:INPUT ACCEPT`, so any service
+    # that listens is reachable by anything that can route to it. That is how
+    # the CAPE UI was exposed without a rule in the first place. Tracked
+    # separately; do not read this as "inbound is handled".
+    manage_ufw: false
     # Post-quantum key exchange, prepended to the role's default list.
     #
     # konstruktoid v4.4.1 defaults sshd_kex_algorithms to five pre-PQ
@@ -108,36 +131,24 @@
   notify: Restart usbguard
 
 # =============================================================================
-# UFW: re-add the inbound ports the baseline removes.
+# The ufw inbound re-add task lived here. It is gone with ufw itself: nothing
+# deletes those rules any more because nothing manages a second firewall.
 #
-# konstruktoid sets `default deny (incoming)` and adds one inbound rule, for
-# sshd. It exposes `ufw_outgoing_traffic` but nothing for inbound, so anything
-# else this host must serve is deleted on every hardening run.
+# It existed because konstruktoid sets `default deny (incoming)` and re-adds
+# exactly one inbound rule (sshd), silently removing everything else this host
+# serves on every run. On 2026-09-02 that took the public web tier offline and
+# left WireGuard alive only on conntrack -- it would have dropped on the next
+# idle gap. The same window opened again on 2026-09-19.
 #
-# Found the hard way: a TAGS=hardening deploy on 2026-09-02 rewrote
-# /etc/ufw/user.rules at 00:08 and the public site went dark. nginx was fine and
-# still answering locally; the packets never arrived. WireGuard (51820/udp) was
-# not allowed either and kept working only because conntrack held the flow open
-# — it would have dropped on the next idle gap.
-#
-# SSH stays reachable throughout (22/tcp is the rule the baseline DOES add),
-# which is the only reason this was an outage and not a lockout.
+# Purge rather than leave `rc`: a config-only ufw package is one `apt install`
+# from evicting iptables-persistent again.
 # =============================================================================
 
-- name: Allow the inbound ports the hardening baseline removes
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.port }}"
-    proto: "{{ item.proto }}"
-    direction: in
-    # Scoped to one NIC when the entry names it. An administrative port with no
-    # interface is reachable from the public address, which is what happened to
-    # the web UI before #604.
-    interface: "{{ item.interface | default(omit) }}"
-    comment: "{{ item.comment }}"
-  loop: "{{ hardening_ufw_inbound }}"
-  loop_control:
-    label: "{{ item.port }}/{{ item.proto }}"
+- name: Remove ufw entirely — iptables-persistent is the firewall on this host
+  ansible.builtin.apt:
+    name: ufw
+    state: absent
+    purge: true
 
 # =============================================================================
 # Console-only recovery account (#552).
