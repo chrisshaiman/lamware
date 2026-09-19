@@ -210,10 +210,31 @@ probe_egress() {
     local uid_name="pipeline"
     id -u "$uid_name" >/dev/null 2>&1 || return 0
     if sudo -u "$uid_name" timeout 2 bash -c 'echo > /dev/tcp/127.0.0.1/27017' 2>/dev/null; then
-        echo "INEFFECTIVE: the pipeline user reached 127.0.0.1:27017, which the allowlist denies — something ACCEPTs before the DROP"
+        local why
+        why="$(egress_failure_detail)"
+        echo "INEFFECTIVE: the pipeline user reached 127.0.0.1:27017, which the allowlist denies${why:+ — $why}"
     fi
 }
 
+# PREEMPTION IS A HINT, NOT AN ALARM. It answers "does some chain above the
+# DROP contain an ACCEPT", when the question that matters is "does anything
+# above accept THIS traffic". Those differ, and the gap produced two false
+# urgent pages in one day:
+#
+#   ufw-before-logging-output   an empty shell left behind when ufw was removed
+#   LIBVIRT_OUT                 real ACCEPTs, but scoped `-o virbr-det --dport
+#                               53/68` -- DHCP and DNS to the detonation
+#                               bridge, nothing to do with the pipeline user
+#
+# Both fired while the DROP was demonstrably working: 42+ packets on it, and
+# uid 997 refused to 1.1.1.1:443, 1.1.1.1:53, 127.0.0.1:27017 and :4000.
+# Answering it properly means evaluating iptables match semantics, which this
+# script is not going to do correctly.
+#
+# probe_egress answers the real question by trying the connection. That is the
+# alarm. Preemption is attached as an explanation WHEN the probe fails, and is
+# silent otherwise -- because a page that fires on a healthy host is one the
+# operator learns to discount, and this check touches the PAUSE file.
 check_egress() {
     local cmd="$1"
     read -r ac ai dc di <<< "$(egress_survey "$cmd")"
@@ -223,13 +244,21 @@ check_egress() {
     fi
     if [ "$ac" -gt 0 ] && [ "$ai" -gt "$di" ]; then
         echo "ORDERING: $cmd pipeline ACCEPT at rule $ai sits below the DROP-all at rule $di"
-        return
     fi
-    local pre
-    pre="$(egress_preempted_by "$cmd" "$di")"
-    if [ -n "$pre" ]; then
-        echo "PREEMPTED: $cmd rule $pre accepts before the pipeline DROP-all at rule $di — the DROP cannot fire"
-    fi
+}
+
+# Why the egress is not enforced, for a probe that has already failed. Never
+# called on its own.
+egress_failure_detail() {
+    local out=""
+    for cmd in iptables ip6tables; do
+        read -r _ac _ai _dc di <<< "$(egress_survey "$cmd")"
+        [ "${di:-0}" -gt 0 ] || continue
+        local pre
+        pre="$(egress_preempted_by "$cmd" "$di")"
+        [ -n "$pre" ] && out="${out}${out:+; }$cmd rule $pre accepts before the DROP-all at rule $di"
+    done
+    echo "$out"
 }
 
 # Two DIFFERENT controls are checked here and they fail for different reasons.
