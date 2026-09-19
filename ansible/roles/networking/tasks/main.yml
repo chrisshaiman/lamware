@@ -428,6 +428,63 @@
     comment: "Cape: guest resultserver"
   when: networking_inp_resultserver.rc != 0
 
-- name: Save iptables rules (persist across reboots)
-  ansible.builtin.command: netfilter-persistent save
-  changed_when: true
+# -------------------------------------------------------------------------
+# CAPE must be able to reach the guest agent, and ufw does not let it.
+#
+# CAPE drives every analysis over http://<guest>:8000 -- CUCKOO_GUEST_PORT in
+# lib/cuckoo/common/constants.py, used by guest.py for both the REST calls and
+# the socket.create_connection() liveness probe. Nothing else on the host talks
+# to the guest: LIBVIRT_OUT covers only DHCP (68) and DNS (53).
+#
+# ufw sets DEFAULT_OUTPUT_POLICY=DROP, and no chain accepts NEW outbound to
+# virbr-det. So the connection fell through to the OUTPUT policy and CAPE sat
+# there until it gave up:
+#
+#   14:40:17  Starting analysis on guest (id=clean, ip=192.168.100.10)
+#   14:44:38  ERROR: the guest initialization hit the critical timeout
+#   14:44:51  Completed analysis unsuccessfully
+#
+# Task 1250 produced 0 processes and 0 API calls from a sample that normally
+# yields ~16 and ~99k. 263 packets hit the OUTPUT policy DROP.
+#
+# It only worked before by accident: /etc/iptables/rules.v4 carries
+# `:OUTPUT ACCEPT`, and ufw declares Breaks: iptables-persistent, so whichever
+# role ran last decided whether the policy was permissive. Removing the
+# netfilter-persistent dependency ended that coin-flip -- correctly, but it also
+# removed the thing that had been hiding this.
+#
+# SCOPE IS DELIBERATELY ONE PORT. A blanket `-o virbr-det -j ACCEPT` was tested
+# first and logged ~165 packets to ephemeral ports; those are replies to
+# guest-initiated flows and ufw's conntrack rule already accepts them. Task 1252
+# then detonated successfully with tcp/8000 alone -- reported, analysis.log
+# present, 8 processes. The wider rule was not needed.
+#
+# Placed AFTER the pipeline egress block, so the pipeline user's uid DROP still
+# refuses it a route onto the detonation bridge. Verified: pipeline -> guest:8000
+# is refused while CAPE's is not.
+#
+# This does NOT weaken the air-gap, which is FORWARD. Guest -> internet stays
+# DROPped at FORWARD 4-5, above every ufw chain.
+# -------------------------------------------------------------------------
+- name: Let CAPE reach the guest agent on the detonation bridge
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - lamware guest agent"
+    # After the pipeline egress block if it is present, else after the chain
+    # declarations. Either way it lands above ufw's own accepts and below the
+    # uid DROP.
+    insertafter: '^-A ufw-before-output -m owner|^:ufw-not-local'
+    validate: /usr/sbin/iptables-restore --test %s
+    block: |
+      -A ufw-before-output -o {{ networking_detonation_bridge | default('virbr-det') }} -p tcp --dport 8000 -m comment --comment "CAPE: guest agent" -j ACCEPT
+  notify: Reload ufw
+
+# `netfilter-persistent save` is gone. ufw declares Breaks: against the package
+# that provides it, so on any host where the hardening role has run the binary
+# does not exist and this task failed the whole play. The rules that must
+# survive a reboot now live in before.rules, which ufw owns and reapplies.
+#
+# The raw INPUT and FORWARD rules above are NOT moved: the air-gap DROPs sit at
+# FORWARD 4-5, above every ufw chain, and ufw-before-forward would place them at
+# position 10 -- below LIBVIRT_FWO. That trades a position we control for one
+# libvirt rewrites on network restart. Persisting those is separate work.

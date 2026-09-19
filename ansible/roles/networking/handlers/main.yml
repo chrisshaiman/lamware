@@ -1,0 +1,8 @@
+---
+# Reload, not restart: `ufw reload` re-reads before.rules and reapplies the rule
+# set without dropping the firewall in between. `ufw disable && ufw enable`
+# would leave a window with no rules on a host whose only access path is the
+# network.
+- name: Reload ufw
+  ansible.builtin.command: ufw reload
+  changed_when: true
