@@ -108,29 +108,68 @@ of passing silently.
 
 ## Memory dumps and the Volatility stage
 
-`pipeline_cape_memory_dump` is **false**, and the Volatility stage has no input
-while it is.
+`pipeline_cape_memory_dump` is **true**. Volatility needs a full-VM RAM dump and
+is the only thing that reads one.
 
-This is a live state worth understanding rather than a setting to flip
-casually. A full-VM RAM dump is 8.6 GB per run, and `conf/memory.conf` sets
-`delete_memdump = no`, so nothing reclaims them: eight runs filled the disk and
-CAPE silently stopped scheduling below its `freespace = 50000` floor while every
-service still reported active.
+### The stage was dead from 2026-09-16 to 2026-09-18, and the cause was a reaper
 
-The host-side response on 2026-09-16 set `memory_dump = off` in `cuckoo.conf`.
-The pipeline kept submitting `memory=1` regardless, so from that date Volatility
-reported `{"triggered": true, "error": "memory dump not found"}` with zero
-plugins on every analysis — a string that reads like CAPE misbehaving:
+Every analysis in that window reported
+
+    {"triggered": true, "error": "memory dump not found"}
+
+with zero plugins. Either side of it:
 
     r5_* (2026-09-10/11)        triggered=true  error=none  plugins=7
     verify_salat (2026-09-18)   triggered=true  error=...   plugins=0
 
-The submission is now driven by config, and the stage distinguishes the two
-cases it used to conflate: **disabled** is a skip that names the switch,
-**requested but absent** stays a loud error.
+The obvious suspect was `memory_dump = off`, set in `cuckoo.conf` on 2026-09-16
+during the disk-exhaustion response. **That was a red herring.** CAPE's gate is
 
-Turning dumps back on is a separate decision with a prerequisite: something must
-reap the dumps, because `delete_memdump = no` means CAPE will not.
+    if not self.cfg.cuckoo.memory_dump and not self.task.memory:
+        return
+
+so a per-task `memory=1` overrides the global setting, and the pipeline was
+sending one. Verified empirically: with the config still `off`, task 1248
+produced an 8 GB dump.
+
+The actual cause was `cape-janitor.service` — a host-only, untracked unit added
+on 2026-09-16 at 21:07 for the #518 batches, sweeping every 120 seconds and
+deleting **every** `memory.dmp` it found, unconditionally. Its own header said
+so: *"reaping them is always safe here; reaping them is NOT safe if Volatility
+is ever enabled."* It was correct for those batches, which submitted straight to
+CAPE and never read a dump. It was catastrophic for the pipeline, which reads
+one a few minutes after it is written.
+
+Stopping that unit is the whole fix; the dump reappeared on the next analysis.
+
+The lesson is not "the janitor was wrong". It is that a tool built for one
+measurement mode was left running into another, where its stated precondition no
+longer held — and the failure surfaced as a string that read like CAPE
+misbehaving. The stage now distinguishes **disabled** (a skip naming the switch)
+from **requested but absent** (a loud error saying where it looked), so the next
+occurrence names itself.
+
+### What reaps the dumps
+
+`delete_memdump = no`, so CAPE never reclaims one itself. Two things do:
+
+**The backstop** is the ansible-managed `cape-storage-maintenance` cron in the
+cape role — hourly at :15, `find storage/analyses -name memory.dmp -mmin +60
+-delete`. It has been there all along. A dump therefore lives at most ~61
+minutes, and the Volatility stage's 45-minute alarm starts about 3 minutes after
+the dump is written, so the consumer finishes ~48 minutes in with 12 minutes to
+spare.
+
+**The primary path** is the pipeline itself: `reap_memory_dump` runs as soon as
+the Volatility stage finishes, success or failure. That holds peak usage at one
+dump (8.6 GB) rather than up to two hours' worth.
+
+What must not come back is `cape-janitor.service` — a host-only, untracked
+120-second sweep that deleted every `memory.dmp` it found, unconditionally. It
+was correct for the #518 batches, which submitted straight to CAPE and never
+read a dump, and its own header said so: *"reaping them is NOT safe if
+Volatility is ever enabled"*. It would delete the dump out from under a stage
+allowed to run for 45 minutes. It has been removed from the host.
 
 ## Safety
 

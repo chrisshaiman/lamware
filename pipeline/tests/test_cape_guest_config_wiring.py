@@ -8,6 +8,7 @@ it would read as "configurable" in review while the production path stayed
 exactly as broken as before.
 """
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -41,12 +42,13 @@ def test_an_older_config_json_still_loads():
             f"{k} has no default, so an existing config.json would fail to load")
 
 
-def test_the_defaults_are_the_safe_ones():
+def test_the_guest_defaults_are_the_safe_ones():
     assert DEFAULTS["pipeline_cape_machine"] == "clean"
     assert DEFAULTS["pipeline_cape_office_machine"] == "office"
-    assert DEFAULTS["pipeline_cape_memory_dump"] is False, (
-        "memory dumps default ON would reintroduce 8.6 GB a run with "
-        "delete_memdump=no, which filled the disk and stalled CAPE")
+
+
+def test_memory_dumps_are_on_because_volatility_cannot_run_without_one():
+    assert DEFAULTS["pipeline_cape_memory_dump"] is True
 
 
 def test_every_key_is_rendered_into_config_json():
@@ -83,3 +85,68 @@ def test_volatility_is_told_whether_a_dump_was_requested():
     kws = _call_keywords(RUN_PIPELINE, "run_volatility")
     assert kws is not None and "memory_dump_requested" in kws, (
         "the Volatility stage cannot tell 'disabled' from 'CAPE failed'")
+
+
+# --- dumps and their reapers are ONE decision ------------------------------
+
+def _memdump_reaper_cron():
+    """The cron task that reaps memory dumps, found by PARSING the role.
+
+    Not by grepping. The string "cape-storage-maintenance" also appears in a
+    comment above an unrelated task ("renaming this task to ..."), so a
+    substring check still passes after the cron itself is renamed away. A
+    mutation sweep caught exactly that.
+    """
+    tasks = yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "cape" / "tasks" / "main.yml").read_text())
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        cron = t.get("ansible.builtin.cron")
+        if not isinstance(cron, dict) or cron.get("state") == "absent":
+            continue
+        if "memory.dmp" in str(cron.get("job") or ""):
+            return cron
+    return None
+
+
+def test_enabling_dumps_requires_a_backstop_reaper_to_exist():
+    """A dump is ~8 GB and conf/memory.conf sets delete_memdump=no, so CAPE
+    never reclaims one. Turning dumps on without a reaper is what filled the
+    disk and silently stopped CAPE scheduling below freespace=50000."""
+    if not DEFAULTS["pipeline_cape_memory_dump"]:
+        return
+    cron = _memdump_reaper_cron()
+    assert cron is not None, "memory dumps are enabled but no cron reaps memory.dmp"
+    assert "-mmin" in str(cron["job"]), "the reaper no longer reaps by age"
+
+
+def test_the_primary_reclaim_runs_in_the_pipeline():
+    """The backstop is hourly; the dump should not wait that long when its only
+    consumer has already finished with it."""
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id == "reap_memory_dump"
+               for n in ast.walk(RUN_PIPELINE)), (
+        "nothing reclaims the dump after the Volatility stage")
+
+
+def test_the_reaper_grace_exceeds_the_volatility_stage_timeout():
+    """The 120-second sweeper that killed this stage deleted dumps a stage was
+    still allowed to be reading. Any reaper must outlast that stage.
+
+    run-pipeline arms signal.alarm(2700) -- 45 minutes -- and the dump is
+    roughly 3 minutes old when the stage starts.
+    """
+    cron = _memdump_reaper_cron()
+    assert cron is not None, "no memory.dmp reaper to check"
+    m = re.search(r"memory\.dmp'\s+-mmin\s+\+(\d+)", str(cron["job"]))
+    assert m, f"cannot find the reaper's age threshold in: {cron['job']}"
+    grace_min = int(m.group(1))
+
+    alarm = re.search(r"signal\.alarm\((\d+)\)", (FILES / "run-pipeline.py").read_text())
+    assert alarm, "the Volatility stage timeout is gone"
+    stage_timeout_min = int(alarm.group(1)) / 60
+
+    assert grace_min > stage_timeout_min, (
+        f"reaper deletes dumps at {grace_min}m but the Volatility stage may run "
+        f"for {stage_timeout_min:.0f}m -- it would delete one mid-read")

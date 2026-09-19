@@ -76,6 +76,7 @@ from stages.triage import (
 )
 from stages.volatility import (
     extract_shellcode_artifacts,
+    reap_memory_dump,
     run_volatility,
     should_run_volatility,
 )
@@ -555,6 +556,18 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                       f"hollowing, rootkit, persistence, or packing signatures")
         log.info(f"  Not triggered — {reason}")
         report["volatility"] = {"triggered": False, "reason": reason}
+    # Reclaim the 8.6 GB dump now that the only consumer is finished. Eight
+    # unreaped dumps filled the disk and CAPE silently stopped scheduling below
+    # freespace=50000 while every service still reported active.
+    if CAPE_MEMORY_DUMP:
+        _reaped = reap_memory_dump(cape_data)
+        report.setdefault("volatility", {})["memory_dump_reaped"] = _reaped
+        if _reaped.get("reaped"):
+            log.info(f"  Reclaimed memory dump "
+                     f"({_reaped['freed_bytes'] / 1e9:.1f} GB)")
+        elif _reaped.get("error"):
+            log.warning(f"  [!] could not reclaim memory dump: {_reaped['error']}")
+
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
 

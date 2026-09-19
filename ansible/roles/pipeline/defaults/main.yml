@@ -17,10 +17,21 @@ pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
 pipeline_cape_machine: clean
 pipeline_cape_office_machine: office
 
-# Full-VM RAM dump per analysis. OFF: 8.6 GB a run with delete_memdump=no filled
-# the disk and CAPE silently stopped scheduling below freespace=50000. Turning
-# this on re-enables the Volatility stage and REQUIRES reaping the dumps.
-pipeline_cape_memory_dump: false
+# Full-VM RAM dump per analysis. ON: the Volatility stage is its only consumer
+# and cannot run without one. It is ~8 GB a run (the guest has 8 GiB of RAM) and
+# conf/memory.conf sets delete_memdump=no, so CAPE never reclaims one. Two things
+# do, and both must stay in place:
+#
+#   primary    run-pipeline calls reap_memory_dump as soon as the Volatility
+#              stage finishes, holding peak usage at one dump
+#   backstop   the cape role's `cape-storage-maintenance` cron, hourly at :15,
+#              deleting memory.dmp older than 60 minutes (orphans from aborted
+#              runs and ad-hoc submissions)
+#
+# Do NOT add a short-interval unconditional sweeper. One existed from 2026-09-16
+# to 2026-09-18 (cape-janitor.service, every 120s) and silently killed the
+# Volatility stage on every analysis by deleting the dump before it was read.
+pipeline_cape_memory_dump: true
 
 # Report retention (days) — cron job purges older reports
 pipeline_report_retention_days: 7
