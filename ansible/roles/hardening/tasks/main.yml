@@ -130,6 +130,10 @@
     port: "{{ item.port }}"
     proto: "{{ item.proto }}"
     direction: in
+    # Scoped to one NIC when the entry names it. An administrative port with no
+    # interface is reachable from the public address, which is what happened to
+    # the web UI before #604.
+    interface: "{{ item.interface | default(omit) }}"
     comment: "{{ item.comment }}"
   loop: "{{ hardening_ufw_inbound }}"
   loop_control:
