@@ -113,8 +113,15 @@ def test_the_rule_checks_are_actually_CALLED():
     assert "check_egress" in body, "the pipeline egress allowlist is unchecked"
     assert "{{ management_interface }}" in body, "the internet path is unchecked"
     assert "wg0" in body, "the management path is unchecked"
-    assert re.search(r"^\s*rules_problem=.*_check", body, re.M), (
-        "the loop computes checks but never accumulates them into rules_problem")
+    # The accumulator was split in two so the alert can name the control that
+    # failed: everything used to be announced as an air-gap breach, including
+    # pipeline-egress findings, which fired urgent/skull on 2026-09-19 while the
+    # air-gap was intact. Both halves must still capture what their check
+    # returned -- a check computed and dropped is the defect this test is about.
+    assert re.search(r"^\s*airgap_problem=.*_check", body, re.M), (
+        "the bridge checks are computed but never accumulated")
+    assert re.search(r"^\s*\[ -n \"\$_egress_check\" \].*egress_problem=", body, re.M), (
+        "the egress check is computed but never accumulated")
 
 
 def test_rule_ordering_is_checked():
