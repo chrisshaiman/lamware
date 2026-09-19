@@ -231,7 +231,7 @@
     - name: Verify the merged sshd config still parses
       ansible.builtin.command: /usr/sbin/sshd -t
       changed_when: false
-      register: _sshd_parse_result
+      register: hardening_sshd_parse_result
   rescue:
     # GATE, deliberately first in the rescue. A failed task aborts the rescue,
     # so when sshd could not run at all the removal below is never reached and
@@ -240,9 +240,9 @@
     - name: Refuse to delete the drop-in unless sshd actually rejected the config
       ansible.builtin.assert:
         that:
-          - "'Missing privilege separation directory' not in (_sshd_parse_result.stderr | default(''))"
+          - "'Missing privilege separation directory' not in (hardening_sshd_parse_result.stderr | default(''))"
         fail_msg: >-
-          `sshd -t` could not run: {{ _sshd_parse_result.stderr | default('(no stderr)') }}.
+          `sshd -t` could not run: {{ hardening_sshd_parse_result.stderr | default('(no stderr)') }}.
           That is an environment fault, not a rejection of
           20-lamware-console-user.conf, so the drop-in has been LEFT IN PLACE
           and sshd is unchanged. Create /run/sshd and re-run.
