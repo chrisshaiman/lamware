@@ -121,13 +121,43 @@ def test_enabling_dumps_requires_a_backstop_reaper_to_exist():
     assert "-mmin" in str(cron["job"]), "the reaper no longer reaps by age"
 
 
-def test_the_primary_reclaim_runs_in_the_pipeline():
-    """The backstop is hourly; the dump should not wait that long when its only
-    consumer has already finished with it."""
-    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-               and n.func.id == "reap_memory_dump"
-               for n in ast.walk(RUN_PIPELINE)), (
-        "nothing reclaims the dump after the Volatility stage")
+def test_pipeline_does_not_delete_cape_storage():
+    """The pipeline user must not reclaim dumps. This is a security boundary.
+
+    analyses/<id> is cape:lamware drwxr-s--- with an ACL granting lamware r-x.
+    Deleting a file needs write on the DIRECTORY, so `pipeline` cannot -- and
+    deliberately must not. Cleanup belongs to the cape-owned cron.
+
+    This has now been added and removed TWICE:
+
+        8f126ee  2026-05-09  pipeline deletes the dump after Volatility
+        daaa7c3  2026-05-15  removed: "crosses the security boundary between
+                             pipeline and cape users"
+        #611     2026-09-19  added back; failed with PermissionError on every
+                             run, silently, while reading as belt-and-braces
+
+    A standing comment saying "do not do this" sat fifty lines below the second
+    attempt and did not prevent it. This test is the version that can.
+    """
+    src = (FILES / "run-pipeline.py").read_text()
+    for node in ast.walk(RUN_PIPELINE):
+        if not isinstance(node, ast.Call):
+            continue
+        name = (node.func.attr if isinstance(node.func, ast.Attribute)
+                else getattr(node.func, "id", ""))
+        if name in ("unlink", "rmtree", "remove", "reap_memory_dump"):
+            seg = ast.get_source_segment(src, node) or ""
+            assert "CAPEv2" not in seg and "memory" not in seg.lower(), (
+                f"run-pipeline deletes CAPE storage: {seg!r}. Cleanup belongs "
+                f"to the cape-owned cron -- see daaa7c3.")
+
+
+def test_the_cape_owned_cron_is_the_only_reaper():
+    """Removing the pipeline path only works if the cron actually exists."""
+    cron = _memdump_reaper_cron()
+    assert cron is not None, "no reaper at all: dumps would accumulate at ~8.6 GB each"
+    assert cron.get("user") in ("cape", "{{ cape_user }}"), (
+        f"the reaper must run as the user that OWNS the storage, not {cron.get('user')!r}")
 
 
 def test_the_reaper_grace_exceeds_the_volatility_stage_timeout():

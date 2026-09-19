@@ -76,7 +76,6 @@ from stages.triage import (
 )
 from stages.volatility import (
     extract_shellcode_artifacts,
-    reap_memory_dump,
     run_volatility,
     should_run_volatility,
 )
@@ -556,18 +555,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                       f"hollowing, rootkit, persistence, or packing signatures")
         log.info(f"  Not triggered — {reason}")
         report["volatility"] = {"triggered": False, "reason": reason}
-    # Reclaim the 8.6 GB dump now that the only consumer is finished. Eight
-    # unreaped dumps filled the disk and CAPE silently stopped scheduling below
-    # freespace=50000 while every service still reported active.
-    if CAPE_MEMORY_DUMP:
-        _reaped = reap_memory_dump(cape_data)
-        report.setdefault("volatility", {})["memory_dump_reaped"] = _reaped
-        if _reaped.get("reaped"):
-            log.info(f"  Reclaimed memory dump "
-                     f"({_reaped['freed_bytes'] / 1e9:.1f} GB)")
-        elif _reaped.get("error"):
-            log.warning(f"  [!] could not reclaim memory dump: {_reaped['error']}")
-
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
 
@@ -611,9 +598,23 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         all_candidates = shellcode_candidates
     shellcode_candidates = all_candidates
 
-    # Memory dump cleanup is handled by a cape-owned cron job.
-    # The pipeline user intentionally does not have write access to
-    # CAPE storage — that's a security boundary we want to preserve.
+    # Memory dump cleanup is handled by a cape-owned cron job
+    # (`cape-storage-maintenance`, hourly at :15, memory.dmp older than 60 min).
+    #
+    # The pipeline user intentionally does not have write access to CAPE
+    # storage — that is a security boundary, not an oversight. analyses/<id>
+    # is cape:lamware drwxr-s--- with an ACL granting lamware r-x, and deleting
+    # a file requires write on the DIRECTORY, so `pipeline` cannot and must not.
+    #
+    # THIS HAS BEEN ADDED AND REMOVED TWICE. 8f126ee (2026-05-09) added a
+    # pipeline-side delete; daaa7c3 (2026-05-15) removed it for the reason
+    # above. #611 (2026-09-19) added it back and it failed on every run with
+    # PermissionError — a reclaim path that never works is worse than none,
+    # because it reads as belt-and-braces while doing nothing.
+    #
+    # test_pipeline_does_not_delete_cape_storage enforces this. If the disk
+    # fills, change the CRON's schedule or age threshold; do not move deletion
+    # across the boundary.
 
     # Stage 4: Static analysis (Ghidra for native PE, ILSpy for .NET)
     _ghidra_start = _time.time()
