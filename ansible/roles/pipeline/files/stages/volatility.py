@@ -403,35 +403,6 @@ def get_memory_dump_path(cape_data: dict) -> Path | None:
     return None
 
 
-def reap_memory_dump(cape_data: dict) -> dict:
-    """Delete this analysis's full-VM dump once the stage is done with it.
-
-    The consumer cleans up after itself. This is the PRIMARY reclaim path; the
-    cape-memdump-reaper timer is only a backstop for orphans (aborted runs, and
-    ad-hoc CAPE submissions no pipeline consumed).
-
-    Deleting here rather than on a timer removes the race the predecessor had:
-    a 120-second sweep that deleted every dump it found would take one out from
-    under a stage that is allowed to run for 45 minutes.
-
-    Nothing re-reads the dump afterwards -- `--replay` re-runs only the
-    post-collection stages (correlate, analysis, iocs, summary, db, pdf), and
-    Volatility is not among them.
-    """
-    dump_path = get_memory_dump_path(cape_data)
-    if not dump_path:
-        return {"reaped": False, "reason": "no dump on disk"}
-    try:
-        size = dump_path.stat().st_size
-        dump_path.unlink()
-    except OSError as e:
-        # Not fatal: the backstop timer will get it. But say so, because a dump
-        # that cannot be deleted is how the disk fills.
-        return {"reaped": False, "error": f"{type(e).__name__}: {e}",
-                "path": str(dump_path)}
-    return {"reaped": True, "freed_bytes": size, "path": str(dump_path)}
-
-
 def determine_extra_plugins(cape_data: dict, volatility_extra_plugins: dict,
                             get_cape_signatures_fn) -> list[str]:
     """Determine which extra Volatility plugins to run based on triggers."""

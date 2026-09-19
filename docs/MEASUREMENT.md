@@ -151,6 +151,125 @@ occurrence names itself.
 
 ### What reaps the dumps
 
+`delete_memdump = no`, so CAPE never reclaims one itself. Exactly one thing
+does, and it is deliberately not the pipeline:
+
+**`cape-storage-maintenance`** — the ansible-managed cron in the cape role,
+hourly at :15, `find storage/analyses -name memory.dmp -mmin +60 -delete`. It
+runs as `cape`, the user that owns the storage.
+
+A dump therefore lives at most ~61 minutes. The Volatility stage's 45-minute
+alarm starts about 3 minutes after the dump is written, so the consumer finishes
+~48 minutes in with 12 minutes to spare. A test asserts that inequality rather
+than trusting it.
+
+#### The pipeline must NOT delete dumps
+
+This is a security boundary, not an oversight. `analyses/<id>` is
+`cape:lamware drwxr-s---` with an ACL granting `lamware` `r-x`, and deleting a
+file requires write on the **directory** — so `pipeline` cannot, and must not.
+
+It has been added and removed twice:
+
+    8f126ee  2026-05-09  pipeline deletes the dump after Volatility
+    daaa7c3  2026-05-15  removed -- "crosses the security boundary between
+                         pipeline and cape users"
+    #611     2026-09-19  added back; failed with PermissionError on every run
+
+The second time, a standing comment saying exactly this sat fifty lines below
+the new code and did not prevent it. `test_pipeline_does_not_delete_cape_storage`
+is the version that can: it walks the AST for any `unlink`/`rmtree`/`remove`
+touching CAPE storage.
+
+**If the disk fills, change the cron's schedule or age threshold.** Do not move
+deletion across the boundary.
+
+#### And never a short-interval unconditional sweeper
+
+`cape-janitor.service` — host-only, untracked, every 120 seconds, deleting every
+`memory.dmp` it found — is what killed the Volatility stage from 2026-09-16 to
+2026-09-18. Its own header said *"reaping them is NOT safe if Volatility is ever
+enabled."* It has been removed from the host.
+
+## Eval corpus vs production feed
+
+This is the structural line, not a stylistic one:
+
+**Eval corpus** — ten known samples, run repeatedly. A per-sample history exists,
+so "is this run valid?" is answerable, tier gating is possible in principle
+(#606), and a thesis claim can be made.
+
+**Production feed** — novel samples from MalwareBazaar, each seen once. No
+per-sample history can exist, so no baseline and no validity test are possible.
+Tier is recorded as **metadata only** and never gates anything. Its output is
+triage — IOCs, config extraction, severity — which is useful without any thesis.
+
+The consequence is worth stating plainly: **a thesis claim can only be made on
+the eval corpus.** The production feed generates triage output and interesting
+samples, not evidence.
+
+`score_report.py` therefore records the tier and does not reject on it. Detonation
+gating, if it ever lands, belongs on the eval path where a baseline can exist.
+
+## The guest is pinned, and recorded
+
+Both CAPE guests are tagged `x64` in `kvm.conf`, so tags alone select neither.
+`clean` has a pinned custom CPU model; `office` has host-passthrough plus Office
+installed. Until 2026-09-18 the production pipeline submitted `tags=['x64']`
+with no machine, so CAPE used whichever guest was free and **the report recorded
+nowhere which one ran the sample**.
+
+Submissions now pin explicitly — Office documents to the office guest (derived
+from triage's routing tags), everything else to `clean` — and every report
+carries `cape.machine_requested` and `cape.machine_ran_on`, read back from CAPE
+rather than assumed. A disagreement is recorded as `machine_pin_warning` instead
+of passing silently.
+
+## Memory dumps and the Volatility stage
+
+`pipeline_cape_memory_dump` is **true**. Volatility needs a full-VM RAM dump and
+is the only thing that reads one.
+
+### The stage was dead from 2026-09-16 to 2026-09-18, and the cause was a reaper
+
+Every analysis in that window reported
+
+    {"triggered": true, "error": "memory dump not found"}
+
+with zero plugins. Either side of it:
+
+    r5_* (2026-09-10/11)        triggered=true  error=none  plugins=7
+    verify_salat (2026-09-18)   triggered=true  error=...   plugins=0
+
+The obvious suspect was `memory_dump = off`, set in `cuckoo.conf` on 2026-09-16
+during the disk-exhaustion response. **That was a red herring.** CAPE's gate is
+
+    if not self.cfg.cuckoo.memory_dump and not self.task.memory:
+        return
+
+so a per-task `memory=1` overrides the global setting, and the pipeline was
+sending one. Verified empirically: with the config still `off`, task 1248
+produced an 8 GB dump.
+
+The actual cause was `cape-janitor.service` — a host-only, untracked unit added
+on 2026-09-16 at 21:07 for the #518 batches, sweeping every 120 seconds and
+deleting **every** `memory.dmp` it found, unconditionally. Its own header said
+so: *"reaping them is always safe here; reaping them is NOT safe if Volatility
+is ever enabled."* It was correct for those batches, which submitted straight to
+CAPE and never read a dump. It was catastrophic for the pipeline, which reads
+one a few minutes after it is written.
+
+Stopping that unit is the whole fix; the dump reappeared on the next analysis.
+
+The lesson is not "the janitor was wrong". It is that a tool built for one
+measurement mode was left running into another, where its stated precondition no
+longer held — and the failure surfaced as a string that read like CAPE
+misbehaving. The stage now distinguishes **disabled** (a skip naming the switch)
+from **requested but absent** (a loud error saying where it looked), so the next
+occurrence names itself.
+
+### What reaps the dumps
+
 `delete_memdump = no`, so CAPE never reclaims one itself. Two things do:
 
 **The backstop** is the ansible-managed `cape-storage-maintenance` cron in the
