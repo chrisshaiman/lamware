@@ -60,6 +60,7 @@ def _rule_check_section(rendered: str) -> str:
     section = rendered[start:end]
     assert "check_egress" in section, "the slice missed the pipeline egress check"
     assert "for _fam in" in section, "the slice missed the driver loop"
+    assert "alert_subject()" in section, "the slice missed the alert classifier"
     return section
 
 
@@ -141,7 +142,7 @@ def _run(tmp_path, *, v4_forward, v4_output, v6_forward, v6_output) -> str:
     script.write_text(
         f'BRIDGE="{BRIDGE}"\n'
         + _rule_check_section(_render())
-        + '\nprintf "%s" "$rules_problem"\n',
+        + '\nprintf "%s|%s" "$(alert_subject)" "$rules_problem"\n',
         encoding="utf-8")
 
     proc = subprocess.run(
@@ -152,6 +153,15 @@ def _run(tmp_path, *, v4_forward, v4_output, v6_forward, v6_output) -> str:
     return proc.stdout
 
 
+def _subject(out: str) -> str:
+    """The alert headline the operator actually sees."""
+    return out.split("|", 1)[0]
+
+
+def _problems(out: str) -> str:
+    return out.split("|", 1)[1] if "|" in out else out
+
+
 HEALTHY = dict(v4_forward=_forward_table(), v4_output=_output_table(),
                v6_forward=_forward_table(), v6_output=_output_table())
 
@@ -159,7 +169,9 @@ HEALTHY = dict(v4_forward=_forward_table(), v4_output=_output_table(),
 def test_a_healthy_rule_set_reports_no_problem(tmp_path):
     """The positive control. Without it, a check that reports a problem
     unconditionally would satisfy every other test in this file."""
-    assert _run(tmp_path, **HEALTHY) == ""
+    out = _run(tmp_path, **HEALTHY)
+    assert _problems(out) == "", out
+    assert _subject(out) == "", "a healthy host must not produce an alert headline"
 
 
 def test_the_fake_binaries_are_actually_consulted(tmp_path):
@@ -173,7 +185,7 @@ def test_the_fake_binaries_are_actually_consulted(tmp_path):
 def test_a_flushed_forward_chain_is_reported_per_family(tmp_path, family):
     """THE original bug (#336), now per family. A flushed chain has no rules, so
     no counter moves and the delta-based check reads `ok` forever."""
-    out = _run(tmp_path, **{**HEALTHY, f"{family}_forward": _forward_table(drop=False)})
+    out = _problems(_run(tmp_path, **{**HEALTHY, f"{family}_forward": _forward_table(drop=False)}))
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"MISSING: no {cmd} DROP rule" in out, out
     other = "ip6tables" if family == "v4" else "iptables"
@@ -196,7 +208,7 @@ def test_an_accept_above_the_drop_is_reported_per_family(tmp_path, family):
 def test_a_missing_pipeline_drop_all_is_reported(tmp_path, family):
     """#343: the v6 allowlist did not exist at all, against an OUTPUT policy of
     ACCEPT, and nothing said so."""
-    out = _run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop=False)})
+    out = _problems(_run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop=False)}))
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"MISSING: no {cmd} DROP-all for the pipeline user" in out, out
 
@@ -206,7 +218,7 @@ def test_a_pipeline_allow_below_the_drop_all_is_reported(tmp_path, family):
     """The specific hazard the Ansible tasks carry: `ansible.builtin.iptables`
     APPENDS, so an allow added in a later change lands below the DROP-all. It is
     present, it matches `iptables -C`, and it permits nothing."""
-    out = _run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True, chain="ufw6-before-output" if family=="v6" else "ufw-before-output")})
+    out = _problems(_run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True, chain="ufw6-before-output" if family=="v6" else "ufw-before-output")}))
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"ORDERING: {cmd} pipeline ACCEPT" in out, out
 
@@ -239,7 +251,7 @@ def test_our_own_allows_above_the_drop_are_not_reported_as_preemption(tmp_path):
     and test_a_healthy_rule_set_reports_no_problem caught it.
     """
     out = _run(tmp_path, **HEALTHY)
-    assert "PREEMPTED" not in out, out
+    assert "PREEMPTED" not in _problems(out), out
 
 
 def test_every_reported_problem_survives_into_one_string(tmp_path):
@@ -251,3 +263,60 @@ def test_every_reported_problem_survives_into_one_string(tmp_path):
                v6_forward=_forward_table(drop=False), v6_output=_output_table(drop=False))
     assert out.count("MISSING") == 6, (
         f"expected 6 problems (2 bridge paths + 1 egress, per family), got: {out}")
+
+
+# --- the alert must name the control that actually failed --------------------
+#
+# On 2026-09-19 a pipeline-egress survey reading the wrong chain fired
+# "AIR-GAP RULES NOT ENFORCED" at urgent/skull priority while the air-gap was
+# perfectly intact — DROPs at FORWARD 4-5, above every ufw chain, in both
+# families. An operator who sees that headline cry wolf learns to discount it,
+# and the air-gap is the one alert that must never be discounted.
+
+def test_a_real_air_gap_breach_still_fires(tmp_path):
+    """THE test. Everything else here is in service of this one still working."""
+    out = _run(tmp_path, **{**HEALTHY, "v4_forward": _forward_table(drop=False)})
+    assert _subject(out) == "AIR-GAP RULES NOT ENFORCED", out
+    assert "MISSING" in _problems(out), out
+
+
+def test_a_real_air_gap_breach_fires_in_ipv6_too(tmp_path):
+    out = _run(tmp_path, **{**HEALTHY, "v6_forward": _forward_table(drop=False)})
+    assert _subject(out) == "AIR-GAP RULES NOT ENFORCED", out
+
+
+def test_an_accept_above_the_air_gap_drop_still_fires(tmp_path):
+    """A DROP that exists but sits below an ACCEPT for the same pair."""
+    out = _run(tmp_path, **{**HEALTHY,
+                            "v4_forward": _forward_table(accept_first=True)})
+    assert _subject(out) == "AIR-GAP RULES NOT ENFORCED", out
+    assert "ORDERING" in _problems(out), out
+
+
+def test_an_egress_only_problem_does_not_claim_the_air_gap_is_open(tmp_path):
+    """The 2026-09-19 false positive, reproduced.
+
+    The egress DROP is absent; the air-gap is untouched. The alert must say so.
+    """
+    out = _run(tmp_path, **{**HEALTHY, "v4_output": _output_table(drop=False)})
+    assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
+    assert "AIR-GAP" not in _subject(out), out
+    # Still an alert -- an unrestricted pipeline user is a real finding.
+    assert _problems(out) != "", out
+
+
+def test_both_failing_names_both(tmp_path):
+    """Collapsing to one category would hide the air-gap behind an egress
+    problem, which is the same mistake in the other direction."""
+    out = _run(tmp_path, **{**HEALTHY,
+                            "v4_forward": _forward_table(drop=False),
+                            "v4_output": _output_table(drop=False)})
+    assert _subject(out) == "AIR-GAP AND PIPELINE EGRESS NOT ENFORCED", out
+
+
+def test_a_preempted_egress_is_reported_as_egress_not_air_gap(tmp_path):
+    """The real-world defeat — a foreign ACCEPT above the DROP — is an egress
+    finding, however alarming."""
+    out = _run(tmp_path, **{**HEALTHY, "v4_output": _output_table(preempt=True)})
+    assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
+    assert "PREEMPTED" in _problems(out), out

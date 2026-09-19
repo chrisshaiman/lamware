@@ -212,23 +212,54 @@ check_egress() {
     fi
 }
 
-rules_problem=""
+# Two DIFFERENT controls are checked here and they fail for different reasons.
+# They are accumulated separately so the alert can name the one that actually
+# broke: every finding used to be announced as "AIR-GAP RULES NOT ENFORCED",
+# including pipeline-egress findings, and on 2026-09-19 that fired urgent/skull
+# for an egress survey reading the wrong chain while the air-gap was perfectly
+# intact. An operator who sees that headline cry wolf learns to discount it, and
+# the air-gap is the one alert that must never be discounted.
+#
+# Classified by WHICH CHECK produced the message, not by grepping the text --
+# a message reworded later would silently change category.
+airgap_problem=""
+egress_problem=""
 for _fam in iptables ip6tables; do
     for _check in \
         "$(check_rules "$_fam" "{{ management_interface }}" internet)" \
-        "$(check_rules "$_fam" wg0 management)" \
-        "$(check_egress "$_fam")"
+        "$(check_rules "$_fam" wg0 management)"
     do
         [ -n "$_check" ] || continue
-        rules_problem="${rules_problem}${rules_problem:+; }${_check}"
+        airgap_problem="${airgap_problem}${airgap_problem:+; }${_check}"
     done
+    _egress_check="$(check_egress "$_fam")"
+    [ -n "$_egress_check" ] && egress_problem="${egress_problem}${egress_problem:+; }${_egress_check}"
 done
 
 # Family-independent, so it runs once rather than per-family: a successful
 # connection proves the allowlist is not enforced regardless of which table
 # should have stopped it.
 _probe="$(probe_egress)"
-[ -n "$_probe" ] && rules_problem="${rules_problem}${rules_problem:+; }${_probe}"
+[ -n "$_probe" ] && egress_problem="${egress_problem}${egress_problem:+; }${_probe}"
+
+# Defined here, beside the accumulators it reads, so the behaviour test can
+# exercise it. A copy of this logic living in the test would pass while the
+# shipped script was wrong -- the failure this whole harness exists to catch.
+alert_subject() {
+    if [ -n "$airgap_problem" ] && [ -n "$egress_problem" ]; then
+        echo "AIR-GAP AND PIPELINE EGRESS NOT ENFORCED"
+    elif [ -n "$airgap_problem" ]; then
+        echo "AIR-GAP RULES NOT ENFORCED"
+    elif [ -n "$egress_problem" ]; then
+        echo "PIPELINE EGRESS NOT ENFORCED"
+    fi
+}
+
+# Kept for anything downstream that reads a single combined string.
+rules_problem="${airgap_problem}"
+if [ -n "$egress_problem" ]; then
+    rules_problem="${rules_problem}${rules_problem:+; }${egress_problem}"
+fi
 
 # Current counters
 det_eth0_accept=$(get_counter out_eth0 ACCEPT)
@@ -247,10 +278,16 @@ alert_message=""
 # of a packet threshold, so it alarms on its own — before any counter is read.
 if [ -n "$rules_problem" ]; then
     status="alert"
-    alert_message="AIR-GAP RULES NOT ENFORCED: $rules_problem"
+    # The headline names the control that failed. Both can fail at once, and
+    # then both are named -- collapsing them to one category would hide the
+    # air-gap behind an egress problem or vice versa.
+    _subject="$(alert_subject)"
+    alert_message="$_subject: $rules_problem"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ALERT: $alert_message"
     touch "$PAUSE_FILE"
-    queue_alert air_gap_rules "AIR-GAP RULES MISSING" "$alert_message" --priority urgent --tags skull
+    # Still urgent: an unrestricted pipeline user is a real finding. What
+    # changes is that it no longer claims the detonation network is open.
+    queue_alert air_gap_rules "$_subject" "$alert_message" --priority urgent --tags skull
 fi
 
 if [ -f "$BASELINE_FILE" ]; then
