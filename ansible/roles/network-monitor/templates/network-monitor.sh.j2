@@ -173,20 +173,34 @@ egress_survey() {
 
 # Does anything ACCEPT ahead of our DROP in the same chain? That is how the
 # rules were defeated before: not by being absent or misordered among
-# themselves, but by a terminating ACCEPT above them that this file never read.
+# themselves, but by a terminating ACCEPT above them.
+#
+# A JUMP is only preempting if the chain it jumps to can actually terminate the
+# packet, so the target is RESOLVED rather than matched by name. Matching names
+# gave a false alert within hours of being written: after ufw was removed, 18
+# of its chains survived as empty shells in rules.v4, and a jump to
+# `ufw-before-logging-output` -- which contains nothing and accepts nothing --
+# was reported as "the DROP cannot fire" while the DROP was demonstrably firing
+# at 42 packets. That is the cry-wolf failure this check exists to avoid.
 egress_preempted_by() {
-    local cmd="$1" di="$2"
-    # Same flags as egress_survey on purpose: two different column layouts in
-    # one file is how an awk index silently drifts off by one.
-    "$cmd" -L "$(egress_chain_for "$cmd")" -v -n -x --line-numbers 2>/dev/null \
-        | awk -v d="$di" '
-            # Our OWN allows belong above the DROP -- that is the design, and
-            # flagging them would make this check cry wolf on every healthy
-            # host. What matters is a FOREIGN terminating rule above it.
-            /pipeline: / { next }
-            NR>2 && $1+0 < d && ($4 == "ACCEPT" || $4 ~ /^ufw6?-/) {
-                print $1 " " $4; exit
-            }'
+    local cmd="$1" di="$2" num target
+    while read -r num target; do
+        [ -n "$num" ] || continue
+        case "$target" in
+            ACCEPT|RETURN)
+                echo "$num $target"; return ;;
+            *)
+                # A user chain. Preempting only if it holds a terminating ACCEPT.
+                if [ "$("$cmd" -S "$target" 2>/dev/null | grep -c -- "-j ACCEPT")" -gt 0 ]; then
+                    echo "$num $target"; return
+                fi ;;
+        esac
+    done <<EOF
+$("$cmd" -L "$(egress_chain_for "$cmd")" -v -n -x --line-numbers 2>/dev/null \
+    | awk -v d="$di" '
+        /pipeline: / { next }
+        NR>2 && $1+0 < d && $4 != "LOG" && $4 != "" { print $1, $4 }')
+EOF
 }
 
 probe_egress() {

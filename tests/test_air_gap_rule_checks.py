@@ -67,6 +67,8 @@ def _rule_check_section(rendered: str) -> str:
 # `iptables -L <chain> -v -n -x --line-numbers` columns:
 #   num pkts bytes target prot opt in out source destination
 def _rule(num, target, in_if, out_if, comment=""):
+    """`iptables -L <chain> -v -n -x --line-numbers` row. `target` may be a
+    verdict (ACCEPT/DROP) or the name of a chain to jump to."""
     tail = f'/* {comment} */' if comment else ""
     return (f"{num} 0 0 {target} all -- {in_if} {out_if} "
             f"0.0.0.0/0 0.0.0.0/0 {tail}")
@@ -86,7 +88,7 @@ def _forward_table(*, drop=True, accept_first=False):
     return "\n".join([header, *rows])
 
 
-def _output_table(*, drop=True, drop_first=False, preempt=False, chain="OUTPUT"):
+def _output_table(*, drop=True, drop_first=False, preempt=False, jump_to=None, chain="OUTPUT"):
     """The pipeline allowlist as it appears in ufw's before-output chain.
 
     It used to be surveyed in OUTPUT, where it was unreachable: ufw accepts all
@@ -98,6 +100,8 @@ def _output_table(*, drop=True, drop_first=False, preempt=False, chain="OUTPUT")
     n = 1
     if preempt:
         rows.append(_rule(n, "ACCEPT", "*", "lo")); n += 1
+    if jump_to:
+        rows.append(_rule(n, jump_to, "*", "*")); n += 1
     allows = [("ACCEPT", "pipeline: PostgreSQL"), ("ACCEPT", "pipeline: CAPE API")]
     if drop_first and drop:
         rows.append(_rule(n, "DROP", "*", "*", "pipeline: block all other outbound")); n += 1
@@ -114,6 +118,16 @@ def _fake_binary(path: Path, forward: str, output: str) -> None:
     path.write_text(textwrap.dedent(f"""\
         #!/bin/bash
         # Fake firewall. Emits a canned table for `-L <chain> ...`.
+        # -S <chain>: the preemption check resolves jump targets by asking what
+        # a chain contains. An empty answer means "accepts nothing", which is
+        # true of the leftover ufw shells on a host with no ufw.
+        if [ "$1" = "-S" ]; then
+          case "$2" in
+            ACCEPTING_CHAIN) echo "-A $2 -j ACCEPT" ;;
+            *) echo "-N $2" ;;
+          esac
+          exit 0
+        fi
         for a in "$@"; do
           case "$a" in
             FORWARD) cat <<'EOF'
@@ -239,6 +253,27 @@ def test_a_foreign_accept_above_the_drop_all_is_reported(tmp_path, family):
                             f"{family}_output": _output_table(preempt=True)})
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"PREEMPTED: {cmd}" in out, out
+
+
+def test_a_jump_to_an_EMPTY_chain_is_not_preemption(tmp_path):
+    """The false alert this check produced within hours of being written.
+
+    After ufw was removed, 18 of its chains survived as empty shells in
+    rules.v4. A jump to `ufw-before-logging-output` -- which contains nothing --
+    was reported as "the DROP cannot fire" while the DROP was firing at 42
+    packets. A check that cries wolf is one the operator learns to ignore.
+    """
+    out = _run(tmp_path, **{**HEALTHY,
+                            "v4_output": _output_table(jump_to="EMPTY_CHAIN")})
+    assert "PREEMPTED" not in _problems(out), out
+
+
+def test_a_jump_to_a_chain_that_ACCEPTS_is_preemption(tmp_path):
+    """The inverse, so the fix above cannot be "never report anything"."""
+    out = _run(tmp_path, **{**HEALTHY,
+                            "v4_output": _output_table(jump_to="ACCEPTING_CHAIN")})
+    assert "PREEMPTED" in _problems(out), out
+    assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
 
 
 def test_our_own_allows_above_the_drop_are_not_reported_as_preemption(tmp_path):
