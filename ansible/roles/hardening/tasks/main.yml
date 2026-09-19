@@ -204,6 +204,25 @@
           DenyUsers {{ hardening_console_user }}
       notify: Reload sshd
 
+    # `sshd -t` refuses to run at all without the privilege separation
+    # directory, exiting 255 with "Missing privilege separation directory:
+    # /run/sshd". That is an environment problem, not a config rejection.
+    #
+    # This host uses socket activation -- ssh.socket enabled, ssh.service
+    # disabled -- so /run/sshd is created per sshd instance and can be absent
+    # between connections. The check was therefore RACY: it passed whenever an
+    # sshd happened to be alive and failed otherwise. On 2026-09-19 it failed,
+    # the rescue below concluded the fragment had broken sshd, and deleted a
+    # working security control while reporting a cause that was not true.
+    # /run/sshd is tmpfs and root-owned; creating it is idempotent and cheap.
+    - name: Ensure the sshd privilege separation directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     # sshd_config.d fragments cannot be validated in isolation -- `sshd -t -f`
     # on a fragment is not a valid config -- so the MERGED config is checked
     # after writing. If it does not parse, the fragment is removed again below.
@@ -212,7 +231,23 @@
     - name: Verify the merged sshd config still parses
       ansible.builtin.command: /usr/sbin/sshd -t
       changed_when: false
+      register: _sshd_parse_result
   rescue:
+    # GATE, deliberately first in the rescue. A failed task aborts the rescue,
+    # so when sshd could not run at all the removal below is never reached and
+    # the fragment survives. Deleting a security control requires evidence that
+    # the control is bad; "the validator could not start" is not that evidence.
+    - name: Refuse to delete the drop-in unless sshd actually rejected the config
+      ansible.builtin.assert:
+        that:
+          - "'Missing privilege separation directory' not in (_sshd_parse_result.stderr | default(''))"
+        fail_msg: >-
+          `sshd -t` could not run: {{ _sshd_parse_result.stderr | default('(no stderr)') }}.
+          That is an environment fault, not a rejection of
+          20-lamware-console-user.conf, so the drop-in has been LEFT IN PLACE
+          and sshd is unchanged. Create /run/sshd and re-run.
+        quiet: true
+
     - name: Remove the drop-in that broke sshd
       ansible.builtin.file:
         path: /etc/ssh/sshd_config.d/20-lamware-console-user.conf
