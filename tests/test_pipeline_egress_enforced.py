@@ -129,12 +129,27 @@ def test_the_monitor_surveys_output():
     assert 'EGRESS_CHAIN_V6="OUTPUT"' in MONITOR
 
 
-def test_the_monitor_still_detects_a_preempting_accept():
-    """The failure mode is chain-independent: something terminating above the
-    DROP. It happened via ufw once and could happen via anything."""
-    assert "PREEMPTED" in MONITOR
+def test_the_monitor_can_still_explain_a_preempting_accept():
+    """Structural preemption is no longer an alarm -- it produced two false
+    urgent pages in one day, on an empty ufw shell and on LIBVIRT_OUT's
+    DHCP/DNS accepts, both while the DROP was firing at 42+ packets.
+
+    It survives as the EXPLANATION attached to a failed probe, so the operator
+    still learns what accepted first. Defined AND called, because a rename
+    touching only one leaves the name present while breaking the script."""
+    assert "egress_failure_detail" in MONITOR
     assert MONITOR.count("egress_preempted_by") >= 2, (
         "egress_preempted_by is defined or called, but not both")
+
+
+def test_structural_preemption_does_not_alarm_on_its_own():
+    """The alarm is the probe. Re-promoting the heuristic brings back both
+    false pages, and it touches the PAUSE file."""
+    body = MONITOR[MONITOR.index("check_egress() {"):]
+    body = body[:body.index("\n}")]
+    assert "egress_preempted_by" not in body, (
+        "check_egress calls the structural heuristic again; it answers 'does a "
+        "chain above contain an ACCEPT', not 'does anything accept THIS traffic'")
 
 
 def test_the_monitor_probes_effectiveness_not_just_presence():

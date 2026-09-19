@@ -124,6 +124,7 @@ def _fake_binary(path: Path, forward: str, output: str) -> None:
         if [ "$1" = "-S" ]; then
           case "$2" in
             ACCEPTING_CHAIN) echo "-A $2 -j ACCEPT" ;;
+            LIBVIRT_OUT) echo "-A $2 -o virbr-det -p udp -m udp --dport 53 -j ACCEPT" ;;
             *) echo "-N $2" ;;
           esac
           exit 0
@@ -145,12 +146,34 @@ EOF
     path.chmod(0o755)
 
 
-def _run(tmp_path, *, v4_forward, v4_output, v6_forward, v6_output) -> str:
+def _fake_probe_env(bindir: Path, *, reachable: bool) -> None:
+    """Stand in for `id` and `sudo` so probe_egress can actually be exercised.
+
+    The probe is the ONLY alarm for egress ineffectiveness now that structural
+    preemption was demoted to a hint. Leaving it uncovered was a real gap: a
+    mutation that silenced it passed the whole suite, because `id -u pipeline`
+    fails in CI and the probe returns early before doing anything.
+
+    `reachable` is the thing under test -- True means the connection the
+    allowlist must refuse succeeded, which is the failure the probe exists to
+    catch.
+    """
+    (bindir / "id").write_text("#!/bin/bash\nexit 0\n")
+    (bindir / "id").chmod(0o755)
+    (bindir / "sudo").write_text(
+        "#!/bin/bash\nexit %d\n" % (0 if reachable else 1))
+    (bindir / "sudo").chmod(0o755)
+
+
+def _run(tmp_path, *, v4_forward, v4_output, v6_forward, v6_output,
+         egress_reachable=False) -> str:
     """Execute the rendered checks and return what they reported."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
     _fake_binary(bindir / "iptables", v4_forward, v4_output)
     _fake_binary(bindir / "ip6tables", v6_forward, v6_output)
+    _fake_probe_env(bindir, reachable=egress_reachable)
 
     script = tmp_path / "check.sh"
     script.write_text(
@@ -164,6 +187,22 @@ def _run(tmp_path, *, v4_forward, v4_output, v6_forward, v6_output) -> str:
         env={"PATH": f"{bindir}:{shutil.os.environ['PATH']}"},
         capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 0, f"the check script itself failed: {proc.stderr}"
+    return proc.stdout
+
+
+def _detail(tmp_path, **tables) -> str:
+    """Run egress_failure_detail — the explanation the probe attaches."""
+    full = {**HEALTHY, **tables}
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    _fake_binary(bindir / "iptables", full["v4_forward"], full["v4_output"])
+    _fake_binary(bindir / "ip6tables", full["v6_forward"], full["v6_output"])
+    script = tmp_path / "detail.sh"
+    script.write_text(f'BRIDGE="{BRIDGE}"\n' + _rule_check_section(_render())
+                      + '\nprintf "%s" "$(egress_failure_detail)"\n', encoding="utf-8")
+    proc = subprocess.run(["bash", str(script)],
+                          env={"PATH": f"{bindir}:{shutil.os.environ['PATH']}"},
+                          capture_output=True, text=True, timeout=60, check=False)
     return proc.stdout
 
 
@@ -238,7 +277,7 @@ def test_a_pipeline_allow_below_the_drop_all_is_reported(tmp_path, family):
 
 
 @pytest.mark.parametrize("family", ["v4", "v6"])
-def test_a_foreign_accept_above_the_drop_all_is_reported(tmp_path, family):
+def test_a_foreign_accept_above_the_drop_all_is_NOT_alarmed_on_its_own(tmp_path, family):
     """The failure that actually happened, and that nothing detected.
 
     On 2026-09-19 the allowlist was present, correctly ordered among itself, and
@@ -251,8 +290,12 @@ def test_a_foreign_accept_above_the_drop_all_is_reported(tmp_path, family):
     """
     out = _run(tmp_path, **{**HEALTHY,
                             f"{family}_output": _output_table(preempt=True)})
-    cmd = "iptables" if family == "v4" else "ip6tables"
-    assert f"PREEMPTED: {cmd}" in out, out
+    assert "PREEMPTED" not in _problems(out), (
+        "structural preemption alarmed on its own. It answers 'does a chain "
+        "above contain an ACCEPT', not 'does anything above accept THIS "
+        "traffic' -- and the gap produced two false urgent pages in one day, "
+        "on an empty ufw shell and on LIBVIRT_OUT's DHCP/DNS accepts. "
+        f"got: {out!r}")
 
 
 def test_a_jump_to_an_EMPTY_chain_is_not_preemption(tmp_path):
@@ -266,14 +309,19 @@ def test_a_jump_to_an_EMPTY_chain_is_not_preemption(tmp_path):
     out = _run(tmp_path, **{**HEALTHY,
                             "v4_output": _output_table(jump_to="EMPTY_CHAIN")})
     assert "PREEMPTED" not in _problems(out), out
+    assert _subject(out) == "", "an empty chain must not raise any alert"
 
 
-def test_a_jump_to_a_chain_that_ACCEPTS_is_preemption(tmp_path):
-    """The inverse, so the fix above cannot be "never report anything"."""
-    out = _run(tmp_path, **{**HEALTHY,
-                            "v4_output": _output_table(jump_to="ACCEPTING_CHAIN")})
-    assert "PREEMPTED" in _problems(out), out
-    assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
+def test_the_jump_resolver_still_distinguishes_empty_from_accepting(tmp_path):
+    """The resolver is no longer an alarm, but it is still the explanation
+    attached to a failed probe -- so it must keep telling the two apart.
+
+    Exercised through egress_failure_detail, which is what the probe calls.
+    """
+    out = _detail(tmp_path, v4_output=_output_table(jump_to="ACCEPTING_CHAIN"))
+    assert "ACCEPTING_CHAIN" in out, out
+    out = _detail(tmp_path, v4_output=_output_table(jump_to="EMPTY_CHAIN"))
+    assert out.strip() == "", f"an empty chain is not an explanation: {out!r}"
 
 
 def test_our_own_allows_above_the_drop_are_not_reported_as_preemption(tmp_path):
@@ -286,6 +334,23 @@ def test_our_own_allows_above_the_drop_are_not_reported_as_preemption(tmp_path):
     """
     out = _run(tmp_path, **HEALTHY)
     assert "PREEMPTED" not in _problems(out), out
+
+
+def test_the_real_world_false_positives_stay_silent(tmp_path):
+    """Both shapes that cost an urgent page on 2026-09-19, as fixtures.
+
+    EMPTY_CHAIN   ufw-before-logging-output — an empty shell left behind when
+                  ufw was removed; contains nothing, accepts nothing.
+    LIBVIRT_OUT   real ACCEPTs, but scoped `-o virbr-det --dport 53/68` — DHCP
+                  and DNS to the detonation bridge, unrelated to uid 997.
+
+    Both fired while the DROP was working: 42+ packets on it, and the pipeline
+    user refused to 1.1.1.1:443, 1.1.1.1:53, 127.0.0.1:27017 and :4000.
+    """
+    for chain in ("EMPTY_CHAIN", "LIBVIRT_OUT"):
+        out = _run(tmp_path / chain, **{**HEALTHY,
+                                        "v4_output": _output_table(jump_to=chain)})
+        assert _subject(out) == "", f"{chain} raised an alert: {out!r}"
 
 
 def test_every_reported_problem_survives_into_one_string(tmp_path):
@@ -348,9 +413,40 @@ def test_both_failing_names_both(tmp_path):
     assert _subject(out) == "AIR-GAP AND PIPELINE EGRESS NOT ENFORCED", out
 
 
-def test_a_preempted_egress_is_reported_as_egress_not_air_gap(tmp_path):
-    """The real-world defeat — a foreign ACCEPT above the DROP — is an egress
-    finding, however alarming."""
-    out = _run(tmp_path, **{**HEALTHY, "v4_output": _output_table(preempt=True)})
+def test_a_missing_egress_drop_is_reported_as_egress_not_air_gap(tmp_path):
+    """Classification still has to work. A genuinely absent DROP-all -- which,
+    unlike structural preemption, is unambiguous -- must be named as an egress
+    problem and never as an air-gap breach."""
+    out = _run(tmp_path, **{**HEALTHY, "v4_output": _output_table(drop=False)})
     assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
-    assert "PREEMPTED" in _problems(out), out
+    assert "MISSING" in _problems(out), out
+
+
+# --- the probe is the alarm, so the probe must be tested --------------------
+
+def test_the_probe_alarms_when_the_allowlist_is_not_enforced(tmp_path):
+    """THE egress alarm. Structural preemption was demoted to a hint after two
+    false pages, which makes this the only thing that catches an allowlist that
+    exists and does not work — the exact state the host was in all morning:
+    DROP present, 0 packets, uid 997 reaching 1.1.1.1:443."""
+    out = _run(tmp_path, **HEALTHY, egress_reachable=True)
+    assert "INEFFECTIVE" in _problems(out), out
+    assert _subject(out) == "PIPELINE EGRESS NOT ENFORCED", out
+
+
+def test_the_probe_is_silent_when_the_allowlist_works(tmp_path):
+    """The positive control. Without it, a probe that always alarms would
+    satisfy the test above."""
+    out = _run(tmp_path, **HEALTHY, egress_reachable=False)
+    assert "INEFFECTIVE" not in _problems(out), out
+    assert _subject(out) == "", out
+
+
+def test_a_failed_probe_carries_the_structural_explanation(tmp_path):
+    """Demoting preemption must not throw the diagnosis away — when the probe
+    fails, the operator still needs to know WHAT accepted first."""
+    out = _run(tmp_path, **{**HEALTHY, "v4_output": _output_table(jump_to="ACCEPTING_CHAIN")},
+               egress_reachable=True)
+    assert "INEFFECTIVE" in _problems(out), out
+    assert "ACCEPTING_CHAIN" in _problems(out), (
+        f"the probe alarmed without saying why: {out!r}")
