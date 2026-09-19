@@ -59,6 +59,63 @@
     executable: /bin/bash
   changed_when: false
 
+# CAPE is installed by upstream's cape2.sh and is NOT version-pinned, so an
+# upgrade replaces these files wholesale. Both patches lived only on the host
+# until #607; the first one is load-bearing — without it EVERY detonation fails.
+#
+# Applied with --forward so re-running is a no-op once they are in, and
+# registered so a failure is loud rather than leaving a half-patched tree.
+- name: Stage CAPE local patches
+  ansible.builtin.copy:
+    src: "patches/{{ item }}"
+    dest: "{{ cape_install_dir }}/.lamware-patches/{{ item }}"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+  loop:
+    - 0001-analyzer-parent-spoofing-fallback.patch
+    - 0002-office-libreoffice-fallback.patch
+
+# 0001 fixes an upstream defect introduced by CAPEv2#3006 (2026-05-11).
+# build_parent_attribute_list() spoofs Explorer as the parent of every launched
+# sample, but all four of its error paths LOG AND CONTINUE. On a guest with no
+# interactive shell GetShellWindow() returns NULL, OpenProcess fails, and a NULL
+# handle reaches CreateProcessW as ERROR_INVALID_HANDLE.
+#
+# The failure is total and silent: every analysis completes "successfully" with
+# 0 processes and 0 API calls, and the misleading "You probably submitted the job
+# with wrong package" sends you looking at package selection. Verified on this
+# host: before the patch 0 processes, after it 7 processes and ~130k API calls.
+#
+# 0002 predates lamware's own history — a LibreOffice fallback for the Office
+# packages when MS Word is absent, which existed only as an untracked local
+# modification and survived the 2026-09-16 upgrade purely because upstream had
+# not touched those files.
+- name: Apply CAPE local patches
+  ansible.posix.patch:
+    src: "patches/{{ item }}"
+    basedir: "{{ cape_install_dir }}"
+    strip: 1
+    state: present
+  loop:
+    - 0001-analyzer-parent-spoofing-fallback.patch
+    - 0002-office-libreoffice-fallback.patch
+  register: cape_patch_result
+  notify: Restart Cape services
+
+# A patch that silently stops applying is the failure mode this role exists to
+# prevent: the sandbox would come back up detonating nothing and reporting
+# success. Assert the marker the patch introduces, not the patch command's
+# exit code.
+- name: Verify the parent-spoofing fallback is present in the analyzer
+  ansible.builtin.command:
+    cmd: >-
+      grep -q "Parent-process spoofing unavailable"
+      {{ cape_install_dir }}/analyzer/windows/lib/api/process.py
+  changed_when: false
+  failed_when: cape_patch_verify.rc != 0
+  register: cape_patch_verify
+
 - name: Fix CAPEv2 directory ownership after cape2.sh
   ansible.builtin.file:
     path: "{{ cape_install_dir }}"
