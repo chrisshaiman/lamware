@@ -208,13 +208,13 @@
     state: absent
     comment: "{{ item.comment }}"
   loop:
-    - {fam: ipv4, proto: tcp, iface: lo, port: "4000",  jump: ACCEPT, comment: "pipeline: LiteLLM proxy"}
-    - {fam: ipv4, proto: tcp, iface: lo, port: "5432",  jump: ACCEPT, comment: "pipeline: PostgreSQL"}
-    - {fam: ipv4, proto: tcp, iface: lo, port: "8000",  jump: ACCEPT, comment: "pipeline: CAPE API"}
+    - {fam: ipv4, proto: tcp, iface: lo, port: "4000", jump: ACCEPT, comment: "pipeline: LiteLLM proxy"}
+    - {fam: ipv4, proto: tcp, iface: lo, port: "5432", jump: ACCEPT, comment: "pipeline: PostgreSQL"}
+    - {fam: ipv4, proto: tcp, iface: lo, port: "8000", jump: ACCEPT, comment: "pipeline: CAPE API"}
     - {fam: ipv4, proto: tcp, iface: lo, port: "27017", jump: ACCEPT, comment: "pipeline: MongoDB"}
     - {fam: ipv4, jump: DROP, comment: "pipeline: block all other outbound"}
-    - {fam: ipv6, proto: tcp, iface: lo, port: "5432",  jump: ACCEPT, comment: "pipeline: PostgreSQL"}
-    - {fam: ipv6, proto: tcp, iface: lo, port: "8000",  jump: ACCEPT, comment: "pipeline: CAPE API"}
+    - {fam: ipv6, proto: tcp, iface: lo, port: "5432", jump: ACCEPT, comment: "pipeline: PostgreSQL"}
+    - {fam: ipv6, proto: tcp, iface: lo, port: "8000", jump: ACCEPT, comment: "pipeline: CAPE API"}
     - {fam: ipv6, jump: DROP, comment: "pipeline: block all other outbound"}
 
 - name: Create lamware-api system user
