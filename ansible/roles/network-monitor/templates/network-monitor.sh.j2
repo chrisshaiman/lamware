@@ -131,30 +131,84 @@ check_rules() {
 # and until #343 it existed only in IPv4 — so the v6 half could be absent, or
 # present but ordered behind its own DROP, and every other check stayed green.
 #
-# Ordering is the failure mode worth naming: Ansible APPENDS these rules, so an
-# allow added after the DROP-all is dead. It is still present, still matches a
-# `-C` check, and blocks the traffic it was written to permit.
+# Ordering is the failure mode worth naming: an allow that sits after the
+# DROP-all is dead. It is still present, still matches a `-C` check, and blocks
+# the traffic it was written to permit.
+#
+# THE SURVEY USED TO READ THE OUTPUT CHAIN AND THAT MADE IT BLIND. The rules now
+# live in ufw's before-output chain, because in OUTPUT they were unreachable:
+# ufw accepts all loopback and its own outgoing port list before OUTPUT's later
+# rules are evaluated. Measured 2026-09-19: DROP at 0 packets while uid 997
+# opened TCP to 1.1.1.1:443. Every check here was green throughout, because a
+# rule that EXISTS satisfied a survey that only ever asked whether it exists.
+#
+# So presence is no longer the whole test. probe_egress actually tries a
+# connection the allowlist must refuse. It targets a LOCAL port (Mongo, which
+# the allowlist deliberately omits) so the check generates no outbound traffic
+# of its own.
 # -------------------------------------------------------------------------
+
+EGRESS_CHAIN_V4="ufw-before-output"
+EGRESS_CHAIN_V6="ufw6-before-output"
+
+egress_chain_for() {
+    [ "$1" = "ip6tables" ] && echo "$EGRESS_CHAIN_V6" || echo "$EGRESS_CHAIN_V4"
+}
 
 egress_survey() {
     # Emits: <accept_count> <last_accept_idx> <drop_count> <first_drop_idx>
     local cmd="$1"
-    "$cmd" -L OUTPUT -v -n -x --line-numbers 2>/dev/null \
+    "$cmd" -L "$(egress_chain_for "$cmd")" -v -n -x --line-numbers 2>/dev/null \
         | awk '
             /pipeline: / && $4 == "ACCEPT" { a = $1; ac++ }
             /pipeline: / && $4 == "DROP"   { if (!d) d = $1; dc++ }
             END { print ac+0, a+0, dc+0, d+0 }'
 }
 
+# Does anything ACCEPT ahead of our DROP in the same chain? That is how the
+# rules were defeated before: not by being absent or misordered among
+# themselves, but by a terminating ACCEPT above them that this file never read.
+egress_preempted_by() {
+    local cmd="$1" di="$2"
+    # Same flags as egress_survey on purpose: two different column layouts in
+    # one file is how an awk index silently drifts off by one.
+    "$cmd" -L "$(egress_chain_for "$cmd")" -v -n -x --line-numbers 2>/dev/null \
+        | awk -v d="$di" '
+            # Our OWN allows belong above the DROP -- that is the design, and
+            # flagging them would make this check cry wolf on every healthy
+            # host. What matters is a FOREIGN terminating rule above it.
+            /pipeline: / { next }
+            NR>2 && $1+0 < d && ($4 == "ACCEPT" || $4 ~ /^ufw6?-user-output$/) {
+                print $1 " " $4; exit
+            }'
+}
+
+probe_egress() {
+    # Effectiveness, not presence: Mongo is deliberately NOT in the allowlist,
+    # and it is local, so a refusal costs nothing and a success proves the
+    # allowlist is not being enforced.
+    local uid_name="pipeline"
+    id -u "$uid_name" >/dev/null 2>&1 || return 0
+    if sudo -u "$uid_name" timeout 2 bash -c 'echo > /dev/tcp/127.0.0.1/27017' 2>/dev/null; then
+        echo "INEFFECTIVE: the pipeline user reached 127.0.0.1:27017, which the allowlist denies — something ACCEPTs before the DROP"
+    fi
+}
+
 check_egress() {
     local cmd="$1"
     read -r ac ai dc di <<< "$(egress_survey "$cmd")"
     if [ "$dc" -eq 0 ]; then
-        echo "MISSING: no $cmd DROP-all for the pipeline user — its egress is unrestricted"
+        echo "MISSING: no $cmd DROP-all for the pipeline user in $(egress_chain_for "$cmd") — its egress is unrestricted"
         return
     fi
     if [ "$ac" -gt 0 ] && [ "$ai" -gt "$di" ]; then
         echo "ORDERING: $cmd pipeline ACCEPT at rule $ai sits below the DROP-all at rule $di"
+        return
+    fi
+    local pre
+    pre="$(egress_preempted_by "$cmd" "$di")"
+    if [ -n "$pre" ]; then
+        echo "PREEMPTED: $cmd rule $pre accepts before the pipeline DROP-all at rule $di — the DROP cannot fire"
     fi
 }
 
@@ -169,6 +223,12 @@ for _fam in iptables ip6tables; do
         rules_problem="${rules_problem}${rules_problem:+; }${_check}"
     done
 done
+
+# Family-independent, so it runs once rather than per-family: a successful
+# connection proves the allowlist is not enforced regardless of which table
+# should have stopped it.
+_probe="$(probe_egress)"
+[ -n "$_probe" ] && rules_problem="${rules_problem}${rules_problem:+; }${_probe}"
 
 # Current counters
 det_eth0_accept=$(get_counter out_eth0 ACCEPT)

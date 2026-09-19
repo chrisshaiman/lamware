@@ -85,9 +85,18 @@ def _forward_table(*, drop=True, accept_first=False):
     return "\n".join([header, *rows])
 
 
-def _output_table(*, drop=True, drop_first=False):
+def _output_table(*, drop=True, drop_first=False, preempt=False, chain="ufw-before-output"):
+    """The pipeline allowlist as it appears in ufw's before-output chain.
+
+    It used to be surveyed in OUTPUT, where it was unreachable: ufw accepts all
+    loopback and its own outgoing port list before OUTPUT's later rules run.
+    `preempt=True` reproduces that — a terminating ACCEPT above the DROP, which
+    is what defeated the real rules while every check stayed green.
+    """
     rows = []
     n = 1
+    if preempt:
+        rows.append(_rule(n, "ACCEPT", "*", "lo")); n += 1
     allows = [("ACCEPT", "pipeline: PostgreSQL"), ("ACCEPT", "pipeline: CAPE API")]
     if drop_first and drop:
         rows.append(_rule(n, "DROP", "*", "*", "pipeline: block all other outbound")); n += 1
@@ -95,7 +104,7 @@ def _output_table(*, drop=True, drop_first=False):
         rows.append(_rule(n, target, "*", "lo", comment)); n += 1
     if drop and not drop_first:
         rows.append(_rule(n, "DROP", "*", "*", "pipeline: block all other outbound")); n += 1
-    header = ("Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)\n"
+    header = (f"Chain {chain} (policy ACCEPT 0 packets, 0 bytes)\n"
               "num pkts bytes target prot opt in out source destination")
     return "\n".join([header, *rows])
 
@@ -110,7 +119,7 @@ def _fake_binary(path: Path, forward: str, output: str) -> None:
 {forward}
 EOF
               exit 0 ;;
-            OUTPUT) cat <<'EOF'
+            ufw-before-output|ufw6-before-output) cat <<'EOF'
 {output}
 EOF
               exit 0 ;;
@@ -197,9 +206,40 @@ def test_a_pipeline_allow_below_the_drop_all_is_reported(tmp_path, family):
     """The specific hazard the Ansible tasks carry: `ansible.builtin.iptables`
     APPENDS, so an allow added in a later change lands below the DROP-all. It is
     present, it matches `iptables -C`, and it permits nothing."""
-    out = _run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True)})
+    out = _run(tmp_path, **{**HEALTHY, f"{family}_output": _output_table(drop_first=True, chain="ufw6-before-output" if family=="v6" else "ufw-before-output")})
     cmd = "iptables" if family == "v4" else "ip6tables"
     assert f"ORDERING: {cmd} pipeline ACCEPT" in out, out
+
+
+@pytest.mark.parametrize("family", ["v4", "v6"])
+def test_a_foreign_accept_above_the_drop_all_is_reported(tmp_path, family):
+    """The failure that actually happened, and that nothing detected.
+
+    On 2026-09-19 the allowlist was present, correctly ordered among itself, and
+    completely ineffective: ufw's chains accepted all loopback and its own
+    outgoing port list before OUTPUT's later rules were reached. The DROP-all
+    sat at 0 packets while the pipeline user opened TCP to 1.1.1.1:443.
+
+    The old survey read only rules commented `pipeline:`, so a terminating
+    ACCEPT above them was invisible. Every check reported healthy throughout.
+    """
+    chain = "ufw6-before-output" if family == "v6" else "ufw-before-output"
+    out = _run(tmp_path, **{**HEALTHY,
+                            f"{family}_output": _output_table(preempt=True, chain=chain)})
+    cmd = "iptables" if family == "v4" else "ip6tables"
+    assert f"PREEMPTED: {cmd}" in out, out
+
+
+def test_our_own_allows_above_the_drop_are_not_reported_as_preemption(tmp_path):
+    """The allows are SUPPOSED to sit above the DROP. A preemption check that
+    flags them fires on every healthy host, and a check that always fires is one
+    the operator learns to ignore -- which is how the real thing gets missed.
+
+    This is not hypothetical: the first version of the check did exactly that,
+    and test_a_healthy_rule_set_reports_no_problem caught it.
+    """
+    out = _run(tmp_path, **HEALTHY)
+    assert "PREEMPTED" not in out, out
 
 
 def test_every_reported_problem_survives_into_one_string(tmp_path):
