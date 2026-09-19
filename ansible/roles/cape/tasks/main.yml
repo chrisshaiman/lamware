@@ -65,6 +65,19 @@
 #
 # Applied with --forward so re-running is a no-op once they are in, and
 # registered so a failure is loud rather than leaving a half-patched tree.
+# ansible.builtin.copy does NOT create intermediate directories, so the staging
+# task below fails outright on a host that has never had it -- which was every
+# host, because these tasks had never actually run: the deploy that "verified"
+# them came from a branch that predated them. A missing mkdir is a poor reason
+# for the whole cape role to abort before reaching its own patch verification.
+- name: Create the CAPE local-patch staging directory
+  ansible.builtin.file:
+    path: "{{ cape_install_dir }}/.lamware-patches"
+    state: directory
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0755"
+
 - name: Stage CAPE local patches
   ansible.builtin.copy:
     src: "patches/{{ item }}"

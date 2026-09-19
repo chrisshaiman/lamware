@@ -100,3 +100,61 @@ def test_the_marker_string_matches_between_patch_and_verification():
     marker = "Parent-process spoofing unavailable"
     assert marker in patch, "the patch no longer adds the string the check greps for"
     assert marker in cmd
+
+
+# --- the staging directory must exist before anything copies into it ---------
+
+def _cape_tasks():
+    import yaml
+    return yaml.safe_load(
+        (ROOT / "ansible" / "roles" / "cape" / "tasks" / "main.yml").read_text())
+
+
+def _index_of(tasks, predicate):
+    for i, t in enumerate(tasks):
+        if isinstance(t, dict) and predicate(t):
+            return i
+    return None
+
+
+def test_the_patch_staging_directory_is_created_before_it_is_used():
+    """ansible.builtin.copy does not create intermediate directories.
+
+    Without an explicit file: task the role aborts on any host that has never
+    had .lamware-patches -- which was every host, because these tasks had never
+    run: the deploy that appeared to verify them came from a branch that
+    predated them. The abort happened BEFORE the role's own patch verification,
+    so the guard protecting the load-bearing patch never executed either.
+
+    Asserted on parsed task order, not on the file's text.
+    """
+    tasks = _cape_tasks()
+
+    mkdir_at = _index_of(tasks, lambda t: (
+        isinstance(t.get("ansible.builtin.file"), dict)
+        and ".lamware-patches" in str(t["ansible.builtin.file"].get("path", ""))
+        and t["ansible.builtin.file"].get("state") == "directory"))
+    copy_at = _index_of(tasks, lambda t: (
+        isinstance(t.get("ansible.builtin.copy"), dict)
+        and ".lamware-patches" in str(t["ansible.builtin.copy"].get("dest", ""))))
+
+    assert copy_at is not None, "nothing stages the patches any more"
+    assert mkdir_at is not None, (
+        ".lamware-patches is copied into but never created; copy: does not "
+        "create intermediate directories, so the role aborts on a fresh host")
+    assert mkdir_at < copy_at, (
+        f"the staging directory is created at task {mkdir_at} but copied into "
+        f"at task {copy_at} -- ordering is wrong")
+
+
+def test_the_patch_verification_still_runs_after_applying():
+    """The abort this fixes happened upstream of the verification step, so the
+    guard on the load-bearing patch never ran. Keep the order honest."""
+    tasks = _cape_tasks()
+    apply_at = _index_of(tasks, lambda t: "ansible.posix.patch" in t)
+    verify_at = _index_of(tasks, lambda t: (
+        "Parent-process spoofing unavailable" in str(t.get("ansible.builtin.command", ""))
+        or "Parent-process spoofing unavailable" in str(t.get("ansible.builtin.shell", ""))))
+    assert apply_at is not None, "the patches are no longer applied"
+    assert verify_at is not None, "the load-bearing patch is no longer verified"
+    assert apply_at < verify_at, "the patches are verified before they are applied"
