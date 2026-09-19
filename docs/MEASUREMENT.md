@@ -92,6 +92,46 @@ samples, not evidence.
 `score_report.py` therefore records the tier and does not reject on it. Detonation
 gating, if it ever lands, belongs on the eval path where a baseline can exist.
 
+## The guest is pinned, and recorded
+
+Both CAPE guests are tagged `x64` in `kvm.conf`, so tags alone select neither.
+`clean` has a pinned custom CPU model; `office` has host-passthrough plus Office
+installed. Until 2026-09-18 the production pipeline submitted `tags=['x64']`
+with no machine, so CAPE used whichever guest was free and **the report recorded
+nowhere which one ran the sample**.
+
+Submissions now pin explicitly — Office documents to the office guest (derived
+from triage's routing tags), everything else to `clean` — and every report
+carries `cape.machine_requested` and `cape.machine_ran_on`, read back from CAPE
+rather than assumed. A disagreement is recorded as `machine_pin_warning` instead
+of passing silently.
+
+## Memory dumps and the Volatility stage
+
+`pipeline_cape_memory_dump` is **false**, and the Volatility stage has no input
+while it is.
+
+This is a live state worth understanding rather than a setting to flip
+casually. A full-VM RAM dump is 8.6 GB per run, and `conf/memory.conf` sets
+`delete_memdump = no`, so nothing reclaims them: eight runs filled the disk and
+CAPE silently stopped scheduling below its `freespace = 50000` floor while every
+service still reported active.
+
+The host-side response on 2026-09-16 set `memory_dump = off` in `cuckoo.conf`.
+The pipeline kept submitting `memory=1` regardless, so from that date Volatility
+reported `{"triggered": true, "error": "memory dump not found"}` with zero
+plugins on every analysis — a string that reads like CAPE misbehaving:
+
+    r5_* (2026-09-10/11)        triggered=true  error=none  plugins=7
+    verify_salat (2026-09-18)   triggered=true  error=...   plugins=0
+
+The submission is now driven by config, and the stage distinguishes the two
+cases it used to conflate: **disabled** is a skip that names the switch,
+**requested but absent** stays a loud error.
+
+Turning dumps back on is a separate decision with a prerequisite: something must
+reap the dumps, because `delete_memdump = no` means CAPE will not.
+
 ## Safety
 
 `make detonate` runs live malware. It is deliberately foreground and

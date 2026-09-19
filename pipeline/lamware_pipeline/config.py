@@ -87,6 +87,16 @@ class PipelineConfig(BaseModel):
     reports_dir: str
     cape_poll_interval: int
     cape_timeout: int
+    # Which guest a submission is pinned to. Defaulted so an older config.json
+    # still loads. Both guests are tagged x64 in kvm.conf, so tags alone do not
+    # select one and an unpinned submission lands on whichever is free.
+    cape_machine: str = "clean"
+    cape_office_machine: str = "office"
+    # Request a full-VM RAM dump. OFF by default: it is 8.6 GB a run and
+    # conf/memory.conf sets delete_memdump=no, so eight runs filled the disk and
+    # CAPE silently stopped scheduling below freespace=50000. The Volatility
+    # stage is its only consumer and reports honestly when it is off.
+    cape_memory_dump: bool = False
     pcap_enabled: bool
     pcap_timeout: int
     evasion_hunter_enabled: bool

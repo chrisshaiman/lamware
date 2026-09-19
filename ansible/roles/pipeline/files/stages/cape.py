@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import requests
+from lamware_pipeline.cape_guest import MACHINE_REQUIRED
 from lamware_pipeline.config import PipelineConfig
 
 # -------------------------------------------------------------------------
@@ -103,22 +104,41 @@ def derive_filename(sample_path: Path, package: str, original_name: str = "") ->
 
 
 def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
-                   filename: str = "", custom: str = "", clock: str = "") -> int:
+                   filename: str = "", custom: str = "", clock: str = "",
+                   machine: str = "", memory_dump: bool = False) -> int:
     """Submit sample to Cape API. Returns task ID.
 
     Args:
         clock: Guest VM clock setting in 'mm/dd/yyyy HH:MM:SS' format.
                If set, CAPE sets the guest clock before sample execution.
                Used to defeat date/time expiration checks.
+        machine: the guest to pin this submission to. REQUIRED -- both guests
+               are tagged x64, so tags alone do not select one.
+        memory_dump: request a full-VM RAM dump. Off by default; see below.
     """
+    if not machine:
+        raise ValueError(MACHINE_REQUIRED)
     url = f"{CAPE_API_URL}/tasks/create/file/"
     submit_name = filename or sample_path.name
     data = {
         "tags": ",".join(tags),
-        "memory": "1",
+        "machine": machine,
         "options": "procmemdump=1,procdump=1",
         "custom": custom,
     }
+    # `memory` was hardcoded to "1" here for the life of this function, which is
+    # a full-VM RAM dump taken after the analysis ends. At 8.6 GB a run, with
+    # conf/memory.conf delete_memdump=no, eight runs filled the disk and CAPE
+    # silently stopped scheduling below its freespace=50000 floor while every
+    # service still reported active.
+    #
+    # It is now a deliberate, configured choice rather than a constant, because
+    # the Volatility stage is the only consumer and it reads the dump off CAPE's
+    # storage. Requesting one without reaping it is what exhausted the disk;
+    # NOT requesting one silently disables Volatility. Both are real failures,
+    # so neither is hidden behind a default nobody set.
+    if memory_dump:
+        data["memory"] = "1"
     if package:
         data["package"] = package
     if clock:

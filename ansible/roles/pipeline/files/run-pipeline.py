@@ -31,6 +31,7 @@ from pathlib import Path
 
 from db_ingest import ingest_to_db, mark_pdf_generated
 from ioc_extract import extract_iocs, map_iocs_to_techniques
+from lamware_pipeline.cape_guest import derive_machine, machine_of, verify_ran_on
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.correlation import (
     build_mitre_mapping,
@@ -144,6 +145,9 @@ INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
 REPORTS_DIR = Path(_PIPELINE_CONFIG.reports_dir)
 CAPE_POLL_INTERVAL = _PIPELINE_CONFIG.cape_poll_interval
 CAPE_TIMEOUT = _PIPELINE_CONFIG.cape_timeout
+CAPE_MACHINE = _PIPELINE_CONFIG.cape_machine
+CAPE_OFFICE_MACHINE = _PIPELINE_CONFIG.cape_office_machine
+CAPE_MEMORY_DUMP = _PIPELINE_CONFIG.cape_memory_dump
 
 # Malfind shellcode analysis config (Phase 1)
 MALFIND_ENABLED = _PIPELINE_CONFIG.malfind_enabled
@@ -309,7 +313,14 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             except Exception as e:
                 log.warning(f"  Could not calculate guest clock: {e}")
 
-        log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, package={cape_package or 'auto'}, memory=1")
+        # Pin the guest. kvm.conf tags BOTH guests x64, so tags alone select
+        # neither: unpinned, CAPE used whichever machine was free and the report
+        # recorded nowhere which one ran the sample. Two runs of one sample could
+        # differ for a reason that left no trace.
+        cape_machine = derive_machine(cape_tags, CAPE_MACHINE, CAPE_OFFICE_MACHINE)
+        log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, "
+                 f"package={cape_package or 'auto'}, machine={cape_machine}, "
+                 f"memory_dump={CAPE_MEMORY_DUMP}")
         update_stage(analysis_id_early, "cape", "started")
         try:
             cape_task_id = submit_to_cape(
@@ -319,13 +330,28 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 filename=cape_filename,
                 custom=f"pipeline_task_id={task_id}",
                 clock=cape_clock,
+                machine=cape_machine,
+                memory_dump=CAPE_MEMORY_DUMP,
             )
             log.info(f"  Cape task ID: {cape_task_id}")
             cape_data = poll_cape_task(cape_task_id)
+            # Which guest ACTUALLY ran it, read back from CAPE rather than
+            # assumed from what we asked for. A pinned parameter that silently
+            # stops being honoured is the failure this project keeps finding, so
+            # it is recorded either way and flagged when it disagrees.
+            ran_on = machine_of(cape_data)
             report["cape"] = {
                 "task_id": cape_task_id,
                 "status": cape_data.get("status", "unknown"),
+                "machine_requested": cape_machine,
+                "machine_ran_on": ran_on,
+                "memory_dump_requested": CAPE_MEMORY_DUMP,
             }
+            if cape_data.get("status") == "reported":
+                mismatch = verify_ran_on(cape_data, cape_machine)
+                if mismatch:
+                    log.warning(f"  [!] guest pin not honoured: {mismatch}")
+                    report["cape"]["machine_pin_warning"] = mismatch
 
             # Extract rich intelligence from Cape's full report
             if cape_data.get("status") == "reported":
@@ -461,7 +487,14 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     if should_run_volatility(cape_data, volatility_cmd=VOLATILITY_CMD,
                              volatility_triggers=VOLATILITY_TRIGGERS,
                              get_cape_signatures_fn=get_cape_signatures):
-        log.info("  Triggered — running Volatility 3")
+        # Say which it is. "Triggered — running Volatility 3" followed by a
+        # report saying the stage was skipped is the same kind of mismatch the
+        # stage's own return value was fixed for.
+        if CAPE_MEMORY_DUMP:
+            log.info("  Triggered — running Volatility 3")
+        else:
+            log.info("  Triggered, but skipping: memory dumps are disabled "
+                     "(cape_memory_dump=false), so there is no dump to analyse")
         # Pass Cape's injection PIDs to guide malfind analysis
         cape_injection_pids = report.get("cape", {}).get("injection_pids", [])
         if cape_injection_pids:
@@ -478,6 +511,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             report["volatility"] = run_volatility(
                 cape_data, output_dir,
                 volatility_cmd=VOLATILITY_CMD,
+                memory_dump_requested=CAPE_MEMORY_DUMP,
                 volatility_triggers=VOLATILITY_TRIGGERS,
                 volatility_standard_plugins=VOLATILITY_STANDARD_PLUGINS,
                 volatility_extra_plugins=VOLATILITY_EXTRA_PLUGINS,

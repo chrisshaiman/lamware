@@ -483,6 +483,7 @@ def run_volatility(cape_data: dict, output_dir: Path,
                    malfind_max_candidates: int,
                    malfind_benign_processes: list[str],
                    get_cape_signatures_fn,
+                   memory_dump_requested: bool = False,
                    cape_injection_pids: list[int] | None = None,
                    cape_has_injection_buffers: bool = False,
                    vadinfo_max_dump_bytes: int = 4 * 1024 * 1024,
@@ -497,7 +498,31 @@ def run_volatility(cape_data: dict, output_dir: Path,
 
     dump_path = get_memory_dump_path(cape_data)
     if not dump_path:
-        return {"triggered": True, "error": "memory dump not found"}
+        # Two very different situations used to produce the same string, and the
+        # string read like a transient fault in both:
+        #
+        #   dumps disabled     nothing was ever requested. Not an error; this
+        #                      stage simply has no input and says so.
+        #   dumps requested    CAPE was asked for one and did not write it.
+        #                      That IS an error and must stay loud.
+        #
+        # Conflating them is how this stage went dead in production: from
+        # 2026-09-16, when host-side cuckoo.conf set memory_dump = off, every
+        # run reported `triggered: True, error: "memory dump not found"` with
+        # zero plugins, while the pipeline kept submitting memory=1 and nobody
+        # could tell whether CAPE had failed or the feature was simply off.
+        if not memory_dump_requested:
+            return {
+                "triggered": False,
+                "skipped": True,
+                "reason": "memory dumps are disabled (cape_memory_dump=false), "
+                          "so there is no input for this stage",
+            }
+        return {"triggered": True,
+                "error": "memory dump was requested but CAPE wrote none",
+                "dump_expected_at": str(
+                    Path(f"/opt/CAPEv2/storage/analyses/"
+                         f"{cape_data.get('id') or cape_data.get('task_id')}/memory.dmp"))}
 
     # Read the dump where Cape wrote it. There used to be a copy to a tmpfs
     # ramdisk here "for faster I/O"; measured on this host it bought nothing:

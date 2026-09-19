@@ -41,6 +41,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Shared with the production submit path on purpose. When each carried its own
+# copy, only this one pinned the guest and verified the pin.
+from lamware_pipeline.cape_guest import MACHINE_REQUIRED, verify_ran_on  # noqa: F401
+
 # CAPE task states that will never become "reported" no matter how long we wait.
 TERMINAL_FAILURES = ("failed_analysis", "failed_processing")
 DONE = "reported"
@@ -55,9 +59,7 @@ def plan_submission(sample: Path, machine: str, package: str = "exe",
     express, not merely discouraged.
     """
     if not machine:
-        raise ValueError(
-            "machine must be pinned: kvm.conf defines clean AND office, both tagged "
-            "x64, so an unpinned batch silently mixes two different guests (I1)")
+        raise ValueError(MACHINE_REQUIRED)
     fields = {
         "package": package,
         "timeout": str(timeout_s),
@@ -101,23 +103,6 @@ def classify_poll(status: str, waited_s: float, deadline_s: float) -> PollDecisi
             "Not submitting further runs: a second task in flight would let CAPE use "
             "the office machine concurrently and invalidate the batch (I2).")
     return PollDecision("wait")
-
-
-def verify_ran_on(info: dict, expected: str) -> str | None:
-    """None if the completed task ran on `expected`, else why not. I4.
-
-    CAPE writes info.machine as a dict on current versions and a bare string on
-    older ones; an unrecognised shape is a verification FAILURE, not a pass,
-    because "we could not check" and "it checked out" must never look alike.
-    """
-    machine = (info or {}).get("machine")
-    name = machine.get("name") if isinstance(machine, dict) else machine
-    if not name:
-        return (f"could not determine which machine the task ran on "
-                f"(info.machine={machine!r}); refusing to assume it was {expected!r}")
-    if name != expected:
-        return f"ran on {name!r}, not {expected!r} -- pinning is not holding (I4)"
-    return None
 
 
 @dataclass
