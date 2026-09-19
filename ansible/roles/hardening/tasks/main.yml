@@ -27,6 +27,35 @@
     set_motd: false
     # Do not force a reboot after hardening — operator controls reboots
     system_upgrade: false
+    # Post-quantum key exchange, prepended to the role's default list.
+    #
+    # konstruktoid v4.4.1 defaults sshd_kex_algorithms to five pre-PQ
+    # algorithms, so every SSH session to this host negotiated a classical KEX
+    # and OpenSSH 10 clients printed:
+    #
+    #   ** WARNING: connection is not using a post-quantum key exchange algorithm.
+    #   ** This session may be vulnerable to "store now, decrypt later" attacks.
+    #   ** The server may need to be upgraded.
+    #
+    # The upgrade advice is wrong here: sshd is OpenSSH 9.6p1 and its build
+    # DOES support sntrup761x25519-sha512@openssh.com (verified with
+    # `sshd -T -o KexAlgorithms=...`). The algorithm was excluded by our own
+    # hardening baseline, not missing from the server.
+    #
+    # ADDITIVE on purpose. The role's five entries are kept verbatim and the
+    # PQ hybrid is prepended, so it is preferred when both sides offer it and
+    # every client that can connect today still can. Changing the KEX list on a
+    # host reachable only over SSH is not the place to also narrow it.
+    #
+    # sntrup761 rather than mlkem768x25519-sha256 because the latter needs
+    # OpenSSH 9.9+; revisit when this host moves past Ubuntu 24.04's 9.6.
+    sshd_kex_algorithms:
+      - "sntrup761x25519-sha512@openssh.com"
+      - "curve25519-sha256@libssh.org"
+      - "diffie-hellman-group16-sha512"
+      - "diffie-hellman-group18-sha512"
+      - "ecdh-sha2-nistp521"
+      - "ecdh-sha2-nistp384"
 
 # =============================================================================
 # USBGuard: allow the out-of-band console keyboard
