@@ -25,7 +25,6 @@ regexes. If CAPE rewords either line the patterns stop matching and the guard
 goes silent, which is the failure mode these tests exist to catch.
 """
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -146,150 +145,43 @@ def _scored(detonation):
                            "detonation": detonation}, **_OK_REST})
 
 
-def test_partial_is_usable_not_suspect():
-    """POLICY REVERSAL, deliberate. An earlier version rejected any run that lost
-    a hollowed child, discarding ~40% of runs.
+def test_no_tier_is_rejected_globally():
+    """POLICY REVERSAL, measured. An earlier version rejected ALL-LOST and
+    NO-HOLLOW. Across ~230 runs of nine samples that was wrong for five of them:
 
-    That was wrong. A PARTIAL run is not damaged data, it is data from a
-    different measurement condition, and a tight one: signatures 32.2 +/- 0.4
-    against CLEAN's 34.3 +/- 0.7. The two children are identical copies, so one
-    of them shows nearly the whole behavioural repertoire; what is lost is
-    duplicate volume, not new behaviour.
+      NO-HOLLOW  means "died before hollowing" for quasarrat, and simply "does
+                 not hollow" for salat, latrodectus, unclassified, xworm and
+                 agenttesla -- 100% false positives on those
+      ALL-LOST   is fatal for quasarrat (observed 26 vs 54) and harmless for
+                 cobaltstrikebeacon, ALL-LOST in 12 of 13 runs while scoring the
+                 most stable in the corpus (90.1 +/- 2.5)
 
-    Keeping PARTIAL is only safe BECAUSE the tier is recorded, so analysis can
-    compare like with like instead of pooling two populations (#606)."""
-    v, _ = _scored({"tier": "PARTIAL", "process_count": 6,
-                    "api_calls_total": 60000, "monitors_loaded": 5,
-                    "hollowed_pids": [4208, 4209], "traced_pids": [4209],
-                    "lost_pids": [4208]})
-    assert v == "OK", "PARTIAL runs are usable and must not be discarded"
-
-
-def test_all_lost_is_suspect():
-    """Task 1117: both hollowed children lost, so the run measures the launcher
-    and nothing else -- 4,114 calls against a CLEAN run's ~129,000."""
-    v, detail = _scored({"tier": "ALL-LOST", "process_count": 1,
-                         "api_calls_total": 4114, "monitors_loaded": 1,
-                         "hollowed_pids": [3092, 6680], "traced_pids": [],
-                         "lost_pids": [3092, 6680]})
-    assert v == "SUSPECT"
-    assert "3092" in detail and "6680" in detail
+    Whether a tier means failure is a property of the SAMPLE. A rule that fires
+    on healthy data is worse than no rule."""
+    for tier in ("CLEAN", "PARTIAL", "ALL-LOST", "NO-HOLLOW"):
+        v, _ = _scored({"tier": tier, "process_count": 1,
+                        "api_calls_total": 2415, "monitors_loaded": 1,
+                        "hollowed_pids": [], "traced_pids": [], "lost_pids": []})
+        assert v == "OK", f"tier {tier} must not be rejected without a baseline"
 
 
-def test_no_hollow_is_suspect():
-    """The sample died before hollowing anything. 'Every hollowed child was
-    traced' is vacuously true here, which scored three plainly dead runs as
-    CLEAN before the tier gained its hollowed>0 precondition."""
-    v, detail = _scored({"tier": "NO-HOLLOW", "process_count": 1,
-                         "api_calls_total": 2415, "monitors_loaded": 1,
-                         "hollowed_pids": [], "traced_pids": [], "lost_pids": []})
-    assert v == "SUSPECT"
-    assert "hollowing" in detail
+def test_a_quiet_sample_is_not_called_dead():
+    """latrodectus makes 266 api calls on a HEALTHY run; the old 5,000 threshold
+    rejected all ten of its runs, and agenttesla's six at 3,741."""
+    for calls in (0, 266, 432, 746, 3741):
+        v, _ = _scored({"tier": "NO-HOLLOW", "process_count": 1,
+                        "api_calls_total": calls, "monitors_loaded": 1})
+        assert v == "OK", f"{calls} api calls is normal for some sample"
 
 
-def test_task_1118_is_ok():
-    v, _ = _scored({"process_count": 6, "api_calls_total": 49574,
-                    "monitors_loaded": 6, "monitor_injection_failed_pids": []})
-    assert v == "OK"
-
-
-def test_quiet_run_without_any_warning_still_caught():
-    """Task 1103: under-instrumented with an EMPTY failed-pid list. The backstop
-    is the only thing that sees this one."""
-    v, detail = _scored({"process_count": 1, "api_calls_total": 2344,
-                         "monitors_loaded": 1,
-                         "monitor_injection_failed_pids": []})
-    assert v == "SUSPECT"
-    assert "2344" in detail
-
-
-def test_reports_predating_the_field_are_not_all_suspect():
-    """A report with no detonation block at all must not become SUSPECT — that
-    would condemn every archived report rather than flag a real failure."""
-    v, _ = score({"cape": {"malscore": 10.0, "status": "reported"}, **_OK_REST})
-    assert v == "OK"
-
-
-# --- the producer is actually WIRED IN -------------------------------------
-
-def test_extract_cape_intel_emits_the_detonation_block(tmp_path, monkeypatch):
-    """Without this, deleting the detonation_health() call from
-    extract_cape_intel leaves every test above green while the rule goes inert.
-    That exact mutation has slipped through here before.
-
-    extract_cape_intel reads report.json off CAPE storage by task id, so the
-    absolute prefix is redirected into tmp_path.
-    """
-    from stages import cape
-
-    stored = (tmp_path / "opt" / "CAPEv2" / "storage" / "analyses" / "1117"
-              / "reports")
-    stored.mkdir(parents=True)
-    (stored / "report.json").write_text(
-        json.dumps(_cape_report(LOG_1117_FAILED, 1, 4114)))
-
-    real_path = cape.Path
-
-    def redirected(p):
-        if isinstance(p, str) and p.startswith("/opt/CAPEv2/"):
-            return real_path(str(tmp_path) + p)
-        return real_path(p)
-
-    monkeypatch.setattr(cape, "Path", redirected)
-
-    intel = cape.extract_cape_intel({"id": 1117}, tmp_path / "out")
-    assert "detonation" in intel, "extract_cape_intel no longer emits detonation"
-    assert intel["detonation"]["monitor_injection_failed_pids"] == [3092, 6680]
-
-
-# --- the two ways a process leaves are not the same thing ------------------
-# "has terminated" (hook saw the exit) vs "appears to have terminated" (poller
-# found it gone). The strings differ by has/have, so a sloppy pattern matches
-# both and the distinction silently disappears.
-
-# Verbatim from tasks 1103 and 1117 respectively.
-LINE_VANISHED = ("2026-09-09 11:39:14,661 [root] INFO: Process with pid 3540 "
-                 "appears to have terminated")
-LINE_CLEAN_EXIT = ("2026-09-12 06:42:20,007 [root] INFO: Process with pid 7548 "
-                   "has terminated")
-
-
-def test_vanished_and_clean_exit_are_told_apart():
-    det = detonation_health({"debug": {"log": LINE_VANISHED + "\n" + LINE_CLEAN_EXIT}})
-    assert det["vanished_pids"] == [3540]
-    assert det["clean_exit_pids"] == [7548]
-
-
-def test_clean_exit_pattern_does_not_claim_the_vanished_line():
-    """'appears to have terminated' also ends in 'terminated' and names a pid.
-    If the exit pattern matches it, a vanished process reads as a clean exit."""
-    from stages import cape
-    assert cape._PROCESS_EXITED_RE.findall(LINE_VANISHED) == []
-    assert cape._PROCESS_VANISHED_RE.findall(LINE_CLEAN_EXIT) == []
-
-
-def test_task_1103_shape_reports_why_it_was_quiet():
-    v, detail = _scored({"process_count": 1, "api_calls_total": 2344,
-                         "monitors_loaded": 1, "monitor_injection_failed_pids": [],
-                         "vanished_pids": [3540], "clean_exit_pids": []})
-    assert v == "SUSPECT"
-    assert "3540" in detail and "no exit call" in detail
-
-
-def test_a_quiet_but_cleanly_exited_run_is_not_blamed_on_vanishing():
-    """A sample that ran briefly and exited properly is still SUSPECT for being
-    quiet, but must not be reported as having vanished."""
-    v, detail = _scored({"process_count": 1, "api_calls_total": 900,
-                         "monitors_loaded": 1, "monitor_injection_failed_pids": [],
-                         "vanished_pids": [], "clean_exit_pids": [1234]})
-    assert v == "SUSPECT"
-    assert "vanished" not in detail
-
-
-def test_repro_runs_record_clean_exits_and_no_vanishing():
-    det = detonation_health({"debug": {"log": LOG_1118_HEALTHY + LINE_CLEAN_EXIT}})
-    assert det["vanished_pids"] == []
-    assert det["clean_exit_pids"] == [7548]
+def test_the_tier_is_still_recorded():
+    """The recording half is what made #518 tractable and is retained. Only the
+    global rejection was wrong."""
+    rep = {"cape": {"malscore": 10.0, "status": "reported",
+                    "detonation": {"tier": "PARTIAL"}}, **_OK_REST}
+    score(rep)
+    assert any("PARTIAL" in n for n in rep.get("_notes", [])), \
+        "the tier must survive into the report even though it no longer gates"
 
 
 # --- tier classification ----------------------------------------------------

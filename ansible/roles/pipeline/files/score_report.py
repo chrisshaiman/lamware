@@ -24,35 +24,8 @@ import json
 import sys
 from pathlib import Path
 
-#: A backstop, not the primary rule. The tier (see score()) is the primary
-#: signal; this catches a run that died before hollowing anything, where there is
-#: no tier evidence to read because nothing got far enough to be lost.
-#:
-#:     quasarrat, task 1103      1 process   2,344 api calls   -> observed 17
-#:     xworm, healthy run        1 process  24,132 api calls   -> observed 17
-#:     quasarrat, task 1117      1 process   4,114 api calls   (injection failed)
-#:     quasarrat, tasks 1118-21  6-7 procs  49k-92k api calls
-#:
-#: process_count alone cannot separate the first two, which is why the rule is on
-#: call volume. 5,000 sits an order of magnitude below every healthy run observed
-#: and above both known bad ones.
-#:
-#: Still provisional and still derived from a handful of runs — state it rather
-#: than hide it. The durable version of this test is comparative, the same sample
-#: across runs, but that needs more than one report and this file scores one.
-#:
-#: KNOWN GAP, measured rather than assumed. Partial instrumentation loss clears
-#: every rule in this file:
-#:
-#:     task 1109 salat     33,971 calls, 10 procs   (clean runs: 78-92k, 14-15)
-#:     task 1090 formbook  32,764 calls,  8 procs   (clean runs: 47-56k, 10)
-#:
-#: Both lost processes mid-run and both sit far above this threshold. Raising it
-#: is not the fix — 33,971 is a perfectly healthy total for a quieter sample, and
-#: vanished_pids cannot separate them either, since every CLEAN salat run carries
-#: one as well. Only a per-sample baseline distinguishes these, so a run still
-#: needs comparing against its own history before its numbers are averaged.
-QUIET_DETONATION_API_CALLS = 5000
+# (QUIET_DETONATION_API_CALLS removed — see score() for why a global
+# call-volume threshold cannot work across this corpus.)
 
 
 def score(report: dict) -> tuple[str, str]:
@@ -65,50 +38,52 @@ def score(report: dict) -> tuple[str, str]:
     # measurement when it did (#518).
     det = cape.get("detonation") or {}
 
-    # Tier-based verdict. The old rule rejected any run that lost a hollowed
-    # child, which discarded ~40% of runs — and was wrong, because a PARTIAL run
-    # is not deficient data, it is data from a different measurement condition:
+    # Tier is RECORDED but no longer used to reject, because there is no global
+    # definition of a failed run. Measured across ~230 runs of nine samples:
     #
-    #   CLEAN     signatures 34.3 +/- 0.7    both children traced
-    #   PARTIAL   signatures 32.2 +/- 0.4    one traced, one lost
-    #   ALL-LOST  signatures 20.8 +/- 0.4    neither traced
+    #   NO-HOLLOW  means "died before hollowing" for quasarrat, and simply
+    #              "does not hollow" for salat, latrodectus, unclassified,
+    #              xworm and agenttesla -- 5 of 9 samples, 100% false positives
+    #   ALL-LOST   is fatal for quasarrat (observed 26 vs 54) and harmless for
+    #              cobaltstrikebeacon, which is ALL-LOST in 12 of 13 runs while
+    #              scoring the most stable in the corpus (90.1 +/- 2.5), because
+    #              39 other processes carry its payload
+    #   PARTIAL    is equivalent to CLEAN on signatures for both samples that
+    #              produce it (27.6 vs 27.8; 32.7 vs 34.0)
     #
-    # Within a tier the instrument is near-deterministic (+/-0.5). ACROSS tiers
-    # the means differ by enough that pooling them produces the +/-15-25 "noise
-    # floor" that made #518 unanswerable — two back-to-back batches of the same
-    # sample averaged 53.5 and 45.7 purely because their tier mix differed.
+    # An earlier version of this file rejected NO-HOLLOW and ALL-LOST globally.
+    # That would have failed every run of five samples. The tier is real and
+    # worth recording -- it is what made #518 tractable -- but whether a given
+    # tier means failure is a property of the sample, not of the tier.
     #
-    # So PARTIAL is USABLE and must be kept, but its tier must be recorded so
-    # analysis compares like with like. Only ALL-LOST and NO-HOLLOW are rejected:
-    # in those, the payload behaviour was never observed at all.
+    # Rejection now needs a per-sample baseline (#606). Until that exists this
+    # file deliberately does NOT reject on tier: a rule that fires on healthy
+    # data is worse than no rule, because it trains the operator to ignore it.
     tier = det.get("tier")
-    lost = det.get("lost_pids") or det.get("monitor_injection_failed_pids") or []
-    if tier == "ALL-LOST":
-        return "SUSPECT", (
-            f"no payload observed: the sample hollowed {len(det.get('hollowed_pids') or [])} "
-            f"child process(es) {lost} and CAPE instrumented none of them, so this "
-            f"run measures the launcher only (#606)")
-    if tier == "NO-HOLLOW":
-        return "SUSPECT", (
-            "sample never reached its hollowing stage — it died during startup, "
-            "so there is no payload behaviour in this report to measure")
+    if tier:
+        report.setdefault("_notes", []).append(f"detonation tier: {tier}")
 
-    # The heuristic stays as a backstop for the failure mode that produces no
-    # warning at all: task 1103 was under-instrumented with an empty
-    # monitor_injection_failed_pids.
-    calls = det.get("api_calls_total")
-    if calls is not None and calls < QUIET_DETONATION_API_CALLS:
-        # Say WHY where the log allows it. A process the poller found missing,
-        # with no exit hook, is the task-1103 shape and reads very differently
-        # from a sample that ran briefly and exited.
-        vanished = det.get("vanished_pids") or []
-        why = (f" — pid(s) {vanished} vanished with no exit call"
-               if vanished and not det.get("clean_exit_pids") else "")
-        return "SUSPECT", (f"detonation looks quiet: {calls} api calls across "
-                           f"{det.get('process_count')} process(es), "
-                           f"{det.get('monitors_loaded')} monitor(s) loaded"
-                           f"{why} — too little was observed for the score to "
-                           f"mean anything")
+    # The global call-volume backstop was removed with the tier rules, for the
+    # same reason: measured across the corpus, "normal" spans four orders of
+    # magnitude and the 5,000-call threshold rejected healthy samples.
+    #
+    #   769fc3a0     0 calls   normal (7 runs, the sample never executes)
+    #   latrodectus  266       normal
+    #   agenttesla   3,741     normal
+    #   salat        90,225    normal
+    #   quasarrat    2,344     DEAD -- but indistinguishable from the above
+    #                          without knowing what quasarrat usually does
+    #
+    # Separating a dead run from a quiet sample needs that sample's own history,
+    # and this file scores one report. That history exists for the ten-sample
+    # eval corpus and CANNOT exist for the production feed, where every sample
+    # arrives from MalwareBazaar seen exactly once. So detonation gating belongs
+    # in the eval path, not here (#606).
+    #
+    # Triage is unharmed by the loss this would have caught: a run that loses
+    # its hollowed children still yields malscore, family detection and usually
+    # config extraction, because those come from memory scanning rather than the
+    # API trace. Trace completeness is a measurement concern.
 
     gh = report.get("ghidra") or {}
     li = report.get("llm_interpretation") or {}
