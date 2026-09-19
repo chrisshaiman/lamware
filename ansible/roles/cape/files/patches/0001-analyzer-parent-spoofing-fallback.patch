@@ -1,0 +1,71 @@
+diff --git a/analyzer/windows/lib/api/process.py b/analyzer/windows/lib/api/process.py
+index c6ae39712..3bf7cb697 100644
+--- a/analyzer/windows/lib/api/process.py
++++ b/analyzer/windows/lib/api/process.py
+@@ -568,12 +568,14 @@ class Process:
+                 "InitializeProcThreadAttributeList(size probe) unexpected result: ok=%s last_error=%d size=%d",
+                 ok, last_error, cb_attribute_list_size.value
+             )
++            return None, None, None
+ 
+         attr_buf = create_string_buffer(cb_attribute_list_size.value)
+         attr_list = cast(attr_buf, LPVOID)
+ 
+         if not KERNEL32.InitializeProcThreadAttributeList(attr_list, 1, 0, byref(cb_attribute_list_size)):
+             log.error("InitializeProcThreadAttributeList(init)")
++            return None, None, None
+ 
+         hwnd = windll.user32.GetShellWindow()
+         explorer_pid = DWORD()
+@@ -582,7 +584,8 @@ class Process:
+         raw_parent = KERNEL32.OpenProcess(PROCESS_CREATE_PROCESS, False, explorer_pid)
+         if not raw_parent:
+             KERNEL32.DeleteProcThreadAttributeList(attr_list)
+-            log.error("OpenProcess")
++            log.warning("Parent-process spoofing unavailable (no shell window); launching without it")
++            return None, None, None
+ 
+         h_parent = HANDLE(raw_parent)
+         if not KERNEL32.UpdateProcThreadAttribute(
+@@ -597,6 +600,7 @@ class Process:
+             KERNEL32.CloseHandle(h_parent)
+             KERNEL32.DeleteProcThreadAttributeList(attr_list)
+             log.error("UpdateProcThreadAttribute")
++            return None, None, None
+ 
+         return attr_list, attr_buf, h_parent
+ 
+@@ -639,7 +643,8 @@ class Process:
+         startup_info = STARTUPINFOEXW()
+         startup_info.StartupInfo.cb = sizeof(STARTUPINFOEXW)
+         attr_list, attr_buf, h_parent = self.build_parent_attribute_list()
+-        startup_info.lpAttributeList = attr_list
++        if attr_list is not None:
++            startup_info.lpAttributeList = attr_list
+         # STARTF_USESHOWWINDOW
+         startup_info.StartupInfo.dwFlags = 1
+         # SW_SHOWNORMAL
+@@ -651,7 +656,9 @@ class Process:
+             arguments += args
+ 
+         self.path = path
+-        creation_flags = CREATE_NEW_CONSOLE | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED
++        creation_flags = CREATE_NEW_CONSOLE | CREATE_SUSPENDED
++        if attr_list is not None:
++            creation_flags |= EXTENDED_STARTUPINFO_PRESENT
+ 
+         # Use the custom execution directory if provided, otherwise launch in the same location
+         # where the sample resides (default %TEMP%)
+@@ -664,8 +671,10 @@ class Process:
+             path, arguments, None, None, False, creation_flags, None, execution_directory, byref(startup_info), byref(process_info)
+         )
+ 
+-        KERNEL32.CloseHandle(h_parent)
+-        KERNEL32.DeleteProcThreadAttributeList(attr_list)
++        if h_parent is not None:
++            KERNEL32.CloseHandle(h_parent)
++        if attr_list is not None:
++            KERNEL32.DeleteProcThreadAttributeList(attr_list)
+ 
+         if created:
+             self.pid = process_info.dwProcessId

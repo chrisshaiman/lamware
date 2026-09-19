@@ -1,0 +1,174 @@
+diff --git a/analyzer/windows/modules/packages/doc.py b/analyzer/windows/modules/packages/doc.py
+index 5e300a48e..6bbd4b981 100644
+--- a/analyzer/windows/modules/packages/doc.py
++++ b/analyzer/windows/modules/packages/doc.py
+@@ -1,6 +1,9 @@
+ # Copyright (C) 2010-2015 Cuckoo Foundation.
+ # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
+ # See the file 'docs/LICENSE' for copying permission.
++#
++# Modified: LibreOffice fallback when MS Word is not installed.
++
+ 
+ from lib.common.abstracts import Package
+ from lib.common.common import check_file_extension
+@@ -9,7 +12,7 @@ from lib.common.exceptions import CuckooPackageError
+ 
+ 
+ class DOC(Package):
+-    """Word analysis package."""
++    """Word analysis package with LibreOffice fallback."""
+ 
+     default_curdir = MSOFFICE_TRUSTED_PATH
+ 
+@@ -24,19 +27,35 @@ class DOC(Package):
+         ("ProgramFiles", "Microsoft Office", "Office*", "WINWORD.EXE"),
+         ("ProgramFiles", "Microsoft Office*", "root", "Office*", "WINWORD.EXE"),
+         ("ProgramFiles", "Microsoft Office", "WORDVIEW.EXE"),
++        ("ProgramFiles", "LibreOffice", "program", "soffice.exe"),
+     ]
+-    summary = "Opens a document file with WINWORD.EXE."
+-    description = f"""Uses 'WINWORD.EXE /q', or if unavailable, 'WORDVIEW.EXE /q'.
++    summary = "Opens a document file with WINWORD.EXE or LibreOffice."
++    description = f"""Uses 'WINWORD.EXE /q', or if unavailable, LibreOffice soffice.exe.
+     {TRUSTED_PATH_TEXT}
+     The .doc filename extension will be added automatically."""
+ 
+     def start(self, path):
+-        # Try getting winword or wordview as a backup
++        if not path.endswith((".doc", ".docx", ".docm", ".dotm", ".odt")):
++            path = check_file_extension(path, ".doc")
++
++        # Try MS Word first
+         try:
+             word = self.get_path_glob("WINWORD.EXE")
++            return self.execute(word, f'"{path}" /q', path)
+         except CuckooPackageError:
+-            word = self.get_path_glob("WORDVIEW.EXE")
++            pass
+ 
+-        if not path.endswith((".doc", ".docx", ".docm", ".dotm", ".odt")):
+-            path = check_file_extension(path, ".doc")
+-        return self.execute(word, f'"{path}" /q', path)
++        # Try WordView
++        try:
++            word = self.get_path_glob("WORDVIEW.EXE")
++            return self.execute(word, f'"{path}" /q', path)
++        except CuckooPackageError:
++            pass
++
++        # Fall back to LibreOffice
++        soffice = self.get_path_glob("soffice.exe")
++        return self.execute(
++            soffice,
++            f'--norestore --writer "{path}"',
++            path,
++        )
+diff --git a/analyzer/windows/modules/packages/ppt.py b/analyzer/windows/modules/packages/ppt.py
+index 7c985f118..10055cf86 100644
+--- a/analyzer/windows/modules/packages/ppt.py
++++ b/analyzer/windows/modules/packages/ppt.py
+@@ -1,13 +1,16 @@
+ # Copyright (C) 2010-2015 Cuckoo Foundation.
+ # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
+ # See the file 'docs/LICENSE' for copying permission.
++#
++# Modified: LibreOffice fallback when MS PowerPoint is not installed.
+ 
+ from lib.common.abstracts import Package
+ from lib.common.constants import MSOFFICE_TRUSTED_PATH, TRUSTED_PATH_TEXT
++from lib.common.exceptions import CuckooPackageError
+ 
+ 
+ class PPT(Package):
+-    """PowerPoint analysis package."""
++    """PowerPoint analysis package with LibreOffice fallback."""
+ 
+     default_curdir = MSOFFICE_TRUSTED_PATH
+ 
+@@ -21,12 +24,25 @@ class PPT(Package):
+         ("ProgramFiles", "Microsoft Office", "POWERPNT.EXE"),
+         ("ProgramFiles", "Microsoft Office", "Office*", "POWERPNT.EXE"),
+         ("ProgramFiles", "Microsoft Office*", "root", "Office*", "POWERPNT.EXE"),
++        ("ProgramFiles", "LibreOffice", "program", "soffice.exe"),
+     ]
+-    summary = "Opens sample file with Powerpoint."
+-    description = f"""Uses 'POWERPNT.EXE /s <sample>' to open a powerpoint presentation file.
++    summary = "Opens sample file with Powerpoint or LibreOffice."
++    description = f"""Uses 'POWERPNT.EXE /s <sample>' or LibreOffice soffice.exe.
+     {TRUSTED_PATH_TEXT}
+     """
+ 
+     def start(self, path):
+-        powerpoint = self.get_path_glob("POWERPNT.EXE")
+-        return self.execute(powerpoint, f'/s "{path}"', path)
++        # Try MS PowerPoint first
++        try:
++            powerpoint = self.get_path_glob("POWERPNT.EXE")
++            return self.execute(powerpoint, f'/s "{path}"', path)
++        except CuckooPackageError:
++            pass
++
++        # Fall back to LibreOffice
++        soffice = self.get_path_glob("soffice.exe")
++        return self.execute(
++            soffice,
++            f'--norestore --impress "{path}"',
++            path,
++        )
+diff --git a/analyzer/windows/modules/packages/xls.py b/analyzer/windows/modules/packages/xls.py
+index f727b9f99..fb27ce46d 100644
+--- a/analyzer/windows/modules/packages/xls.py
++++ b/analyzer/windows/modules/packages/xls.py
+@@ -1,14 +1,17 @@
+ # Copyright (C) 2010-2015 Cuckoo Foundation.
+ # This file is part of Cuckoo Sandbox - http://www.cuckoosandbox.org
+ # See the file 'docs/LICENSE' for copying permission.
++#
++# Modified: LibreOffice fallback when MS Excel is not installed.
+ 
+ from lib.common.abstracts import Package
+ from lib.common.common import check_file_extension
+ from lib.common.constants import MSOFFICE_TRUSTED_PATH, TRUSTED_PATH_TEXT
++from lib.common.exceptions import CuckooPackageError
+ 
+ 
+ class XLS(Package):
+-    """Excel analysis package."""
++    """Excel analysis package with LibreOffice fallback."""
+ 
+     default_curdir = MSOFFICE_TRUSTED_PATH
+ 
+@@ -22,14 +25,28 @@ class XLS(Package):
+         ("ProgramFiles", "Microsoft Office", "EXCEL.EXE"),
+         ("ProgramFiles", "Microsoft Office", "Office*", "EXCEL.EXE"),
+         ("ProgramFiles", "Microsoft Office*", "root", "Office*", "EXCEL.EXE"),
++        ("ProgramFiles", "LibreOffice", "program", "soffice.exe"),
+     ]
+-    summary = "Opens the supplied document with EXCEL.EXE."
+-    description = f"""Uses 'EXCEL.EXE <path> /dde' to open the file.
++    summary = "Opens the supplied document with EXCEL.EXE or LibreOffice."
++    description = f"""Uses 'EXCEL.EXE <path> /dde' or LibreOffice soffice.exe.
+     {TRUSTED_PATH_TEXT}
+     The .xls filename extension will be added automatically."""
+ 
+     def start(self, path):
+         if not path.endswith((".xls", ".xlsx", ".xlsb", ".xlsm", ".slk", ".ods")):
+             path = check_file_extension(path, ".xls")
+-        excel = self.get_path_glob("EXCEL.EXE")
+-        return self.execute(excel, f'"{path}" /dde', path)
++
++        # Try MS Excel first
++        try:
++            excel = self.get_path_glob("EXCEL.EXE")
++            return self.execute(excel, f'"{path}" /dde', path)
++        except CuckooPackageError:
++            pass
++
++        # Fall back to LibreOffice
++        soffice = self.get_path_glob("soffice.exe")
++        return self.execute(
++            soffice,
++            f'--norestore --calc "{path}"',
++            path,
++        )
