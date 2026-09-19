@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup
+.PHONY: provenance provenance-has all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -474,6 +474,40 @@ deploy: collections-check
 	@echo "==> Running post-deploy smoke gate..."
 	@$(MAKE) smoke
 	@echo "==> Deploy + test + smoke complete."
+
+# -----------------------------------------------------------------------------
+# Measurement front doors — the two instruments, one command each
+# -----------------------------------------------------------------------------
+# These exist because their absence had a measurable cost. lamware_eval has been
+# committed and tested since July with no Makefile entry point, and its last run
+# on the host is dated 2026-08-31. The detonation instrument had no code at all:
+# every #518 batch was a fresh shell script on the sandbox (13 of them between
+# 2026-09-04 and 2026-09-17), they diverged, and two batches were discarded for
+# silently running on the `office` guest instead of `clean`.
+#
+# The two measure DIFFERENT things and are not interchangeable:
+#
+#   make eval       re-runs the LLM interpretation arm over each corpus sample's
+#                   FROZEN report.json. Detonates nothing. Answers "is the model
+#                   reading the binary correctly?"
+#
+#   make detonate   runs one sample through CAPE N times on a PINNED guest and
+#                   stratifies the result by detonation tier. Answers "how much
+#                   does the observation itself vary?" -- the #518 question.
+#
+# Both run under systemd on the sandbox so a dropped ssh session cannot kill a
+# multi-hour job, and both refuse to start on top of a running one.
+
+eval:
+	@ARMS="$(ARMS)" CORPUS="$(CORPUS)" LABEL="$(LABEL)" SAMPLES="$(SAMPLES)" \
+		SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/eval.sh
+
+# THIS DETONATES LIVE MALWARE. Deliberately operator-typed and foreground: it
+# starts a one-shot unit and enables nothing, so nothing here can arm a
+# recurring or unattended detonation.
+detonate:
+	@SAMPLE="$(SAMPLE)" RUNS="$(RUNS)" MACHINE="$(MACHINE)" PACKAGE="$(PACKAGE)" \
+		SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/detonate.sh
 
 security-test:
 	@echo "==> Running security smoke tests..."
