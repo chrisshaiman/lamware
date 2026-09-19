@@ -114,60 +114,29 @@ def test_a_dead_cape_is_suspect_whatever_interpret_did():
 _DET_OK = {"process_count": 6, "api_calls_total": 48000, "duration_s": 295}
 
 
-def test_a_dead_detonation_is_suspect():
-    """quasarrat's failed run: one process, 2,344 api calls."""
-    v, detail = score({"cape": dict(_CAPE_OK,
-                                    detonation={"process_count": 1, "api_calls_total": 2344}),
-                       "ghidra": {"triggered": True},
-                       "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
-                                              "tool_calls_used": 3}})
-    assert v == "SUSPECT", "a sample that died before doing anything scored as a measurement"
-    assert "2344" in detail
+def test_detonation_no_longer_gates_globally():
+    """REVERSAL, measured across ~230 runs of nine samples. A global detonation
+    rule -- on tier or on api-call volume -- fires on healthy data:
 
+      latrodectus  266 api calls     normal, rejected by the old 5,000 floor
+      agenttesla   3,741             normal, rejected
+      salat        NO-HOLLOW x12     normal, it does not hollow
+      cobaltstrike ALL-LOST x12/13   harmless, 39 other processes carry the payload
 
-def test_a_busy_single_process_sample_is_not_suspect():
-    """xworm legitimately runs as ONE process and makes 24,132 calls. Judging on
-    process_count would reject it — which is why the rule is on call volume."""
-    v, _ = score({"cape": dict(_CAPE_OK,
-                               detonation={"process_count": 1, "api_calls_total": 24132}),
-                  "ghidra": {"triggered": True},
-                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
-                                         "tool_calls_used": 3}})
-    assert v == "OK", "a healthy single-process sample was rejected"
+    Separating a dead run from a quiet sample needs that sample's own history.
+    That exists for the eval corpus and CANNOT exist for the production feed,
+    where each MalwareBazaar sample is seen once, so the gate belongs in the
+    eval path rather than here (#606)."""
+    for det in ({"tier": "NO-HOLLOW", "api_calls_total": 266},
+                {"tier": "ALL-LOST", "api_calls_total": 4114},
+                {"tier": "PARTIAL", "api_calls_total": 69000},
+                {"tier": "CLEAN", "api_calls_total": 129617}):
+        v, _ = score({"cape": {"malscore": 10.0, "status": "reported", "detonation": det},
+                      "ghidra": {"triggered": True},
+                      "llm_interpretation": {"tool_calls_used": 3,
+                                             "analysis": {"malware_family_guess": "x"}}})
+        assert v == "OK", f"{det} must not be rejected on detonation alone"
 
-
-def test_a_healthy_detonation_is_ok():
-    v, _ = score({"cape": dict(_CAPE_OK, detonation=_DET_OK),
-                  "ghidra": {"triggered": True},
-                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
-                                         "tool_calls_used": 3}})
-    assert v == "OK"
-
-
-def test_an_older_report_without_the_field_is_not_penalised():
-    """Reports predating the detonation block must still score. Absent is not zero."""
-    v, _ = score({"cape": _CAPE_OK, "ghidra": {"triggered": True},
-                  "llm_interpretation": {"analysis": {"malware_family_guess": "x"},
-                                         "tool_calls_used": 3}})
-    assert v == "OK", "a report without detonation stats was treated as a failed detonation"
-
-
-def test_the_detonation_check_precedes_the_interpret_checks():
-    """A failed detonation makes the interpret verdict irrelevant — the sample
-    produced nothing to interpret, and reporting it as an interpret problem sends
-    the next reader to the wrong place."""
-    v, detail = score({"cape": dict(_CAPE_OK,
-                                    detonation={"process_count": 1, "api_calls_total": 100}),
-                       "ghidra": {"triggered": True, "error": "no PE files found"},
-                       "llm_interpretation": {}})
-    assert v == "SUSPECT" and "detonation" in detail
-
-
-# --- the producer must actually produce it --------------------------------
-# The rule above reads cape.detonation. Nothing tested that the cape stage
-# WRITES it, so deleting the producer left every test green while the rule
-# became permanently inert — two halves in two files that must agree, which is
-# the shape of #584 and #590.
 
 def test_the_cape_stage_records_the_detonation_block():
     """Behavioural, not grepped. The rule above keys on api_calls_total, so the
