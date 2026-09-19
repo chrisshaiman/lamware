@@ -158,7 +158,7 @@
   # Only so the rule lines below stay inside the 160-column ansible-lint limit;
   # repeating the getent expression four times per family pushed them to 173.
   ansible.builtin.set_fact:
-    pipeline_uid: "{{ pipeline_uid }}"
+    pipeline_uid: "{{ ansible_facts.getent_passwd.pipeline[1] }}"
 
 - name: Enforce the pipeline egress allowlist ahead of ufw's own accepts (IPv4)
   ansible.builtin.blockinfile:

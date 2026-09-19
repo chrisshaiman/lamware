@@ -174,3 +174,51 @@ def test_the_probe_targets_a_local_port_so_it_generates_no_egress():
         assert host.startswith("127."), (
             f"the probe dials {host}, which leaves the host; a monitor that "
             f"reaches the internet to prove it cannot would be its own finding")
+
+
+# --- the fact the rules depend on must actually be defined ------------------
+
+def _set_fact_tasks():
+    return [t["ansible.builtin.set_fact"] for t in TASKS
+            if isinstance(t, dict) and isinstance(t.get("ansible.builtin.set_fact"), dict)]
+
+
+def test_the_uid_fact_is_defined_from_getent_not_from_itself():
+    """`pipeline_uid: "{{ pipeline_uid }}"` is undefined at resolution time and
+    fails the whole role.
+
+    It got there by a blind global replace of the getent expression, which also
+    rewrote the set_fact that was supposed to DEFINE it. The existing tests
+    checked only the blockinfile blocks, so nothing covered the definition and
+    the deploy was where it surfaced.
+    """
+    facts = [f for f in _set_fact_tasks() if "pipeline_uid" in f]
+    assert facts, "pipeline_uid is never defined, but the rules reference it"
+    for f in facts:
+        value = str(f["pipeline_uid"])
+        assert "pipeline_uid" not in value, (
+            f"pipeline_uid is defined from itself: {value!r}")
+        assert "getent_passwd" in value, (
+            f"pipeline_uid is not resolved from getent: {value!r}")
+
+
+def test_the_getent_lookup_runs_before_the_fact_is_pinned():
+    names = [t.get("name", "") for t in TASKS if isinstance(t, dict)]
+    getent_at = next((i for i, t in enumerate(TASKS)
+                      if isinstance(t, dict) and "ansible.builtin.getent" in t), None)
+    fact_at = next((i for i, t in enumerate(TASKS)
+                    if isinstance(t, dict)
+                    and isinstance(t.get("ansible.builtin.set_fact"), dict)
+                    and "pipeline_uid" in t["ansible.builtin.set_fact"]), None)
+    assert getent_at is not None, "nothing resolves the pipeline uid"
+    assert fact_at is not None and getent_at < fact_at, (
+        f"the fact is pinned at task {fact_at} before getent runs at {getent_at}: {names[:0]}")
+
+
+def test_every_variable_the_rules_use_is_defined_somewhere():
+    """Catches the general shape: a rule referencing a variable no task sets."""
+    defined = {k for f in _set_fact_tasks() for k in f}
+    for b in _egress_blocks():
+        for var in re.findall(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}", b["block"]):
+            assert var in defined, (
+                f"{b['path']}: rules use {{{{ {var} }}}} but no set_fact defines it")
