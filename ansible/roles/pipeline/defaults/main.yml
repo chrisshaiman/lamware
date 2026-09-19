@@ -9,6 +9,19 @@ pipeline_reports_dir: /opt/pipeline/reports
 pipeline_cape_poll_interval: 30   # seconds between status checks
 pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
 
+# Which CAPE guest a submission is pinned to. kvm.conf tags BOTH guests x64, so
+# tags alone do not select one: unpinned, a sample lands on whichever is free
+# and the guest becomes an uncontrolled variable recorded nowhere. Office
+# samples need the office guest (Office is installed there); everything else
+# goes to clean, which has the pinned custom CPU model.
+pipeline_cape_machine: clean
+pipeline_cape_office_machine: office
+
+# Full-VM RAM dump per analysis. OFF: 8.6 GB a run with delete_memdump=no filled
+# the disk and CAPE silently stopped scheduling below freespace=50000. Turning
+# this on re-enables the Volatility stage and REQUIRES reaping the dumps.
+pipeline_cape_memory_dump: false
+
 # Report retention (days) — cron job purges older reports
 pipeline_report_retention_days: 7
 

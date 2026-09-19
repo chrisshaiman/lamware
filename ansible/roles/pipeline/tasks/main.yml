@@ -441,6 +441,7 @@
     - "{{ pipeline_install_dir }}"
     - "{{ pipeline_install_dir }}/stages"
     - "{{ pipeline_install_dir }}/lamware_eval"
+    - "{{ pipeline_install_dir }}/lamware_detonate"
     - "{{ pipeline_install_dir }}/eval"
     - "{{ pipeline_reports_dir }}"
 
@@ -587,6 +588,26 @@
     - runner.py
     - rebuild.py
     - motif.py
+    - __main__.py
+
+- name: Deploy lamware_detonate package (repeated-detonation measurement harness)
+  # The instrument #518 needed and never had. lamware_eval evaluates LLM ARMS
+  # over a frozen report.json and never detonates, so every #518 batch ran
+  # through a hand-written shell driver on the host -- 13 of them between
+  # 2026-09-04 and 2026-09-17. Only the last pinned the guest, and by then two
+  # batches had been discarded for running on `office`.
+  ansible.builtin.copy:
+    src: "lamware_detonate/{{ item }}"
+    dest: "{{ pipeline_install_dir }}/lamware_detonate/{{ item }}"
+    owner: pipeline
+    group: pipeline
+    mode: "0640"
+  # Enumerated, not a glob — same contract as lamware_eval above, and
+  # test_every_lamware_detonate_module_is_in_the_deploy_loop enforces it.
+  loop:
+    - __init__.py
+    - batch.py
+    - aggregate.py
     - __main__.py
 
 - name: Seed the eval corpus manifest (force:false so operator-grown corpus is not clobbered)
