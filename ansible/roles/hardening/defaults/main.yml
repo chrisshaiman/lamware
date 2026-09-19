@@ -4,30 +4,9 @@
 hardening_usbguard_allow_console_hid: true
 hardening_usbguard_rulefile: /etc/usbguard/rules.conf
 
-# Inbound ports UFW must allow, re-added after konstruktoid's baseline.
-#
-# The role sets `default deny (incoming)` and adds exactly ONE inbound rule —
-# sshd from sshd_admin_net. It offers no variable for anything else, so every
-# `TAGS=hardening` deploy silently removes these. On 2026-09-02 a deploy took
-# the public web tier offline and left WireGuard surviving only on conntrack.
-#
-# `interface` scopes a rule to one NIC. Omit it and the port is reachable from
-# anywhere, which is right for 80/443 (ACME, the public SPA) and wrong for
-# anything administrative.
-hardening_ufw_inbound:
-  - {port: "80", proto: tcp, comment: "lamware: public HTTP (ACME + redirect)"}
-  - {port: "443", proto: tcp, comment: "lamware: public HTTPS (SPA/api/ws)"}
-  - {port: "51820", proto: udp, comment: "lamware: WireGuard"}
-  # CAPE's web UI. WireGuard ONLY -- it is an unauthenticated admin interface
-  # over plain HTTP onto a live-malware host, and #604 moved the lamware web
-  # app behind the VPN for the same reason.
-  #
-  # It had no rule at all and nobody noticed, because /etc/iptables/rules.v4
-  # carried `:INPUT ACCEPT` and iptables-persistent kept restoring it. ufw
-  # declares Breaks: against that package, so whichever ran last decided
-  # whether the default policy was permissive. Once ufw won for good, the UI
-  # stopped answering on 10.200.0.1:8000.
-  - {port: "8000", proto: tcp, interface: wg0, comment: "lamware: CAPE web UI (WireGuard only)"}
+# (hardening_ufw_inbound removed: ufw is not installed on this host. See the
+# manage_ufw: false block in tasks/main.yml for why, and for the default-deny
+# inbound property that choice gives up.)
 
 # Console-only recovery account (#552). Deliberately NOT in the sudo group:
 # sshd carries `AllowGroups sudo`, so group membership is what refuses it over

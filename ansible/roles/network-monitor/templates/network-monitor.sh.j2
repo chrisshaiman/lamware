@@ -148,8 +148,14 @@ check_rules() {
 # of its own.
 # -------------------------------------------------------------------------
 
-EGRESS_CHAIN_V4="ufw-before-output"
-EGRESS_CHAIN_V6="ufw6-before-output"
+# OUTPUT, not a ufw chain. The rules moved into ufw-before-output on
+# 2026-09-19 because ufw's chains sat in front of OUTPUT and the DROP was
+# unreachable; ufw has since been removed entirely (it and iptables-persistent
+# evict each other, and every deploy picked a winner by role order). With no
+# ufw, nothing precedes these rules in OUTPUT and they work where they always
+# should have.
+EGRESS_CHAIN_V4="OUTPUT"
+EGRESS_CHAIN_V6="OUTPUT"
 
 egress_chain_for() {
     [ "$1" = "ip6tables" ] && echo "$EGRESS_CHAIN_V6" || echo "$EGRESS_CHAIN_V4"
@@ -178,7 +184,7 @@ egress_preempted_by() {
             # flagging them would make this check cry wolf on every healthy
             # host. What matters is a FOREIGN terminating rule above it.
             /pipeline: / { next }
-            NR>2 && $1+0 < d && ($4 == "ACCEPT" || $4 ~ /^ufw6?-user-output$/) {
+            NR>2 && $1+0 < d && ($4 == "ACCEPT" || $4 ~ /^ufw6?-/) {
                 print $1 " " $4; exit
             }'
 }

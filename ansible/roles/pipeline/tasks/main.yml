@@ -101,121 +101,126 @@
   changed_when: false
 
 # -------------------------------------------------------------------------
-# Network lockdown — the pipeline user's own outbound.
+# Network lockdown — restrict the PIPELINE USER's OWN outbound to the localhost
+# services its in-process code actually uses: PostgreSQL (db_ingest /
+# pipeline_status) and the CAPE API (cape stage). Everything else is DROPped, so a
+# compromised pipeline process cannot reach the internet or arbitrary hosts.
 #
-# THESE RULES LIVE IN ufw's before-output CHAIN, NOT IN OUTPUT, AND THAT IS THE
-# WHOLE POINT. Appending them to OUTPUT is what the role used to do, and under
-# ufw it does nothing:
-#
-#   Chain OUTPUT
-#     -j ufw-before-output     -> -o lo -j ACCEPT            (all loopback)
-#                              -> -j ufw-user-output         (22,53,80,123,443,853,4460
-#                                                             to ANY destination)
-#     ... 6 more ufw jumps ...
-#     -A OUTPUT ... --uid-owner <pipeline> -j DROP           <- never reached
-#
-# Measured on the live host 2026-09-19: the DROP had 0 packets, and the pipeline
-# user could open TCP to 1.1.1.1:443, 9.9.9.9:443 and 1.1.1.1:53. The allowlist
-# above it was equally dead -- ufw accepts all loopback first, so uid 997 also
-# reached 27017 and 4000, the two ports the role explicitly revokes below.
-#
-# ufw's outbound allows come from konstruktoid's `ufw_outgoing_traffic` default,
-# which we do not override. They carry no destination match. Ordering our rules
-# ahead of that jump is what makes the DROP mean anything.
-#
-# WHAT IS ALLOWED, AND WHY ONLY THIS:
-#   5432  PostgreSQL   db_ingest / pipeline_status
-#   8000  CAPE API     the cape stage. Note cape_api_url is http://10.200.0.1:8000
-#                      -- the WireGuard address, which is LOCAL to this host, so
-#                      Linux routes it out `lo`. That is why an `-o lo` rule
-#                      covers it and why the old rule had 2,623 packets.
-#
-# DNS IS DELIBERATELY NOT ALLOWED. No pipeline-uid code resolves a hostname:
-# cape_api_url and db_host are both IP literals. Direct DNS egress from this uid
-# would be an exfil channel and contradicts the standing rule that C2 domains
-# are never resolved from lamware infrastructure.
-#
-# LiteLLM (4000) and Mongo (27017) are NOT allowed and need no removal task any
-# more: this block is authoritative, so anything absent from it is denied. The
-# interpret container never used the pipeline uid regardless -- it runs as a
-# rootless subuid with --network=none and a bind-mounted LiteLLM Unix socket
-# (verified on the host).
-#
-# The comment strings are load-bearing: network-monitor greps for `pipeline: `
-# to survey this allowlist. Changing them silently blinds that check.
+# NOTE: these rules do NOT govern the interpret (LLM) container. That runs as a
+# rootless subuid — never the pipeline uid — so uid_owner never matched it; it is
+# isolated separately via --network=none + a bind-mounted LiteLLM Unix socket.
+# LiteLLM (4000) and Mongo (27017) are intentionally NOT allowed for the pipeline
+# user — no pipeline-uid process reaches them directly. The state:absent tasks below
+# remove those formerly-vestigial allows so the DROP-all is the only rule covering them.
 # -------------------------------------------------------------------------
 
-- name: Resolve the pipeline user's numeric uid
-  # The account is `system: true`, so its uid is assigned at creation and is not
-  # pinned in this role. iptables-restore resolves a NAME at restore time, which
-  # on a boot-ordering fault would fail open on a rule that must never fail
-  # open. A number cannot be misresolved.
-  ansible.builtin.getent:
-    database: passwd
-    key: pipeline
-
-- name: Pin the resolved uid to a short fact
-  # Only so the rule lines below stay inside the 160-column ansible-lint limit;
-  # repeating the getent expression four times per family pushed them to 173.
-  ansible.builtin.set_fact:
-    pipeline_uid: "{{ ansible_facts.getent_passwd.pipeline[1] }}"
-
-- name: Enforce the pipeline egress allowlist ahead of ufw's own accepts (IPv4)
-  ansible.builtin.blockinfile:
-    path: /etc/ufw/before.rules
-    marker: "# {mark} ANSIBLE MANAGED BLOCK - lamware pipeline egress"
-    # After the chain declarations and BEFORE ufw's `-o lo -j ACCEPT`, which is
-    # the first rule in the file's body. Anchoring on the last chain
-    # declaration keeps the insert deterministic across ufw versions.
-    insertafter: '^:ufw-not-local'
-    # A malformed block is rejected before the file is written, rather than
-    # discovered when ufw reloads and the host answers nothing.
-    validate: /usr/sbin/iptables-restore --test %s
-    block: |
-      -A ufw-before-output -o lo -p tcp --dport 5432 -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: PostgreSQL" -j ACCEPT
-      -A ufw-before-output -o lo -p tcp --dport 8000 -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: CAPE API" -j ACCEPT
-      -A ufw-before-output -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: block all other outbound" -j DROP
-  notify: Reload ufw
-
-- name: Enforce the pipeline egress allowlist ahead of ufw's own accepts (IPv6)
-  # v6 egress is already blocked on this host and these rules have never matched
-  # a packet, but the two families must say the same thing -- #343 was filed
-  # because the allowlist existed only in IPv4 and nobody noticed for months.
-  ansible.builtin.blockinfile:
-    path: /etc/ufw/before6.rules
-    marker: "# {mark} ANSIBLE MANAGED BLOCK - lamware pipeline egress"
-    insertafter: '^:ufw6-before-forward'
-    validate: /usr/sbin/ip6tables-restore --test %s
-    block: |
-      -A ufw6-before-output -o lo -p tcp --dport 5432 -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: PostgreSQL" -j ACCEPT
-      -A ufw6-before-output -o lo -p tcp --dport 8000 -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: CAPE API" -j ACCEPT
-      -A ufw6-before-output -m owner --uid-owner {{ pipeline_uid }} -m comment --comment "pipeline: block all other outbound" -j DROP
-  notify: Reload ufw
-
-# The old rules were appended straight to OUTPUT and persisted with
-# `netfilter-persistent save`. Both are gone: ufw owns before.rules, so these
-# survive a reboot by construction, and netfilter-persistent is evicted by ufw
-# anyway (`ufw` declares Breaks: iptables-persistent, netfilter-persistent).
-- name: Remove the superseded pipeline egress rules from the OUTPUT chain
+- name: Remove vestigial pipeline→LiteLLM allow (no pipeline-uid path; interpret is isolated)
   ansible.builtin.iptables:
-    ip_version: "{{ item.fam }}"
     chain: OUTPUT
-    protocol: "{{ item.proto | default(omit) }}"
+    protocol: tcp
     uid_owner: pipeline
-    out_interface: "{{ item.iface | default(omit) }}"
-    destination_port: "{{ item.port | default(omit) }}"
-    jump: "{{ item.jump }}"
+    out_interface: lo
+    destination_port: "4000"
+    jump: ACCEPT
     state: absent
-    comment: "{{ item.comment }}"
-  loop:
-    - {fam: ipv4, proto: tcp, iface: lo, port: "4000", jump: ACCEPT, comment: "pipeline: LiteLLM proxy"}
-    - {fam: ipv4, proto: tcp, iface: lo, port: "5432", jump: ACCEPT, comment: "pipeline: PostgreSQL"}
-    - {fam: ipv4, proto: tcp, iface: lo, port: "8000", jump: ACCEPT, comment: "pipeline: CAPE API"}
-    - {fam: ipv4, proto: tcp, iface: lo, port: "27017", jump: ACCEPT, comment: "pipeline: MongoDB"}
-    - {fam: ipv4, jump: DROP, comment: "pipeline: block all other outbound"}
-    - {fam: ipv6, proto: tcp, iface: lo, port: "5432", jump: ACCEPT, comment: "pipeline: PostgreSQL"}
-    - {fam: ipv6, proto: tcp, iface: lo, port: "8000", jump: ACCEPT, comment: "pipeline: CAPE API"}
-    - {fam: ipv6, jump: DROP, comment: "pipeline: block all other outbound"}
+    comment: "pipeline: LiteLLM proxy"
+
+- name: Allow pipeline user to reach PostgreSQL (localhost:5432)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "5432"
+    jump: ACCEPT
+    comment: "pipeline: PostgreSQL"
+
+- name: Allow pipeline user to reach CAPE API (localhost:8000)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "8000"
+    jump: ACCEPT
+    comment: "pipeline: CAPE API"
+
+- name: Remove vestigial pipeline→MongoDB allow (no pipeline-uid path; CAPE owns Mongo)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "27017"
+    jump: ACCEPT
+    state: absent
+    comment: "pipeline: MongoDB"
+
+- name: Block all other outbound traffic from pipeline user
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    uid_owner: pipeline
+    jump: DROP
+    comment: "pipeline: block all other outbound"
+
+# -------------------------------------------------------------------------
+# The same allowlist for IPv6 (#343).
+#
+# Every task above is IPv4-only — `ansible.builtin.iptables` defaults to
+# ip_version: ipv4 — so ip6tables carried NO pipeline rules at all, against a
+# default OUTPUT policy of ACCEPT. The allowlist was never what stopped v6
+# traffic; the host simply has no IPv6 route, and that is why this went
+# unnoticed. A route appearing (provider change, a tunnel, an accept_ra flip)
+# would unblock the pipeline user's entire v6 egress in one step, with every
+# existing check still green.
+#
+# The two ACCEPTs are inert today: postgres listens on 127.0.0.1 only, the CAPE
+# API on 10.200.0.1, and `localhost` resolves to 127.0.0.1 with no ::1 entry.
+# They are here so the two families say the same thing — if a service later
+# binds ::1, the allowlist already covers it instead of failing as a timeout.
+#
+# ORDER MATTERS AND THE MODULE DOES NOT ENFORCE IT: these tasks APPEND, so an
+# allow added below the DROP-all is dead on arrival while every presence check
+# still passes. New allows go ABOVE the DROP. network-monitor asserts the
+# ordering at runtime, in both families, for exactly this reason.
+# -------------------------------------------------------------------------
+
+- name: Allow pipeline user to reach PostgreSQL over IPv6
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "5432"
+    jump: ACCEPT
+    comment: "pipeline: PostgreSQL"
+
+- name: Allow pipeline user to reach CAPE API over IPv6
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    protocol: tcp
+    uid_owner: pipeline
+    out_interface: lo
+    destination_port: "8000"
+    jump: ACCEPT
+    comment: "pipeline: CAPE API"
+
+- name: Block all other outbound IPv6 traffic from pipeline user
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    uid_owner: pipeline
+    jump: DROP
+    comment: "pipeline: block all other outbound"
+
+- name: Persist the pipeline egress rules across reboots (both families)
+  # netfilter-persistent writes rules.v4 AND rules.v6. Without this the v6
+  # allowlist survives only until the next boot — and a reboot is precisely
+  # when nobody is watching the rule set.
+  ansible.builtin.command: netfilter-persistent save
+  changed_when: true
 
 - name: Create lamware-api system user
   ansible.builtin.user:
