@@ -50,7 +50,7 @@ fail() {
 # -------------------------------------------------------------------------
 # Test 1: API health endpoint
 # -------------------------------------------------------------------------
-echo "[1/9] API health check..."
+echo "[1/12] API health check..."
 # $WG_URL, not $API_URL: #604 removed the public TLS listener, so the domain
 # resolves to an address nothing serves. Probing it measured DNS, not the API.
 HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/health")
@@ -63,7 +63,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
-echo "[2/9] Keycloak health check..."
+echo "[2/12] Keycloak health check..."
 KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
@@ -74,7 +74,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 3: Unauthenticated API access blocked
 # -------------------------------------------------------------------------
-echo "[3/9] Auth enforcement..."
+echo "[3/12] Auth enforcement..."
 UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/api/analyses")
 if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
     pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
@@ -85,7 +85,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
-echo "[4/9] Docs endpoint gated..."
+echo "[4/12] Docs endpoint gated..."
 # There are TWO gates since #529, and this checks both. Previously it checked
 # only the application one and asserted 404, so adding the network layer made a
 # correctly-hardened host fail:
@@ -120,7 +120,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
-echo "[5/9] TLS certificate check..."
+echo "[5/12] TLS certificate check..."
 # WireGuard address: TLS is no longer served publicly (#604). -servername keeps
 # the SNI as the real domain, which is what the certificate is issued for.
 CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ security_test_wg_address }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
@@ -140,7 +140,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
-echo "[6/9] HTTP redirect check..."
+echo "[6/12] HTTP redirect check..."
 REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
@@ -159,7 +159,7 @@ fi
 # Port 80 MUST stay public: certbot renews by webroot/HTTP-01, so Let's Encrypt
 # has to reach the challenge. Both halves are checked; removing the port-80
 # listener breaks renewal and would not show up for ~90 days.
-echo "[7/9] Public listener surface..."
+echo "[7/12] Public listener surface..."
 # NO `|| echo 000` here. curl's -w already prints 000 when the connection is
 # refused AND exits non-zero, so the fallback CONCATENATES: the first live run
 # of this check reported "000000", which matches neither branch and reported a
@@ -181,7 +181,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 8: Nuclei quick scan
 # -------------------------------------------------------------------------
-echo "[8/9] Nuclei misconfig scan..."
+echo "[8/12] Nuclei misconfig scan..."
 if [ -x "$NUCLEI" ]; then
     NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
     # $WG_URL, not $API_URL. After #604 the public address serves no TLS, and a
@@ -229,7 +229,7 @@ echo "========================================="
 # the firewall PATH is checked rather than a live connection, and the live
 # connection is attempted only when a guest happens to be up.
 # =============================================================================
-echo "[9/9] Sandbox can reach its own guests..."
+echo "[9/12] PREREQUISITE: sandbox can reach its own guests..."
 DET_SUBNET="{{ security_test_detonation_subnet | default('192.168.100.0/24') }}"
 DET_BRIDGE="{{ security_test_detonation_bridge | default('virbr-det') }}"
 AGENT_PORT="{{ security_test_guest_agent_port | default('8000') }}"
@@ -259,6 +259,88 @@ else
     else
         pass "firewall path to ${DET_BRIDGE} is open ($PATH_OK); no guest running to probe"
     fi
+fi
+
+# =============================================================================
+# CONTAINMENT. Everything above either checks a service is UP or checks one
+# negative property (the public TLS listener). These check the properties the
+# whole sandbox rests on: that things which must be impossible are.
+#
+# They were missing. `make security-test` ran nine checks and asserted
+# containment once, while SECURITY_MODEL.md said outright that the air gap was
+# somebody else's job. On 2026-09-19 the pipeline user's egress DROP sat at 0
+# packets for a day, reachable to 1.1.1.1:443, and nothing in this file would
+# have noticed.
+#
+# A negative assertion has to be made by ATTEMPTING the thing. A rule that
+# exists satisfied every structural check for the whole day it did nothing.
+# =============================================================================
+echo "[10/12] CONTAINMENT: pipeline user cannot reach the internet..."
+PIPE_USER="{{ security_test_pipeline_user | default('pipeline') }}"
+if ! id -u "$PIPE_USER" >/dev/null 2>&1; then
+    fail "user $PIPE_USER does not exist — the egress allowlist cannot be verified"
+else
+    EGRESS_LEAK=""
+    for dst in 1.1.1.1/443 8.8.8.8/443 1.1.1.1/53; do
+        if sudo -u "$PIPE_USER" timeout 4 bash -c "echo > /dev/tcp/${dst}" 2>/dev/null; then
+            EGRESS_LEAK="${EGRESS_LEAK}${EGRESS_LEAK:+, }${dst}"
+        fi
+    done
+    if [ -n "$EGRESS_LEAK" ]; then
+        fail "pipeline user reached the internet at $EGRESS_LEAK — a compromised analysis process can exfiltrate"
+    else
+        pass "pipeline user: internet refused (443, 53 to three destinations)"
+    fi
+fi
+
+echo "[11/12] CONTAINMENT: pipeline user is held to its localhost allowlist..."
+if id -u "$PIPE_USER" >/dev/null 2>&1; then
+    LOCAL_LEAK=""
+    # Ports the role explicitly revokes. Reaching either means the allowlist is
+    # not being enforced, however present its rules look.
+    for dst in 127.0.0.1/27017 127.0.0.1/4000; do
+        if sudo -u "$PIPE_USER" timeout 4 bash -c "echo > /dev/tcp/${dst}" 2>/dev/null; then
+            LOCAL_LEAK="${LOCAL_LEAK}${LOCAL_LEAK:+, }${dst}"
+        fi
+    done
+    # And the allowlist must still work, or the check above passes for the
+    # wrong reason — a host with no network at all would look contained.
+    ALLOW_OK=0
+    sudo -u "$PIPE_USER" timeout 4 bash -c "echo > /dev/tcp/127.0.0.1/5432" 2>/dev/null && ALLOW_OK=1
+
+    if [ -n "$LOCAL_LEAK" ]; then
+        fail "pipeline user reached $LOCAL_LEAK, which the allowlist denies — something ACCEPTs before the DROP"
+    elif [ "$ALLOW_OK" -eq 0 ]; then
+        fail "pipeline user cannot reach PostgreSQL on 5432 — the allowlist is denying traffic the pipeline needs"
+    else
+        pass "pipeline user: denied ports refused, allowed ports reachable"
+    fi
+fi
+
+echo "[12/12] CONTAINMENT: detonation network cannot leave the box..."
+# Guests are shut off between analyses and a host cannot originate a FORWARDed
+# packet, so this asserts the RULES and their ORDER rather than a live probe.
+# That is a weaker claim and is stated as one. network-monitor does the
+# continuous version, reading counters every five minutes.
+MGMT_IF="{{ management_interface }}"
+AIRGAP_FAIL=""
+for fam in iptables ip6tables; do
+    for pair in "${MGMT_IF}:internet" "wg0:management"; do
+        oif="${pair%%:*}"; label="${pair##*:}"
+        line=$(sudo "$fam" -L FORWARD -n --line-numbers 2>/dev/null \
+               | awk -v o="$oif" '$0 ~ ("virbr-det") && $0 ~ (o) {print $1, $2; exit}')
+        num="${line%% *}"; tgt="${line##* }"
+        if [ -z "$line" ]; then
+            AIRGAP_FAIL="${AIRGAP_FAIL}${AIRGAP_FAIL:+; }$fam has no rule for virbr-det -> $label ($oif)"
+        elif [ "$tgt" != "DROP" ] && [ "$tgt" != "REJECT" ]; then
+            AIRGAP_FAIL="${AIRGAP_FAIL}${AIRGAP_FAIL:+; }$fam rule $num for virbr-det -> $label is $tgt, not DROP"
+        fi
+    done
+done
+if [ -n "$AIRGAP_FAIL" ]; then
+    fail "AIR GAP: $AIRGAP_FAIL — malware on the detonation network could reach the internet or the management VPN"
+else
+    pass "air gap: first matching FORWARD rule for virbr-det is DROP, both families, both paths"
 fi
 
 if [ "$FAILED" -gt 0 ]; then
