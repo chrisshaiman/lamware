@@ -485,6 +485,7 @@ def run_volatility(cape_data: dict, output_dir: Path,
                    get_cape_signatures_fn,
                    memory_dump_requested: bool = False,
                    cape_injection_pids: list[int] | None = None,
+                   cape_buffer_pids: list[int] | None = None,
                    cape_has_injection_buffers: bool = False,
                    vadinfo_max_dump_bytes: int = 4 * 1024 * 1024,
                    parallel_workers: int = 3) -> dict:
@@ -629,8 +630,29 @@ def run_volatility(cape_data: dict, output_dir: Path,
     # 27 of 31. One invocation for all target pids took 2.84s — `--pid` walks
     # the VAD tree rather than scanning the dump, so this is cheaper than the
     # malfind run above, not an addition to it.
-    if cape_injection_pids and active_dump.exists():
-        vad_pids = sorted(set(cape_injection_pids))
+    # The dump list is the UNION of two different CAPE sources, because the
+    # rule that consumes it joins on the second one.
+    #
+    #   cape.injection_pids            derived from signature data
+    #   injection_buffers[].target_pid from the API call trace
+    #
+    # Nothing makes them agree. On verify_salat_20260919 they had NO overlap --
+    # vadinfo dumped 504 VADs for [972, 1852, 9100] while every injection
+    # buffer targeted 4192 -- so rule_shellcode_self_modified could not resolve
+    # a single address and reported "(3 unresolved)" (#614).
+    #
+    # Measured across the corpus, the union newly covers three pids: formbook
+    # 8588, unclassified_25d18a2b 8988, unclassified_42b9c406 9560. quasarrat
+    # and warzonerat were already covered and their rule resolves and correctly
+    # does not fire -- an evaluated negative, not a gap.
+    #
+    # It does NOT fix every case. A buffer's target can exit before the memory
+    # image is taken, and then no pid list helps: salat's 3964 is absent from a
+    # dump holding 196 processes. Those stay unresolved, and unresolved is
+    # counted rather than dropped precisely so a missing dump never reads as
+    # "the bytes were identical" (#452, #460).
+    vad_pids = sorted(set(cape_injection_pids or []) | set(cape_buffer_pids or []))
+    if vad_pids and active_dump.exists():
         vad_dir = output_dir / "vol_vadinfo"
         vad_dir.mkdir(parents=True, exist_ok=True)
         print(f"    Running vadinfo --dump for {len(vad_pids)} injection target pid(s)...")
