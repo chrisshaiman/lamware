@@ -50,7 +50,7 @@ fail() {
 # -------------------------------------------------------------------------
 # Test 1: API health endpoint
 # -------------------------------------------------------------------------
-echo "[1/8] API health check..."
+echo "[1/9] API health check..."
 # $WG_URL, not $API_URL: #604 removed the public TLS listener, so the domain
 # resolves to an address nothing serves. Probing it measured DNS, not the API.
 HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/health")
@@ -63,7 +63,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
-echo "[2/8] Keycloak health check..."
+echo "[2/9] Keycloak health check..."
 KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
@@ -74,7 +74,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 3: Unauthenticated API access blocked
 # -------------------------------------------------------------------------
-echo "[3/8] Auth enforcement..."
+echo "[3/9] Auth enforcement..."
 UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/api/analyses")
 if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
     pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
@@ -85,7 +85,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
-echo "[4/8] Docs endpoint gated..."
+echo "[4/9] Docs endpoint gated..."
 # There are TWO gates since #529, and this checks both. Previously it checked
 # only the application one and asserted 404, so adding the network layer made a
 # correctly-hardened host fail:
@@ -120,7 +120,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
-echo "[5/8] TLS certificate check..."
+echo "[5/9] TLS certificate check..."
 # WireGuard address: TLS is no longer served publicly (#604). -servername keeps
 # the SNI as the real domain, which is what the certificate is issued for.
 CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ security_test_wg_address }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
@@ -140,7 +140,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
-echo "[6/8] HTTP redirect check..."
+echo "[6/9] HTTP redirect check..."
 REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
@@ -159,7 +159,7 @@ fi
 # Port 80 MUST stay public: certbot renews by webroot/HTTP-01, so Let's Encrypt
 # has to reach the challenge. Both halves are checked; removing the port-80
 # listener breaks renewal and would not show up for ~90 days.
-echo "[7/8] Public listener surface..."
+echo "[7/9] Public listener surface..."
 # NO `|| echo 000` here. curl's -w already prints 000 when the connection is
 # refused AND exits non-zero, so the fallback CONCATENATES: the first live run
 # of this check reported "000000", which matches neither branch and reported a
@@ -181,7 +181,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 8: Nuclei quick scan
 # -------------------------------------------------------------------------
-echo "[8/8] Nuclei misconfig scan..."
+echo "[8/9] Nuclei misconfig scan..."
 if [ -x "$NUCLEI" ]; then
     NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
     # $WG_URL, not $API_URL. After #604 the public address serves no TLS, and a
@@ -206,6 +206,60 @@ echo ""
 echo "========================================="
 echo "  Results: $PASSED passed, $FAILED failed"
 echo "========================================="
+
+# =============================================================================
+# Can the sandbox still reach the things it analyses?
+#
+# The checks above all probe the PUBLIC surface. Nothing checked the inward
+# path, and that gap cost a working day twice.
+#
+# #563 (2026-09-03): a `TAGS=hardening,kvm,frontend` deploy left the host unable
+# to reach its own guests. konstruktoid set `deny (outgoing)` with no rule for
+# the detonation network, and `roles/networking` -- which owns those rules --
+# was not in the tag list. A freshly built guest booted, took a DHCP lease,
+# reached the desktop, and answered nothing. Hours went into the image before
+# the host was suspected.
+#
+# 2026-09-19: the same mechanism, different route. CAPE could not reach the
+# guest agent, every detonation returned 0 processes and 0 API calls, and the
+# cause -- OUTPUT dropping to the detonation subnet -- took three detonations
+# and a packet-logging rule to find. #563 had already written it down.
+#
+# This is the assertion that issue asked for. A guest is usually shut off, so
+# the firewall PATH is checked rather than a live connection, and the live
+# connection is attempted only when a guest happens to be up.
+# =============================================================================
+echo "[9/9] Sandbox can reach its own guests..."
+DET_SUBNET="{{ security_test_detonation_subnet | default('192.168.100.0/24') }}"
+DET_BRIDGE="{{ security_test_detonation_bridge | default('virbr-det') }}"
+AGENT_PORT="{{ security_test_guest_agent_port | default('8000') }}"
+GUEST_IP="{{ security_test_guest_ip | default('192.168.100.10') }}"
+
+OUT_POLICY=$(sudo iptables -S OUTPUT 2>/dev/null | awk '/^-P OUTPUT/ {print $3}')
+DET_ACCEPT=$(sudo iptables -S 2>/dev/null | grep -cE "^-A .*-o ${DET_BRIDGE}.*-j ACCEPT")
+
+if [ "$OUT_POLICY" = "ACCEPT" ]; then
+    PATH_OK="policy ACCEPT"
+elif [ "${DET_ACCEPT:-0}" -gt 0 ]; then
+    PATH_OK="explicit ACCEPT to ${DET_BRIDGE}"
+else
+    PATH_OK=""
+fi
+
+if [ -z "$PATH_OK" ]; then
+    fail "OUTPUT policy is $OUT_POLICY with no ACCEPT to ${DET_BRIDGE} — the host cannot reach its own guests; CAPE will time out on guest init with 0 processes (#563)"
+else
+    # If a guest is actually up, prove it rather than infer it.
+    if sudo virsh list --state-running --name 2>/dev/null | grep -q .; then
+        if timeout 5 bash -c "echo > /dev/tcp/${GUEST_IP}/${AGENT_PORT}" 2>/dev/null; then
+            pass "guest agent reachable at ${GUEST_IP}:${AGENT_PORT} ($PATH_OK)"
+        else
+            fail "a guest is running but its agent at ${GUEST_IP}:${AGENT_PORT} is unreachable — analyses will time out on guest init (#563)"
+        fi
+    else
+        pass "firewall path to ${DET_BRIDGE} is open ($PATH_OK); no guest running to probe"
+    fi
+fi
 
 if [ "$FAILED" -gt 0 ]; then
     echo -e "\nFailures:$FAILURES"
