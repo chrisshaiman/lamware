@@ -497,8 +497,18 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                      "(cape_memory_dump=false), so there is no dump to analyse")
         # Pass Cape's injection PIDs to guide malfind analysis
         cape_injection_pids = report.get("cape", {}).get("injection_pids", [])
+        # The pids the correlation rule joins on, which come from a DIFFERENT
+        # CAPE source than injection_pids and need not overlap it at all — on
+        # 2026-09-19 they had no overlap and rule_shellcode_self_modified could
+        # not resolve a single address (#614).
+        cape_buffer_pids = sorted({
+            b.get("target_pid") for b in (report.get("cape", {}).get("injection_buffers") or [])
+            if b.get("target_pid")})
         if cape_injection_pids:
             log.info(f"  Cape identified injection PIDs: {cape_injection_pids}")
+        if set(cape_buffer_pids) - set(cape_injection_pids):
+            log.info(f"  Injection-buffer target PIDs not in that list: "
+                     f"{sorted(set(cape_buffer_pids) - set(cape_injection_pids))}")
 
         import signal
 
@@ -523,6 +533,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 malfind_benign_processes=MALFIND_BENIGN_PROCESSES,
                 get_cape_signatures_fn=get_cape_signatures,
                 cape_injection_pids=cape_injection_pids,
+                cape_buffer_pids=cape_buffer_pids,
                 # Only genuine injection buffers, not Cape's extracted payloads.
                 # This list holds both — "cape_injection" entries from
                 # injection_buffers and "cape_payload" entries from
