@@ -1,0 +1,16 @@
+Chain FORWARD (policy ACCEPT 0 packets, 0 bytes)
+num      pkts      bytes target     prot opt in     out     source               destination         
+1           0        0 CAPE_ACCEPTED_SEGMENTS  0    --  *      *       0.0.0.0/0            0.0.0.0/0            /* CAPE-rooter */
+2           0        0 CAPE_REJECTED_SEGMENTS  0    --  *      *       0.0.0.0/0            0.0.0.0/0            /* CAPE-rooter */
+3           0        0 CNI-FORWARD  0    --  *      *       0.0.0.0/0            0.0.0.0/0            /* CNI firewall plugin rules */
+4           0        0 DROP       0    --  virbr-det enp3s0f0  0.0.0.0/0            0.0.0.0/0            /* Cape detonation air-gap: no VM internet egress */
+5           0        0 DROP       0    --  virbr-det wg0     0.0.0.0/0            0.0.0.0/0            /* Cape detonation air-gap: no VM access to management VPN */
+6           0        0 LIBVIRT_FWX  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+7           0        0 LIBVIRT_FWI  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+8           0        0 LIBVIRT_FWO  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+9           0        0 ufw-before-logging-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+10          0        0 ufw-before-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+11          0        0 ufw-after-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+12          0        0 ufw-after-logging-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+13          0        0 ufw-reject-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           
+14          0        0 ufw-track-forward  0    --  *      *       0.0.0.0/0            0.0.0.0/0           

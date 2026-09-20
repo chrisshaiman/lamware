@@ -327,8 +327,19 @@ AIRGAP_FAIL=""
 for fam in iptables ip6tables; do
     for pair in "${MGMT_IF}:internet" "wg0:management"; do
         oif="${pair%%:*}"; label="${pair##*:}"
-        line=$(sudo "$fam" -L FORWARD -n --line-numbers 2>/dev/null \
-               | awk -v o="$oif" '$0 ~ ("virbr-det") && $0 ~ (o) {print $1, $2; exit}')
+        # -v is REQUIRED: without it iptables omits the in/out interface
+        # columns entirely, so nothing can match on virbr-det or the outbound
+        # NIC. The first version of this check used `-L -n --line-numbers` and
+        # reported "no rule for virbr-det" on a host whose air-gap rules were
+        # present and correct -- a false FAILURE, which is its own kind of
+        # dangerous: it trains the operator to distrust the alarm.
+        #
+        # Columns with -v -n -x --line-numbers:
+        #   1:num 2:pkts 3:bytes 4:target 5:prot 6:opt 7:in 8:out 9:src 10:dst
+        # Matched positionally rather than by substring, so a comment mentioning
+        # an interface name cannot satisfy it.
+        line=$(sudo "$fam" -L FORWARD -v -n -x --line-numbers 2>/dev/null \
+               | awk -v o="$oif" 'NR>2 && $7 == "virbr-det" && $8 == o {print $1, $4; exit}')
         num="${line%% *}"; tgt="${line##* }"
         if [ -z "$line" ]; then
             AIRGAP_FAIL="${AIRGAP_FAIL}${AIRGAP_FAIL:+; }$fam has no rule for virbr-det -> $label ($oif)"
