@@ -30,13 +30,20 @@ DECISIONS = (ROOT / "docs" / "DECISIONS.md").read_text()
 SECURITY_MODEL = (ROOT / "docs" / "SECURITY_MODEL.md").read_text()
 
 
-def _containment_check() -> str:
-    start = SMOKE.index("Sandbox can reach its own guests")
-    return SMOKE[start:start + 2000]
+def _reachability_check() -> str:
+    """The PREREQUISITE check — the host being able to reach its own guests.
+
+    Deliberately not called a containment check: it asserts the sandbox WORKS,
+    not that something is impossible. The containment assertions live in
+    test_security_test_asserts_containment.py.
+    """
+    start = SMOKE.index("PREREQUISITE: sandbox can reach its own guests")
+    nxt = SMOKE.find('echo "[', start + 10)
+    return SMOKE[start:nxt if nxt > 0 else len(SMOKE)]
 
 
-def test_the_containment_check_exists():
-    assert "Sandbox can reach its own guests" in SMOKE, (
+def test_the_reachability_check_exists():
+    assert "sandbox can reach its own guests" in SMOKE, (
         "nothing asserts the host can reach the guests it analyses; that gap "
         "cost a day on 2026-09-03 and again on 2026-09-19")
 
@@ -44,7 +51,7 @@ def test_the_containment_check_exists():
 def test_it_fails_when_output_drops_to_the_detonation_bridge():
     """The exact condition from #563: `deny (outgoing)` with no rule for the
     detonation network."""
-    body = _containment_check()
+    body = _reachability_check()
     assert "OUT_POLICY" in body and "DET_ACCEPT" in body, (
         "the check does not inspect the OUTPUT policy or an ACCEPT to the bridge")
     assert re.search(r"fail\s+\"OUTPUT policy is", body), (
@@ -54,7 +61,7 @@ def test_it_fails_when_output_drops_to_the_detonation_bridge():
 def test_it_probes_a_live_guest_when_one_exists():
     """Inferring from rules is the fallback. When a guest is actually up, the
     connection is the better evidence — and it is what CAPE itself does."""
-    body = _containment_check()
+    body = _reachability_check()
     assert "virsh list --state-running" in body
     assert "/dev/tcp/" in body, "no live probe of the agent port"
 
@@ -62,16 +69,26 @@ def test_it_probes_a_live_guest_when_one_exists():
 def test_it_does_not_fail_merely_because_no_guest_is_running():
     """Guests are shut off between analyses. A check that fails then would fire
     on every healthy host, and a check that always fires gets ignored."""
-    body = _containment_check()
+    body = _reachability_check()
     assert re.search(r"pass\s+\"firewall path to", body), (
         "with no guest running the check must pass on the path, not fail")
 
 
+def test_the_reachability_check_is_labelled_as_a_prerequisite():
+    """It is a functional health check, not a containment property, and it sits
+    in a suite whose job is asserting what must be impossible. Labelling it
+    keeps the distinction visible to whoever reads the output."""
+    assert "PREREQUISITE" in SMOKE, (
+        "the reachability check reads like a security assertion; it is not one")
+
+
 def test_the_numbering_is_consistent():
     """A renumbering miss reads as a silently skipped test."""
-    nums = sorted({int(m) for m in re.findall(r"\[(\d)/9\]", SMOKE)})
-    assert nums == list(range(1, 10)), f"checks numbered {nums}, expected 1..9"
-    assert "/8]" not in SMOKE, "a check still claims to be one of eight"
+    totals = {int(t) for _, t in re.findall(r"\[(\d+)/(\d+)\]", SMOKE)}
+    assert len(totals) == 1, f"mixed totals in step labels: {totals}"
+    total = totals.pop()
+    nums = sorted({int(n) for n, _ in re.findall(r"\[(\d+)/(\d+)\]", SMOKE)})
+    assert nums == list(range(1, total + 1)), f"checks numbered {nums}, expected 1..{total}"
 
 
 # --- the decision itself has to be findable --------------------------------
