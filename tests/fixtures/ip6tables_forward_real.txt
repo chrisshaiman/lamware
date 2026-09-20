@@ -1,0 +1,13 @@
+Chain FORWARD (policy ACCEPT 0 packets, 0 bytes)
+num      pkts      bytes target     prot opt in     out     source               destination         
+1           0        0 DROP       0    --  virbr-det enp3s0f0  ::/0                 ::/0                 /* Cape detonation air-gap (IPv6): no VM internet egress */
+2           0        0 DROP       0    --  virbr-det wg0     ::/0                 ::/0                 /* Cape detonation air-gap (IPv6): no VM access to management VPN */
+3           0        0 LIBVIRT_FWX  0    --  *      *       ::/0                 ::/0                
+4           0        0 LIBVIRT_FWI  0    --  *      *       ::/0                 ::/0                
+5           0        0 LIBVIRT_FWO  0    --  *      *       ::/0                 ::/0                
+6           0        0 ufw6-before-logging-forward  0    --  *      *       ::/0                 ::/0                
+7           0        0 ufw6-before-forward  0    --  *      *       ::/0                 ::/0                
+8           0        0 ufw6-after-forward  0    --  *      *       ::/0                 ::/0                
+9           0        0 ufw6-after-logging-forward  0    --  *      *       ::/0                 ::/0                
+10          0        0 ufw6-reject-forward  0    --  *      *       ::/0                 ::/0                
+11          0        0 ufw6-track-forward  0    --  *      *       ::/0                 ::/0                
