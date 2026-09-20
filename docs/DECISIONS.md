@@ -26,6 +26,7 @@ these describe an AWS data plane that no longer exists.
 | [004](#adr-004-wireguard-scope-limited-to-admin-access-only) | WireGuard scope limited to admin access | Live (revised 2026-04-18) |
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
+| [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live |
 
 ### Detonation environment
 
@@ -836,3 +837,77 @@ them.
   `/opt/CAPEv2/storage/analyses/<task>/dropped`, and the investigate tools already read
   them. Running Ghidra over those rather than the packed original attacks the root cause
   of both this ADR and #314.
+
+---
+
+## ADR-020: One firewall mechanism — iptables-persistent, not UFW
+
+**Status:** Live (2026-09-19)
+**Supersedes:** the implicit arrangement where both were installed
+**Closes:** #563 (filed 2026-09-03, which recommended exactly this)
+
+### Decision
+
+This host uses **iptables-persistent only**. `roles/hardening` passes
+`manage_ufw: false` to konstruktoid and purges the `ufw` package.
+
+### Why not both
+
+They are mutually exclusive by package metadata — `ufw` declares
+`Breaks: iptables-persistent, netfilter-persistent`. Installing either removes
+the other. Because `hardening` installs ufw and `networking` installs
+iptables-persistent, **every deploy picked a winner by role order**, and that
+decided whether the host's controls worked. Nobody chose it and nothing
+reported it.
+
+### What ufw broke, measured
+
+All on 2026-09-19, on the live host, with every existing check green:
+
+| control | behaviour with ufw installed |
+|---|---|
+| pipeline egress | DROP present with **0 packets** while uid 997 reached `1.1.1.1:443`, `1.1.1.1:53`, `127.0.0.1:27017`, `127.0.0.1:4000` |
+| host → guest agent | nothing accepted NEW outbound to `virbr-det`; CAPE hit *"guest initialization hit the critical timeout"*, **0 processes, 0 API calls** |
+| CAPE web UI | listening on `10.200.0.1:8000` with no inbound rule at all |
+
+The mechanism is ordering. ufw inserts its chains at the top of `INPUT`,
+`OUTPUT` and `FORWARD`; `-o lo -j ACCEPT` and `ufw-user-output` (22, 53, 80,
+123, 443, 853, 4460 **to any destination**, from konstruktoid's
+`ufw_outgoing_traffic` default) both terminate traversal. Anything appended
+below is unreachable.
+
+### Why iptables-persistent wins on this host specifically
+
+The air-gap DROPs must be evaluated **before** anything can accept. They sit at
+`FORWARD` positions 4–5, above every other chain. ufw's equivalent slot,
+`ufw-before-forward`, is position 10 — **below `LIBVIRT_FWO`**, which libvirt
+rewrites on every network restart. Choosing ufw means the most critical control
+in the project depends on config we do not own.
+
+`rules.v4` also persists `INPUT`, `OUTPUT` **and** `FORWARD` together, which is
+what the raw rules need and what before.rules could not give them.
+
+### What this gives up, and does not solve
+
+ufw provided **default-deny inbound**. `/etc/iptables/rules.v4` carries
+`:INPUT ACCEPT`, so any service that listens is reachable by whatever can route
+to it — which is exactly how the CAPE UI was exposed without a rule. **That
+property is currently unpaid for.** It is not addressed by this ADR and must not
+be read as handled.
+
+### Why this took sixteen days
+
+#563 was filed 2026-09-03 with the symptom, the cause, the packet counters, and
+this recommendation verbatim — *"the only one that removes the class of bug
+rather than patching instances"*. It was then rediscovered from first principles
+on 2026-09-19 at the cost of a working Saturday, three detonations and two false
+urgent pages.
+
+Prose did not prevent it. What prevents it now is executable: the checks in
+`tests/test_hardening_ufw_inbound.py` fail if `manage_ufw` is true, if ufw is
+not purged, or if persistence is dropped — and `make security-test` now asserts
+the host can reach its own guest agent, which is the assertion #563 asked for
+and is what turns a four-hour diagnosis into a red check.
+
+**If you are reading this while considering ufw: the tests will stop you, and
+they are right to.**
