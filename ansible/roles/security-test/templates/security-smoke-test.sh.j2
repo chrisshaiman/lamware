@@ -199,14 +199,6 @@ else
     fail "Nuclei binary not found at $NUCLEI"
 fi
 
-# -------------------------------------------------------------------------
-# Summary + ntfy alert on failure
-# -------------------------------------------------------------------------
-echo ""
-echo "========================================="
-echo "  Results: $PASSED passed, $FAILED failed"
-echo "========================================="
-
 # =============================================================================
 # Can the sandbox still reach the things it analyses?
 #
@@ -353,6 +345,23 @@ if [ -n "$AIRGAP_FAIL" ]; then
 else
     pass "air gap: first matching FORWARD rule for virbr-det is DROP, both families, both paths"
 fi
+
+# -------------------------------------------------------------------------
+# Summary + ntfy alert on failure
+#
+# This MUST stay below the last check. It used to sit after the nuclei scan,
+# so it printed "Results: 8 passed, 0 failed" while the four containment
+# checks -- the ones that actually assert the security boundary -- had not run
+# yet. A reader seeing a green total had no way to tell it was a partial tally.
+#
+# (Deliberately no step label in this comment: the label regex in
+# tests/test_security_smoke_targets_wireguard.py reads the whole rendered file
+# and a number in prose is indistinguishable from a real step.)
+# -------------------------------------------------------------------------
+echo ""
+echo "========================================="
+echo "  Results: $PASSED passed, $FAILED failed"
+echo "========================================="
 
 if [ "$FAILED" -gt 0 ]; then
     echo -e "\nFailures:$FAILURES"

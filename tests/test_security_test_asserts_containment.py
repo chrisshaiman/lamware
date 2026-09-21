@@ -101,3 +101,34 @@ def test_containment_checks_come_after_the_service_checks_but_all_run():
                   "CONTAINMENT: pipeline user is held to its localhost allowlist",
                   "CONTAINMENT: detonation network cannot leave the box"):
         assert SMOKE.count(label) == 1, f"{label!r} appears {SMOKE.count(label)} times"
+
+
+def test_the_totals_line_counts_every_check():
+    """The summary used to sit after [8/12] and printed "Results: 8 passed,
+    0 failed" while the four containment checks — the only ones that assert the
+    security boundary — had not run yet.
+
+    A partial tally is worse than no tally: the operator's eye goes to
+    "0 failed" and stops. The header says out of 12, so the total has to be out
+    of 12 as well, which means the summary comes after the last check.
+    """
+    totals = SMOKE.index('echo "  Results: $PASSED passed, $FAILED failed"')
+    trailing = [m.group(0) for m in re.finditer(r'echo "\[(\d+)/12\]', SMOKE[totals:])]
+    assert not trailing, (
+        f"{len(trailing)} check(s) run after the totals line — it would report a "
+        f"partial count: {trailing}")
+
+
+def test_every_declared_check_number_is_present_and_counted():
+    """Guards the denominator itself. Renumbering checks to /12 while only
+    emitting 8 of them would satisfy the test above vacuously."""
+    numbers = sorted(int(n) for n in re.findall(r'echo "\[(\d+)/12\]', SMOKE))
+    assert numbers == list(range(1, 13)), f"checks present: {numbers}"
+
+
+def test_the_ntfy_summaries_are_sent_after_the_totals():
+    """The pass/fail notification quotes $PASSED. Sent early it would report the
+    same partial count to the phone, where nobody can see what was skipped."""
+    totals = SMOKE.index('echo "  Results: $PASSED passed, $FAILED failed"')
+    for marker in ("lamware security test FAILED", "lamware security test passed"):
+        assert SMOKE.index(marker) > totals, f"{marker!r} is sent before the totals"
