@@ -10,7 +10,12 @@ zeroed 5 of 7 local cells in a 2-hour sweep; this recovers that in seconds.
 import json
 from pathlib import Path
 
-from llm_ab_re import TOOL_LAYER_BROKEN_THRESHOLD, analysis_completed, is_tool_error
+from llm_ab_re import (
+    TOOL_LAYER_BROKEN_THRESHOLD,
+    analysis_completed,
+    is_tool_error,
+    is_transport_tool_error,
+)
 
 from lamware_eval.arms import resolve_arm
 from lamware_eval.corpus import load_corpus
@@ -54,12 +59,19 @@ def _tool_call_metrics(arm_dir: Path) -> dict:
             break
     if not log:
         return {"tool_calls_logged": 0, "tool_call_errors": 0,
-                "tool_call_error_rate": 0.0, "tool_layer_broken": False}
+                "tool_call_error_rate": 0.0, "tool_transport_errors": 0,
+                "tool_transport_error_rate": 0.0, "tool_layer_broken": False}
     errors = sum(1 for e in log if is_tool_error(e))
+    # Same split as the live path, imported rather than restated: the gate is
+    # about a dead instrument, and "Function not found" is an answer (#631).
+    transport = sum(1 for e in log if is_transport_tool_error(e))
     rate = round(errors / len(log), 3)
+    transport_rate = round(transport / len(log), 3)
     return {"tool_calls_logged": len(log), "tool_call_errors": errors,
             "tool_call_error_rate": rate,
-            "tool_layer_broken": rate >= TOOL_LAYER_BROKEN_THRESHOLD}
+            "tool_transport_errors": transport,
+            "tool_transport_error_rate": transport_rate,
+            "tool_layer_broken": transport_rate >= TOOL_LAYER_BROKEN_THRESHOLD}
 
 
 def _cost(model: str, usage: dict) -> float:

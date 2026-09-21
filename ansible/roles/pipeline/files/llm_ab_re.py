@@ -81,6 +81,49 @@ def is_tool_error(entry: dict) -> bool:
     return isinstance(result, dict) and bool(result.get("error"))
 
 
+# Two very different things reach the log as `result.error`, and counting both
+# toward `tool_layer_broken` disqualifies a cell for the model's own choices:
+#
+#   realpath: .../project: No such file or directory   the tool layer is DEAD
+#   Function not found: main                           it ran and answered "no"
+#
+# Measured across every persisted cell on the sandbox (2026-09-20): 18 of the
+# first shape, 18 of the second (14 "Function not found", 4 "Memory read
+# failed"). A model guessing `main`, `WinMain` and `_DllMainCRTStartup` on a
+# shellcode blob that has none of them produced a 0.6 rate from a WORKING tool
+# layer, tripping the 0.5 threshold and voiding the cell — measuring the model
+# and calling it infrastructure (#631).
+#
+# An unrecognised error shape counts as TRANSPORT. This gate exists to refuse
+# cells whose instrument was broken, so an unknown failure must fail safe:
+# wrongly voiding a cell costs one re-run, wrongly trusting one corrupts a
+# result.
+_SEMANTIC_TOOL_ERRORS = (
+    "function not found",
+    "memory read failed",
+)
+
+
+def is_semantic_tool_error(entry: dict) -> bool:
+    """Did the tool run correctly and return a negative ANSWER?
+
+    That is the model asking for something that is not there — behaviour under
+    measurement, not an instrument fault.
+    """
+    if not is_tool_error(entry):
+        return False
+    result = entry.get("result")
+    text = str((result or {}).get("error") if isinstance(result, dict) else "")
+    text = f"{text} {entry.get('error') or ''}".lower()
+    return any(marker in text for marker in _SEMANTIC_TOOL_ERRORS)
+
+
+def is_transport_tool_error(entry: dict) -> bool:
+    """Did the call fail to reach a working tool at all? This is what
+    `tool_layer_broken` must be computed from."""
+    return is_tool_error(entry) and not is_semantic_tool_error(entry)
+
+
 def extract_metrics(arm_result: dict) -> dict:
     """Mechanical reliability metrics for one arm. Tool-call errors (the
     router translation-fidelity signal) come from the audit tool_call_log file."""
@@ -88,20 +131,24 @@ def extract_metrics(arm_result: dict) -> dict:
     err = arm_result.get("error") or analysis.get("error")
     completed = analysis_completed(arm_result)
 
-    logged = errors = 0
+    logged = errors = transport_errors = 0
     audit_path = (arm_result.get("audit") or {}).get("tool_call_log")
     if audit_path and Path(audit_path).exists():
         log = json.loads(Path(audit_path).read_text())
         logged = len(log)
         errors = sum(1 for e in log if is_tool_error(e))
+        transport_errors = sum(1 for e in log if is_transport_tool_error(e))
 
     error_rate = round(errors / logged, 3) if logged else 0.0
+    transport_rate = round(transport_errors / logged, 3) if logged else 0.0
     return {
         "completed": completed,
         # A cell whose tool layer was dead says nothing about the model. Scored
         # as an ordinary zero-claim result, it contributed a misleading 0/0 to
         # both arms of an A/B as though depth had been fairly tested on it.
-        "tool_layer_broken": bool(logged) and error_rate >= TOOL_LAYER_BROKEN_THRESHOLD,
+        # Computed from TRANSPORT errors only. A model asking for a function
+        # that does not exist is the measurement, not a dead instrument.
+        "tool_layer_broken": bool(logged) and transport_rate >= TOOL_LAYER_BROKEN_THRESHOLD,
         # A distinct outcome from both success and error: the run finished, the
         # model answered, and the answer could not be parsed. Folding it into
         # either loses the signal (#380).
@@ -110,6 +157,10 @@ def extract_metrics(arm_result: dict) -> dict:
         "tool_calls_logged": logged,
         "tool_call_errors": errors,
         "tool_call_error_rate": error_rate,
+        # Kept separate so the router translation-fidelity signal (every failed
+        # call, semantic ones included) survives the split above.
+        "tool_transport_errors": transport_errors,
+        "tool_transport_error_rate": transport_rate,
         "duration_seconds": arm_result.get("duration_seconds"),
         "model_final": arm_result.get("model_final", ""),
         "family": analysis.get("family") or analysis.get("family_guess", ""),
