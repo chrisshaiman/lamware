@@ -29,8 +29,12 @@ if [ -z "$ARMS" ]; then
   cat >&2 <<'USAGE'
 usage: make eval ARMS=<csv> [CORPUS=...] [LABEL=...] [SAMPLES=<sha-prefix-or-family,...>]
 
-  e.g. make eval ARMS=qwen@30 LABEL=baseline
-       make eval ARMS=qwen@30 SAMPLES=salat        # one sample, for a smoke check
+  e.g. make eval ARMS=qwen@10,qwen@10+corr LABEL=baseline
+       make eval ARMS=qwen@10 SAMPLES=salat        # one sample, for a smoke check
+
+qwen@10 is the working arm. qwen@30 is a MEASUREMENT arm for the open depth
+question (arms.py:47: "do not promote this over qwen@10") -- these examples
+recommended it until 2026-09-20, which is how a pilot got run on the wrong one.
 
 Arms come from lamware_eval.arms._REGISTRY; every arm's model must also be
 registered in the LiteLLM config (enforced by test_every_arm_model_has_a_litellm_entry).

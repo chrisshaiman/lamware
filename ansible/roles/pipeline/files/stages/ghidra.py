@@ -15,6 +15,7 @@ License: Apache 2.0
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -178,6 +179,43 @@ def run_ghidra_on_file(pe_path: Path, output_dir: Path,
                 "raw": result.stdout[:500]}
 
 
+# Volatility prints "N/A" for a VAD whose Start VPN it cannot resolve, and that
+# string used to be formatted straight into a directory name:
+#
+#     .../shellcode_0_N/A/project
+#
+# The slash invents a directory level, so the project was written to a path no
+# consumer could reconstruct. It reached the eval corpus in three of sixteen
+# samples, where the agent's every tool call then failed with
+# `realpath: .../shellcode_0_N/A/project: No such file or directory` (#631).
+#
+# An address we cannot parse is named `unknown` rather than being coerced into
+# something address-shaped: a wrong-looking-but-valid name would put two
+# unrelated candidates in one directory.
+# \Z, not $: Python's $ also matches before a trailing newline, so "400000\n"
+# would validate and put a newline in a directory name.
+_ADDR_RE = re.compile(r"\A(?:0[xX])?([0-9a-fA-F]+)\Z")
+
+
+def _addr_token(value: object) -> str:
+    """A filesystem-safe directory token for a candidate's base address."""
+    m = _ADDR_RE.match(str(value).strip()) if value is not None else None
+    return m.group(1).lower() if m else "unknown"
+
+
+def _path_token(value: object) -> str:
+    """A filesystem-safe directory token for any other path component.
+
+    Callers pass a REQUIRED key (`candidate["pid"]`, not `.get`): a candidate
+    with no pid is a programming error and must raise, not become a directory
+    called "None".
+    """
+    token = re.sub(r"[^A-Za-z0-9._-]", "_", str(value).strip())
+    # "." and ".." survive the character filter and are not names; they would
+    # resolve the project to the parent directory.
+    return "unknown" if token.strip(".") == "" else token
+
+
 def run_ghidra_shellcode(candidate: dict, output_dir: Path,
                          ghidra_cmd: str) -> dict:
     """Run artifact extraction and optionally Ghidra on a shellcode candidate.
@@ -191,7 +229,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
     if isinstance(base_addr, int):
         base_addr = f"0x{base_addr:x}"
     source = candidate.get("source", "malfind_injection")
-    sc_output = output_dir / f"shellcode_{candidate['pid']}_{str(base_addr).replace('0x', '')}"
+    sc_output = output_dir / f"shellcode_{_path_token(candidate['pid'])}_{_addr_token(base_addr)}"
 
     # Use pre-extracted artifacts from Cape, or extract from dump file
     artifacts = candidate.get("shellcode_artifacts")
