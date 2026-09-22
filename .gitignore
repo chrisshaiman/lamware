@@ -34,8 +34,12 @@ ansible/vars/secrets.yml
 packer/http/user-data
 !packer/http/user-data.example
 
-# Claude Code project context (developer-specific, not for public repo)
-CLAUDE.md
+# Claude Code project context. The ROOT file is developer-private; the shared
+# working rules live in .claude/CLAUDE.md and are tracked. Anchored to the root so
+# the pattern stops matching at every depth, which is what kept the tracked copy
+# out. CLAUDE.local.md is Claude Code's own name for the private layer.
+/CLAUDE.md
+CLAUDE.local.md
 
 # Secrets / local config
 .env

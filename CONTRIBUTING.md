@@ -51,10 +51,14 @@ cd frontend && npm ci && npm run build
   for docs and config tweaks.
 - CI must be green: ruff, pytest (shared/pipeline/api), ansible-lint,
   Terraform validate, and the security scanning job.
+- Anything Ansible deploys is deployed **from the PR branch** before merge, and
+  the PR body carries the `Provenance commit:` line that `make merge-check`
+  prints. The `PR evidence` check fails otherwise. Docs-only PRs are exempt.
+  The rules and the reasoning are in `.claude/CLAUDE.md`; they apply to humans too.
 - Match the existing style: type hints, docstrings, structured logging.
   Comments explain *why*, not *what*.
 - Any code that calls the Claude/Anthropic API must capture and propagate
-  token usage (see the "LLM API cost tracking" section in `CLAUDE.md`).
+  token usage (see the "LLM API cost tracking" section in `.claude/CLAUDE.md`).
 - Tests are expected with behavior changes. Pure functions are the norm in
   the pipeline — if your change is hard to test, that is usually a sign the
   I/O and logic want separating.
