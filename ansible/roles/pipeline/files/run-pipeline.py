@@ -276,7 +276,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         log.info(f"  Tags: {cape_tags}")
         if cape_package:
             log.info(f"  Package: {cape_package}")
-        log.info(f"  Filename: {cape_filename}")
+        # BOTH names, because they now differ: the guest sees a sha256 stem so
+        # our curation label cannot reach the behavioural evidence (#634), while
+        # the analyst-facing name stays in report["sample_name"].
+        _shown = original_name or sample_path.name
+        log.info(f"  Filename (analyst): {_shown}")
+        log.info(f"  Filename (guest)  : {cape_filename}")
 
     # Stage 2: Cape — skip for non-Windows binaries (ELF, Mach-O)
     _triage_mime = report.get("triage", {}).get("file_mime", "")

@@ -6,6 +6,7 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import hashlib
 import json
 import os
 import re
@@ -80,26 +81,68 @@ def cape_headers() -> dict:
     return {"Authorization": f"Token {CAPE_API_KEY}"}
 
 
-def derive_filename(sample_path: Path, package: str, original_name: str = "") -> str:
-    """Derive a meaningful filename for Cape submission.
+_EXT_MAP = {
+    "exe": ".exe", "dll": ".dll", "ps1": ".ps1", "bat": ".bat",
+    "vbs": ".vbs", "js": ".js", "doc": ".doc", "xls": ".xls",
+    "pdf": ".pdf", "zip": ".zip", "rar": ".rar", "jar": ".jar",
+    "python": ".py",
+}
 
-    Priority: original_name (from sample-feeder) > sample_path name with
-    triage-derived extension > sample_path name as-is.
+
+def derive_extension(sample_path: Path, package: str, original_name: str = "") -> str:
+    """The extension Cape and the guest need, from whichever source has one.
+
+    The extension is NOT cosmetic: Cape picks its analysis package from it, and
+    Windows decides how to launch the file by it. It is carried through the
+    rename below for that reason.
     """
+    for candidate in (original_name, sample_path.name):
+        if candidate and "." in candidate:
+            return Path(candidate).suffix
+    return _EXT_MAP.get(package, "")
+
+
+def derive_filename(sample_path: Path, package: str, original_name: str = "",
+                    neutral: bool = True) -> str:
+    """The filename the GUEST sees. Content-derived by default (#634).
+
+    Samples used to be submitted under their curation name — `salat.exe`,
+    `WarmCookie_36b43e83.exe` — and the guest wrote that name into its own
+    process command lines and module paths:
+
+        "C:\\WINDOWS\\sysnative\\regsvr32.exe" C:\\WINDOWS\\TEMP\\WarmCookie_36b43e83.exe.dll
+
+    So every behavioural artefact carried our own label for the sample, and an
+    arm shown that evidence was shown the answer. Five of sixteen corpus
+    samples leaked their family this way. Technique recall is scored against a
+    HELD-OUT key (#491); a model told the family can recall that family's known
+    TTPs from training instead of deriving them, and nothing downstream can
+    tell the difference — the leaked name really is in the evidence, so a claim
+    citing it is genuinely grounded.
+
+    A sha256 stem removes the label without removing information the malware
+    could legitimately use: these names were ours, not the sample's own
+    distribution name. The extension is preserved because Cape's package
+    selection and the guest's launch behaviour both depend on it.
+
+    KNOWN TRADE-OFF: a sample that checks its own filename will behave
+    differently under any rename. That is true of the old behaviour too — it
+    checked against OUR invented name rather than its real one — so this does
+    not lose fidelity we had. `original_name` is still recorded in the report
+    as `sample_name` for the analyst; only the guest's view changes.
+
+    Pass neutral=False to submit under the original name, for the case where
+    the name is known to be behaviourally load-bearing.
+    """
+    ext = derive_extension(sample_path, package, original_name)
+    if neutral:
+        digest = hashlib.sha256(sample_path.read_bytes()).hexdigest()
+        return f"{digest}{ext}"
     if original_name:
         return original_name
     name = sample_path.name
-    if "." not in name and package:
-        # No extension — append one from the detected package
-        ext_map = {
-            "exe": ".exe", "dll": ".dll", "ps1": ".ps1", "bat": ".bat",
-            "vbs": ".vbs", "js": ".js", "doc": ".doc", "xls": ".xls",
-            "pdf": ".pdf", "zip": ".zip", "rar": ".rar", "jar": ".jar",
-            "python": ".py",
-        }
-        ext = ext_map.get(package, "")
-        if ext:
-            name = f"{name}{ext}"
+    if "." not in name and ext:
+        name = f"{name}{ext}"
     return name
 
 
