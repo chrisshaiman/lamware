@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
+.PHONY: provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -81,6 +81,7 @@ help:
 	@echo "  make validate             Validate Packer + Terraform configs"
 	@echo "  make deploy TAGS=api      Deploy specific roles + run security tests"
 	@echo "  make security-test        Run post-deploy security smoke tests only"
+	@echo "  make merge-check          Pre-merge gate: host runs this branch HEAD + security tests"
 	@echo "  make clean                Remove local build artifacts"
 	@echo ""
 	@echo "  First-time setup order:"
@@ -569,6 +570,60 @@ provenance:
 		echo "    by a later deploy from main, silently."; \
 		exit 1; \
 	fi
+
+# -----------------------------------------------------------------------------
+# merge-check — is the branch I am about to merge the code that is running?
+# -----------------------------------------------------------------------------
+# The pre-merge deploy gate (.claude/CLAUDE.md §4). Through #635 the sequence was merge,
+# deploy from main, watch the deploy fail, open the next PR: the one test that
+# could see the failure ran after the irreversible step. This target is that test
+# moved in front of the merge. Run it from the PR branch after `make deploy`:
+#
+#   git checkout <pr-branch>
+#   make deploy TAGS=<roles the PR touches>
+#   make merge-check
+#
+# It refuses on main, on a dirty tree, and when the host's provenance marker does
+# not name this exact commit AND this branch (a stale or diverged host is what
+# `make provenance` already catches; a matching sha deployed from a dirty tree is
+# what it only warns about, and here that is a refusal). Then it runs the
+# post-deploy security tests. The last line it prints is the one the PR body must
+# carry — `.github/workflows/pr-evidence.yml` compares it to the PR head.
+merge-check:
+	@echo "==> Merge check"
+	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$BRANCH" = "main" ]; then \
+		echo "    REFUSED: you are on main. Check out the PR branch and deploy from it."; \
+		exit 1; \
+	fi; \
+	if [ -n "$$(git status --porcelain)" ]; then \
+		echo "    REFUSED: the working tree is dirty. Commit or stash first — the host must"; \
+		echo "    run bytes that match a commit, or the evidence names nothing."; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory provenance
+	@REMOTE=$$(ssh $(ANSIBLE_HOST_ALIAS) 'cat /opt/lamware/deploy-provenance.json' 2>/dev/null); \
+	DEPLOYED_BRANCH=$$(echo "$$REMOTE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("branch",""))'); \
+	DIRTY=$$(echo "$$REMOTE" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("dirty",""))'); \
+	BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$DIRTY" = "True" ]; then \
+		echo "    REFUSED: the host was deployed from a DIRTY tree. Commit, redeploy, re-run."; \
+		exit 1; \
+	fi; \
+	if [ "$$DEPLOYED_BRANCH" != "$$BRANCH" ]; then \
+		echo "    REFUSED: the host was deployed from branch '$$DEPLOYED_BRANCH', you are on '$$BRANCH'."; \
+		echo "    Same commit on a different branch name is not the PR under review."; \
+		exit 1; \
+	fi
+	@$(MAKE) --no-print-directory security-test
+	@echo ""
+	@echo "==> Merge check passed. Paste the following under 'Host evidence' in the PR:"
+	@echo ""
+	@echo "    Provenance commit: $$(git rev-parse HEAD)"
+	@echo "    Branch:            $$(git rev-parse --abbrev-ref HEAD)"
+	@echo "    Verified at:       $$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	@echo ""
+	@echo "    Every push moves the head. Redeploy and re-run after each one."
 
 # Is a SPECIFIC commit live? `make provenance-has COMMIT=<sha>`
 provenance-has:

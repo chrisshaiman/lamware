@@ -1,0 +1,46 @@
+name: PR evidence
+
+# Refuses to let a PR merge until it has been deployed from its own branch.
+# See .claude/CLAUDE.md §4 and scripts/pr_evidence_check.py for why. Make this check
+# required in branch protection; without that it is advisory.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: Deployed from branch before merge
+    runs-on: ubuntu-latest
+    # Drafts are still being worked on. Dependabot bumps are verified by the
+    # frontend build job and cannot deploy anything; exempting them is a stated
+    # hole, not an accident.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: List the files this PR changes
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          git diff --name-only "origin/${{ github.event.pull_request.base.ref }}...HEAD" \
+            > /tmp/changed-files.txt
+          echo "changed files:"; sed 's/^/  /' /tmp/changed-files.txt
+
+      - name: Check the body cites a deploy of this head
+        # The body is untrusted text from whoever opened the PR. It reaches the
+        # script through the environment only — never interpolated into a run:
+        # line, where a crafted body would become shell.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 scripts/pr_evidence_check.py \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --changed-files /tmp/changed-files.txt
