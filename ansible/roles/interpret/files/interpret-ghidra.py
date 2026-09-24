@@ -890,14 +890,17 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "List functions in the binary. Optionally filter by wildcard pattern "
             "(* and ? supported, case-insensitive). Returns function names, "
-            "addresses, and incoming xref counts."
+            "addresses, and incoming xref counts. Results are capped: when "
+            "`truncated` is true you have seen `count` of `total_count` matches, "
+            "so say 'at least N' rather than 'N', and narrow with a filter before "
+            "concluding something is absent."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "filter": {
                     "type": "string",
-                    "description": "Wildcard filter pattern (e.g. '*crypt*', 'Ws2*'). Omit to list all.",
+                    "description": "Wildcard filter pattern (e.g. '*crypt*', 'Ws2*'). Omit to list from the start of the binary — NOT to list all: the result is still capped, and `truncated` says whether it was.",
                 },
             },
             "required": [],

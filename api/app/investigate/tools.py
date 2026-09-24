@@ -210,7 +210,10 @@ TOOL_DEFINITIONS = [
         "description": (
             "List functions in the binary, with optional wildcard filter "
             "(e.g., *crypt*). Returns names decompile_function accepts — call this "
-            "first to find candidates, then decompile the interesting ones."
+            "first to find candidates, then decompile the interesting ones. "
+            "Results are capped: when `truncated` is true you have seen `count` of "
+            "`total_count` matches, so say 'at least N' rather than 'N', and narrow "
+            "with a filter before concluding something is absent."
         ),
         "input_schema": {
             "type": "object",
