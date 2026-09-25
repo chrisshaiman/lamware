@@ -11,8 +11,9 @@ never wrong -- it lost a race against wg-quick@wg0. Untreated this recurs on
 EVERY boot, and the symptom is a dead public site with a healthy-looking config,
 which is a slow thing to diagnose.
 """
-import yaml
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible" / "roles" / "frontend"

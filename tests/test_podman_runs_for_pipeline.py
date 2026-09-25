@@ -22,8 +22,9 @@ The role's own aa-disable task CANNOT fail (aa-disable exits non-zero when the
 profile is already disabled, so failed_when: false is mandatory). These tests
 exist because that task looks like a guard and is not one.
 """
-import yaml
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = yaml.safe_load(

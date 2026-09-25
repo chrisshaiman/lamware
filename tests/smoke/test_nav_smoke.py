@@ -44,5 +44,16 @@ def test_nav_page_renders(page, config, path, heading, widget):
     # /auth before React mounts); a redirect-to-default then fails here as a clear URL
     # mismatch rather than an opaque widget timeout.
     expect(page).to_have_url(re.compile(re.escape(path)))
-    expect(page.get_by_role("heading", name=heading, exact=True).first).to_be_visible()
+
+    # The key widget FIRST. It is the only assertion here that can fail when the
+    # page body does not render, so a failure should name it rather than trailing
+    # a heading check that already passed.
     expect(page.locator(widget).first).to_be_visible()
+
+    # Scoped to <main>. top-bar.tsx renders `<h1>{title}</h1>` for EVERY route
+    # from a path->title map, so an unscoped get_by_role("heading") matched the
+    # chrome and passed on all 8 routes whether or not the page body rendered.
+    # On 2026-09-24 /evasions failed the widget assertion having "passed" its
+    # heading assertion against a blank page.
+    expect(page.locator("main").get_by_role(
+        "heading", name=heading, exact=True).first).to_be_visible()

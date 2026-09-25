@@ -169,8 +169,17 @@ public class GhidraTool extends GhidraScript {
         List<String> xrefEntries = new ArrayList<>();
         // ReferenceIterator does not implement Iterable — use while loop
         ReferenceIterator refs = refMgr.getReferencesTo(entryAddr);
-        while (refs.hasNext() && xrefEntries.size() < MAX_XREF_RESULTS) {
+        int totalMatches = 0;
+        while (refs.hasNext()) {
             Reference ref = refs.next();
+            totalMatches++;
+        // Counting continues PAST the cap so `total_count` is true. Only the
+        // expensive part below is skipped — the iteration itself is cheap, and
+        // a count that stops at the cap is what made 434 functions and 1227
+        // functions look identical to the agent (#633).
+            if (xrefEntries.size() >= MAX_XREF_RESULTS) {
+                continue;
+            }
             Address fromAddr = ref.getFromAddress();
             Function caller = funcMgr.getFunctionContaining(fromAddr);
             String callerName = (caller != null) ? caller.getName() : "<unknown>";
@@ -189,6 +198,8 @@ public class GhidraTool extends GhidraScript {
         json.append("\"function\": \"").append(escapeJson(fn.getName())).append("\", ");
         json.append("\"address\": \"0x").append(entryAddr.toString()).append("\", ");
         json.append("\"count\": ").append(xrefEntries.size()).append(", ");
+        json.append("\"total_count\": ").append(totalMatches).append(", ");
+        json.append("\"truncated\": ").append(totalMatches > xrefEntries.size()).append(", ");
         json.append("\"xrefs_to\": [");
         for (int i = 0; i < xrefEntries.size(); i++) {
             if (i > 0) json.append(", ");
@@ -230,12 +241,17 @@ public class GhidraTool extends GhidraScript {
         InstructionIterator instrIter = listing.getInstructions(body, true);
         // InstructionIterator has hasNext()/next() but also implements Iterable in some
         // versions; use the explicit while pattern to be safe across Ghidra versions.
-        while (instrIter.hasNext() && xrefEntries.size() < MAX_XREF_RESULTS) {
+        int totalMatches = 0;
+        while (instrIter.hasNext()) {
             Instruction instr = instrIter.next();
             Reference[] refs = instr.getReferencesFrom();
             for (Reference ref : refs) {
-                if (xrefEntries.size() >= MAX_XREF_RESULTS) break;
                 if (!ref.getReferenceType().isCall() && !ref.getReferenceType().isJump()) {
+                    continue;
+                }
+                totalMatches++;
+                // See the note in runListFunctions: count past the cap, build below it.
+                if (xrefEntries.size() >= MAX_XREF_RESULTS) {
                     continue;
                 }
                 Address toAddr = ref.getToAddress();
@@ -258,6 +274,8 @@ public class GhidraTool extends GhidraScript {
         json.append("\"function\": \"").append(escapeJson(fn.getName())).append("\", ");
         json.append("\"address\": \"0x").append(fn.getEntryPoint().toString()).append("\", ");
         json.append("\"count\": ").append(xrefEntries.size()).append(", ");
+        json.append("\"total_count\": ").append(totalMatches).append(", ");
+        json.append("\"truncated\": ").append(totalMatches > xrefEntries.size()).append(", ");
         json.append("\"xrefs_from\": [");
         for (int i = 0; i < xrefEntries.size(); i++) {
             if (i > 0) json.append(", ");
@@ -315,9 +333,12 @@ public class GhidraTool extends GhidraScript {
 
         // DataIterator does not implement Iterable — use while loop
         DataIterator dataIter = listing.getDefinedData(baseAddr, true);
-        while (dataIter.hasNext() && stringEntries.size() < MAX_STRING_RESULTS) {
+        int totalMatches = 0;
+        while (dataIter.hasNext()) {
             Data data = dataIter.next();
-            // Stop once we exceed the requested range
+            // Stop once we exceed the requested range. This break is a RANGE
+            // boundary, not a cap: everything past it is outside what was asked
+            // for, so it does not count toward total_count.
             if (data.getAddress().compareTo(endAddr) > 0) break;
             if (!data.hasStringValue()) continue;
 
@@ -325,6 +346,11 @@ public class GhidraTool extends GhidraScript {
             if (val == null) continue;
             String s = val.toString();
             if (s.isEmpty()) continue;
+            totalMatches++;
+            // See the note in runListFunctions.
+            if (stringEntries.size() >= MAX_STRING_RESULTS) {
+                continue;
+            }
 
             StringBuilder entry = new StringBuilder();
             entry.append("{");
@@ -340,6 +366,8 @@ public class GhidraTool extends GhidraScript {
         json.append("\"address\": \"0x").append(baseAddr.toString()).append("\", ");
         json.append("\"range\": ").append(range).append(", ");
         json.append("\"count\": ").append(stringEntries.size()).append(", ");
+        json.append("\"total_count\": ").append(totalMatches).append(", ");
+        json.append("\"truncated\": ").append(totalMatches > stringEntries.size()).append(", ");
         json.append("\"strings\": [");
         for (int i = 0; i < stringEntries.size(); i++) {
             if (i > 0) json.append(", ");
@@ -366,12 +394,21 @@ public class GhidraTool extends GhidraScript {
 
         // FunctionIterator does not implement Iterable — use while loop
         FunctionIterator funcIter = funcMgr.getFunctions(true);
-        while (funcIter.hasNext() && funcEntries.size() < MAX_FUNCTION_RESULTS) {
+        int totalMatches = 0;
+        while (funcIter.hasNext()) {
             Function fn = funcIter.next();
             String name = fn.getName();
 
             // Apply wildcard filter if provided
             if (filter != null && !matchesWildcard(name, filter)) {
+                continue;
+            }
+            totalMatches++;
+        // Counting continues PAST the cap so `total_count` is true. Only the
+        // expensive part below is skipped — the iteration itself is cheap, and
+        // a count that stops at the cap is what made 434 functions and 1227
+        // functions look identical to the agent (#633).
+            if (funcEntries.size() >= MAX_FUNCTION_RESULTS) {
                 continue;
             }
 
@@ -396,6 +433,8 @@ public class GhidraTool extends GhidraScript {
         StringBuilder json = new StringBuilder();
         json.append("{");
         json.append("\"count\": ").append(funcEntries.size()).append(", ");
+        json.append("\"total_count\": ").append(totalMatches).append(", ");
+        json.append("\"truncated\": ").append(totalMatches > funcEntries.size()).append(", ");
         if (filter != null) {
             json.append("\"filter\": \"").append(escapeJson(filter)).append("\", ");
         }

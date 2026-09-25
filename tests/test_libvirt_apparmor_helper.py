@@ -18,10 +18,10 @@ nothing looks wrong until an analysis tries to start one. Every external
 indicator -- services active, virsh list working, API answering -- stayed green
 while the sandbox could not run a single sample.
 """
-import yaml
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE = ROOT / "ansible" / "roles" / "kvm"

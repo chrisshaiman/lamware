@@ -14,22 +14,24 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
+from ._redaction import SmokeConfig, redact
+
 # expect() assertions use their own 5s default; raise to match the suite's 15s intent.
 expect.set_options(timeout=15_000)
 
 ARTIFACTS_DIR = Path(__file__).parent / ".artifacts"
 
 
-def _config() -> dict:
+def _config() -> SmokeConfig:
     """Read smoke config from the environment."""
     base_url = os.environ.get("SMOKE_BASE_URL", "https://lamware.shaiman.net").rstrip("/")
     user = os.environ.get("SMOKE_TEST_USER", "smoke-test")
     password = os.environ.get("SMOKE_TEST_PASSWORD", "")
-    return {"base_url": base_url, "user": user, "password": password}
+    return SmokeConfig(base_url=base_url, user=user, password=password)
 
 
 @pytest.fixture(scope="session")
-def config() -> dict:
+def config() -> SmokeConfig:
     cfg = _config()
     if not cfg["password"]:
         pytest.fail("SMOKE_TEST_PASSWORD is not set — the gate cannot authenticate.")
@@ -102,6 +104,16 @@ def page(browser, auth_state, request):
     context.set_default_timeout(15000)
     page = context.new_page()
     request.node._smoke_page = page
+
+    # A blank page body is a BROWSER-side failure, and the gate captured a
+    # screenshot and HTML but never the console — so a React render error left
+    # no trace and /evasions failed on 2026-09-24 with nothing to diagnose.
+    errors: list[str] = []
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {redact(str(e))}"))
+    page.on("console", lambda m: errors.append(f"console.{m.type}: {redact(m.text)}")
+            if m.type in ("error", "warning") else None)
+    request.node._smoke_console = errors
+
     yield page
     context.close()
 
@@ -166,3 +178,7 @@ def pytest_runtest_makereport(item, call):
                 )
             except Exception:
                 pass  # best-effort post-mortem; never mask the real failure
+        console = getattr(item, "_smoke_console", None)
+        if console:
+            report.sections.append(
+                ("browser console (redacted)", "\n".join(console[-25:])))
