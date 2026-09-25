@@ -46,7 +46,8 @@ def test_the_template_renders_and_is_valid_shell():
     """It contains ${...} and Go-template braces adjacent to Jinja's own, which
     is how the first two drafts died -- once on ${'#'}arr[@], once on a comment
     that itself contained a Jinja print tag."""
-    import subprocess, tempfile
+    import subprocess
+    import tempfile
     f = tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False)
     f.write(RENDERED); f.close()
     r = subprocess.run(["bash", "-n", f.name], capture_output=True, text=True)
