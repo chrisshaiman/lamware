@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
+.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -46,8 +46,18 @@ PACKER_DIR      := packer
 # security-test twice (once inside deploy, once inside merge-check). Three of
 # those hardcoded --ask-vault-pass and ignored this variable entirely, so creating
 # the file below fixed none of them.
-VAULT_PASS_FILE ?= $(HOME)/.vault_pass
-VAULT_ARGS      ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
+#
+# TWO sources, session first. `make vault-session` writes the password to tmpfs,
+# where it lives in RAM and dies on reboot — so the convenience is opt-in per
+# boot rather than a secret sitting on the SSD forever. ~/.vault_pass still works
+# for anyone who wants the permanent version.
+#
+# Preferring the session file means no VAULT_PASS_FILE=... on every command:
+# after `make vault-session`, every target below just works. Nothing to remember
+# and nothing to mistype, which is the point. `make vault-session-status` says which source is in use.
+VAULT_SESSION_FILE ?= /dev/shm/lamware-vault-$(shell id -u)
+VAULT_PASS_FILE    ?= $(firstword $(wildcard $(VAULT_SESSION_FILE)) $(HOME)/.vault_pass)
+VAULT_ARGS         ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
 ANSIBLE_DIR     := ansible
 SMOKE_DIR       := tests/smoke
 OVH_DIR         := ovh
@@ -87,6 +97,11 @@ help:
 	@echo "  make validate             Validate Packer + Terraform configs"
 	@echo "  make deploy TAGS=api      Deploy specific roles + run security tests"
 	@echo "  make security-test        Run post-deploy security smoke tests only"
+	@echo ""
+	@echo "  make vault-session        Hold the vault password in RAM for this boot"
+	@echo "                            (run once after a restart; then no prompts)"
+	@echo "  make vault-session-status Which vault password source is in use"
+	@echo "  make vault-session-clear  Forget it now, without rebooting"
 	@echo "  make merge-check          Pre-merge gate: host runs this branch HEAD + security tests"
 	@echo "  make clean                Remove local build artifacts"
 	@echo ""
@@ -487,6 +502,48 @@ collections-check:
 		echo "ERROR: missing Ansible collections:$$missing"; \
 		echo "  fix: ansible-galaxy install -r $(ANSIBLE_DIR)/requirements.yml"; \
 		exit 1; \
+	fi
+
+# ---------------------------------------------------------------------------
+# Vault session — the password in RAM for this boot only
+# ---------------------------------------------------------------------------
+vault-session:
+	@# umask BEFORE the redirect, or the file exists world-readable for the
+	@# instant between creation and chmod.
+	@umask 077; \
+	printf 'Vault password (not echoed): '; \
+	read -rs PW; echo; \
+	if [ -z "$$PW" ]; then echo "    REFUSED: empty password."; exit 1; fi; \
+	printf '%s' "$$PW" > $(VAULT_SESSION_FILE); \
+	unset PW
+	@# Verify it DECRYPTS before reporting success. Without this the first symptom
+	@# of a typo is a failed deploy several minutes later, and the password looks
+	@# configured the whole time.
+	@if cd $(ANSIBLE_DIR) && ansible-vault view \
+			--vault-password-file $(VAULT_SESSION_FILE) vars/secrets.yml >/dev/null 2>&1; then \
+		echo "    OK: vault session active ($(VAULT_SESSION_FILE), mode $$(stat -c %a $(VAULT_SESSION_FILE)))."; \
+		echo "    Every make target now runs without prompting, EXCEPT the console"; \
+		echo "    roles ($(VAULT_CONSOLE_TAGS)), which always ask."; \
+		echo "    Clear it with: make vault-session-clear   (or just reboot)"; \
+	else \
+		rm -f $(VAULT_SESSION_FILE); \
+		echo "    REFUSED: that password does not decrypt vars/secrets.yml."; \
+		echo "    Nothing was stored. Run 'make vault-session' again."; \
+		exit 1; \
+	fi
+
+vault-session-clear:
+	@rm -f $(VAULT_SESSION_FILE)
+	@echo "==> Vault session cleared. Targets will prompt again."
+
+vault-session-status:
+	@if [ -f "$(VAULT_SESSION_FILE)" ]; then \
+		echo "==> Vault session ACTIVE  ($(VAULT_SESSION_FILE))"; \
+	elif [ -f "$(HOME)/.vault_pass" ]; then \
+		echo "==> No session file; using the permanent $(HOME)/.vault_pass"; \
+	else \
+		echo "==> No vault password available — targets will prompt."; \
+		echo "    Start a session for this boot with: make vault-session"; \
 	fi
 
 deploy: collections-check

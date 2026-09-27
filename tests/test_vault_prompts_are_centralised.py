@@ -81,8 +81,13 @@ def test_every_vault_touching_command_passes_vault_args(cmd):
     for inv in using:
         idx = text.index(inv)
         block = text[idx: idx + 400]
-        assert "$(VAULT_ARGS)" in block or "VAULT_ARGS" in block, (
-            f"{cmd} invocation without VAULT_ARGS nearby: {inv}")
+        # Either the shared variable, or an explicit password file. The second is
+        # correct in `vault-session`, which verifies the password it has just
+        # written and must not consult VAULT_ARGS (that would read the OLD
+        # source). The property under test is "supplies a password source
+        # non-interactively", not "mentions one particular variable".
+        assert "VAULT_ARGS" in block or "--vault-password-file" in block, (
+            f"{cmd} invocation with no vault password source: {inv}")
 
 
 def test_the_password_file_path_is_outside_the_repo():
