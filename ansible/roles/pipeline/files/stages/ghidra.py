@@ -93,6 +93,61 @@ def get_original_sample_path(cape_data: dict,
     return None
 
 
+def resolve_original_sample(cape_data: dict, sample_path: Path | None,
+                            storage: Path = CAPE_STORAGE) -> tuple[Path | None, str, str | None]:
+    """The submitted sample, from whichever copy the pipeline can actually read.
+
+    Returns (path, source, note). `source` is "cape_storage", "pipeline_copy" or
+    "none"; `note` explains a fallback so the report can say what happened.
+
+    WHY THIS EXISTS (#644). #393 — the fix for #392, samples readable by every
+    local account — made every file under storage/binaries `640 cape:cape`. The
+    pipeline user is in `lamware`, not `cape`, so CAPE's copy became unreadable
+    on 2026-08-15. `get_original_sample_path` swallows the PermissionError and
+    returns None, and the stage reported "no PE files found": a claim about the
+    SAMPLE, made when the truth was a claim about US. Since then 2 of 106 runs
+    analysed the submitted binary, against 367 of 991 before.
+
+    It went unseen because should_run_ghidra ALREADY fell back to the pipeline's
+    own copy — so Ghidra was triggered — while run_ghidra did not, so it then
+    found nothing. The trigger and the execution asked different questions. Both
+    now ask this one.
+
+    The permissions are NOT loosened: #392 stands. The pipeline already holds a
+    readable copy of every sample — the file it handed CAPE.
+
+    Identity is checked without read access: CAPE names its stored copy by
+    sha256, and resolving a symlink needs only directory traversal, so the
+    fallback is refused if the pipeline's copy is not the sample CAPE detonated.
+    """
+    cape_copy = get_original_sample_path(cape_data, storage)
+    if cape_copy is not None:
+        return cape_copy, "cape_storage", None
+
+    if not sample_path or not _is_ghidra_compatible_binary(Path(sample_path)):
+        return None, "none", None
+
+    import hashlib
+    task_id = cape_data.get("id") or cape_data.get("task_id")
+    expected = None
+    if task_id:
+        try:
+            expected = (storage / str(task_id) / "binary").resolve().name
+        except OSError:
+            expected = None
+    digest = hashlib.sha256(Path(sample_path).read_bytes()).hexdigest()
+    if expected and len(expected) == 64 and expected != digest:
+        return None, "none", (
+            f"CAPE's copy is unreadable and the pipeline's copy is a DIFFERENT file "
+            f"(sha256 {digest[:12]} vs CAPE {expected[:12]}); refusing to analyse it "
+            f"as the submitted sample")
+    return Path(sample_path), "pipeline_copy", (
+        "CAPE's stored copy of the submitted sample is not readable by the pipeline "
+        "user (#644); analysed the pipeline's own copy"
+        + (f", sha256 matches CAPE's ({digest[:12]})" if expected == digest else
+           ", sha256 not cross-checked"))
+
+
 def _is_ghidra_compatible_binary(sample_path: Path) -> bool:
     """Check if the sample is a binary format Ghidra can analyze (PE, ELF, Mach-O)."""
     if not sample_path or not sample_path.exists():
@@ -137,11 +192,9 @@ def should_run_ghidra(cape_data: dict, sample_path: Path, ghidra_cmd: str,
     sigs = get_cape_signatures_fn(cape_data)
     has_trigger = any(sig in GHIDRA_TRIGGERS for sig in sigs)
     has_dropped_pes = len(get_dropped_pe_files(cape_data, storage)) > 0
-    original_is_pe = get_original_sample_path(cape_data, storage) is not None
-
-    # Also check the submitted sample directly (CAPE storage may have corrupt binary)
-    if not original_is_pe:
-        original_is_pe = _is_ghidra_compatible_binary(sample_path)
+    # Same resolver run_ghidra uses, so triggering and execution cannot disagree
+    # about whether there is an original to analyse (#644).
+    original_is_pe = resolve_original_sample(cape_data, sample_path, storage)[0] is not None
 
     # Dropped PEs with trigger signatures — highest value analysis
     if has_trigger and has_dropped_pes:
@@ -545,7 +598,8 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                storage: Path = CAPE_STORAGE) -> dict:
     """Run Ghidra headless on dropped PEs and/or the original sample."""
     pe_files, access_error = discover_pe_files(cape_data, storage)
-    original_pe = get_original_sample_path(cape_data, storage)
+    original_pe, original_source, original_note = resolve_original_sample(
+        cape_data, sample_path, storage)
 
     # Cape's own extracted payloads already reach Ghidra as shellcode
     # candidates (run-pipeline collects cape.large_payloads with
@@ -580,6 +634,11 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         if access_error:
             return {"triggered": True, "error": "Cape payloads unreadable",
                     "payload_access_error": access_error}
+        if original_note:
+            # The fallback was REFUSED (identity mismatch). Say so — never
+            # "no PE files found", which is how #644 hid for six weeks.
+            return {"triggered": True, "error": "original sample unusable",
+                    "original_sample_note": original_note}
         return {"triggered": True, "error": "no PE files found"}
 
     sigs = get_cape_signatures_fn(cape_data)
@@ -595,6 +654,11 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         # Reached the original-sample fallback, but only because we could not
         # look at the extracted payloads — the report must not imply we did.
         result["payload_access_error"] = access_error
+    if trigger_reason == "original_sample_is_pe":
+        result["original_sample_source"] = original_source
+        if original_note:
+            result["original_sample_note"] = original_note
+            print(f"    NOTE: {original_note}")
     if skipped:
         # Say what was not analysed here and why, so a shorter analyzed_files
         # list is legible instead of looking like the payloads went missing.
