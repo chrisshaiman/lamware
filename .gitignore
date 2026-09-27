@@ -30,7 +30,25 @@ shared/backend-aws.hcl
 ansible/vars/main.yml
 !ansible/vars/main.yml.example
 ansible/vars/secrets.yml
+# Vestigial: the line above is an exact path and does not match `.example`, so
+# this negation matches nothing. Kept because removing it would read as a policy
+# change, and verified harmless (tests/test_vault_password_files_cannot_be_committed.py).
 !ansible/vars/secrets.yml.example
+
+# Vault password files, anywhere in the tree. The supported locations are both
+# OUTSIDE the repo — /dev/shm/lamware-vault-<uid> for a boot-scoped session
+# (`make vault-session`) and ~/.vault_pass for the permanent form — so these
+# patterns should never match anything. They exist because VAULT_PASS_FILE is
+# overridable and conventions drift: a password file is one `git add -A` away
+# from a public repo, and gitleaks does not reliably flag a file whose entire
+# content is one unlabelled word.
+.vault_pass
+.vault-pass
+.vault_password
+.vault-password
+vault_pass
+vault-pass
+*.vaultpass
 packer/http/user-data
 !packer/http/user-data.example
 
