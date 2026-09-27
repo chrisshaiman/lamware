@@ -129,14 +129,16 @@ packer-setup:
 	@echo ""
 	@echo "==> Generating build password hash..."
 	@echo "    Enter a password for the Packer build user (used only during image build):"
-	@read -s PW && \
+	@# bash, not sh: `read -s` is a bashism and make uses /bin/sh (dash here),
+	@# which fails with "read: Illegal option -s". Same defect as vault-session.
+	@bash -c 'IFS= read -rs PW && \
 		HASH=$$(openssl passwd -6 "$$PW") && \
 		echo "" && \
 		echo "  1. Replace the placeholder in packer/http/user-data identity.password with:" && \
 		echo "     $$HASH" && \
 		echo "" && \
 		echo "  2. Create packer/packer.auto.pkrvars.hcl with:" && \
-		echo '     ssh_password = "'$$PW'"'
+		echo "     ssh_password = \\"$$PW\\""' 
 	@echo ""
 	@echo "==> packer-setup complete. Update user-data and pkrvars, then run: make image"
 
@@ -508,14 +510,19 @@ collections-check:
 # Vault session — the password in RAM for this boot only
 # ---------------------------------------------------------------------------
 vault-session:
+	@# Explicit bash: `read -s` is a bashism and make runs recipes under /bin/sh,
+	@# which is dash here — it fails with "read: Illegal option -s" and the empty
+	@# PW then trips the guard below, so the error reads as a bad password rather
+	@# than a broken recipe. The alternative, `stty -echo` around a plain read, is
+	@# POSIX but leaves the terminal echo-less if interrupted before restoring it.
+	@#
 	@# umask BEFORE the redirect, or the file exists world-readable for the
 	@# instant between creation and chmod.
-	@umask 077; \
-	printf 'Vault password (not echoed): '; \
-	read -rs PW; echo; \
+	@bash -c 'umask 077; \
+	printf "Vault password (not echoed): "; \
+	IFS= read -rs PW; echo; \
 	if [ -z "$$PW" ]; then echo "    REFUSED: empty password."; exit 1; fi; \
-	printf '%s' "$$PW" > $(VAULT_SESSION_FILE); \
-	unset PW
+	printf "%s" "$$PW" > $(VAULT_SESSION_FILE)' 
 	@# Verify it DECRYPTS before reporting success. Without this the first symptom
 	@# of a typo is a failed deploy several minutes later, and the password looks
 	@# configured the whole time.
