@@ -83,3 +83,39 @@ def test_console_capture_redacts_tokens_but_keeps_errors(text, leaks):
     assert ("<redacted-token>" in out) is leaks
     if not leaks:
         assert out == text
+
+
+def test_the_smoke_conftest_actually_imports_its_helpers():
+    """The split that made these guards runnable also broke the gate.
+
+    `tests/smoke` has no `__init__.py`, so pytest imports conftest.py as the
+    top-level module `conftest`. `from ._redaction import ...` therefore raised
+
+        ImportError: attempted relative import with no known parent package
+
+    and the whole gate failed at collection — after the deploy had already run.
+    Nothing caught it: these guards import `_redaction.py` directly, so they
+    passed while the file that USES it could not load.
+
+    Asserted by compiling conftest.py the way pytest does — as a module with no
+    package — which fails on a relative import without needing playwright.
+    """
+    import ast
+
+    src = (ROOT / "tests" / "smoke" / "conftest.py").read_text()
+    tree = ast.parse(src)
+    relative = [n for n in ast.walk(tree)
+                if isinstance(n, ast.ImportFrom) and n.level and n.level > 0]
+    assert not relative, (
+        "conftest.py uses a relative import; it is loaded as a top-level module "
+        f"and will fail at collection: {[n.module for n in relative]}")
+
+
+def test_the_helper_directory_is_on_the_path_before_it_is_imported():
+    """An absolute `from _redaction import ...` only resolves because conftest puts
+    its own directory on sys.path first. Order matters, so it is asserted."""
+    src = (ROOT / "tests" / "smoke" / "conftest.py").read_text()
+    lines = src.splitlines()
+    path_line = next(i for i, ln in enumerate(lines) if "sys.path.insert" in ln)
+    import_line = next(i for i, ln in enumerate(lines) if "from _redaction import" in ln)
+    assert path_line < import_line, "sys.path is extended after the import that needs it"

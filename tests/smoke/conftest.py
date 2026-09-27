@@ -9,12 +9,20 @@ License: Apache 2.0
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
 
-from ._redaction import SmokeConfig, redact
+# `tests/smoke` has no __init__.py, so pytest imports this file as the top-level
+# module `conftest` — it is not a package member and `from ._redaction import ...`
+# raises "attempted relative import with no known parent package". Put this
+# directory on the path explicitly and import absolutely, which works under every
+# pytest import mode rather than relying on one.
+sys.path.insert(0, str(Path(__file__).parent))
+
+from _redaction import SmokeConfig, redact  # noqa: E402
 
 # expect() assertions use their own 5s default; raise to match the suite's 15s intent.
 expect.set_options(timeout=15_000)
