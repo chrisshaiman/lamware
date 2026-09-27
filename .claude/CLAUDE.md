@@ -108,6 +108,20 @@ The PR bodies that held up open with a measurement ("the overnight run showed
 six of ten produced nothing"). The ones that were reverted open with a theory.
 Run `make provenance` and look at the host before you reason about it.
 
+## 7a. The vault password
+
+Never ask for it in chat — the transcript is retained. If a vault-reading target
+fails with `EOFError (ctrl-d) on prompt`, the session expired on a reboot: ask
+for `make vault-session` and wait. Do not work around it.
+
+These roles always prompt, so an agent (no TTY) cannot deploy them — hand the
+command over rather than attempting it:
+
+    hardening  networking  wireguard  keycloak  kvm  all
+
+Their failure mode is a host you cannot reach (#563), not a wrong number.
+Procedure and rationale: `docs/RUNBOOK_VAULT_SESSION.md`.
+
 ## 8. Things that are never acceptable
 
 - Skipping, disabling, or loosening a test to get green.

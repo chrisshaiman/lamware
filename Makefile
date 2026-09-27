@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
+.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -40,8 +40,24 @@ PACKER_DIR      := packer
 # secrets found" — which reads like a broken playbook rather than a missing argument.
 # Uses ~/.vault_pass when it exists, otherwise prompts. Override explicitly:
 #   make validate VAULT_ARGS="--vault-password-file /path/to/pass"
-VAULT_PASS_FILE ?= $(HOME)/.vault_pass
-VAULT_ARGS      ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
+# Every target that touches the vault routes through VAULT_ARGS, so one password
+# file covers a whole `make deploy && make merge-check` cycle. It used to be four
+# separate prompts: the site playbook, the smoke gate's `ansible-vault view`, and
+# security-test twice (once inside deploy, once inside merge-check). Three of
+# those hardcoded --ask-vault-pass and ignored this variable entirely, so creating
+# the file below fixed none of them.
+#
+# TWO sources, session first. `make vault-session` writes the password to tmpfs,
+# where it lives in RAM and dies on reboot — so the convenience is opt-in per
+# boot rather than a secret sitting on the SSD forever. ~/.vault_pass still works
+# for anyone who wants the permanent version.
+#
+# Preferring the session file means no VAULT_PASS_FILE=... on every command:
+# after `make vault-session`, every target below just works. Nothing to remember
+# and nothing to mistype, which is the point. `make vault-session-status` says which source is in use.
+VAULT_SESSION_FILE ?= /dev/shm/lamware-vault-$(shell id -u)
+VAULT_PASS_FILE    ?= $(firstword $(wildcard $(VAULT_SESSION_FILE)) $(HOME)/.vault_pass)
+VAULT_ARGS         ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
 ANSIBLE_DIR     := ansible
 SMOKE_DIR       := tests/smoke
 OVH_DIR         := ovh
@@ -81,6 +97,11 @@ help:
 	@echo "  make validate             Validate Packer + Terraform configs"
 	@echo "  make deploy TAGS=api      Deploy specific roles + run security tests"
 	@echo "  make security-test        Run post-deploy security smoke tests only"
+	@echo ""
+	@echo "  make vault-session        Hold the vault password in RAM for this boot"
+	@echo "                            (run once after a restart; then no prompts)"
+	@echo "  make vault-session-status Which vault password source is in use"
+	@echo "  make vault-session-clear  Forget it now, without rebooting"
 	@echo "  make merge-check          Pre-merge gate: host runs this branch HEAD + security tests"
 	@echo "  make clean                Remove local build artifacts"
 	@echo ""
@@ -108,14 +129,16 @@ packer-setup:
 	@echo ""
 	@echo "==> Generating build password hash..."
 	@echo "    Enter a password for the Packer build user (used only during image build):"
-	@read -s PW && \
+	@# bash, not sh: `read -s` is a bashism and make uses /bin/sh (dash here),
+	@# which fails with "read: Illegal option -s". Same defect as vault-session.
+	@bash -c 'IFS= read -rs PW && \
 		HASH=$$(openssl passwd -6 "$$PW") && \
 		echo "" && \
 		echo "  1. Replace the placeholder in packer/http/user-data identity.password with:" && \
 		echo "     $$HASH" && \
 		echo "" && \
 		echo "  2. Create packer/packer.auto.pkrvars.hcl with:" && \
-		echo '     ssh_password = "'$$PW'"'
+		echo "     ssh_password = \\"$$PW\\""' 
 	@echo ""
 	@echo "==> packer-setup complete. Update user-data and pkrvars, then run: make image"
 
@@ -430,6 +453,31 @@ validate:
 
 TAGS ?= api,frontend
 
+# Roles that can lock you out of the host, or out of its guests. A mistake here
+# is not a bad number — it is #563 (a hardening deploy left the host unable to
+# reach its own guests, and it cost a working day to find), or a drive to a
+# console.
+#
+# These ALWAYS prompt, even when a vault password file exists. The password file
+# is a convenience for routine roles; it is not authorisation to change the
+# security boundary unattended.
+#
+# This is a MECHANISM, not a policy note. An automated caller — a CI job, a
+# script, an AI agent — has no TTY, so --ask-vault-pass fails immediately with
+# "EOFError (ctrl-d) on prompt" rather than proceeding. Typing the password is
+# the proof that a human is present, and there is deliberately no override flag:
+# an override is the thing that gets set once and then lives in a shell profile.
+#
+# `all` is included because it is ansible's everything tag and therefore a
+# superset of every entry here.
+comma := ,
+space := $(empty) $(empty)
+VAULT_CONSOLE_TAGS ?= hardening networking wireguard keycloak kvm all
+_deploy_tag_list    = $(subst $(comma),$(space),$(TAGS))
+_console_tags       = $(filter $(VAULT_CONSOLE_TAGS),$(_deploy_tag_list))
+DEPLOY_VAULT_ARGS   = $(if $(_console_tags),--ask-vault-pass,$(VAULT_ARGS))
+
+
 # collections-check — fail fast when a declared collection is not installed.
 #
 # NOTE: `ansible-galaxy collection list <name>` exits 0 whether or not the
@@ -458,20 +506,73 @@ collections-check:
 		exit 1; \
 	fi
 
+# ---------------------------------------------------------------------------
+# Vault session — the password in RAM for this boot only
+# ---------------------------------------------------------------------------
+vault-session:
+	@# Explicit bash: `read -s` is a bashism and make runs recipes under /bin/sh,
+	@# which is dash here — it fails with "read: Illegal option -s" and the empty
+	@# PW then trips the guard below, so the error reads as a bad password rather
+	@# than a broken recipe. The alternative, `stty -echo` around a plain read, is
+	@# POSIX but leaves the terminal echo-less if interrupted before restoring it.
+	@#
+	@# umask BEFORE the redirect, or the file exists world-readable for the
+	@# instant between creation and chmod.
+	@bash -c 'umask 077; \
+	printf "Vault password (not echoed): "; \
+	IFS= read -rs PW; echo; \
+	if [ -z "$$PW" ]; then echo "    REFUSED: empty password."; exit 1; fi; \
+	printf "%s" "$$PW" > $(VAULT_SESSION_FILE)' 
+	@# Verify it DECRYPTS before reporting success. Without this the first symptom
+	@# of a typo is a failed deploy several minutes later, and the password looks
+	@# configured the whole time.
+	@if cd $(ANSIBLE_DIR) && ansible-vault view \
+			--vault-password-file $(VAULT_SESSION_FILE) vars/secrets.yml >/dev/null 2>&1; then \
+		echo "    OK: vault session active ($(VAULT_SESSION_FILE), mode $$(stat -c %a $(VAULT_SESSION_FILE)))."; \
+		echo "    Every make target now runs without prompting, EXCEPT the console"; \
+		echo "    roles ($(VAULT_CONSOLE_TAGS)), which always ask."; \
+		echo "    Clear it with: make vault-session-clear   (or just reboot)"; \
+	else \
+		rm -f $(VAULT_SESSION_FILE); \
+		echo "    REFUSED: that password does not decrypt vars/secrets.yml."; \
+		echo "    Nothing was stored. Run 'make vault-session' again."; \
+		exit 1; \
+	fi
+
+vault-session-clear:
+	@rm -f $(VAULT_SESSION_FILE)
+	@echo "==> Vault session cleared. Targets will prompt again."
+
+vault-session-status:
+	@if [ -f "$(VAULT_SESSION_FILE)" ]; then \
+		echo "==> Vault session ACTIVE  ($(VAULT_SESSION_FILE))"; \
+	elif [ -f "$(HOME)/.vault_pass" ]; then \
+		echo "==> No session file; using the permanent $(HOME)/.vault_pass"; \
+	else \
+		echo "==> No vault password available — targets will prompt."; \
+		echo "    Start a session for this boot with: make vault-session"; \
+	fi
+
 deploy: collections-check
 	@echo "==> Deploying roles: $(TAGS)..."
+	@if [ -n "$(_console_tags)" ]; then \
+		echo "    CONSOLE ROLE(S) in this deploy:$(_console_tags)"; \
+		echo "    These prompt for the vault password even if a password file exists."; \
+		echo "    A mistake in them can cut access to the host or its guests (#563),"; \
+		echo "    so they require a human at the keyboard by construction."; \
+	fi
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \
 			site.yml \
 			--tags $(TAGS) \
-			--ask-vault-pass
+			$(DEPLOY_VAULT_ARGS)
 	@echo "==> Running post-deploy security tests..."
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \
 			security-test.yml \
-			--ask-vault-pass
+			$(VAULT_ARGS)
 	@echo "==> Running post-deploy smoke gate..."
 	@$(MAKE) smoke
 	@echo "==> Deploy + test + smoke complete."
@@ -516,7 +617,7 @@ security-test:
 		ansible-playbook \
 			-i inventory/hosts \
 			security-test.yml \
-			--ask-vault-pass
+			$(VAULT_ARGS)
 	@echo "==> Security tests complete."
 
 # -----------------------------------------------------------------------------
@@ -669,7 +770,7 @@ smoke:
 	@PW_PASS="$$SMOKE_TEST_PASSWORD"; \
 	if [ -z "$$PW_PASS" ]; then \
 		echo "==> Extracting smoke test password from vault (enter vault pass)..."; \
-		PW_PASS=$$(cd $(ANSIBLE_DIR) && ansible-vault view vars/secrets.yml \
+		PW_PASS=$$(cd $(ANSIBLE_DIR) && ansible-vault view $(VAULT_ARGS) vars/secrets.yml \
 			| sed -n 's/^keycloak_smoke_test_password:[[:space:]]*//p' | tr -d '"' | head -n1); \
 	fi; \
 	if [ -z "$$PW_PASS" ]; then \
