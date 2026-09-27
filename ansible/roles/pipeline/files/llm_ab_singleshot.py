@@ -99,7 +99,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="A/B a single-shot stage across local models.")
     ap.add_argument("report", help="path to a saved pipeline report.json")
     ap.add_argument("--models", nargs="+",
-                    default=["local-qwen-re", "local-qwen32-re", "local-gptoss-re"],
+                    default=["local-qwen-llamacpp-re"],
                     help="model names to run (must exist in LiteLLM model_list)")
     ap.add_argument("--interpret-cmd", default="/opt/interpret/run-interpret")
     ap.add_argument("--ghidra-cmd", default="/opt/ghidra/run-ghidra")
