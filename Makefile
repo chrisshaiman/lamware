@@ -40,6 +40,12 @@ PACKER_DIR      := packer
 # secrets found" — which reads like a broken playbook rather than a missing argument.
 # Uses ~/.vault_pass when it exists, otherwise prompts. Override explicitly:
 #   make validate VAULT_ARGS="--vault-password-file /path/to/pass"
+# Every target that touches the vault routes through VAULT_ARGS, so one password
+# file covers a whole `make deploy && make merge-check` cycle. It used to be four
+# separate prompts: the site playbook, the smoke gate's `ansible-vault view`, and
+# security-test twice (once inside deploy, once inside merge-check). Three of
+# those hardcoded --ask-vault-pass and ignored this variable entirely, so creating
+# the file below fixed none of them.
 VAULT_PASS_FILE ?= $(HOME)/.vault_pass
 VAULT_ARGS      ?= $(if $(wildcard $(VAULT_PASS_FILE)),--vault-password-file $(VAULT_PASS_FILE),--ask-vault-pass)
 ANSIBLE_DIR     := ansible
@@ -465,13 +471,13 @@ deploy: collections-check
 			-i inventory/hosts \
 			site.yml \
 			--tags $(TAGS) \
-			--ask-vault-pass
+			$(VAULT_ARGS)
 	@echo "==> Running post-deploy security tests..."
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \
 			security-test.yml \
-			--ask-vault-pass
+			$(VAULT_ARGS)
 	@echo "==> Running post-deploy smoke gate..."
 	@$(MAKE) smoke
 	@echo "==> Deploy + test + smoke complete."
@@ -516,7 +522,7 @@ security-test:
 		ansible-playbook \
 			-i inventory/hosts \
 			security-test.yml \
-			--ask-vault-pass
+			$(VAULT_ARGS)
 	@echo "==> Security tests complete."
 
 # -----------------------------------------------------------------------------
@@ -669,7 +675,7 @@ smoke:
 	@PW_PASS="$$SMOKE_TEST_PASSWORD"; \
 	if [ -z "$$PW_PASS" ]; then \
 		echo "==> Extracting smoke test password from vault (enter vault pass)..."; \
-		PW_PASS=$$(cd $(ANSIBLE_DIR) && ansible-vault view vars/secrets.yml \
+		PW_PASS=$$(cd $(ANSIBLE_DIR) && ansible-vault view $(VAULT_ARGS) vars/secrets.yml \
 			| sed -n 's/^keycloak_smoke_test_password:[[:space:]]*//p' | tr -d '"' | head -n1); \
 	fi; \
 	if [ -z "$$PW_PASS" ]; then \
