@@ -436,6 +436,31 @@ validate:
 
 TAGS ?= api,frontend
 
+# Roles that can lock you out of the host, or out of its guests. A mistake here
+# is not a bad number — it is #563 (a hardening deploy left the host unable to
+# reach its own guests, and it cost a working day to find), or a drive to a
+# console.
+#
+# These ALWAYS prompt, even when a vault password file exists. The password file
+# is a convenience for routine roles; it is not authorisation to change the
+# security boundary unattended.
+#
+# This is a MECHANISM, not a policy note. An automated caller — a CI job, a
+# script, an AI agent — has no TTY, so --ask-vault-pass fails immediately with
+# "EOFError (ctrl-d) on prompt" rather than proceeding. Typing the password is
+# the proof that a human is present, and there is deliberately no override flag:
+# an override is the thing that gets set once and then lives in a shell profile.
+#
+# `all` is included because it is ansible's everything tag and therefore a
+# superset of every entry here.
+comma := ,
+space := $(empty) $(empty)
+VAULT_CONSOLE_TAGS ?= hardening networking wireguard keycloak kvm all
+_deploy_tag_list    = $(subst $(comma),$(space),$(TAGS))
+_console_tags       = $(filter $(VAULT_CONSOLE_TAGS),$(_deploy_tag_list))
+DEPLOY_VAULT_ARGS   = $(if $(_console_tags),--ask-vault-pass,$(VAULT_ARGS))
+
+
 # collections-check — fail fast when a declared collection is not installed.
 #
 # NOTE: `ansible-galaxy collection list <name>` exits 0 whether or not the
@@ -466,12 +491,18 @@ collections-check:
 
 deploy: collections-check
 	@echo "==> Deploying roles: $(TAGS)..."
+	@if [ -n "$(_console_tags)" ]; then \
+		echo "    CONSOLE ROLE(S) in this deploy:$(_console_tags)"; \
+		echo "    These prompt for the vault password even if a password file exists."; \
+		echo "    A mistake in them can cut access to the host or its guests (#563),"; \
+		echo "    so they require a human at the keyboard by construction."; \
+	fi
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
 			-i inventory/hosts \
 			site.yml \
 			--tags $(TAGS) \
-			$(VAULT_ARGS)
+			$(DEPLOY_VAULT_ARGS)
 	@echo "==> Running post-deploy security tests..."
 	@cd $(ANSIBLE_DIR) && \
 		ansible-playbook \
