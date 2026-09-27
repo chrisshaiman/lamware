@@ -201,6 +201,7 @@ def analyze_with_headless(sample_path: Path) -> dict:
         "sha256": sha256_file(sample_path),
         "analysis_success": False,
         "functions_count": 0,
+        "external_functions_count": 0,
         "imports": [],
         "strings_of_interest": [],
         "entry_point": "unknown",
@@ -224,6 +225,10 @@ def analyze_with_headless(sample_path: Path) -> dict:
                 exported = json.load(f)
             output["analysis_success"] = True
             output["functions_count"] = exported.get("functions_count", 0)
+            # Explicitly forwarded: this dict is an ALLOWLIST, so a field the
+            # export computes is silently dropped unless named here. That is how
+            # external_functions_count reached /dev/null on its first run (#639).
+            output["external_functions_count"] = exported.get("external_functions_count", 0)
             output["imports"] = exported.get("imports", [])
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")
@@ -375,6 +380,7 @@ def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0")
         "base_address": base_addr,
         "analysis_success": False,
         "functions_count": 0,
+        "external_functions_count": 0,
         "imports": [],
         "strings_of_interest": [],
         "decompiled_functions": [],
@@ -387,6 +393,10 @@ def analyze_shellcode(sample_path: Path, processor: str, base_addr: str = "0x0")
                 exported = json.load(f)
             output["analysis_success"] = True
             output["functions_count"] = exported.get("functions_count", 0)
+            # Explicitly forwarded: this dict is an ALLOWLIST, so a field the
+            # export computes is silently dropped unless named here. That is how
+            # external_functions_count reached /dev/null on its first run (#639).
+            output["external_functions_count"] = exported.get("external_functions_count", 0)
             output["imports"] = exported.get("imports", [])
             output["strings_of_interest"] = exported.get("strings_of_interest", [])
             output["entry_point"] = exported.get("entry_point", "unknown")

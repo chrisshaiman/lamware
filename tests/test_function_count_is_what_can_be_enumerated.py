@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TPL = ROOT / "ansible" / "roles" / "ghidra" / "templates"
 JAVA = (TPL / "ExportAnalysis.java.j2").read_text()
 TOOL = (TPL / "GhidraTool.java.j2").read_text()
+WRAPPER = (TPL / "run-ghidra.py.j2").read_text()
 
 
 def test_the_export_script_exists_and_reports_a_count():
@@ -100,3 +101,27 @@ def test_the_measured_gaps_are_recorded_in_the_source(sample, declared, enumerab
     check it rather than trust it. If these numbers are ever revised, the comment
     and this test move together."""
     assert str(declared) in JAVA and str(enumerable) in JAVA, sample
+
+
+def test_the_wrapper_forwards_the_external_count():
+    """`run-ghidra.py` builds its output from an explicit ALLOWLIST of keys, so a
+    field the export computes is dropped unless it is named there.
+
+    That is not hypothetical: on the first host run of this change,
+    functions_count came back correctly at 336 and external_functions_count came
+    back None, because the export emitted it and the wrapper did not copy it.
+    A structural test on the Java alone would have passed.
+    """
+    forwards = [ln for ln in WRAPPER.splitlines()
+                if "external_functions_count" in ln and "exported.get" in ln]
+    assert len(forwards) == 2, (
+        f"expected both analysis paths to forward it, found {len(forwards)}")
+
+
+def test_the_wrapper_defaults_it_on_failure():
+    """The failure dicts define the output shape when the export produced nothing.
+    A missing key there makes a failed analysis raise a KeyError downstream rather
+    than report zero."""
+    defaults = [ln for ln in WRAPPER.splitlines()
+                if '"external_functions_count": 0,' in ln]
+    assert len(defaults) == 2, f"expected 2 default entries, found {len(defaults)}"
