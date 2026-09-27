@@ -56,9 +56,40 @@ public class ExportAnalysis extends GhidraScript {
 
     @Override
     public void run() throws Exception {
-        // Count functions
+        // Count functions the way everything that CONSUMES this number counts
+        // them: by iterating the program's own address space.
+        //
+        // This was `fm.getFunctionCount()`, which also counts EXTERNAL functions
+        // — the imports, living in Ghidra's EXTERNAL space. So the report
+        // declared a number nothing else agreed with (#639):
+        //
+        //     sample        declared   enumerable   gap   imports
+        //     amadey             434          336    98       106
+        //     cobaltstrike      1227          928   299       301
+        //     emotet             170          169     1         1
+        //     rhadamanthys       707          617    90        97
+        //
+        // The gap IS the externals; it tracks the import count, exactly on
+        // emotet and within a few elsewhere (the report's import list counts
+        // symbols, not external Function objects).
+        //
+        // Two consumers both wanted the smaller number:
+        //   * decompileTopFunctions, 150 lines below in THIS file, iterates
+        //     getFunctions(true) — so the export already disagreed with itself.
+        //   * propagate_project_dir ranks candidate programs by functions_count
+        //     to pick the canonical one (#490). An inflated count prefers a
+        //     program with many imports over one with more analysable code.
+        //
+        // `external_functions_count` keeps what is no longer folded in, so the
+        // change loses nothing and the two numbers can be reconciled later.
         FunctionManager fm = currentProgram.getFunctionManager();
-        int functionCount = fm.getFunctionCount();
+        int functionCount = 0;
+        FunctionIterator countIter = fm.getFunctions(true);
+        while (countIter.hasNext()) {
+            countIter.next();
+            functionCount++;
+        }
+        int externalFunctionCount = fm.getFunctionCount() - functionCount;
 
         // Extract imports by iterating each external library's symbols
         // ExternalLocationIterator doesn't implement Iterable — use while loop
@@ -143,6 +174,7 @@ public class ExportAnalysis extends GhidraScript {
         StringBuilder json = new StringBuilder();
         json.append("{\n");
         json.append("  \"functions_count\": ").append(functionCount).append(",\n");
+        json.append("  \"external_functions_count\": ").append(externalFunctionCount).append(",\n");
         json.append("  \"project_dir\": \"").append(escapeJson(projectDir)).append("\",\n");
 
         // Declared alongside the list, not inferred from its length: a consumer

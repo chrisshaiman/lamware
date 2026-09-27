@@ -14,8 +14,9 @@ The PR body must carry the line `make merge-check` prints:
 and that sha must be the PR's head. A push invalidates the evidence by
 construction, because the head moves and the line does not.
 
-Docs-only PRs are exempt. Nothing else is: a Makefile or CI change still has to
-go through the gate it changes.
+PRs that change nothing the host runs are exempt — docs and `tests/`. Nothing
+else is: a Makefile or CI change still has to go through the gate it changes,
+and `tests/smoke/` IS the deploy gate, so it is not exempt either.
 
 The logic is a pure function so it can be tested without GitHub. The workflow
 passes the body through an environment variable, never interpolated into a
@@ -29,16 +30,34 @@ import re
 import sys
 from pathlib import Path
 
-# A PR is docs-only when every changed path matches one of these. Deliberately
-# narrow: .github/workflows, tests/, Makefile and VERSION change what runs or
-# what is built, so they are not documentation whatever their extension.
-DOCS_ONLY = (
+# A PR needs no host evidence when every changed path is one the host never
+# runs. Deliberately narrow: .github/workflows, Makefile and VERSION change what
+# runs or what is built, so they are not exempt whatever their extension.
+#
+# `tests/` is exempt because it is genuinely not deployed — the pipeline tarball
+# is built with `--exclude=tests` — so a redeploy to satisfy the gate would ship
+# no changed byte and move only the provenance marker. That friction on every
+# test-only PR is what trains people to route around a check.
+#
+# `tests/smoke/` is the ONE exception: `make deploy` runs it as the post-deploy
+# gate (Makefile: "Running post-deploy smoke gate"), so it is not merely tested
+# code, it IS the gate. A change that weakens it must go through the gate it
+# implements. Ordering matters here — the more specific pattern is checked first.
+NOT_DEPLOYED_EXCEPTIONS = (
+    re.compile(r"^tests/smoke/"),
+)
+
+NOT_DEPLOYED = (
     re.compile(r"\.md\Z", re.IGNORECASE),
     re.compile(r"^docs/"),
     re.compile(r"\AAUTHORS\Z"),
     re.compile(r"^LICENSE"),
     re.compile(r"\A\.github/CODEOWNERS\Z"),
     re.compile(r"^\.github/ISSUE_TEMPLATE/"),
+    # One pattern, not two: `\A` covers `tests/...` and `/` covers
+    # `pipeline/tests/...`, so a separate `^tests/` was dead — no mutation could
+    # kill it, which is how that was noticed.
+    re.compile(r"(?:\A|/)tests/"),
 )
 
 # The line `make merge-check` prints. 12 hex chars is the shortest form the
@@ -59,12 +78,23 @@ HOW_TO_FIX = (
 
 
 def is_docs_only(changed_files: list[str]) -> bool:
-    """True when every changed path is documentation. An empty list is not docs-only:
-    it means the diff could not be computed, and a check that passes on missing
-    input is the shape of bug this repo keeps finding (#336, #577)."""
+    """True when the host runs none of the changed paths.
+
+    Named `is_docs_only` for continuity; the rule is now "nothing the host runs"
+    rather than "documentation", because `tests/` qualifies on the same grounds
+    and is the common case.
+
+    An empty list is NOT exempt: it means the diff could not be computed, and a
+    check that passes on missing input is the shape of bug this repo keeps
+    finding (#336, #577).
+    """
     if not changed_files:
         return False
-    return all(any(p.search(f) for p in DOCS_ONLY) for f in changed_files)
+    return all(
+        any(p.search(f) for p in NOT_DEPLOYED)
+        and not any(x.search(f) for x in NOT_DEPLOYED_EXCEPTIONS)
+        for f in changed_files
+    )
 
 
 def evaluate(body: str | None, head_sha: str, changed_files: list[str]) -> tuple[bool, str]:
@@ -77,7 +107,7 @@ def evaluate(body: str | None, head_sha: str, changed_files: list[str]) -> tuple
     head = head_sha.strip().lower()
 
     if is_docs_only(changed_files):
-        return True, (f"docs-only change ({len(changed_files)} file(s)); "
+        return True, (f"no deployed files changed ({len(changed_files)} file(s)); "
                       "no deploy evidence required.")
 
     if PLACEHOLDER.search(body):
