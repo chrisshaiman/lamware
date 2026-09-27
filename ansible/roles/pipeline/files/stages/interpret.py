@@ -560,6 +560,52 @@ def _drain_stderr(proc, buf: list | None = None) -> str:
     return text
 
 
+# Host paths carry OUR label for the sample, and the agent has no use for them.
+#
+#   analyzed_files[].project_dir      /opt/pipeline/reports/eval-amadey-573e6860/project
+#   analyzed_files[].host_output_dir  /opt/pipeline/reports/redet_179dcccf0614
+#   project_dir                       /opt/pipeline/eval-corpus/amadey_573e6860/project
+#
+# Those are the only three path-shaped keys in a ghidra_result, measured across
+# every corpus report. #634 fixed the leak through the detonated FILENAME; this
+# closes the remaining route, which no naming convention can reach because the
+# corpus directory is itself named after the family.
+#
+# Safe to remove rather than redact: the HOST executes tool calls with its own
+# `project_dir` local (see run_ghidra_tool below), and the container exchanges
+# only tool_call/status/final over stdin — grep interpret-ghidra.py, it never
+# reads either key. Removing beats blanking because an empty string would still
+# tell the agent a path existed.
+#
+# Lower severity than the filename leak and worth stating: both arms of the #420
+# comparison see this equally, so it never biased that A/B. It still hands a
+# family label to a model asked to derive one, and it inflates absolute
+# capability numbers for every arm alike.
+_HOST_PATH_KEYS = ("project_dir", "host_output_dir")
+
+
+def without_host_paths(ghidra_result: dict) -> dict:
+    """A copy of `ghidra_result` with host paths removed, for the agent's payload.
+
+    Shallow-copies only the containers it rewrites, so large values (decompiled
+    functions, strings) are shared rather than duplicated. The caller's dict is
+    never mutated: run-pipeline writes `ghidra_result` into the report afterwards,
+    and the report SHOULD keep the paths — they are how a later repair tool finds
+    the project (#490, repair_ghidra_pairing.py).
+    """
+    if not isinstance(ghidra_result, dict):
+        return ghidra_result
+    out = {k: v for k, v in ghidra_result.items() if k not in _HOST_PATH_KEYS}
+    files = ghidra_result.get("analyzed_files")
+    if isinstance(files, list):
+        out["analyzed_files"] = [
+            {k: v for k, v in af.items() if k not in _HOST_PATH_KEYS}
+            if isinstance(af, dict) else af
+            for af in files
+        ]
+    return out
+
+
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
                     ghidra_cmd: str, list_functions_cap: int | None = None,
@@ -645,7 +691,10 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     # Send init message (bazaar_family passed through for LLM context)
     init_payload = {
         "type": "init",
-        "ghidra_data": ghidra_result,
+        # Host paths stripped: they carry our label for the sample and the agent
+        # cannot use them (#634). `project_dir` and `program_name` were taken as
+        # locals above, so the tool executor is unaffected.
+        "ghidra_data": without_host_paths(ghidra_result),
         "config": interpret_config,
     }
     if ghidra_result.get("bazaar_family"):
