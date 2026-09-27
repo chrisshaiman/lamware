@@ -40,7 +40,7 @@ def run_ab(report: dict, interpret_cmd: str, models: list[str]) -> dict[str, dic
 def main() -> None:
     ap = argparse.ArgumentParser(description="A/B summarize a report across models.")
     ap.add_argument("report", help="path to a pipeline report.json")
-    ap.add_argument("--local", default="local-qwen", help="local model name")
+    ap.add_argument("--local", default="local-qwen-llamacpp", help="local model name")
     ap.add_argument("--cloud", default="claude-haiku-4-5", help="cloud model name")
     ap.add_argument("--interpret-cmd", default="/opt/interpret/run-interpret",
                     help="interpret container wrapper")

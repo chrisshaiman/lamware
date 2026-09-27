@@ -41,30 +41,16 @@ model_list:
       model: "anthropic/claude-opus-5"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  # Local LLM (Ollama) for the summary stages. Reached over host loopback; the
-  # /v1/messages router translates Anthropic<->Ollama (verified 2026-07-04 spike).
-  # think:false is REQUIRED — Qwen3.6 is a thinking model and otherwise burns the
-  # token budget on hidden reasoning and returns an EMPTY summary (proven
-  # 2026-07-04: think=true -> empty, think=false -> full summary). Confirm LiteLLM
-  # forwards `think` to ollama_chat during deploy; if not, fall back to an Ollama
-  # Modelfile PARAMETER or a `/no_think` directive in the summary system prompt.
-  - model_name: "local-qwen"
-    litellm_params:
-      model: "{{ litellm_local_model_backend }}"
-      api_base: "{{ litellm_ollama_api_base }}"
-      think: false
-  - model_name: "local-qwen-strict"
-    litellm_params:
-      model: "{{ litellm_local_model_backend }}"
-      api_base: "{{ litellm_ollama_api_base }}"
-      think: false
-  # Agentic RE loop variant — identical to local-qwen but with think:true so the
-  # model reasons through disassembly before committing to tool calls.
-  - model_name: "local-qwen-re"
-    litellm_params:
-      model: "{{ litellm_local_model_backend }}"
-      api_base: "{{ litellm_ollama_api_base }}"
-      think: true
+  # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
+  # were removed 2026-09-27. No production stage called them — summary,
+  # plain_english and visual all run on llama.cpp — but they kept a live route to
+  # a second copy of the same qwen3.6 weights, so any research script run with its
+  # old defaults loaded ~14GB alongside llama-server's ~23GB: the #403 OOM, one
+  # command away (#407). The ollama CONTAINER is kept for now because #431 compares
+  # the two backends; reach it directly on 127.0.0.1:11434, not through LiteLLM.
+  #
+  # `local-qwen-strict` was the documented OFFLINE summary mode (no cloud
+  # fallback). Its llama.cpp replacement is `local-qwen-llamacpp-strict` below.
   # Agentic RE on llama.cpp (llama-server), the eval harness's local arms.
   # llama.cpp beat Ollama for reasoning-on work in the 2026-07-23 spike: it splits
   # reasoning into `reasoning_content` so `content` stays clean, and it
@@ -136,6 +122,16 @@ model_list:
       api_key: "sk-none"
       chat_template_kwargs:
         enable_thinking: false
+  # Offline summary mode: identical to local-qwen-llamacpp, and deliberately given
+  # NO entry in `fallbacks` below, so a local failure fails instead of reaching a
+  # cloud model. Replaces the Ollama-backed local-qwen-strict.
+  - model_name: "local-qwen-llamacpp-strict"
+    litellm_params:
+      model: "openai/qwen3.6"
+      api_base: "{{ litellm_llamacpp_openai_base | default('http://127.0.0.1:11435/v1') }}"
+      api_key: "sk-none"
+      chat_template_kwargs:
+        enable_thinking: false
 {% for seed in litellm_llamacpp_seeds %}
 {% if loop.first %}
   # ---------------------------------------------------------------------------
@@ -190,11 +186,11 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
-  # local-qwen -> Haiku on any local failure. See PipelineConfig.summary_model for
+  # local-qwen-llamacpp -> Haiku on any local failure. See PipelineConfig.summary_model for
   # the per-stage knob.
   #
   # DELIBERATELY ABSENT, do not "fix" by adding one:
-  #   local-qwen-strict     — strict = offline.
+  #   local-qwen-llamacpp-strict — strict = offline.
   #   local-qwen-llamacpp-re — the AGENTIC RE model. Its context holds decompiled
   #     malware bodies, extracted strings and C2 indicators. A cloud fallback would
   #     silently ship all of that to a third party at the exact moment the local
@@ -202,7 +198,7 @@ litellm_settings:
   #     and defeating the air-gap that is the whole reason RE runs locally.
   #     RE must fail loudly and stay offline. Guarded by
   #     pipeline/tests/test_litellm_fallbacks.py.
-  fallbacks: [{"local-qwen": ["haiku-fallback"]}, {"local-qwen-llamacpp": ["haiku-fallback"]}]
+  fallbacks: [{"local-qwen-llamacpp": ["haiku-fallback"]}]
 
 general_settings:
   master_key: "{{ litellm_master_key | mandatory }}"

@@ -23,7 +23,7 @@ CFG = (ROOT / "ansible" / "roles" / "litellm" / "templates"
        / "config.yaml.j2").read_text()
 
 # Models whose context contains malware-derived content or which are explicitly offline.
-NO_CLOUD_FALLBACK = ("local-qwen-llamacpp-re", "local-qwen-strict")
+NO_CLOUD_FALLBACK = ("local-qwen-llamacpp-re", "local-qwen-llamacpp-strict")
 
 
 def _fallbacks_line() -> str:
@@ -47,9 +47,29 @@ def test_the_deliberate_absence_is_documented():
     assert "local-qwen-llamacpp-re" in CFG.split("DELIBERATELY ABSENT")[1][:900]
 
 
+def _production_summary_models() -> set[str]:
+    """The aliases the summary stages actually request, read from the pipeline
+    role's defaults rather than hard-coded here."""
+    defaults = (ROOT / "ansible" / "roles" / "pipeline" / "defaults"
+                / "main.yml").read_text()
+    found = re.findall(r'^pipeline_(?:summary|plain_english)_model:\s*"([^"]+)"',
+                       defaults, re.MULTILINE)
+    assert found, "pipeline summary model defaults not found"
+    return set(found)
+
+
 def test_summary_model_fallback_is_still_intact():
-    """The summary path is a different risk profile and SHOULD stay resilient."""
-    assert '"local-qwen": ["haiku-fallback"]' in _fallbacks_line()
+    """The summary path is a different risk profile and SHOULD stay resilient.
+
+    Asserted against whatever the pipeline ACTUALLY requests. This test used to
+    name "local-qwen", the Ollama alias. When the summary stages moved to
+    llama.cpp it kept passing while checking a fallback nothing used, and it only
+    noticed anything when that alias was deleted.
+    """
+    line = _fallbacks_line()
+    for model in _production_summary_models():
+        assert f'"{model}": ["haiku-fallback"]' in line, (
+            f"{model} is what the summary stages request, and has no fallback")
 
 
 def test_re_model_is_still_registered_as_a_model():
@@ -94,3 +114,24 @@ def test_no_cloud_provider_sneaks_into_the_re_entry():
     for cloud_model in ("claude-", "gpt-4", "gpt-5"):
         assert cloud_model not in block, (
             f"RE entry names {cloud_model!r} — that is a cloud model, not local qwen")
+
+
+def test_the_offline_summary_mode_still_exists():
+    """`local-qwen-strict` was the documented offline mode for the summary stages.
+    Removing the Ollama aliases must not quietly remove the capability, so it moved
+    to llama.cpp — registered, and deliberately absent from `fallbacks`."""
+    assert 'model_name: "local-qwen-llamacpp-strict"' in CFG
+    assert "local-qwen-llamacpp-strict" not in _fallbacks_line()
+
+
+def test_no_model_routes_to_ollama():
+    """Ollama served the same qwen3.6 weights as llama-server. A live route to it
+    meant any caller loaded a second ~14GB copy next to ~23GB, which is the #403 OOM
+    (#407). No production stage used it. The container is kept for #431, which
+    reaches it directly on :11434, never through LiteLLM."""
+    model_list = CFG.split("litellm_settings:")[0]
+    entries = [e for e in model_list.split("- model_name:")[1:]]
+    for e in entries:
+        body = "\n".join(ln for ln in e.splitlines() if not ln.strip().startswith("#"))
+        assert "ollama" not in body.lower(), f"an entry still routes to ollama: {e[:80]}"
+        assert "11434" not in body, f"an entry still targets ollama's port: {e[:80]}"

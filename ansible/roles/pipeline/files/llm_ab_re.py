@@ -222,7 +222,7 @@ def main() -> None:
     ap.add_argument("analysis_dirs", nargs="+",
                     help="pipeline analysis dirs (each has report.json + project/)")
     ap.add_argument("--cloud", default="claude-sonnet-4-6", help="cloud model (production RE baseline)")
-    ap.add_argument("--local", default="local-qwen-re", help="local model (routes via re_backend=local)")
+    ap.add_argument("--local", default="local-qwen-llamacpp-re", help="local model (routes via re_backend=local)")
     ap.add_argument("--config", default="/opt/pipeline/config.json",
                     help="pipeline config.json (its 'interpret' block is the base config)")
     ap.add_argument("--interpret-cmd", default="/opt/interpret/run-interpret")
