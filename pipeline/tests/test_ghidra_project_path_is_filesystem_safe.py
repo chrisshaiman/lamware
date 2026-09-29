@@ -22,9 +22,10 @@ which the eval scored as `tool_layer_broken` — correctly, but two months after
 the fact.
 
 An unparseable address is named `unknown` rather than coerced into something
-address-shaped: a valid-but-wrong name would silently put two unrelated
-candidates in one directory, which is worse than an honest collision on
-`unknown`.
+address-shaped. That alone did NOT prevent collisions: every CAPE payload has
+pid 0 and no address, so all of them became `shellcode_0_unknown` and each run
+erased the last (#648). The directory now also carries a content hash; see
+test_ghidra_payload_projects_do_not_collide.py.
 """
 import pytest
 from stages.ghidra import _addr_token, _path_token
@@ -72,15 +73,23 @@ def test_the_caller_requires_a_pid_rather_than_defaulting():
     """A candidate with no pid is a programming error. Reading it with .get()
     would name the directory "None" and carry on — the silent-degradation shape
     this repo keeps finding."""
+    import ast
     import inspect
+    import textwrap
 
     from stages import ghidra
-    src = inspect.getsource(ghidra.run_ghidra_shellcode)
-    line = next(ln for ln in src.splitlines() if "sc_output" in ln and "=" in ln)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(ghidra.run_ghidra_shellcode)))
+    # The whole assignment, however many lines it spans — a line-based search
+    # silently picks up the first physical line of a wrapped expression.
+    assign = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "sc_output" for t in n.targets))
+    expr = ast.unparse(assign.value)
     # `.get("pid")` is correct elsewhere in this function — a missing pid should
     # be None in a RESULT dict. It is only the PATH that must not tolerate it.
-    assert "candidate['pid']" in line or 'candidate["pid"]' in line, line
-    assert ".get(" not in line.split("_addr_token")[0], line
+    assert "candidate['pid']" in expr, expr
+    assert "get('pid'" not in expr, expr
 
 
 @pytest.mark.parametrize("raw", ["400000\n", " 0x400000 ", "\t400000"])

@@ -14,6 +14,7 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -269,6 +270,33 @@ def _path_token(value: object) -> str:
     return "unknown" if token.strip(".") == "" else token
 
 
+# pid + address is not an identity. CAPE's extracted payloads have neither (pid
+# 0, address "N/A"), so every one of them was named shellcode_0_unknown, and
+# each headless run's "Creating project" replaced the one before: of cobalt-
+# strike's five payloads only the last program survived, while the report still
+# listed all five with function counts the agent could never reach (#648).
+# Before #631 the shared name was shellcode_0_N/A, which failed loudly; making
+# it filesystem-safe without making it unique turned that into a silent loss.
+#
+# The content hash is the identity. Two candidates with the same bytes may share
+# a directory — they are the same program — and two different ones cannot.
+_SHA_RE = re.compile(r"\A[0-9a-fA-F]{64}\Z")
+
+
+def _content_token(candidate: dict) -> str:
+    """First 12 hex digits of the candidate's sha256.
+
+    Uses the sha256 the caller recorded when it is a real one; otherwise hashes
+    the dump itself. A missing or unreadable dump raises: the headless run
+    reads the same file, so there is nothing to analyse under a made-up name.
+    """
+    sha = str(candidate.get("sha256") or "").strip()
+    if not _SHA_RE.match(sha):
+        with Path(candidate["path"]).open("rb") as fh:
+            sha = hashlib.file_digest(fh, "sha256").hexdigest()
+    return sha[:12].lower()
+
+
 def run_ghidra_shellcode(candidate: dict, output_dir: Path,
                          ghidra_cmd: str) -> dict:
     """Run artifact extraction and optionally Ghidra on a shellcode candidate.
@@ -282,7 +310,6 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
     if isinstance(base_addr, int):
         base_addr = f"0x{base_addr:x}"
     source = candidate.get("source", "malfind_injection")
-    sc_output = output_dir / f"shellcode_{_path_token(candidate['pid'])}_{_addr_token(base_addr)}"
 
     # Use pre-extracted artifacts from Cape, or extract from dump file
     artifacts = candidate.get("shellcode_artifacts")
@@ -314,6 +341,12 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
         if artifacts:
             result["shellcode_artifacts"] = artifacts
         return result
+
+    # After the early return: an artifact-only buffer never gets a project, so
+    # it must not fail on naming one.
+    sc_output = output_dir / (
+        f"shellcode_{_path_token(candidate['pid'])}_{_addr_token(base_addr)}"
+        f"_{_content_token(candidate)}")
 
     try:
         result = subprocess.run(
@@ -486,7 +519,7 @@ def propagate_project_dir(analyzed_files: list[dict],
 
     **Assume every project lives at ``output_dir/project``.** The two loaders
     write to different places — ``run_ghidra_on_file`` to ``output_dir``,
-    ``run_ghidra_shellcode`` to ``output_dir/shellcode_<pid>_<addr>``. Pointing
+    ``run_ghidra_shellcode`` to ``output_dir/shellcode_<pid>_<addr>_<sha12>``. Pointing
     a shellcode analysis at ``output_dir/project`` names a project that holds a
     different program, or none. On latrodectus that project was **empty**, and
     all 5 of the interpret stage's Ghidra tool calls failed with "GhidraTool
