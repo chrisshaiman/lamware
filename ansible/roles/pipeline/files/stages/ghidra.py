@@ -62,6 +62,17 @@ def discover_pe_files(cape_data: dict,
         return [], str(exc)
 
 
+# Stage 4 branches that hand the sample to another analyser. Each records its
+# flag on report["ghidra"]; run-pipeline then sends CAPE's payloads (never the
+# wrapper) to Ghidra (#646). A branch missing from this tuple silently keeps
+# the old behaviour, so test_routed_samples_get_payload_ghidra.py derives the
+# set from run-pipeline's source and compares.
+ROUTED_FLAGS = (
+    "office_routed", "powershell_routed", "script_routed", "dotnet_routed",
+    "go_routed", "pyinstaller_routed", "java_routed",
+)
+
+
 def get_dropped_pe_files(cape_data: dict,
                          storage: Path = CAPE_STORAGE) -> list[Path]:
     """PE files Cape extracted, for callers that only need the list."""
@@ -628,11 +639,20 @@ def _drop_already_queued(pe_files: list[Path],
 def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                ghidra_cmd: str, get_cape_signatures_fn,
                shellcode_candidates: list[dict] | None = None,
-               storage: Path = CAPE_STORAGE) -> dict:
-    """Run Ghidra headless on dropped PEs and/or the original sample."""
+               storage: Path = CAPE_STORAGE,
+               include_original: bool = True) -> dict:
+    """Run Ghidra headless on dropped PEs and/or the original sample.
+
+    ``include_original=False`` is for samples another analyser already owns
+    (.NET, Office, scripts, …): the wrapper is not a native program, but what
+    it unpacked is, and CAPE extracted it (#646).
+    """
     pe_files, access_error = discover_pe_files(cape_data, storage)
-    original_pe, original_source, original_note = resolve_original_sample(
-        cape_data, sample_path, storage)
+    if include_original:
+        original_pe, original_source, original_note = resolve_original_sample(
+            cape_data, sample_path, storage)
+    else:
+        original_pe, original_source, original_note = None, None, None
 
     # Cape's own extracted payloads already reach Ghidra as shellcode
     # candidates (run-pipeline collects cape.large_payloads with
@@ -660,6 +680,13 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         # Returning "no PE files found" here would abandon the payloads that
         # are about to be analysed properly.
         trigger_reason = "cape_payloads_via_shellcode_loader"
+    elif not include_original:
+        # Nothing unpacked. Not an error: the routed analyser still covers the
+        # sample. An unreadable CAPE tree still is one, and must say so.
+        result = {"triggered": True, "analyzed_files": []}
+        if access_error:
+            result["payload_access_error"] = access_error
+        return result
     else:
         # "no PE files found" is a claim about the sample. If Cape's storage
         # was unreadable it is a claim about us, and saying the first when the

@@ -48,7 +48,7 @@ from stages.cape import (
     submit_to_cape,
 )
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
-from stages.ghidra import run_ghidra, should_run_ghidra
+from stages.ghidra import ROUTED_FLAGS, run_ghidra, should_run_ghidra
 from stages.go import is_go_binary, run_go_analysis
 from stages.interpret import run_interpret, run_plain_english, run_summarize
 from stages.java import is_java_binary, run_java_analysis
@@ -833,6 +833,29 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             log.info("\n[Stage 4] Ghidra: checking triggers...")
             log.info("  Not triggered")
             report["ghidra"] = {"triggered": False}
+
+    # A routed sample is analysed by its own tool, and every routed branch above
+    # used to end with analyzed_files: []. That discarded what CAPE unpacked,
+    # which for a loader is the malware: formbook's .NET stage is a card game
+    # wrapped around six lines of reflective load, while CAPE had extracted a
+    # "Formbook Payload" that nothing looked at (#646). The wrapper stays with
+    # its analyser; the payloads go to Ghidra.
+    _routed = [k for k in ROUTED_FLAGS if report.get("ghidra", {}).get(k)]
+    if _routed:
+        log.info(f"\n[Stage 4] {_routed[0]}: running Ghidra on CAPE payloads (not the wrapper)...")
+        payload_ghidra = run_ghidra(
+            cape_data, output_dir, sample_path,
+            ghidra_cmd=GHIDRA_CMD,
+            get_cape_signatures_fn=get_cape_signatures,
+            shellcode_candidates=shellcode_candidates,
+            include_original=False,
+        )
+        # Keep the routed flag: Stage 4.5 and the UI still read it.
+        report["ghidra"] = {**payload_ghidra, **{k: True for k in _routed}}
+        n_ok = sum(1 for f in payload_ghidra.get("analyzed_files", [])
+                   if f.get("analysis_success"))
+        log.info(f"  Payloads analysed: {len(payload_ghidra.get('analyzed_files', []))}, "
+                 f"{n_ok} with a loaded program")
 
     # Check CAPE logs for encoded PowerShell commands (any sample type)
     if not report.get("powershell_analysis"):
