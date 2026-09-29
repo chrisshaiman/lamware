@@ -62,6 +62,16 @@ def discover_pe_files(cape_data: dict,
         return [], str(exc)
 
 
+# The analyzed_files a routed sample's agent may read instead of the wrapper:
+# CAPE's unpacked payloads (shellcode loader, source "cape_payload") and dropped
+# PEs (PE loader, which sets no "source" at all). None can only mean a dropped
+# PE here because routed samples run with include_original=False; on the native
+# path it would also match the original, which is why select_payload_target is
+# only ever called for routed samples. Injection buffers and malfind regions are
+# left out: they are fragments of a process, not a program to investigate.
+PAYLOAD_SOURCES = frozenset({"cape_payload", None})
+
+
 # Stage 4 branches that hand the sample to another analyser. Each records its
 # flag on report["ghidra"]; run-pipeline then sends CAPE's payloads (never the
 # wrapper) to Ghidra (#646). A branch missing from this tuple silently keeps
@@ -71,6 +81,33 @@ ROUTED_FLAGS = (
     "office_routed", "powershell_routed", "script_routed", "dotnet_routed",
     "go_routed", "pyinstaller_routed", "java_routed",
 )
+
+
+def select_payload_target(ghidra_data: dict) -> dict | None:
+    """The unpacked program the RE agent should read instead of a routed wrapper.
+
+    Option (c) of #646: when a sample was routed to another analyser (.NET,
+    Office, script, ...) and Ghidra loaded a real program from what CAPE
+    unpacked, the agent investigates THAT, not the wrapper. formbook's .NET
+    stage is 97k characters of card game; the program worth reading is the
+    payload it loads by reflection.
+
+    Returns the analyzed_files entry that run_ghidra already verified and chose
+    as canonical (``ghidra_data["program_name"]``), and only if it is a payload
+    that loaded with functions. Never ``successful[0]``: list position is not a
+    quality signal, and on cobaltstrike it would have been a 0-function
+    payload. None means "keep the routed analyser's interpretation".
+    """
+    canonical = ghidra_data.get("program_name")
+    if not canonical or not ghidra_data.get("project_dir"):
+        return None
+    for f in ghidra_data.get("analyzed_files") or []:
+        if (f.get("program_name") == canonical
+                and f.get("analysis_success")
+                and (f.get("functions_count") or 0) > 0
+                and f.get("source") in PAYLOAD_SOURCES):
+            return f
+    return None
 
 
 def get_dropped_pe_files(cape_data: dict,

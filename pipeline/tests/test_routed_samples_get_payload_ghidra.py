@@ -139,3 +139,82 @@ def test_run_pipeline_sends_routed_payloads_without_the_wrapper():
     val = payload_only[0]["include_original"]
     assert isinstance(val, ast.Constant) and val.value is False
     assert "shellcode_candidates" in payload_only[0], "payloads are not passed"
+
+
+# --- option (c): the agent reads the payload, not the wrapper -----------------
+
+from stages.ghidra import select_payload_target  # noqa: E402
+
+
+def _ghidra(canonical: str, files: list[dict], project_dir="/r/x/project") -> dict:
+    return {"dotnet_routed": True, "program_name": canonical,
+            "project_dir": project_dir, "analyzed_files": files}
+
+
+def _f(name, fns, source="cape_payload", ok=True):
+    f = {"program_name": name, "functions_count": fns, "analysis_success": ok,
+         "project_dir": f"/r/{name}/project"}
+    if source is not None:
+        f["source"] = source
+    return f
+
+
+def test_the_canonical_payload_is_chosen_not_the_first_success():
+    """cobaltstrike's first successful payload had 0 functions; the canonical
+    one had 1,945. List position is not a quality signal."""
+    files = [_f("empty", 0), _f("real", 1945)]
+    assert select_payload_target(_ghidra("real", files))["program_name"] == "real"
+
+
+def test_a_dropped_pe_qualifies():
+    """The PE loader sets no "source"; for a routed sample that is a dropped PE."""
+    files = [_f("dropped", 300, source=None)]
+    assert select_payload_target(_ghidra("dropped", files)) is not None
+
+
+@pytest.mark.parametrize("canonical_file", [
+    _f("c", 0),                                   # loaded, no functions
+    _f("c", 50, ok=False),                        # analysis failed
+    _f("c", 50, source="cape_injection"),         # a process fragment
+    _f("c", 50, source="malfind_injection"),      # a process fragment
+])
+def test_nothing_worth_reading_keeps_the_wrapper(canonical_file):
+    assert select_payload_target(_ghidra("c", [canonical_file])) is None
+
+
+def test_no_verified_project_keeps_the_wrapper():
+    """run_ghidra sets project_dir only after verifying the program opens (#490).
+    Without it the agent's every tool call would fail."""
+    assert select_payload_target(_ghidra("c", [_f("c", 50)], project_dir=None)) is None
+
+
+def test_a_canonical_name_with_no_matching_file_keeps_the_wrapper():
+    assert select_payload_target(_ghidra("ghost", [_f("c", 50)])) is None
+
+
+def _stage45_if():
+    """The If node that starts the Stage 4.5 dispatch chain."""
+    for node in ast.walk(_tree()):
+        if isinstance(node, ast.If) and "payload_target" in ast.unparse(node.test):
+            return node
+    return None
+
+
+def test_the_payload_branch_comes_before_every_routed_analyser():
+    """If any routed branch (dotnet, office, ...) is tested first, the wrapper
+    wins and option (c) is dead code."""
+    node = _stage45_if()
+    assert node is not None, "no Stage 4.5 branch tests payload_target"
+    # Exact, because "payload_target is None" would satisfy every other check
+    # here while reading the wrapper for exactly the samples that have a payload.
+    assert ast.unparse(node.test) == "payload_target is not None and INTERPRET_ENABLED"
+    later = node.orelse[0]
+    assert isinstance(later, ast.If) and "dotnet_data" in ast.unparse(later.test), (
+        "the payload branch is not immediately ahead of the .NET branch")
+
+
+def test_the_report_says_what_was_read():
+    """A .NET sample's interpretation of its payload must not read as an
+    interpretation of its C#; the eval keys on this."""
+    body = ast.unparse(_stage45_if())
+    assert "'input'" in body and "'wrapper_routed_by'" in body, body[:400]
