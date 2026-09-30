@@ -83,31 +83,65 @@ ROUTED_FLAGS = (
 )
 
 
-def select_payload_target(ghidra_data: dict) -> dict | None:
+# CAPE names a payload after the family its config extractor recognised, in
+# three forms seen in our corpus (all 33 distinct labels are in the test):
+# "Formbook Payload", "Salat Payload: 32-bit executable", "XWorm payload".
+# Generic unpacking results are named for their shape instead ("Unpacked PE
+# Image: 32-bit DLL", "Injected Shellcode/Data", "Decompressed PE Image: ..."),
+# and those are not a family claim.
+_FAMILY_PAYLOAD_RE = re.compile(
+    r"\A(?!(?:Unpacked|Injected|Extracted|Decompressed)\b)\S.*?\s[Pp]ayload(?::.*)?\Z")
+
+
+def is_family_payload(cape_type: object) -> bool:
+    """True when CAPE labelled this payload with a family, not just a shape."""
+    return isinstance(cape_type, str) and bool(_FAMILY_PAYLOAD_RE.match(cape_type.strip()))
+
+
+def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, str | None]:
     """The unpacked program the RE agent should read instead of a routed wrapper.
 
     Option (c) of #646: when a sample was routed to another analyser (.NET,
-    Office, script, ...) and Ghidra loaded a real program from what CAPE
-    unpacked, the agent investigates THAT, not the wrapper. formbook's .NET
-    stage is 97k characters of card game; the program worth reading is the
-    payload it loads by reflection.
+    Office, script, ...) the agent investigates what CAPE unpacked instead.
 
-    Returns the analyzed_files entry that run_ghidra already verified and chose
-    as canonical (``ghidra_data["program_name"]``), and only if it is a payload
-    that loaded with functions. Never ``successful[0]``: list position is not a
-    quality signal, and on cobaltstrike it would have been a 0-function
-    payload. None means "keep the routed analyser's interpretation".
+    Preference, first match wins:
+
+    1. ``cape_family_label``: a payload CAPE labelled with a family
+       ("Formbook Payload"), loaded with functions, whose program ``verify``
+       confirms opens (True; None is "could not tell" and does not qualify).
+       The first version ranked by function count alone, and on formbook
+       (v651, 2026-09-29) that picked an unlabelled 4,064-function DLL over the
+       377-function "Formbook Payload"; the agent then described a generic
+       loader.
+    2. ``canonical``: the program run_ghidra already verified and chose
+       (``ghidra_data["program_name"]``), if it is a loaded payload. Never
+       ``successful[0]``: list position is not a quality signal.
+
+    Returns ``(file, reason)``, or ``(None, None)`` to keep the routed
+    analyser's own interpretation.
     """
-    canonical = ghidra_data.get("program_name")
-    if not canonical or not ghidra_data.get("project_dir"):
-        return None
-    for f in ghidra_data.get("analyzed_files") or []:
-        if (f.get("program_name") == canonical
-                and f.get("analysis_success")
+    files = ghidra_data.get("analyzed_files") or []
+
+    def loaded_payload(f: dict) -> bool:
+        return (bool(f.get("analysis_success"))
                 and (f.get("functions_count") or 0) > 0
-                and f.get("source") in PAYLOAD_SOURCES):
-            return f
-    return None
+                and f.get("source") in PAYLOAD_SOURCES
+                and bool(f.get("project_dir")) and bool(f.get("program_name")))
+
+    if verify is not None:
+        labelled = sorted(
+            (f for f in files if loaded_payload(f) and is_family_payload(f.get("cape_type"))),
+            key=lambda f: -(f.get("functions_count") or 0))
+        for f in labelled:
+            if verify(f["project_dir"], f["program_name"]) is True:
+                return f, "cape_family_label"
+
+    canonical = ghidra_data.get("program_name")
+    if canonical and ghidra_data.get("project_dir"):
+        for f in files:
+            if f.get("program_name") == canonical and loaded_payload(f):
+                return f, "canonical"
+    return None, None
 
 
 def get_dropped_pe_files(cape_data: dict,
@@ -435,6 +469,10 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
         }
 
     analysis["source"] = source
+    # CAPE's own label for the payload ("Formbook Payload"). The agent's input is
+    # chosen by it (select_payload_target), so it must survive to the result.
+    if candidate.get("cape_type"):
+        analysis["cape_type"] = candidate["cape_type"]
     analysis["pid"] = candidate.get("pid")
     analysis["process"] = candidate.get("process")
     analysis["injection_address"] = base_addr

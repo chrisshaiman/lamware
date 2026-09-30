@@ -143,7 +143,7 @@ def test_run_pipeline_sends_routed_payloads_without_the_wrapper():
 
 # --- option (c): the agent reads the payload, not the wrapper -----------------
 
-from stages.ghidra import select_payload_target  # noqa: E402
+from stages.ghidra import is_family_payload, select_payload_target  # noqa: E402
 
 
 def _ghidra(canonical: str, files: list[dict], project_dir="/r/x/project") -> dict:
@@ -151,25 +151,101 @@ def _ghidra(canonical: str, files: list[dict], project_dir="/r/x/project") -> di
             "project_dir": project_dir, "analyzed_files": files}
 
 
-def _f(name, fns, source="cape_payload", ok=True):
+def _f(name, fns, source="cape_payload", ok=True, cape_type=None):
     f = {"program_name": name, "functions_count": fns, "analysis_success": ok,
          "project_dir": f"/r/{name}/project"}
     if source is not None:
         f["source"] = source
+    if cape_type is not None:
+        f["cape_type"] = cape_type
     return f
+
+
+def _opens(*names):
+    """A verifier that confirms exactly these programs open."""
+    return lambda _dir, name: True if name in names else False
 
 
 def test_the_canonical_payload_is_chosen_not_the_first_success():
     """cobaltstrike's first successful payload had 0 functions; the canonical
     one had 1,945. List position is not a quality signal."""
     files = [_f("empty", 0), _f("real", 1945)]
-    assert select_payload_target(_ghidra("real", files))["program_name"] == "real"
+    f, why = select_payload_target(_ghidra("real", files))
+    assert f["program_name"] == "real" and why == "canonical"
+
+
+def test_a_family_labelled_payload_beats_a_bigger_unlabelled_one():
+    """formbook v651: canonical by function count was an unlabelled 4,064-function
+    DLL; the 377-function "Formbook Payload" was loaded and ignored."""
+    files = [_f("dll", 4064), _f("fb", 377, cape_type="Formbook Payload"),
+             _f("unp", 4062, cape_type="Unpacked PE Image: 32-bit DLL")]
+    f, why = select_payload_target(_ghidra("dll", files), verify=_opens("dll", "fb", "unp"))
+    assert f["program_name"] == "fb", f
+    assert why == "cape_family_label"
+
+
+@pytest.mark.parametrize("verdict", [False, None])
+def test_a_label_on_a_program_that_does_not_open_falls_back(verdict):
+    """None is "could not tell", not "opens". Handing the agent an unopenable
+    program is #490; the canonical one was verified by run_ghidra."""
+    files = [_f("dll", 4064), _f("fb", 377, cape_type="Formbook Payload")]
+    f, why = select_payload_target(_ghidra("dll", files), verify=lambda *_: verdict)
+    assert f["program_name"] == "dll" and why == "canonical"
+
+
+def test_without_a_verifier_labels_are_not_trusted():
+    files = [_f("dll", 4064), _f("fb", 377, cape_type="Formbook Payload")]
+    f, why = select_payload_target(_ghidra("dll", files))
+    assert why == "canonical"
+
+
+# Every distinct cape_type in malware_analysis.large_payloads on 2026-09-29.
+# The first pattern only knew "<Family> Payload" and missed the other two
+# family forms, which are the majority of family labels in the corpus.
+_REAL_FAMILY = [
+    "CobaltStrikeBeacon Payload", "Formbook Payload", "Latrodectus Payload",
+    "QuasarRAT Payload", "WarzoneRAT Payload", "HijackLoader Payload",
+    "Guloader Payload", "Latrodectus Payload: 64-bit DLL",
+    "Salat Payload: 32-bit executable",
+    "CobaltStrikeBeacon Payload: 32-bit executable",
+    "QuasarRAT Payload: 32-bit executable", "WarzoneRAT Payload: 32-bit executable",
+    "HijackLoader Payload: 32-bit executable", "DarkCloud Payload: 32-bit executable",
+    "Xtreme Payload: 32-bit executable", "XWorm payload",
+    "XWorm payload: 32-bit executable",
+]
+_REAL_GENERIC = [
+    "Unpacked Shellcode", "Unpacked PE Image: 32-bit DLL",
+    "Unpacked PE Image: 64-bit executable", "Injected Shellcode/Data",
+    "Unpacked PE Image: 32-bit executable", "", "unknown",
+    "Unpacked Shellcode: 64-bit executable", "Unpacked PE Image: 64-bit DLL",
+    "Injected PE Image: 32-bit executable", "Unpacked Shellcode: 64-bit DLL",
+    "Injected PE Image: 64-bit DLL", "Injected PE Image: 64-bit executable",
+    "Decompressed PE Image: 64-bit executable", "Decompressed PE Image: 32-bit executable",
+    "Injected Shellcode/Data: 64-bit executable",
+]
+
+
+def test_the_real_label_lists_are_complete():
+    """33 distinct labels were observed; a list that shrank would hide a gap."""
+    assert len(set(_REAL_FAMILY)) + len(set(_REAL_GENERIC)) == 33
+
+
+@pytest.mark.parametrize("label,family",
+                         [(t, True) for t in _REAL_FAMILY]
+                         + [(t, False) for t in _REAL_GENERIC]
+                         # Not seen yet: a shape word followed by "Payload". The
+                         # exclusion exists for these, so each word is exercised.
+                         + [("Unpacked Payload", False), ("Injected Payload", False),
+                            ("Extracted Payload", False), ("Decompressed Payload", False),
+                            ("Extracted Shellcode", False), (None, False)])
+def test_what_counts_as_a_family_label(label, family):
+    assert is_family_payload(label) is family
 
 
 def test_a_dropped_pe_qualifies():
     """The PE loader sets no "source"; for a routed sample that is a dropped PE."""
     files = [_f("dropped", 300, source=None)]
-    assert select_payload_target(_ghidra("dropped", files)) is not None
+    assert select_payload_target(_ghidra("dropped", files))[0] is not None
 
 
 @pytest.mark.parametrize("canonical_file", [
@@ -179,17 +255,26 @@ def test_a_dropped_pe_qualifies():
     _f("c", 50, source="malfind_injection"),      # a process fragment
 ])
 def test_nothing_worth_reading_keeps_the_wrapper(canonical_file):
-    assert select_payload_target(_ghidra("c", [canonical_file])) is None
+    assert select_payload_target(_ghidra("c", [canonical_file])) == (None, None)
+
+
+@pytest.mark.parametrize("label_file", [
+    _f("fb", 377, source="cape_injection", cape_type="Formbook Payload"),
+    _f("fb", 0, cape_type="Formbook Payload"),
+])
+def test_a_label_does_not_rescue_an_unusable_program(label_file):
+    f, why = select_payload_target(_ghidra("x", [label_file]), verify=_opens("fb"))
+    assert (f, why) == (None, None)
 
 
 def test_no_verified_project_keeps_the_wrapper():
     """run_ghidra sets project_dir only after verifying the program opens (#490).
     Without it the agent's every tool call would fail."""
-    assert select_payload_target(_ghidra("c", [_f("c", 50)], project_dir=None)) is None
+    assert select_payload_target(_ghidra("c", [_f("c", 50)], project_dir=None)) == (None, None)
 
 
 def test_a_canonical_name_with_no_matching_file_keeps_the_wrapper():
-    assert select_payload_target(_ghidra("ghost", [_f("c", 50)])) is None
+    assert select_payload_target(_ghidra("ghost", [_f("c", 50)])) == (None, None)
 
 
 def _stage45_if():
@@ -218,3 +303,26 @@ def test_the_report_says_what_was_read():
     interpretation of its C#; the eval keys on this."""
     body = ast.unparse(_stage45_if())
     assert "'input'" in body and "'wrapper_routed_by'" in body, body[:400]
+    assert "'chosen_because'" in body and "'cape_type'" in body, body[:400]
+
+
+def test_the_pipeline_passes_a_real_verifier():
+    """Without a verifier the family-label preference is dead code."""
+    src = ast.unparse(_tree())
+    assert "select_payload_target(ghidra_data, verify=make_ghidra_verifier(GHIDRA_CMD))" in src
+
+
+def test_cape_type_survives_to_the_ghidra_result(tmp_path, monkeypatch):
+    """The label lives on the candidate; selection reads it from the result."""
+    import subprocess
+    payload = tmp_path / "p.bin"
+    payload.write_bytes(b"\x90" * 2048)
+    monkeypatch.setattr(ghidra, "extract_shellcode_artifacts", lambda _p: {})
+    monkeypatch.setattr(ghidra.subprocess, "run", lambda cmd, **_k: subprocess.CompletedProcess(
+        cmd, 0, stdout='{"analysis_success": true, "functions_count": 3}', stderr=""))
+    cand = {"source": "cape_payload", "pid": 0, "injection_address": "N/A",
+            "path": payload, "analyze_with_ghidra": True,
+            "sha256": hashlib.sha256(b"\x90" * 2048).hexdigest(),
+            "cape_type": "Formbook Payload"}
+    out = ghidra.run_ghidra_shellcode(cand, tmp_path / "out", "run-ghidra")
+    assert out.get("cape_type") == "Formbook Payload", out

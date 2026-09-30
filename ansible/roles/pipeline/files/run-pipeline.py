@@ -50,6 +50,7 @@ from stages.cape import (
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
 from stages.ghidra import (
     ROUTED_FLAGS,
+    make_ghidra_verifier,
     run_ghidra,
     select_payload_target,
     should_run_ghidra,
@@ -937,12 +938,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     # is investigated through the PAYLOAD, not the wrapper. The wrapper's own
     # analysis (dotnet_analysis, office_analysis, ...) stays in the report.
     _routed_by = [k for k in ROUTED_FLAGS if ghidra_data.get(k)]
-    payload_target = select_payload_target(ghidra_data) if _routed_by else None
+    payload_target, payload_reason = (
+        select_payload_target(ghidra_data, verify=make_ghidra_verifier(GHIDRA_CMD))
+        if _routed_by else (None, None))
 
     if payload_target is not None and INTERPRET_ENABLED:
         log.info(f"\n[Stage 4.5] LLM Interpretation: {_routed_by[0]} sample, "
                  f"reading unpacked payload {payload_target.get('program_name', '?')[:16]} "
-                 f"({payload_target.get('functions_count')} functions) instead of the wrapper...")
+                 f"({payload_target.get('functions_count')} functions, "
+                 f"{payload_target.get('cape_type') or 'unlabelled'}, {payload_reason}) "
+                 f"instead of the wrapper...")
         report["llm_interpretation"] = _interpret_ghidra_program(payload_target)
         # Say what was read. Without this a .NET sample's interpretation would
         # look like an interpretation of its C#, and the eval could not tell.
@@ -951,6 +956,8 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             "program_name": payload_target.get("program_name"),
             "source": payload_target.get("source") or "dropped_pe",
             "functions_count": payload_target.get("functions_count"),
+            "cape_type": payload_target.get("cape_type"),
+            "chosen_because": payload_reason,
             "wrapper_routed_by": _routed_by[0],
         }
     elif dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
