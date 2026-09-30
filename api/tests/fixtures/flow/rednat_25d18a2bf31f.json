@@ -1,0 +1,639 @@
+{
+ "_fixture": "Trimmed from the host report for this task: only the keys api/app/flow.py reads (#653).",
+ "sample_name": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729.exe",
+ "triage": {
+  "file_type": "PE32 executable for MS Windows 6.01 (GUI), Intel i386, 11 sections",
+  "hashes": {
+   "sha256": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729"
+  }
+ },
+ "cape": {
+  "task_id": 1267,
+  "status": "reported",
+  "payloads_extracted": 11,
+  "large_payloads": [
+   {
+    "sha256": "e601d9a19c52ef31fabe7a2d7d22f0508f3766054a26be27f514b852f938e75f",
+    "size": 917504,
+    "cape_type": "Unpacked PE Image: 32-bit executable"
+   }
+  ],
+  "injection_buffers": [
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b100000",
+    "size": 188
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a820",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03cc0",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a860",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03880",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a8a0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a039c0",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a8e0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a05c30",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a920",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03700",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a960",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a05930",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a9a0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a036e0",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a9e0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a05870",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11aa20",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a033c0",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11aa60",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a036a0",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11aaa0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03820",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11aae0",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03800",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11ab20",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03720",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11ab60",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff999a03760",
+    "size": 16
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x1c08b11a800",
+    "size": 32
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72bb53440",
+    "size": 256
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72bb61e10",
+    "size": 8
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72b8b5860",
+    "size": 192
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72b8b5858",
+    "size": 8
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72bb493b8",
+    "size": 8
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72bb493c0",
+    "size": 8
+   },
+   {
+    "target_pid": 5900,
+    "injection_address": "0x7ff72b8b5928",
+    "size": 8
+   },
+   {
+    "target_pid": 5096,
+    "injection_address": "0x1d9445dec00",
+    "size": 32
+   },
+   {
+    "target_pid": 5096,
+    "injection_address": "0x7ff72bb53440",
+    "size": 256
+   },
+   {
+    "target_pid": 5096,
+    "injection_address": "0x7ff72bb61e10",
+    "size": 8
+   },
+   {
+    "target_pid": 7484,
+    "injection_address": "0x21fefa6d400",
+    "size": 32
+   },
+   {
+    "target_pid": 7484,
+    "injection_address": "0x7ff72bb53440",
+    "size": 256
+   },
+   {
+    "target_pid": 7484,
+    "injection_address": "0x7ff72bb61e10",
+    "size": 8
+   }
+  ]
+ },
+ "volatility": {
+  "triggered": true,
+  "plugins_run": [
+   "psscan",
+   "pstree",
+   "malfind",
+   "cmdline",
+   "dlllist",
+   "handles"
+  ]
+ },
+ "ghidra": {
+  "triggered": true,
+  "trigger_reason": "original_sample_is_pe",
+  "pe_load_skipped": [
+   "e601d9a19c52ef31fabe7a2d7d22f0508f3766054a26be27f514b852f938e75f"
+  ],
+  "pe_load_skipped_reason": "already queued for the shellcode loader, which handles Cape's memory-dumped payloads better than the PE loader (#390)",
+  "original_sample_source": "pipeline_copy",
+  "original_sample_note": "CAPE's stored copy of the submitted sample is not readable by the pipeline user (#644); analysed the pipeline's own copy, sha256 matches CAPE's (25d18a2bf31f)",
+  "analysis_warnings": [],
+  "program_name": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729.bin",
+  "analyzed_files": [
+   {
+    "program_name": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729.bin",
+    "sha256": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729",
+    "filename": "25d18a2bf31ff3ce40f2d042cbba8dc5a6cd4f680adcacc763c62d2e64168729.bin",
+    "functions_count": 2384,
+    "analysis_success": true
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (188 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b100000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a820"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03cc0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a860"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03880"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a8a0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a039c0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a8e0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a05c30"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a920"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03700"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a960"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a05930"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a9a0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a036e0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a9e0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a05870"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11aa20"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a033c0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11aa60"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a036a0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11aaa0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03820"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11aae0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03800"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11ab20"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03720"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11ab60"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (16 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff999a03760"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x1c08b11a800"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72bb53440"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72bb61e10"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (192 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72b8b5860"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72b8b5858"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72bb493b8"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72bb493c0"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5900,
+    "injection_address": "0x7ff72b8b5928"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 5096,
+    "injection_address": "0x1d9445dec00"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 5096,
+    "injection_address": "0x7ff72bb53440"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 5096,
+    "injection_address": "0x7ff72bb61e10"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (32 bytes, < 1KB threshold)",
+    "pid": 7484,
+    "injection_address": "0x21fefa6d400"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 7484,
+    "injection_address": "0x7ff72bb53440"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (8 bytes, < 1KB threshold)",
+    "pid": 7484,
+    "injection_address": "0x7ff72bb61e10"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "e601d9a19c52ef31fabe7a2d7d22f0508f3766054a26be27f514b852f938e75f",
+    "sha256": "e601d9a19c52ef31fabe7a2d7d22f0508f3766054a26be27f514b852f938e75f",
+    "filename": "e601d9a19c52ef31fabe7a2d7d22f0508f3766054a26be27f514b852f938e75f",
+    "functions_count": 1938,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Unpacked PE Image: 32-bit executable"
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "tool_calls_used": 10,
+  "model_final": "local-qwen-llamacpp-re"
+ },
+ "cross_correlations": [
+  {
+   "type": "injection_corroborated"
+  }
+ ],
+ "correlation_warnings": [
+  "Injection-address memory partially covered: 42 of 43 addresses had no readable VAD dump (most often a process that exited before capture) \u2014 those writes were not compared, so an absence of findings does not cover them"
+ ]
+}

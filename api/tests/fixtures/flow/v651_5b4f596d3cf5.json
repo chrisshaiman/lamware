@@ -1,0 +1,187 @@
+{
+ "_fixture": "Trimmed from the host report for this task: only the keys api/app/flow.py reads (#653).",
+ "sample_name": "5b4f596d3cf54c94c57934ccc75e31d7f5999df9abb1b77ff6f8cff007da8d74.exe",
+ "triage": {
+  "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+  "hashes": {
+   "sha256": "5b4f596d3cf54c94c57934ccc75e31d7f5999df9abb1b77ff6f8cff007da8d74"
+  }
+ },
+ "cape": {
+  "task_id": 1273,
+  "status": "reported",
+  "payloads_extracted": 20,
+  "large_payloads": [
+   {
+    "sha256": "21e85e73cdd7a978fe8232f233e279aaa2a6ac16c82d9d98e44138a69a33ee26",
+    "size": 15892480,
+    "cape_type": "Formbook Payload"
+   },
+   {
+    "sha256": "b80661f152bb5131d0cc05cfcef916c6fc4d22fd948b2a7bafa6950abee0542b",
+    "size": 1805312,
+    "cape_type": "Unpacked PE Image: 32-bit DLL"
+   },
+   {
+    "sha256": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+    "size": 1792512,
+    "cape_type": ""
+   },
+   {
+    "sha256": "f0f1a93afa14cc5b3bb51be17a6f1789c4f0db115e86a3f0232c21dbbfbcbe67",
+    "size": 891392,
+    "cape_type": "Unpacked PE Image: 32-bit DLL"
+   },
+   {
+    "sha256": "8c38731c203b0743c040a8d986b5ef8bb8bb4a8b550cb99cb70e953fd8012398",
+    "size": 286720,
+    "cape_type": "Injected PE Image: 32-bit executable"
+   }
+  ],
+  "injection_buffers": [
+   {
+    "target_pid": 10092,
+    "injection_address": "0x00400000",
+    "size": 258
+   },
+   {
+    "target_pid": 10092,
+    "injection_address": "0x00401000",
+    "size": 256
+   }
+  ]
+ },
+ "volatility": {
+  "triggered": true,
+  "plugins_run": [
+   "psscan",
+   "pstree",
+   "malfind",
+   "cmdline",
+   "dlllist",
+   "handles"
+  ]
+ },
+ "dotnet_analysis": {
+  "analysis_success": true,
+  "class_count": 16,
+  "decompilation": {
+   "source_length": 97135
+  }
+ },
+ "ghidra": {
+  "triggered": true,
+  "trigger_reason": "dropped_pe_with_signatures",
+  "dotnet_routed": true,
+  "pe_load_skipped": [
+   "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+   "8c38731c203b0743c040a8d986b5ef8bb8bb4a8b550cb99cb70e953fd8012398",
+   "b80661f152bb5131d0cc05cfcef916c6fc4d22fd948b2a7bafa6950abee0542b",
+   "f0f1a93afa14cc5b3bb51be17a6f1789c4f0db115e86a3f0232c21dbbfbcbe67"
+  ],
+  "pe_load_skipped_reason": "already queued for the shellcode loader, which handles Cape's memory-dumped payloads better than the PE loader (#390)",
+  "analysis_warnings": [],
+  "program_name": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+  "analyzed_files": [
+   {
+    "program_name": "a314d7708b70a681c0a56334a04387fadee8f65ddd396c9543125a9d0ba4aaff",
+    "sha256": "a314d7708b70a681c0a56334a04387fadee8f65ddd396c9543125a9d0ba4aaff",
+    "filename": "a314d7708b70a681c0a56334a04387fadee8f65ddd396c9543125a9d0ba4aaff",
+    "functions_count": 163,
+    "analysis_success": true
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (258 bytes, < 1KB threshold)",
+    "pid": 10092,
+    "injection_address": "0x00400000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 10092,
+    "injection_address": "0x00401000"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "21e85e73cdd7a978fe8232f233e279aaa2a6ac16c82d9d98e44138a69a33ee26",
+    "sha256": "21e85e73cdd7a978fe8232f233e279aaa2a6ac16c82d9d98e44138a69a33ee26",
+    "filename": "21e85e73cdd7a978fe8232f233e279aaa2a6ac16c82d9d98e44138a69a33ee26",
+    "functions_count": 377,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Formbook Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "b80661f152bb5131d0cc05cfcef916c6fc4d22fd948b2a7bafa6950abee0542b",
+    "sha256": "b80661f152bb5131d0cc05cfcef916c6fc4d22fd948b2a7bafa6950abee0542b",
+    "filename": "b80661f152bb5131d0cc05cfcef916c6fc4d22fd948b2a7bafa6950abee0542b",
+    "functions_count": 4062,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Unpacked PE Image: 32-bit DLL"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+    "sha256": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+    "filename": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+    "functions_count": 4064,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "f0f1a93afa14cc5b3bb51be17a6f1789c4f0db115e86a3f0232c21dbbfbcbe67",
+    "sha256": "f0f1a93afa14cc5b3bb51be17a6f1789c4f0db115e86a3f0232c21dbbfbcbe67",
+    "filename": "f0f1a93afa14cc5b3bb51be17a6f1789c4f0db115e86a3f0232c21dbbfbcbe67",
+    "functions_count": 5,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Unpacked PE Image: 32-bit DLL"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "8c38731c203b0743c040a8d986b5ef8bb8bb4a8b550cb99cb70e953fd8012398",
+    "sha256": "8c38731c203b0743c040a8d986b5ef8bb8bb4a8b550cb99cb70e953fd8012398",
+    "filename": "8c38731c203b0743c040a8d986b5ef8bb8bb4a8b550cb99cb70e953fd8012398",
+    "functions_count": 7,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Injected PE Image: 32-bit executable"
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "input": {
+   "kind": "unpacked_payload",
+   "program_name": "47d96441be8b090d269281a03471c2c367cee77d3a0d4cd9b5cebca0648c754d",
+   "source": "cape_payload",
+   "functions_count": 4064,
+   "wrapper_routed_by": "dotnet_routed"
+  },
+  "tool_calls_used": 10,
+  "model_final": "local-qwen-llamacpp-re"
+ },
+ "cross_correlations": [
+  {
+   "type": "cmdline_spoofing"
+  },
+  {
+   "type": "injection_corroborated"
+  }
+ ],
+ "correlation_warnings": []
+}
