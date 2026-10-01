@@ -4,15 +4,33 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
+#
+# Every step runs whatever the others did, and a failure is logged and makes the
+# exit status non-zero. Under `set -e` the first report directory this user
+# could not delete ended the run: five May directories holding files owned by a
+# container's mapped uid stopped every nightly run from May to 2026-10-01, and
+# nothing said so (cron discards the output).
+#
+# CAPE memory dumps are NOT cleaned here. This runs as `pipeline`, which has
+# read-only access to CAPE storage by design (docs/SECURITY_CONSTRAINTS.md), so
+# the two `find ... -delete || true` lines that used to sit here could never
+# delete anything. The cape role's hourly `cape-storage-maintenance` cron owns
+# that, and run-pipeline reaps each dump as soon as Volatility finishes.
 
-set -euo pipefail
+set -uo pipefail
 
-# Clean old pipeline reports
-find {{ pipeline_reports_dir }} -maxdepth 1 -mindepth 1 -type d \
-  -mtime +{{ pipeline_report_retention_days }} \
-  -exec rm -rf {} +
+status=0
+fail() {
+  logger -t pipeline-cleanup -p user.err -- "$*"
+  echo "pipeline-cleanup: $*" >&2
+  status=1
+}
 
-# Clean CAPE memory dumps (8GB each, accumulate fast)
-# Keeps analysis data (reports, pcaps, screenshots) but removes full and per-process dumps
-find /opt/CAPEv2/storage/analyses/ -name "memory.dmp" -mtime +{{ pipeline_report_retention_days }} -delete 2>/dev/null || true
-find /opt/CAPEv2/storage/analyses/ -path "*/memory/*.dmp" -mtime +{{ pipeline_report_retention_days }} -delete 2>/dev/null || true
+# Old pipeline reports. One directory at a time, so a directory that cannot be
+# deleted is named and the rest still go.
+while IFS= read -r -d '' dir; do
+  rm -rf -- "$dir" 2>/dev/null || fail "could not delete $dir (files not owned by $(id -un)?)"
+done < <(find {{ pipeline_reports_dir }} -maxdepth 1 -mindepth 1 -type d \
+           -mtime +{{ pipeline_report_retention_days }} -print0)
+
+exit "$status"
