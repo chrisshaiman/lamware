@@ -71,7 +71,7 @@ def _run(root: Path, tmp_path: Path) -> subprocess.CompletedProcess:
 
 def test_an_undeletable_directory_does_not_stop_the_rest(reports, tmp_path):
     root, stuck, old, recent = reports
-    proc = _run(root, tmp_path)
+    _run(root, tmp_path)
     assert not old.exists(), "a deletable expired report survived"
     assert recent.exists(), "a report inside retention was deleted"
     assert stuck.exists()
