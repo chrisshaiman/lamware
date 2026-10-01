@@ -20,6 +20,7 @@ import { RelatedAnalyses } from "./related-analyses";
 import { StageTimingsCard } from "./stage-timings-card";
 import { DownloadBar } from "./download-bar";
 import { InvestigationPanel } from "./investigation-panel";
+import { PipelineFlowSection } from "./pipeline-flow-section";
 
 export function AnalysisDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -175,6 +176,9 @@ export function AnalysisDetailPage() {
           <NarrativeSection analysis={analysis} />
         </div>
       </div>
+
+      {/* Which component fed which, including what was skipped (#653) */}
+      <PipelineFlowSection analysisId={analysis.id} />
 
       {/* Data sections */}
       <IocsSection iocs={analysis.iocs} />

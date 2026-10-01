@@ -1,0 +1,208 @@
+{
+ "_fixture": "Trimmed from the host report for this task: only the keys api/app/flow.py reads (#653).",
+ "sample_name": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1.exe",
+ "triage": {
+  "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386, 4 sections",
+  "hashes": {
+   "sha256": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1"
+  }
+ },
+ "cape": {
+  "task_id": 1272,
+  "status": "reported",
+  "payloads_extracted": 8,
+  "large_payloads": [
+   {
+    "sha256": "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+    "size": 1212416,
+    "cape_type": "CobaltStrikeBeacon Payload: 32-bit executable"
+   },
+   {
+    "sha256": "96e944d4a1365716962a07d0acabbef0a2bf2d094961fb5d2b32af6c5fa1eda8",
+    "size": 276694,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   },
+   {
+    "sha256": "e3f29f94df495669624106c19dfa5a44f03ecca7aaa4c4d5654f773e606988d3",
+    "size": 276694,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   },
+   {
+    "sha256": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "size": 239616,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   },
+   {
+    "sha256": "1db6d2fab2ed5461c1d5bcaf9010f05de9066588d8afdae26043b15b2a8ac1bb",
+    "size": 237273,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   }
+  ],
+  "injection_buffers": [
+   {
+    "target_pid": 2612,
+    "injection_address": "0x00400000",
+    "size": 256
+   },
+   {
+    "target_pid": 2612,
+    "injection_address": "0x00401000",
+    "size": 256
+   },
+   {
+    "target_pid": 2612,
+    "injection_address": "0x004d8000",
+    "size": 258
+   },
+   {
+    "target_pid": 2612,
+    "injection_address": "0x004ed000",
+    "size": 256
+   },
+   {
+    "target_pid": 2612,
+    "injection_address": "0x0052b000",
+    "size": 256
+   }
+  ]
+ },
+ "volatility": {
+  "triggered": true,
+  "plugins_run": [
+   "psscan",
+   "pstree",
+   "malfind",
+   "cmdline",
+   "dlllist",
+   "handles"
+  ]
+ },
+ "ghidra": {
+  "triggered": true,
+  "trigger_reason": "dropped_pe_with_signatures",
+  "pe_load_skipped": [
+   "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+   "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2"
+  ],
+  "pe_load_skipped_reason": "already queued for the shellcode loader, which handles Cape's memory-dumped payloads better than the PE loader (#390)",
+  "analysis_warnings": [],
+  "program_name": "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+  "analyzed_files": [
+   {
+    "program_name": "94fd5805587bcc976a7f041135a3cb74dca1667659ecece7392074ce2a83eebc",
+    "sha256": "94fd5805587bcc976a7f041135a3cb74dca1667659ecece7392074ce2a83eebc",
+    "filename": "94fd5805587bcc976a7f041135a3cb74dca1667659ecece7392074ce2a83eebc",
+    "functions_count": 928,
+    "analysis_success": true
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 2612,
+    "injection_address": "0x00400000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 2612,
+    "injection_address": "0x00401000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (258 bytes, < 1KB threshold)",
+    "pid": 2612,
+    "injection_address": "0x004d8000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 2612,
+    "injection_address": "0x004ed000"
+   },
+   {
+    "source": "cape_injection",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "Artifact extraction only (256 bytes, < 1KB threshold)",
+    "pid": 2612,
+    "injection_address": "0x0052b000"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+    "sha256": "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+    "filename": "77887c827e7567c06ab75d1f1b7f6949851b11f6c7ec90b29abb363c52559ad2",
+    "functions_count": 1945,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload: 32-bit executable"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "96e944d4a1365716962a07d0acabbef0a2bf2d094961fb5d2b32af6c5fa1eda8",
+    "sha256": "96e944d4a1365716962a07d0acabbef0a2bf2d094961fb5d2b32af6c5fa1eda8",
+    "filename": "96e944d4a1365716962a07d0acabbef0a2bf2d094961fb5d2b32af6c5fa1eda8",
+    "functions_count": 940,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "e3f29f94df495669624106c19dfa5a44f03ecca7aaa4c4d5654f773e606988d3",
+    "sha256": "e3f29f94df495669624106c19dfa5a44f03ecca7aaa4c4d5654f773e606988d3",
+    "filename": "e3f29f94df495669624106c19dfa5a44f03ecca7aaa4c4d5654f773e606988d3",
+    "functions_count": 940,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "sha256": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "filename": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "functions_count": 23,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "1db6d2fab2ed5461c1d5bcaf9010f05de9066588d8afdae26043b15b2a8ac1bb",
+    "sha256": "1db6d2fab2ed5461c1d5bcaf9010f05de9066588d8afdae26043b15b2a8ac1bb",
+    "filename": "1db6d2fab2ed5461c1d5bcaf9010f05de9066588d8afdae26043b15b2a8ac1bb",
+    "functions_count": 23,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "tool_calls_used": 10,
+  "model_final": "local-qwen-llamacpp-re"
+ },
+ "cross_correlations": [
+  {
+   "type": "c2_live_in_memory"
+  }
+ ],
+ "correlation_warnings": [
+  "Injection-address memory unavailable (no injection address resolved to a dumped VAD (5 unresolved)) \u2014 could not evaluate whether injected bytes were modified after the write"
+ ]
+}

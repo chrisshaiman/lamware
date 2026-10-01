@@ -21,6 +21,7 @@ from ..audit import log_audit
 from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
+from ..flow import derive_flow
 from ..models import (
     Analysis,
     AnalysisIoc,
@@ -159,6 +160,30 @@ def list_analyses(
         )
 
     return {"total": total, "offset": offset, "limit": limit, "analyses": items}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/analyses/{id}/flow -- which component fed which (#653)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{analysis_id}/flow")
+def get_analysis_flow(
+    analysis_id: int,
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    The pipeline's component graph for one analysis, derived from its report.
+
+    Returns nodes and edges with an ok / skipped / failed / absent status, never
+    the report itself: it holds decompiled code and attacker-controlled strings.
+    An analysis with no stored report yields a graph where everything is
+    ``absent`` — the endpoint does not guess.
+    """
+    analysis = _get_analysis_or_404(analysis_id, session)
+    report = analysis.report_json if isinstance(analysis.report_json, dict) else {}
+    return {"analysis_id": analysis_id, "has_report": bool(report), **derive_flow(report)}
 
 
 # ---------------------------------------------------------------------------

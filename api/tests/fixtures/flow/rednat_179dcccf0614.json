@@ -1,0 +1,172 @@
+{
+ "_fixture": "Trimmed from the host report for this task: only the keys api/app/flow.py reads (#653).",
+ "sample_name": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1.exe",
+ "triage": {
+  "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386, 4 sections",
+  "hashes": {
+   "sha256": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1"
+  }
+ },
+ "cape": {
+  "task_id": 1270,
+  "status": "reported",
+  "payloads_extracted": 17,
+  "large_payloads": [
+   {
+    "sha256": "72bc4b29eb4c833f27d2f94f3018171007d24331e82679d346f3b9e6ed9b50b3",
+    "size": 642588,
+    "cape_type": "Unpacked Shellcode"
+   },
+   {
+    "sha256": "07bdb0aeb844ec046f877f8944e7995c293d9b9c50d4780c00d010ebfa6acc92",
+    "size": 451008,
+    "cape_type": "Unpacked Shellcode"
+   },
+   {
+    "sha256": "41de0aed8bb1e3d40518ce6f340753d4ec7d0447ef6e86a8463badaaf990e48a",
+    "size": 276694,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   },
+   {
+    "sha256": "c8cb49d3b4e4067e3fba829f243e394208acf92f7e92fcdd3084a231e2c458a5",
+    "size": 276694,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   },
+   {
+    "sha256": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "size": 239616,
+    "cape_type": "CobaltStrikeBeacon Payload"
+   }
+  ]
+ },
+ "volatility": {
+  "triggered": true,
+  "plugins_run": [
+   "psscan",
+   "pstree",
+   "malfind",
+   "cmdline",
+   "dlllist",
+   "handles"
+  ]
+ },
+ "ghidra": {
+  "triggered": true,
+  "trigger_reason": "dropped_pe_with_signatures",
+  "pe_load_skipped": [
+   "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2"
+  ],
+  "pe_load_skipped_reason": "already queued for the shellcode loader, which handles Cape's memory-dumped payloads better than the PE loader (#390)",
+  "analysis_warnings": [
+   "Ghidra: 41de0aed8bb1e3d4 claims 940 functions but is not in /opt/pipeline/reports/rednat_179dcccf0614/shellcode_0_unknown/project \u2014 tool calls against it would all fail",
+   "Ghidra: c8cb49d3b4e4067e claims 940 functions but is not in /opt/pipeline/reports/rednat_179dcccf0614/shellcode_0_unknown/project \u2014 tool calls against it would all fail",
+   "Ghidra: canonical program fell back to 781f65c7f109f41c (928 functions) \u2014 2 better-ranked candidate(s) could not be opened"
+  ],
+  "program_name": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+  "analyzed_files": [
+   {
+    "program_name": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+    "sha256": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+    "filename": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+    "functions_count": 928,
+    "analysis_success": true
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "72bc4b29eb4c833f27d2f94f3018171007d24331e82679d346f3b9e6ed9b50b3",
+    "sha256": "72bc4b29eb4c833f27d2f94f3018171007d24331e82679d346f3b9e6ed9b50b3",
+    "filename": "72bc4b29eb4c833f27d2f94f3018171007d24331e82679d346f3b9e6ed9b50b3",
+    "functions_count": 0,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Unpacked Shellcode"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "07bdb0aeb844ec046f877f8944e7995c293d9b9c50d4780c00d010ebfa6acc92",
+    "sha256": "07bdb0aeb844ec046f877f8944e7995c293d9b9c50d4780c00d010ebfa6acc92",
+    "filename": "07bdb0aeb844ec046f877f8944e7995c293d9b9c50d4780c00d010ebfa6acc92",
+    "functions_count": 0,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Unpacked Shellcode"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "41de0aed8bb1e3d40518ce6f340753d4ec7d0447ef6e86a8463badaaf990e48a",
+    "sha256": "41de0aed8bb1e3d40518ce6f340753d4ec7d0447ef6e86a8463badaaf990e48a",
+    "filename": "41de0aed8bb1e3d40518ce6f340753d4ec7d0447ef6e86a8463badaaf990e48a",
+    "functions_count": 940,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "c8cb49d3b4e4067e3fba829f243e394208acf92f7e92fcdd3084a231e2c458a5",
+    "sha256": "c8cb49d3b4e4067e3fba829f243e394208acf92f7e92fcdd3084a231e2c458a5",
+    "filename": "c8cb49d3b4e4067e3fba829f243e394208acf92f7e92fcdd3084a231e2c458a5",
+    "functions_count": 940,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "sha256": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "filename": "d690ff908fc593257ed23cd4130a2e4897641ea7afa022cf33343a225b0f70f2",
+    "functions_count": 23,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_CobaltStrikeBeacon Payload"
+   },
+   {
+    "source": "malfind_injection",
+    "program_name": "pid.972.vad.0x1ccb2fa0000-0x1ccb2fa0fff.dmp",
+    "sha256": "85ed06c30076bb49d557d07962652db0116bb8da12f4c6682643df384439fa89",
+    "filename": "pid.972.vad.0x1ccb2fa0000-0x1ccb2fa0fff.dmp",
+    "functions_count": 0,
+    "analysis_success": true,
+    "pid": 972,
+    "injection_address": "0x1ccb2fa0000"
+   },
+   {
+    "source": "malfind_injection",
+    "program_name": "pid.972.vad.0x7ff979910000-0x7ff979925fff.dmp",
+    "sha256": "98134b4421923123546ef8e6551e8d71e6479ee23d27258ff6c440ccf2993e3b",
+    "filename": "pid.972.vad.0x7ff979910000-0x7ff979925fff.dmp",
+    "functions_count": 0,
+    "analysis_success": true,
+    "pid": 972,
+    "injection_address": "0x7ff979910000"
+   },
+   {
+    "source": "malfind_injection",
+    "program_name": "pid.6968.vad.0x2e40000-0x2e41fff.dmp",
+    "sha256": "e382031424f6749f4eb3aa771c14e751ded63d3eb587bfbc0e35d095b0252b69",
+    "filename": "pid.6968.vad.0x2e40000-0x2e41fff.dmp",
+    "functions_count": 1,
+    "analysis_success": true,
+    "pid": 6968,
+    "injection_address": "0x2e40000"
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "tool_calls_used": 10,
+  "model_final": "local-qwen-llamacpp-re"
+ },
+ "cross_correlations": [
+  {
+   "type": "c2_live_in_memory"
+  }
+ ],
+ "correlation_warnings": []
+}

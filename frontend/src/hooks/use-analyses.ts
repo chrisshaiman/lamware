@@ -7,6 +7,7 @@ import type {
   AnalysisListResponse,
   AnalysisDetail,
   DeleteAnalysisResponse,
+  PipelineFlow,
 } from "#lib/types";
 
 interface AnalysisListParams {
@@ -36,6 +37,20 @@ export function useAnalysisDetail(id: number | undefined) {
     queryFn: async () => {
       const { data } = await apiClient.get<AnalysisDetail>(
         `/api/analyses/${id}`,
+      );
+      return data;
+    },
+    enabled: id !== undefined,
+  });
+}
+
+/** Which component fed which, derived server-side from the stored report (#653). */
+export function useAnalysisFlow(id: number | undefined) {
+  return useQuery({
+    queryKey: ["analysis-flow", id],
+    queryFn: async () => {
+      const { data } = await apiClient.get<PipelineFlow>(
+        `/api/analyses/${id}/flow`,
       );
       return data;
     },

@@ -183,6 +183,70 @@ export interface DeleteAnalysisResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline flow — GET /api/analyses/{id}/flow (#653)
+// ---------------------------------------------------------------------------
+
+/**
+ * `absent` means the report does not record this hand-off at all. It is never
+ * the same as a count of zero, and the UI must never render it as one.
+ */
+export type FlowStatus = "ok" | "skipped" | "failed" | "absent";
+
+export interface FlowNode {
+  id: string;
+  label: string;
+  status: FlowStatus;
+  detail: string | null;
+  reason: string | null;
+  role?: string | null;
+  warnings?: string[];
+  timed_out?: boolean;
+}
+
+/** One thing an edge carried (a payload, a buffer, a program). */
+export interface FlowItem {
+  label: string;
+  /** loaded | empty | lost | failed | skipped | missing | read */
+  status: string;
+  detail: string | null;
+  functions?: number | null;
+  sha256?: string;
+  size?: number | null;
+  source?: string;
+  kind?: string;
+}
+
+export interface FlowEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  status: FlowStatus;
+  reason: string | null;
+  /** null = the report does not say how many were due. */
+  expected: number | null;
+  /** null = not recorded; never read null as zero. */
+  carried: number | null;
+  /** null = the report does not list the items. */
+  items: FlowItem[] | null;
+  items_truncated: number;
+  counts: Record<string, number> | null;
+  extracted?: number | null;
+  not_forwarded?: number | null;
+  not_forwarded_reason?: string | null;
+  note?: string | null;
+  inferred?: boolean;
+  canonical?: string | null;
+}
+
+export interface PipelineFlow {
+  analysis_id: number;
+  has_report: boolean;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
+// ---------------------------------------------------------------------------
 // IOC browser
 // ---------------------------------------------------------------------------
 

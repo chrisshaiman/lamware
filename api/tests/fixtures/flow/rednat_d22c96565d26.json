@@ -1,0 +1,116 @@
+{
+ "_fixture": "Trimmed from the host report for this task: only the keys api/app/flow.py reads (#653).",
+ "sample_name": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e.dll",
+ "triage": {
+  "file_type": "PE32+ executable for MS Windows 6.00 (DLL), x86-64, 6 sections",
+  "hashes": {
+   "sha256": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e"
+  }
+ },
+ "cape": {
+  "task_id": 1271,
+  "status": "reported",
+  "payloads_extracted": 4,
+  "large_payloads": [
+   {
+    "sha256": "1785b6a0a84e26c253181456f094c610d18aead0775c286d8dfab73b13c14c44",
+    "size": 106554,
+    "cape_type": "Latrodectus Payload: 64-bit DLL"
+   },
+   {
+    "sha256": "b688d1a5f9e337f995376a297d144ac0f129631c5ef0ba5b36dde27a7f398daa",
+    "size": 102460,
+    "cape_type": "Latrodectus Payload"
+   },
+   {
+    "sha256": "49a9b25a27f6a14e12398eda49b49ec37c5f702793dee98bdbd2ed4b3a0b1d19",
+    "size": 95744,
+    "cape_type": "Latrodectus Payload: 64-bit DLL"
+   },
+   {
+    "sha256": "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4",
+    "size": 70656,
+    "cape_type": "Latrodectus Payload: 64-bit DLL"
+   }
+  ]
+ },
+ "volatility": {
+  "triggered": false,
+  "reason": "Cape signatures (8) did not match Volatility triggers. Triggers require: injection, hollowing, rootkit, persistence, or packing signatures"
+ },
+ "ghidra": {
+  "triggered": true,
+  "trigger_reason": "original_sample_is_pe",
+  "pe_load_skipped": [
+   "1785b6a0a84e26c253181456f094c610d18aead0775c286d8dfab73b13c14c44",
+   "49a9b25a27f6a14e12398eda49b49ec37c5f702793dee98bdbd2ed4b3a0b1d19",
+   "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4"
+  ],
+  "pe_load_skipped_reason": "already queued for the shellcode loader, which handles Cape's memory-dumped payloads better than the PE loader (#390)",
+  "original_sample_source": "pipeline_copy",
+  "original_sample_note": "CAPE's stored copy of the submitted sample is not readable by the pipeline user (#644); analysed the pipeline's own copy, sha256 matches CAPE's (d22c96565d26)",
+  "analysis_warnings": [],
+  "program_name": "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4",
+  "analyzed_files": [
+   {
+    "sha256": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e",
+    "filename": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e.bin",
+    "functions_count": 0,
+    "analysis_success": false,
+    "note": "ExportAnalysis script did not produce output \u2014 results from log parsing only",
+    "ghidra_stdout": "ERROR REPORT: Function entryPoint may not be created on defined data (HeadlessAnalyzer)\nERROR REPORT: Import failed for file: file:///sample/d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e.bin (HeadlessAnalyzer)"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "1785b6a0a84e26c253181456f094c610d18aead0775c286d8dfab73b13c14c44",
+    "sha256": "1785b6a0a84e26c253181456f094c610d18aead0775c286d8dfab73b13c14c44",
+    "filename": "1785b6a0a84e26c253181456f094c610d18aead0775c286d8dfab73b13c14c44",
+    "functions_count": 124,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Latrodectus Payload: 64-bit DLL"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "b688d1a5f9e337f995376a297d144ac0f129631c5ef0ba5b36dde27a7f398daa",
+    "sha256": "b688d1a5f9e337f995376a297d144ac0f129631c5ef0ba5b36dde27a7f398daa",
+    "filename": "b688d1a5f9e337f995376a297d144ac0f129631c5ef0ba5b36dde27a7f398daa",
+    "functions_count": 135,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Latrodectus Payload"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "49a9b25a27f6a14e12398eda49b49ec37c5f702793dee98bdbd2ed4b3a0b1d19",
+    "sha256": "49a9b25a27f6a14e12398eda49b49ec37c5f702793dee98bdbd2ed4b3a0b1d19",
+    "filename": "49a9b25a27f6a14e12398eda49b49ec37c5f702793dee98bdbd2ed4b3a0b1d19",
+    "functions_count": 127,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Latrodectus Payload: 64-bit DLL"
+   },
+   {
+    "source": "cape_payload",
+    "program_name": "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4",
+    "sha256": "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4",
+    "filename": "e946c7775adf254daae23981e0574408d5d7700a06602fbef3cebc9efd1d83d4",
+    "functions_count": 219,
+    "analysis_success": true,
+    "pid": 0,
+    "injection_address": "N/A",
+    "process": "cape_Latrodectus Payload: 64-bit DLL"
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "tool_calls_used": 7,
+  "model_final": "local-qwen-llamacpp-re"
+ },
+ "cross_correlations": [],
+ "correlation_warnings": []
+}
