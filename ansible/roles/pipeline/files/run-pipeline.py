@@ -48,7 +48,13 @@ from stages.cape import (
     submit_to_cape,
 )
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
-from stages.ghidra import run_ghidra, should_run_ghidra
+from stages.ghidra import (
+    ROUTED_FLAGS,
+    make_ghidra_verifier,
+    run_ghidra,
+    select_payload_target,
+    should_run_ghidra,
+)
 from stages.go import is_go_binary, run_go_analysis
 from stages.interpret import run_interpret, run_plain_english, run_summarize
 from stages.java import is_java_binary, run_java_analysis
@@ -834,6 +840,29 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             log.info("  Not triggered")
             report["ghidra"] = {"triggered": False}
 
+    # A routed sample is analysed by its own tool, and every routed branch above
+    # used to end with analyzed_files: []. That discarded what CAPE unpacked,
+    # which for a loader is the malware: formbook's .NET stage is a card game
+    # wrapped around six lines of reflective load, while CAPE had extracted a
+    # "Formbook Payload" that nothing looked at (#646). The wrapper stays with
+    # its analyser; the payloads go to Ghidra.
+    _routed = [k for k in ROUTED_FLAGS if report.get("ghidra", {}).get(k)]
+    if _routed:
+        log.info(f"\n[Stage 4] {_routed[0]}: running Ghidra on CAPE payloads (not the wrapper)...")
+        payload_ghidra = run_ghidra(
+            cape_data, output_dir, sample_path,
+            ghidra_cmd=GHIDRA_CMD,
+            get_cape_signatures_fn=get_cape_signatures,
+            shellcode_candidates=shellcode_candidates,
+            include_original=False,
+        )
+        # Keep the routed flag: Stage 4.5 and the UI still read it.
+        report["ghidra"] = {**payload_ghidra, **{k: True for k in _routed}}
+        n_ok = sum(1 for f in payload_ghidra.get("analyzed_files", [])
+                   if f.get("analysis_success"))
+        log.info(f"  Payloads analysed: {len(payload_ghidra.get('analyzed_files', []))}, "
+                 f"{n_ok} with a loaded program")
+
     # Check CAPE logs for encoded PowerShell commands (any sample type)
     if not report.get("powershell_analysis"):
         ps_commands = extract_powershell_from_cape(report)
@@ -884,7 +913,54 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
-    if dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
+    def _interpret_ghidra_program(target: dict) -> dict:
+        """Agentic Ghidra investigation of one loaded program, logged."""
+        interp = run_interpret(
+            target, output_dir,
+            interpret_cmd=INTERPRET_CMD,
+            interpret_enabled=INTERPRET_ENABLED,
+            interpret_timeout=INTERPRET_TIMEOUT,
+            force_final_grace=FORCE_FINAL_GRACE,
+            interpret_config=INTERPRET_CONFIG,
+            ghidra_cmd=GHIDRA_CMD,
+        )
+        if interp.get("enabled") and interp.get("analysis"):
+            calls = interp.get("tool_calls_used", 0)
+            influenced = interp.get("possible_prompt_influence", False)
+            family = interp.get("analysis", {}).get("malware_family_guess", "?")
+            log.info(f"  Family guess: {family}")
+            log.info(f"  Tool calls: {calls}, Influence flag: {influenced}")
+        elif interp.get("error"):
+            log.warning(f"Error: {interp['error']}")
+        return interp
+
+    # Option (c) of #646: a routed sample whose unpacked payload Ghidra loaded
+    # is investigated through the PAYLOAD, not the wrapper. The wrapper's own
+    # analysis (dotnet_analysis, office_analysis, ...) stays in the report.
+    _routed_by = [k for k in ROUTED_FLAGS if ghidra_data.get(k)]
+    payload_target, payload_reason = (
+        select_payload_target(ghidra_data, verify=make_ghidra_verifier(GHIDRA_CMD))
+        if _routed_by else (None, None))
+
+    if payload_target is not None and INTERPRET_ENABLED:
+        log.info(f"\n[Stage 4.5] LLM Interpretation: {_routed_by[0]} sample, "
+                 f"reading unpacked payload {payload_target.get('program_name', '?')[:16]} "
+                 f"({payload_target.get('functions_count')} functions, "
+                 f"{payload_target.get('cape_type') or 'unlabelled'}, {payload_reason}) "
+                 f"instead of the wrapper...")
+        report["llm_interpretation"] = _interpret_ghidra_program(payload_target)
+        # Say what was read. Without this a .NET sample's interpretation would
+        # look like an interpretation of its C#, and the eval could not tell.
+        report["llm_interpretation"]["input"] = {
+            "kind": "unpacked_payload",
+            "program_name": payload_target.get("program_name"),
+            "source": payload_target.get("source") or "dropped_pe",
+            "functions_count": payload_target.get("functions_count"),
+            "cape_type": payload_target.get("cape_type"),
+            "chosen_because": payload_reason,
+            "wrapper_routed_by": _routed_by[0],
+        }
+    elif dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
         # .NET path — send C# source directly to LLM (no Ghidra tools needed)
         log.info("\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
@@ -1101,24 +1177,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     elif successful:
         # Native PE path — agentic Ghidra investigation
         log.info("\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
-        report["llm_interpretation"] = run_interpret(
-            successful[0], output_dir,
-            interpret_cmd=INTERPRET_CMD,
-            interpret_enabled=INTERPRET_ENABLED,
-            interpret_timeout=INTERPRET_TIMEOUT,
-            force_final_grace=FORCE_FINAL_GRACE,
-            interpret_config=INTERPRET_CONFIG,
-            ghidra_cmd=GHIDRA_CMD,
-        )
-        interp = report["llm_interpretation"]
-        if interp.get("enabled") and interp.get("analysis"):
-            calls = interp.get("tool_calls_used", 0)
-            influenced = interp.get("possible_prompt_influence", False)
-            family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {calls}, Influence flag: {influenced}")
-        elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+        report["llm_interpretation"] = _interpret_ghidra_program(successful[0])
     else:
         if INTERPRET_ENABLED and (ghidra_data.get("triggered") or dotnet_data):
             log.info("\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")

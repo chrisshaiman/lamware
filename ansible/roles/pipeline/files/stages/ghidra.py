@@ -62,6 +62,88 @@ def discover_pe_files(cape_data: dict,
         return [], str(exc)
 
 
+# The analyzed_files a routed sample's agent may read instead of the wrapper:
+# CAPE's unpacked payloads (shellcode loader, source "cape_payload") and dropped
+# PEs (PE loader, which sets no "source" at all). None can only mean a dropped
+# PE here because routed samples run with include_original=False; on the native
+# path it would also match the original, which is why select_payload_target is
+# only ever called for routed samples. Injection buffers and malfind regions are
+# left out: they are fragments of a process, not a program to investigate.
+PAYLOAD_SOURCES = frozenset({"cape_payload", None})
+
+
+# Stage 4 branches that hand the sample to another analyser. Each records its
+# flag on report["ghidra"]; run-pipeline then sends CAPE's payloads (never the
+# wrapper) to Ghidra (#646). A branch missing from this tuple silently keeps
+# the old behaviour, so test_routed_samples_get_payload_ghidra.py derives the
+# set from run-pipeline's source and compares.
+ROUTED_FLAGS = (
+    "office_routed", "powershell_routed", "script_routed", "dotnet_routed",
+    "go_routed", "pyinstaller_routed", "java_routed",
+)
+
+
+# CAPE names a payload after the family its config extractor recognised, in
+# three forms seen in our corpus (all 33 distinct labels are in the test):
+# "Formbook Payload", "Salat Payload: 32-bit executable", "XWorm payload".
+# Generic unpacking results are named for their shape instead ("Unpacked PE
+# Image: 32-bit DLL", "Injected Shellcode/Data", "Decompressed PE Image: ..."),
+# and those are not a family claim.
+_FAMILY_PAYLOAD_RE = re.compile(
+    r"\A(?!(?:Unpacked|Injected|Extracted|Decompressed)\b)\S.*?\s[Pp]ayload(?::.*)?\Z")
+
+
+def is_family_payload(cape_type: object) -> bool:
+    """True when CAPE labelled this payload with a family, not just a shape."""
+    return isinstance(cape_type, str) and bool(_FAMILY_PAYLOAD_RE.match(cape_type.strip()))
+
+
+def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, str | None]:
+    """The unpacked program the RE agent should read instead of a routed wrapper.
+
+    Option (c) of #646: when a sample was routed to another analyser (.NET,
+    Office, script, ...) the agent investigates what CAPE unpacked instead.
+
+    Preference, first match wins:
+
+    1. ``cape_family_label``: a payload CAPE labelled with a family
+       ("Formbook Payload"), loaded with functions, whose program ``verify``
+       confirms opens (True; None is "could not tell" and does not qualify).
+       The first version ranked by function count alone, and on formbook
+       (v651, 2026-09-29) that picked an unlabelled 4,064-function DLL over the
+       377-function "Formbook Payload"; the agent then described a generic
+       loader.
+    2. ``canonical``: the program run_ghidra already verified and chose
+       (``ghidra_data["program_name"]``), if it is a loaded payload. Never
+       ``successful[0]``: list position is not a quality signal.
+
+    Returns ``(file, reason)``, or ``(None, None)`` to keep the routed
+    analyser's own interpretation.
+    """
+    files = ghidra_data.get("analyzed_files") or []
+
+    def loaded_payload(f: dict) -> bool:
+        return (bool(f.get("analysis_success"))
+                and (f.get("functions_count") or 0) > 0
+                and f.get("source") in PAYLOAD_SOURCES
+                and bool(f.get("project_dir")) and bool(f.get("program_name")))
+
+    if verify is not None:
+        labelled = sorted(
+            (f for f in files if loaded_payload(f) and is_family_payload(f.get("cape_type"))),
+            key=lambda f: -(f.get("functions_count") or 0))
+        for f in labelled:
+            if verify(f["project_dir"], f["program_name"]) is True:
+                return f, "cape_family_label"
+
+    canonical = ghidra_data.get("program_name")
+    if canonical and ghidra_data.get("project_dir"):
+        for f in files:
+            if f.get("program_name") == canonical and loaded_payload(f):
+                return f, "canonical"
+    return None, None
+
+
 def get_dropped_pe_files(cape_data: dict,
                          storage: Path = CAPE_STORAGE) -> list[Path]:
     """PE files Cape extracted, for callers that only need the list."""
@@ -387,6 +469,10 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
         }
 
     analysis["source"] = source
+    # CAPE's own label for the payload ("Formbook Payload"). The agent's input is
+    # chosen by it (select_payload_target), so it must survive to the result.
+    if candidate.get("cape_type"):
+        analysis["cape_type"] = candidate["cape_type"]
     analysis["pid"] = candidate.get("pid")
     analysis["process"] = candidate.get("process")
     analysis["injection_address"] = base_addr
@@ -628,11 +714,20 @@ def _drop_already_queued(pe_files: list[Path],
 def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
                ghidra_cmd: str, get_cape_signatures_fn,
                shellcode_candidates: list[dict] | None = None,
-               storage: Path = CAPE_STORAGE) -> dict:
-    """Run Ghidra headless on dropped PEs and/or the original sample."""
+               storage: Path = CAPE_STORAGE,
+               include_original: bool = True) -> dict:
+    """Run Ghidra headless on dropped PEs and/or the original sample.
+
+    ``include_original=False`` is for samples another analyser already owns
+    (.NET, Office, scripts, …): the wrapper is not a native program, but what
+    it unpacked is, and CAPE extracted it (#646).
+    """
     pe_files, access_error = discover_pe_files(cape_data, storage)
-    original_pe, original_source, original_note = resolve_original_sample(
-        cape_data, sample_path, storage)
+    if include_original:
+        original_pe, original_source, original_note = resolve_original_sample(
+            cape_data, sample_path, storage)
+    else:
+        original_pe, original_source, original_note = None, None, None
 
     # Cape's own extracted payloads already reach Ghidra as shellcode
     # candidates (run-pipeline collects cape.large_payloads with
@@ -660,6 +755,13 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         # Returning "no PE files found" here would abandon the payloads that
         # are about to be analysed properly.
         trigger_reason = "cape_payloads_via_shellcode_loader"
+    elif not include_original:
+        # Nothing unpacked. Not an error: the routed analyser still covers the
+        # sample. An unreadable CAPE tree still is one, and must say so.
+        result = {"triggered": True, "analyzed_files": []}
+        if access_error:
+            result["payload_access_error"] = access_error
+        return result
     else:
         # "no PE files found" is a claim about the sample. If Cape's storage
         # was unreadable it is a claim about us, and saying the first when the
