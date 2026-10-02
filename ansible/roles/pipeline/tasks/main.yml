@@ -803,15 +803,6 @@
     create: true
     mode: "0600"
 
-# Orphaned by a user change: ansible.builtin.cron keys on `name` AND `user`, so
-# when this task moved from cape to pipeline the cape copy stayed behind. It ran
-# nightly as cape against a 0750 pipeline:pipeline script it cannot execute.
-- name: Remove the stale pipeline-report-cleanup entry from cape's crontab
-  ansible.builtin.cron:
-    name: "pipeline-report-cleanup"
-    user: cape
-    state: absent
-
 - name: Schedule daily report cleanup
   ansible.builtin.cron:
     name: "pipeline-report-cleanup"
