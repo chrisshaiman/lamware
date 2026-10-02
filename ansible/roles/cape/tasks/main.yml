@@ -596,12 +596,20 @@
 # drop-in was applied.
 # -------------------------------------------------------------------------
 
+# konstruktoid.hardening's "Clean cron and at" deletes every non-root line from
+# cron.allow on each hardening run. Until this runs again, root's
+# `crontab -u cape` is refused, and ansible.builtin.cron then reads cape's
+# crontab as EMPTY: an add fails loudly, but a removal (state: absent) reports
+# "ok" and removes nothing. Tagged with every cron task below so a tag-limited
+# deploy cannot skip it (it carried no tag until 2026-10-02, so
+# `--tags cape-storage-perms` ran the cron tasks without it).
 - name: Allow cape user to use crontab
   ansible.builtin.lineinfile:
     path: /etc/cron.allow
     line: "{{ cape_user }}"
     create: true
     mode: "0600"
+  tags: [cape-storage-perms]
 
 - name: Set CAPE storage directories to lamware group
   ansible.builtin.file:
@@ -721,6 +729,37 @@
     name: "cape-memory-dump-cleanup"
     user: "{{ cape_user }}"
     state: absent
+  tags: [cape-storage-perms]
+
+# Orphaned by a user change: the pipeline role's report cleanup once ran as
+# cape, and cron keys on name AND user, so moving it to pipeline left this copy.
+# It ran nightly as cape against a 0750 pipeline:pipeline script it cannot
+# execute. Removed here, not in the pipeline role, because only this role puts
+# cape back in cron.allow first (see above).
+- name: Remove the stale pipeline-report-cleanup entry from cape's crontab
+  ansible.builtin.cron:
+    name: "pipeline-report-cleanup"
+    user: "{{ cape_user }}"
+    state: absent
+  tags: [cape-storage-perms]
+
+# The cron module's "ok" is not evidence for a removal (see the cron.allow task
+# above). Read the crontab and fail if anything removed above is still there.
+- name: Read cape's crontab
+  ansible.builtin.command: crontab -l -u {{ cape_user }}
+  register: _cape_crontab
+  changed_when: false
+  failed_when: _cape_crontab.rc != 0 and 'no crontab' not in _cape_crontab.stderr
+  tags: [cape-storage-perms]
+
+- name: Assert the removed cron entries are gone from cape's crontab
+  ansible.builtin.assert:
+    that:
+      - "'#Ansible: pipeline-report-cleanup' not in _cape_crontab.stdout"
+      - "'#Ansible: cape-memory-dump-cleanup' not in _cape_crontab.stdout"
+    fail_msg: >-
+      cape's crontab still has an entry this role removes. If the read above
+      worked, the removal did not; check /etc/cron.allow.
   tags: [cape-storage-perms]
 
 - name: Schedule CAPE storage maintenance (hourly)
