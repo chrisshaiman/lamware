@@ -530,8 +530,16 @@ pipeline_patterns=(
     '/usr/lib/systemd/systemd --user*'
     '(sd-pam)'
     '/usr/bin/dbus-daemon --session*'
-    # Pipeline spool processing
-    'bash -c for f in /opt/pipeline/spool*'
+    # Pipeline spool processing (#534). The entry this replaces,
+    # 'bash -c for f in /opt/pipeline/spool*', could never match: the unit's
+    # command line began `/bin/bash -c export XDG_RUNTIME_DIR=...`. The runner
+    # and the procsub subshell share one command line; tee writes the run log
+    # into the pipeline-only quarantine directory, so its path is fixed. The
+    # runner's ntfy call (<=30 s, only on a quarantine) is deliberately not
+    # listed: a process here naming the alert script is indistinguishable from
+    # an alert site bypassing the dedup queue (test_alert_dedup).
+    '/bin/bash /usr/local/bin/pipeline-spool-run'
+    'tee -- {{ api_spool_failed_dir | default('/opt/pipeline/spool-failed') }}/.run.log'
     # Container file operations (scoped to pipeline paths)
     'cp /tmp/*'
     'find /opt/*'

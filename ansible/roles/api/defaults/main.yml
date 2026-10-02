@@ -5,3 +5,9 @@ api_install_dir: /opt/lamware-api
 api_port: 8001
 api_host: "127.0.0.1"
 api_user: lamware-api
+
+# Where pipeline-spool-run moves a sample whose pipeline run failed (#534),
+# next to a <name>.failure sidecar. Holds LIVE MALWARE: pipeline:pipeline 0750,
+# outside the spool (DirectoryNotEmpty= would count it and re-trigger forever)
+# and outside anything nginx or the API serves.
+api_spool_failed_dir: /opt/pipeline/spool-failed

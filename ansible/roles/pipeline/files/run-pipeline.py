@@ -1779,10 +1779,12 @@ def main():
 
         if failures:
             # Exit non-zero so the outage is visible to whatever ran us.
-            # pipeline-spool.service uses `run-pipeline "$f" && rm -f "$f"`, so
-            # the sample is NOT consumed while the toolchain is broken — which
-            # is the behaviour we want: it can be re-run once it is fixed,
-            # rather than being silently spent on a degraded analysis.
+            # pipeline-spool-run (api role) moves a sample that exits non-zero
+            # to the spool quarantine directory with a sidecar and an alert,
+            # so it is NOT consumed while the toolchain is broken: it can be
+            # re-queued once it is fixed, rather than being silently spent on a
+            # degraded analysis — and it no longer sits in the spool being
+            # re-run in a loop (#534).
             log.error(f"\nFAILED STAGES: {', '.join(failures)}")
             log.error("The report was still written, but do not compare it with "
                       "one produced by a healthy pipeline.")

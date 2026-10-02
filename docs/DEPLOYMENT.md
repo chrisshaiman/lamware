@@ -894,6 +894,18 @@ journalctl -u pipeline-spool -n 50
 # CAPE_API_KEY comes from /opt/pipeline/pipeline.env, not the ambient environment.
 ```
 
+A sample whose pipeline run fails (any non-zero exit, including a crash) is moved
+to `/opt/pipeline/spool-failed/` next to a `<name>.failure` sidecar — exit code,
+signal, time, and the last 60 lines of output — and an ntfy alert is sent. The
+rest of the spool keeps processing (#534). The directory holds live malware and is
+`pipeline:pipeline 0750`. To re-run a sample once the cause is fixed, use the
+`requeue=` line in its sidecar:
+
+```bash
+sudo cat /opt/pipeline/spool-failed/<name>.failure
+sudo mv -- /opt/pipeline/spool-failed/<name> /opt/pipeline/spool/
+```
+
 ### Packer build fails on WinRM timeout
 
 The Windows installer takes 20–30 minutes. If Packer times out waiting for WinRM,

@@ -130,6 +130,7 @@ Each directory has an **owner** (full control) and a **group** (limited access).
 | `/opt/pipeline/reports/` | `pipeline` — read, write, create reports | `lamware-api` — read to serve PDFs and logs | No access |
 | `/opt/triage/`, `/opt/ghidra/`, etc. | `pipeline` — read, write, run containers | Other lamware members — read only | No access |
 | `/opt/pipeline/spool/` | `lamware-api` — write uploaded samples | `pipeline` — read + delete after processing (setgid 2770) | No access |
+| `/opt/pipeline/spool-failed/` | `pipeline` — samples whose pipeline run failed, plus `.failure` sidecars (0750, #534). Live malware; outside the spool and not served | No access (group `pipeline`, not `lamware`) | No access |
 | `/opt/pipeline/control/` | `lamware-api` — create + delete PAUSE file | `pipeline` — read + write (auto-feeder creates PAUSE on guardrail limits, setgid 2770) | No access |
 | `/opt/auto-feeder/` | `pipeline` — auto-feeder state and scripts | `lamware-api` — read + write state.json for reset/resume (setgid 2770) | No access |
 | `/opt/lamware-api/` | `lamware-api` — API code and venv | No group access needed | No access |

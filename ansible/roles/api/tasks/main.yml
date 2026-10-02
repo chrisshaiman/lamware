@@ -30,6 +30,17 @@
     group: lamware
     mode: "2770"
 
+- name: Create spool quarantine directory (failed samples, live malware)
+  # pipeline:pipeline 0750, not group lamware: only the spool runner and root
+  # need it, and lamware-api has no reason to read a failed sample. Outside
+  # the spool on purpose — see api_spool_failed_dir in defaults (#534).
+  ansible.builtin.file:
+    path: "{{ api_spool_failed_dir }}"
+    state: directory
+    owner: pipeline
+    group: pipeline
+    mode: "0750"
+
 - name: Create pipeline control directory (PAUSE file, API + pipeline both write)
   ansible.builtin.file:
     path: /opt/pipeline/control
@@ -194,6 +205,15 @@
     src: pipeline-spool.path.j2
     dest: /etc/systemd/system/pipeline-spool.path
     mode: "0644"
+
+- name: Deploy pipeline-spool-run (drains the spool, quarantines failures)
+  # root-owned and not writable by pipeline, which is the user that runs it.
+  ansible.builtin.template:
+    src: pipeline-spool-run.sh.j2
+    dest: /usr/local/bin/pipeline-spool-run
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Deploy pipeline-spool.service unit (processes uploaded samples)
   ansible.builtin.template:
