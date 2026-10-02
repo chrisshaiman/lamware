@@ -19,6 +19,7 @@ License: Apache 2.0
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -201,14 +202,55 @@ VOLATILITY_EXTRA_PLUGINS = _PIPELINE_CONFIG.volatility_extra_plugins
 # Report output
 # -------------------------------------------------------------------------
 
-def write_report(task_id: str, report: dict, reports_dir: Path) -> Path:
-    """Write merged report to disk."""
+CANONICAL_REPORT = "report.json"
+
+
+def write_json_atomic(path: Path, data: dict) -> None:
+    """Write ``data`` as JSON to ``path`` so no reader ever sees a partial file.
+
+    ``open("w")`` truncates first and writes second, so a crash, a full disk or
+    an exception inside ``json.dump`` left a truncated report.json where the
+    previous one had been (#405). Writing a sibling temp file and
+    ``os.replace``-ing it over the target means the destination holds either
+    the old bytes or the new ones, never a prefix of the new. The temp file is
+    in the same directory because ``os.replace`` is only atomic within one
+    filesystem.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def write_report(task_id: str, report: dict, reports_dir: Path,
+                 name: str = CANONICAL_REPORT) -> Path:
+    """Write a report into the task's directory, atomically.
+
+    ``name`` defaults to the canonical report.json, which only the live
+    pipeline writes. A replay passes its own ``report.replay-<stamp>.json`` so
+    the evidence from the original run is never the file being replaced.
+    """
     report_dir = reports_dir / task_id
     report_dir.mkdir(parents=True, exist_ok=True)
-    report_path = report_dir / "report.json"
-    with report_path.open("w") as f:
-        json.dump(report, f, indent=2, default=str)
+    report_path = report_dir / name
+    write_json_atomic(report_path, report)
     return report_path
+
+
+def replay_output_names(replayed_at: datetime) -> tuple[str, str]:
+    """Return (json_name, pdf_name) for a replay started at ``replayed_at``.
+
+    Microseconds are in the stamp so two replays of one task in the same second
+    do not land on the same file — that would be #405 again, one level down.
+    """
+    stamp = replayed_at.strftime("%Y%m%dT%H%M%S%fZ")
+    return f"report.replay-{stamp}.json", f"report.replay-{stamp}.pdf"
 
 
 # -------------------------------------------------------------------------
@@ -1536,10 +1578,27 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
       summary     — executive summary (LLM call)
       db          — database ingestion
       pdf         — PDF report generation
+
+    A replay never writes over the run it replays (#405). The original
+    report.json, report.pdf and analyses row are the record of a detonation
+    that cannot be re-run identically, and replay is a dev tool used precisely
+    while the stages are most likely to produce worse output. So:
+
+      report.json  — read only. The result goes to report.replay-<stamp>.json
+                     beside it, carrying ``replay_of`` (path + sha256 of the
+                     bytes it was built from).
+      report.pdf   — untouched. The PDF goes to report.replay-<stamp>.pdf.
+      DB           — a NEW analyses row (ingest_to_db with no
+                     existing_analysis_id), so the original row is not
+                     updated. The new row is not marked pdf_generated: the
+                     API serves <task_id>/report.pdf for every row with that
+                     task_id, which is the original's PDF, not this one.
     """
     log.info(f"Replay] Loading {report_path}")
-    with report_path.open() as f:
-        report = json.load(f)
+    original_bytes = report_path.read_bytes()
+    report = json.loads(original_bytes)
+    replayed_at = datetime.now(UTC)
+    replay_json_name, replay_pdf_name = replay_output_names(replayed_at)
 
     task_id = report.get("task_id", report_path.parent.name)
     output_dir = REPORTS_DIR / task_id
@@ -1597,21 +1656,27 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             elif summary.get("error"):
                 log.warning(f"Error: {summary['error']}")
 
-    # Write updated report
-    report["replayed_at"] = datetime.now(UTC).isoformat()
+    # Write the replay BESIDE the original, never over it (#405). The stamp on
+    # the file and in the body are the same instant so they can be matched.
+    report["replayed_at"] = replayed_at.isoformat()
     report["replayed_stages"] = run_stages
-    new_report_path = write_report(task_id, report, REPORTS_DIR)
-    log.info(f"\n[Done] Updated report: {new_report_path}")
+    report["replay_of"] = {
+        "path": str(report_path),
+        "sha256": hashlib.sha256(original_bytes).hexdigest(),
+    }
+    new_report_path = write_report(task_id, report, REPORTS_DIR,
+                                   name=replay_json_name)
+    log.info(f"\n[Done] Replay report: {new_report_path} "
+             f"(original left unchanged: {report_path})")
 
     if "db" in run_stages:
-        log.info("\n[DB Ingestion] Writing to database...")
-        analysis_id = ingest_to_db(report)
-    else:
-        analysis_id = None
+        log.info("\n[DB Ingestion] Writing to database as a new analyses row...")
+        # No existing_analysis_id: inserting is what keeps the original row.
+        ingest_to_db(report)
 
     if "pdf" in run_stages:
         log.info("\n[PDF Report] Generating...")
-        pdf_path = new_report_path.parent / "report.pdf"
+        pdf_path = new_report_path.parent / replay_pdf_name
         try:
             # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             # List form, no shell; PDF_CMD is a deploy-config constant and the paths are
@@ -1624,9 +1689,8 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
                 cwd="/tmp",
             )
             if result.returncode == 0:
+                # Deliberately no mark_pdf_generated: see the docstring.
                 log.info(f"  PDF written to: {pdf_path}")
-                if analysis_id:
-                    mark_pdf_generated(analysis_id)
             else:
                 log.error(f"  [!] PDF generation failed: {result.stderr[:500]}")
         except subprocess.TimeoutExpired:
