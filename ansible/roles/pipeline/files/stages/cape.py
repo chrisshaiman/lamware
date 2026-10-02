@@ -18,6 +18,8 @@ import requests
 from lamware_pipeline.cape_guest import MACHINE_REQUIRED
 from lamware_pipeline.config import PipelineConfig
 
+from stages.process_activity import summarize_process_activity
+
 # -------------------------------------------------------------------------
 # Configuration (loaded from config.json; secret from the environment)
 # -------------------------------------------------------------------------
@@ -708,6 +710,14 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
             process_cmdlines[pid] = cmdline
     if process_cmdlines:
         intel["process_cmdlines"] = process_cmdlines
+
+    # Process tree + per-process API counts for the investigation agent's
+    # get_api_traces tool (#406). The API answers from this report only, and
+    # until this key existed it read cape.behavior, which nothing wrote, so it
+    # reported zero processes for every analysis.
+    process_activity = summarize_process_activity(full_report)
+    if process_activity is not None:
+        intel["process_activity"] = process_activity
 
     # Mutex IOCs from API traces — CreateMutex/OpenMutex calls with
     # process attribution and create-vs-check distinction.

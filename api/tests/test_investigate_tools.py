@@ -255,120 +255,153 @@ def test_cape_task_id_none_value():
 
 
 # ---------------------------------------------------------------------------
-# _get_api_traces tests
+# _get_api_traces tests (#406)
+#
+# The previous tests here built report["cape"]["behavior"] by hand -- a key no
+# pipeline code writes -- so the tool passed every test and returned
+# {"processes": [], "process_count": 0} for every real analysis (v655 / CAPE
+# task 1275: 11 processes, 60,089 call entries recorded). These tests instead
+# run the pipeline's REAL producer (stages/process_activity.py) over a fixture
+# trimmed from that CAPE report, so the tool is tested against the shape the
+# pipeline actually writes.
 # ---------------------------------------------------------------------------
 
-_FAKE_REPORT = {
-    "cape": {
-        "behavior": {
-            "processes": [
-                {
-                    "process_name": "malware.exe",
-                    "pid": 1234,
-                    "calls": [
-                        {"api": "CreateFile", "args": {"filename": "evil.dat"}},
-                        {"api": "WriteFile", "args": {"data": "AAAA"}},
-                        {"api": "VirtualAlloc", "args": {"size": 4096}},
-                    ],
-                },
-                {
-                    "process_name": "cmd.exe",
-                    "pid": 5678,
-                    "calls": [
-                        {"api": "CreateProcess", "args": {"cmdline": "whoami"}},
-                    ],
-                },
-            ]
-        }
-    }
-}
+_REPO = Path(__file__).resolve().parents[2]
+_PA_SRC = _REPO / "ansible" / "roles" / "pipeline" / "files" / "stages" / "process_activity.py"
+_CAPE_FIXTURE = _REPO / "pipeline" / "tests" / "fixtures" / "cape_behavior_trimmed.json"
+_pa_ns: dict = {"__name__": "process_activity_under_test"}
+exec(compile(_PA_SRC.read_text(encoding="utf-8"), str(_PA_SRC), "exec"), _pa_ns)  # noqa: S102
+summarize_process_activity = _pa_ns["summarize_process_activity"]
 
 
-def test_get_api_traces_no_filter():
-    result = _get_api_traces({}, _FAKE_REPORT)
-    assert result["process_count"] == 2
-    names = [p["process_name"] for p in result["processes"]]
-    assert "malware.exe" in names
-    assert "cmd.exe" in names
+def _pipeline_report(cape_full_report: dict, **cape_extra) -> dict:
+    """A report as run-pipeline builds it: cape base keys + extract_cape_intel's."""
+    cape = {"task_id": 1275, "status": "reported",
+            "process_activity": summarize_process_activity(cape_full_report)}
+    cape.update(cape_extra)
+    return {"cape": cape}
 
 
-def test_get_api_traces_process_filter():
-    result = _get_api_traces({"process": "malware"}, _FAKE_REPORT)
-    assert result["process_count"] == 1
-    assert result["processes"][0]["process_name"] == "malware.exe"
+def _fixture_report() -> dict:
+    return _pipeline_report(json.loads(_CAPE_FIXTURE.read_text()))
 
 
-def test_get_api_traces_api_filter():
-    result = _get_api_traces({"api_filter": "virtual"}, _FAKE_REPORT)
-    # Only malware.exe has VirtualAlloc
-    procs_with_calls = [p for p in result["processes"] if p["calls"]]
-    assert len(procs_with_calls) == 1
-    assert procs_with_calls[0]["calls"][0]["api"] == "VirtualAlloc"
+def test_get_api_traces_returns_what_cape_recorded():
+    result = _get_api_traces({}, _fixture_report())
+    assert "error" not in result
+    assert result["recorded_process_count"] == 4
+    assert result["recorded_api_calls_total"] == 34
+    assert result["processes_shown"] == 4
+    by_pid = {p["pid"]: p for p in result["processes"]}
+    assert set(by_pid) == {8332, 4228, 1364, 1936}, "pid comes from CAPE's process_id"
+    assert by_pid[8332]["ppid"] == 7240
+    assert by_pid[8332]["api_calls"] == 13
+    assert by_pid[8332]["categories"]["threading"] == 6
+    assert by_pid[1936]["api_calls"] == 0
 
 
-def test_get_api_traces_caps_per_process():
-    """Verify the 100-call-per-process cap is enforced."""
-    many_calls = [{"api": f"Api{i}", "args": {}} for i in range(150)]
-    report = {
-        "cape": {
-            "behavior": {
-                "processes": [
-                    {"process_name": "heavy.exe", "pid": 1, "calls": many_calls}
-                ]
-            }
-        }
-    }
+def test_get_api_traces_process_filter_by_name_and_pid():
+    result = _get_api_traces({"process": "powershell"}, _fixture_report())
+    assert [p["pid"] for p in result["processes"]] == [4228]
+    result = _get_api_traces({"process": "1364"}, _fixture_report())
+    assert [p["pid"] for p in result["processes"]] == [1364]
+
+
+def test_get_api_traces_api_filter_keeps_only_matching_processes():
+    result = _get_api_traces({"api_filter": "writeprocessmemory"}, _fixture_report())
+    assert [p["pid"] for p in result["processes"]] == [8332]
+    assert result["processes"][0]["apis"] == {"WriteProcessMemory": 1}
+    # Totals still describe the whole run, so "no match" cannot read as "no calls".
+    assert result["recorded_api_calls_total"] == 34
+
+
+def test_get_api_traces_output_is_json_safe():
+    json.dumps(_get_api_traces({}, _fixture_report()))
+
+
+# --- absent data is reported as absent, never as zero -----------------------
+
+def test_get_api_traces_old_report_says_not_recorded():
+    """A report from before #406: CAPE ran, but process_activity was never
+    written. Must not answer zero processes."""
+    old = {"cape": {"task_id": 1275, "status": "reported",
+                    "detonation": {"process_count": 11, "api_calls_total": 60089,
+                                   "tier": "CLEAN"}}}
+    result = _get_api_traces({}, old)
+    assert "not recorded" in result["error"]
+    assert "processes" not in result and "process_count" not in result
+    assert result["cape_recorded_totals"] == {
+        "process_count": 11, "api_calls_total": 60089, "detonation_tier": "CLEAN"}
+
+
+@pytest.mark.parametrize("report", [
+    {},
+    {"cape": {"status": "skipped", "reason": "non-Windows binary"}},
+    {"cape": {"task_id": None, "status": "error", "error": "boom"}},
+])
+def test_get_api_traces_no_cape_run_is_unknown_not_zero(report):
     result = _get_api_traces({}, report)
-    proc = result["processes"][0]
-    assert proc["total_calls"] == 150
-    assert proc["calls_shown"] == 100
-    assert len(proc["calls"]) == 100
+    assert "UNKNOWN, not zero" in result["error"]
+    assert "processes" not in result
 
 
-def test_get_api_traces_empty_report():
-    result = _get_api_traces({}, {})
-    assert result["process_count"] == 0
+def test_get_api_traces_recorded_empty_list_flags_lost_instrumentation():
+    report = _pipeline_report({"behavior": {"processes": []}},
+                              detonation={"tier": "ALL-LOST", "process_count": 0})
+    result = _get_api_traces({}, report)
+    assert result["recorded_process_count"] == 0
+    assert "lost instrumentation" in result["note"]
+    assert "ALL-LOST" in result["note"]
+
+
+# --- bounded output, truncation said out loud -------------------------------
+
+def _oversized_report(n_procs=100, n_apis=300):
+    calls = [{"api": f"Api{i:03d}", "category": "process"} for i in range(n_apis)]
+    return _pipeline_report({"behavior": {"processes": [
+        {"process_id": 5000 + i, "parent_id": 4, "process_name": f"proc{i}.exe",
+         "environ": {"CommandLine": "x" * 5000}, "calls": calls}
+        for i in range(n_procs)]}})
+
+
+def test_get_api_traces_oversized_is_capped_and_marked():
+    result = _get_api_traces({}, _oversized_report())
+    assert result["recorded_process_count"] == 100
+    assert result["processes_shown"] == 20
+    assert result["processes_not_shown"] == 44          # 64 stored - 20 shown
+    assert result["summary_truncated"] is True
+    assert result["processes_omitted_from_summary"] == 36
+    p = result["processes"][0]
+    assert p["apis_shown"] == 25
+    assert p["apis_stored_truncated"] is True
+    assert len(p["command_line"]) <= 1024
+    assert len(json.dumps(result)) < 200_000
+
+
+def test_get_api_traces_filter_runs_before_the_display_cap():
+    """#404 lead 3: the old loop sliced to 10 before filtering, so a process
+    named beyond the cap could never be found."""
+    result = _get_api_traces({"process": "proc50.exe"}, _oversized_report())
+    assert [p["pid"] for p in result["processes"]] == [5050]
+
+
+def test_get_api_traces_process_dropped_from_summary_is_not_reported_absent():
+    result = _get_api_traces({"process": "proc99.exe"}, _oversized_report())
     assert result["processes"] == []
+    assert result["summary_truncated"] is True
+    assert "omitted" in result["note"]
 
 
-def test_get_api_traces_process_cap():
-    """Verify the 10-process cap is enforced."""
-    many_procs = [
-        {"process_name": f"proc{i}.exe", "pid": i, "calls": [{"api": "Foo", "args": {}}]}
-        for i in range(15)
-    ]
-    report = {"cape": {"behavior": {"processes": many_procs}}}
-    result = _get_api_traces({}, report)
-    assert result["process_count"] <= 10
-
-
-def test_get_api_traces_non_json_calls_are_serializable():
-    """Calls containing bytes or datetime values must not break json.dumps (Fix 1)."""
-    import datetime
-
-    report = {
-        "cape": {
-            "behavior": {
-                "processes": [
-                    {
-                        "process_name": "weird.exe",
-                        "pid": 999,
-                        "calls": [
-                            # bytes value — not JSON-serializable natively
-                            {"api": "WriteFile", "args": {"data": b"\x00\x01\x02\x03"}},
-                            # datetime value — also not JSON-serializable natively
-                            {"api": "GetSystemTime", "args": {"ts": datetime.datetime(2026, 1, 1)}},
-                        ],
-                    }
-                ]
-            }
-        }
-    }
-    result = _get_api_traces({}, report)
-    # The whole result dict must survive json.dumps without raising TypeError
-    serialized = json.dumps(result)
-    assert "WriteFile" in serialized
-    assert "GetSystemTime" in serialized
+def test_get_api_traces_recaps_strings_not_written_by_the_pipeline():
+    """report_json rows are data; one not produced by this code is still capped."""
+    report = {"cape": {"status": "reported", "process_activity": {
+        "process_count": 1, "api_calls_total": 1,
+        "processes": [{"pid": 1, "name": "n" * 10_000, "command_line": "c" * 10_000,
+                       "apis": {"A" * 10_000: 1}, "api_calls": 1}]}}}
+    p = _get_api_traces({}, report)["processes"][0]
+    assert len(p["name"]) <= 260
+    assert len(p["command_line"]) <= 1024
+    assert all(len(k) <= 128 for k in p["apis"])
 
 
 # ---------------------------------------------------------------------------
@@ -717,10 +750,11 @@ _CURRENT_ANALYSIS_TOOLS = _ns["_CURRENT_ANALYSIS_TOOLS"]
 
 _REPORT = {
     "pcap_analysis": {"c2": ["10.0.0.827"], "flows": 827},
-    "cape": {"behavior": {"processes": [
-        {"process_name": "sample827.exe", "process_id": 827,
-         "calls": [{"api": "CreateRemoteThread", "arguments": {}}]},
-    ]}},
+    # The shape the pipeline writes (#406); cape.behavior never existed in a report.
+    "cape": {"status": "reported", "process_activity": {
+        "process_count": 1, "api_calls_total": 1,
+        "processes": [{"pid": 827, "name": "sample827.exe", "api_calls": 1,
+                       "apis": {"CreateRemoteThread": 1}}]}},
 }
 
 

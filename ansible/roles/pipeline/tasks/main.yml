@@ -527,6 +527,7 @@
     - interpret.py
     - single_shot_init.py
     - cape.py
+    - process_activity.py
 
 - name: Deploy pipeline helper modules (no secrets, plain .py)
   # ioc_extract has no Jinja — deployed verbatim via copy: from the role's files/.

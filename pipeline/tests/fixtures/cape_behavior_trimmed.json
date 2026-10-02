@@ -1,0 +1,543 @@
+{
+ "_comment": "Structure trimmed from a real CAPE report.json (task 1275) behavior section: real key sets, pid/ppid tree and API/category names; names, command lines, paths, arguments and timestamps are synthesised. #406.",
+ "info": {
+  "id": 1275,
+  "duration": 342,
+  "timeout": false
+ },
+ "behavior": {
+  "processes": [
+   {
+    "process_id": 8332,
+    "process_name": "sample.exe",
+    "parent_id": 7240,
+    "module_path": "C:\\Windows\\Temp\\sample.exe",
+    "first_seen": "2026-01-01 00:00:00,000",
+    "threads": [
+     "1000"
+    ],
+    "environ": {
+     "UserName": "user",
+     "ComputerName": "GUEST",
+     "CommandLine": "\"C:\\Windows\\Temp\\sample.exe\""
+    },
+    "file_activities": {
+     "read_files": [],
+     "write_files": [],
+     "delete_files": []
+    },
+    "calls": [
+     {
+      "timestamp": "2026-01-01 00:00:00,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "RtlUserThreadStart",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 0
+     },
+     {
+      "timestamp": "2026-01-01 00:00:01,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "NtTestAlert",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 1
+     },
+     {
+      "timestamp": "2026-01-01 00:00:02,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "RtlUserThreadStart",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 2
+     },
+     {
+      "timestamp": "2026-01-01 00:00:03,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "process",
+      "api": "NtProtectVirtualMemory",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 3
+     },
+     {
+      "timestamp": "2026-01-01 00:00:04,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "NtTestAlert",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 4
+     },
+     {
+      "timestamp": "2026-01-01 00:00:05,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "RtlUserThreadStart",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 5
+     },
+     {
+      "timestamp": "2026-01-01 00:00:06,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrLoadDll",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 6
+     },
+     {
+      "timestamp": "2026-01-01 00:00:07,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 7
+     },
+     {
+      "timestamp": "2026-01-01 00:00:08,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "process",
+      "api": "NtProtectVirtualMemory",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 8
+     },
+     {
+      "timestamp": "2026-01-01 00:00:09,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "RegOpenKeyExW",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 9
+     },
+     {
+      "timestamp": "2026-01-01 00:00:10,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "NtResumeThread",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 10
+     },
+     {
+      "timestamp": "2026-01-01 00:00:11,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "process",
+      "api": "NtWriteVirtualMemory",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 11
+     },
+     {
+      "timestamp": "2026-01-01 00:00:12,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "process",
+      "api": "WriteProcessMemory",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 12
+     }
+    ]
+   },
+   {
+    "process_id": 4228,
+    "process_name": "powershell.exe",
+    "parent_id": 8332,
+    "module_path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "first_seen": "2026-01-01 00:00:00,000",
+    "threads": [
+     "1000"
+    ],
+    "environ": {
+     "UserName": "user",
+     "ComputerName": "GUEST",
+     "CommandLine": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -Command Get-Date"
+    },
+    "file_activities": {
+     "read_files": [],
+     "write_files": [],
+     "delete_files": []
+    },
+    "calls": [
+     {
+      "timestamp": "2026-01-01 00:00:00,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrpCallInitRoutine",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 0
+     },
+     {
+      "timestamp": "2026-01-01 00:00:01,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "misc",
+      "api": "HeapCreate",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 1
+     },
+     {
+      "timestamp": "2026-01-01 00:00:02,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetDllHandle",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 2
+     },
+     {
+      "timestamp": "2026-01-01 00:00:03,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 3
+     },
+     {
+      "timestamp": "2026-01-01 00:00:04,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 4
+     },
+     {
+      "timestamp": "2026-01-01 00:00:05,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 5
+     },
+     {
+      "timestamp": "2026-01-01 00:00:06,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 6
+     },
+     {
+      "timestamp": "2026-01-01 00:00:07,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetDllHandle",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 7
+     },
+     {
+      "timestamp": "2026-01-01 00:00:08,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "LdrGetProcedureAddressForCaller",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 8
+     },
+     {
+      "timestamp": "2026-01-01 00:00:09,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "process",
+      "api": "NtProtectVirtualMemory",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 9
+     },
+     {
+      "timestamp": "2026-01-01 00:00:10,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "NtResumeThread",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 10
+     }
+    ]
+   },
+   {
+    "process_id": 1364,
+    "process_name": "sample.exe",
+    "parent_id": 8332,
+    "module_path": "C:\\Windows\\Temp\\sample.exe",
+    "first_seen": "2026-01-01 00:00:00,000",
+    "threads": [
+     "1000"
+    ],
+    "environ": {
+     "UserName": "user",
+     "ComputerName": "GUEST",
+     "CommandLine": "\"C:\\Windows\\Temp\\sample.exe\""
+    },
+    "file_activities": {
+     "read_files": [],
+     "write_files": [],
+     "delete_files": []
+    },
+    "calls": [
+     {
+      "timestamp": "2026-01-01 00:00:00,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtOpenKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 0
+     },
+     {
+      "timestamp": "2026-01-01 00:00:01,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtQueryValueKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 1
+     },
+     {
+      "timestamp": "2026-01-01 00:00:02,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtQueryValueKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 2
+     },
+     {
+      "timestamp": "2026-01-01 00:00:03,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtQueryValueKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 3
+     },
+     {
+      "timestamp": "2026-01-01 00:00:04,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtQueryValueKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 4
+     },
+     {
+      "timestamp": "2026-01-01 00:00:05,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "registry",
+      "api": "NtQueryValueKey",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 5
+     },
+     {
+      "timestamp": "2026-01-01 00:00:06,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "NtClose",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 6
+     },
+     {
+      "timestamp": "2026-01-01 00:00:07,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "NtTestAlert",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 7
+     },
+     {
+      "timestamp": "2026-01-01 00:00:08,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "threading",
+      "api": "RtlUserThreadStart",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 8
+     },
+     {
+      "timestamp": "2026-01-01 00:00:09,000",
+      "thread_id": "1000",
+      "caller": "0x00000000",
+      "parentcaller": "0x00000000",
+      "category": "system",
+      "api": "NtWaitForSingleObject",
+      "status": true,
+      "return": "0x00000000",
+      "arguments": [],
+      "repeated": 0,
+      "id": 9
+     }
+    ]
+   },
+   {
+    "process_id": 1936,
+    "process_name": "OneDrive.exe",
+    "parent_id": 7360,
+    "module_path": "C:\\Users\\user\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+    "first_seen": "2026-01-01 00:00:00,000",
+    "threads": [
+     "1000"
+    ],
+    "environ": {
+     "UserName": "user",
+     "ComputerName": "GUEST",
+     "CommandLine": "\"C:\\Users\\user\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe\" /background"
+    },
+    "file_activities": {
+     "read_files": [],
+     "write_files": [],
+     "delete_files": []
+    },
+    "calls": []
+   }
+  ],
+  "processtree": [],
+  "summary": {}
+ }
+}
