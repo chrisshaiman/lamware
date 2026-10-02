@@ -58,6 +58,22 @@ alert() {
         >/dev/null 2>&1 || log "ntfy alert not delivered (title=$1)"
 }
 
+# What an alert may say about a sample. The spool name is
+# `<submission uuid>_<uploaded filename>` (api/app/routers/samples.py) and the
+# filename is attacker-supplied text that can also name a case or a victim; on
+# the public ntfy.sh the topic is only a routing key. So a push carries the
+# submission id alone. Anything without a well-formed uuid prefix (a dotfile, a
+# symlink, a hand-dropped file) gets a short hash of its name instead — never a
+# substring of it. The full name stays on the host: journal and sidecar.
+alert_id() {
+    local name=$1
+    if [[ $name =~ ^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_ ]]; then
+        printf 'submission %s' "${BASH_REMATCH[1]}"
+    else
+        printf 'name-sha256 %s' "$(printf '%s' "$name" | sha256sum | cut -c1-12)"
+    fi
+}
+
 # Pick a destination that clobbers neither an earlier quarantined sample nor
 # its sidecar. A re-uploaded sample gets a fresh submission-id prefix from the
 # API, so this only matters when an operator re-queues a quarantined file and
@@ -82,7 +98,7 @@ quarantine() {
     if ! mv -- "$f" "$dest" || [ -e "$f" ] || [ -L "$f" ]; then
         log "ERROR could not quarantine sample=$name — it is still in the spool and will be retried"
         alert "Spool quarantine FAILED" \
-            "Sample $name failed (exit ${rc:-n/a}) and could not be moved to $FAILED. It is still in $SPOOL; the spool will retry it until this is fixed." \
+            "Sample ($(alert_id "$name")) failed (exit ${rc:-n/a}) and could not be moved to $FAILED. It is still in $SPOOL; the spool will retry it until this is fixed. Full name in: journalctl -u pipeline-spool" \
             urgent
         return 1
     fi
@@ -103,7 +119,7 @@ quarantine() {
     } > "$dest.failure"
     log "QUARANTINED sample=$name exit=${rc:-n/a} signal=$sig reason=$reason dest=$dest"
     alert "Spool sample quarantined" \
-        "Sample $name failed (exit ${rc:-n/a}, signal $sig: $reason). Moved to $dest; later uploads continue. Details: $dest.failure" \
+        "Sample ($(alert_id "$name")) failed (exit ${rc:-n/a}, signal $sig: $reason). Moved to $FAILED/; later uploads continue. Details in its .failure sidecar there." \
         high
     return 0
 }

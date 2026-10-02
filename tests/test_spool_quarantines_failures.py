@@ -171,9 +171,60 @@ def test_the_failure_is_alerted_and_logged(sp):
     assert len(alerts) == 1, alerts
     title, message = alerts[0][0], alerts[0][1]
     assert "quarantined" in title.lower()
-    assert "bad.exe" in message and "exit 1" in message
+    assert "exit 1" in message
     assert alerts[0][alerts[0].index("--priority") + 1] == "high"
     assert re.search(r"QUARANTINED sample=bad\.exe exit=1 ", proc.stderr), proc.stderr
+
+
+# --- what leaves the host -------------------------------------------------------
+
+UUID = "3f2b9c1e-7a4d-4e8b-9c0f-1a2b3c4d5e6f"
+VICTIM = "Invoice-ACME-victim"
+
+
+def test_the_alert_carries_the_submission_id_not_the_filename(sp):
+    """The uploaded filename is attacker-supplied and can name a case or victim,
+    and ntfy defaults to the public ntfy.sh. The push says which submission;
+    the name stays in the journal and the sidecar, on the host."""
+    sp.add(f"{UUID}_{VICTIM}.exe", "fail")
+    proc = sp.run()
+    alerts = sp.alerts()
+    assert len(alerts) == 1, alerts
+    sent = "\n".join(alerts[0])
+    assert UUID in sent, "the alert no longer says which submission failed"
+    assert VICTIM not in sent, f"the uploaded filename reached the push: {sent!r}"
+    assert f"{sp.failed}/" in sent, "the alert should name the quarantine directory"
+    # It stays on the host.
+    assert f"{UUID}_{VICTIM}.exe" in proc.stderr
+    assert sp.sidecar(f"{UUID}_{VICTIM}.exe")["sample"] == f"{UUID}_{VICTIM}.exe"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_the_unmovable_alert_carries_the_submission_id_not_the_filename(sp):
+    sp.failed.chmod(0o500)
+    try:
+        sp.add(f"{UUID}_{VICTIM}.exe", "fail")
+        sp.run()
+    finally:
+        sp.failed.chmod(0o750)
+    alerts = sp.alerts()
+    assert len(alerts) == 1, alerts
+    sent = "\n".join(alerts[0])
+    assert UUID in sent and VICTIM not in sent, sent
+
+
+def test_a_name_without_a_submission_id_is_hashed_not_quoted(sp):
+    """A dotfile or hand-dropped file has no uuid prefix to fall back on; the
+    alert must not degrade to quoting the name, or any part of it."""
+    import hashlib
+    # A uuid with a trailing `_`, but not as the prefix: only the API's own
+    # prefix identifies a submission.
+    name = f".{VICTIM}_{UUID}_x.exe"
+    sp.add(name, "fail")
+    sp.run()
+    sent = "\n".join(sp.alerts()[0])
+    assert VICTIM not in sent and UUID not in sent, sent
+    assert hashlib.sha256(name.encode()).hexdigest()[:12] in sent
 
 
 def test_a_clean_run_alerts_nobody(sp):
