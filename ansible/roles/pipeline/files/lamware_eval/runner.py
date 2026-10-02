@@ -325,6 +325,21 @@ def _corpus_verifier(probe, ghidra_data: dict, corpus_dir: str | Path | None):
     return verify
 
 
+def agent_visible_text(ghidra_payload: dict) -> str:
+    """The grounding text for a Ghidra payload: what the agent was sent, as text.
+
+    `run_interpret` sends the agent `without_host_paths(payload)`; this scores
+    against the same thing, via the same function, for BOTH Ghidra modalities.
+    Scoring against the raw dict also scored against `project_dir` and
+    `host_output_dir`, and every corpus path is
+    `/opt/pipeline/eval-corpus/<family>_<sha8>/...`, so a claim naming the
+    family was grounded by the directory name alone (#669). One helper rather
+    than a strip per branch: the native branch was left unstripped once
+    already, when the payload branch was not.
+    """
+    return json.dumps(without_host_paths(ghidra_payload))
+
+
 def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
     """The pre-#646 dispatch: the wrapper's own analyser, else the Ghidra dict.
 
@@ -340,7 +355,9 @@ def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
         init = build_dotnet_init(dotnet, llm_context, cape_sigs)
         return init, "dotnet", json.dumps(init.get("decompiled_source", ""))
     gr = report.get("ghidra") or {}
-    return gr, "native_pe", json.dumps(gr)
+    # The init is the full dict: the host needs `project_dir` to broker tool
+    # calls. Only the grounding text loses the paths (#669).
+    return gr, "native_pe", agent_visible_text(gr)
 
 
 def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = None,
@@ -386,16 +403,19 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
     THE GROUNDING SOURCE moves with the modality, because a claim is grounded
     only against what the agent could have read:
 
-      native_pe         json.dumps(report["ghidra"]), unchanged
+      native_pe         report["ghidra"] as the agent received it
+                        (`agent_visible_text`: host paths removed, #669)
       dotnet            the decompiled C#. Scored against the Ghidra dict it was
                         scored against an empty one, so every claim it made was
                         a fabrication.
-      unpacked_payload  the chosen program's entry exactly as the agent received
-                        it (`without_host_paths`). Not the C#, which the agent
-                        never saw; not the whole Ghidra dict, whose other
-                        payloads it never saw; and not the host paths, which
-                        carry the family name the corpus directory is named for
-                        and would ground a family claim the agent did not earn.
+      unpacked_payload  the chosen program's entry as the agent received it
+                        (`agent_visible_text`). Not the C#, which the agent
+                        never saw, and not the whole Ghidra dict, whose other
+                        payloads it never saw.
+
+    Neither Ghidra source includes host paths: they carry the family name the
+    corpus directory is named for and would ground a family claim the agent
+    did not earn (#669).
 
     The input record says which of these happened, in the shape production
     writes to `llm_interpretation.input`, so a scorecard can say which input
@@ -437,7 +457,7 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
         "chosen_because": reason,
         "wrapper_routed_by": routed_by[0] if routed_by else None,
     }
-    return init, "unpacked_payload", json.dumps(without_host_paths(target)), read
+    return init, "unpacked_payload", agent_visible_text(target), read
 
 
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,

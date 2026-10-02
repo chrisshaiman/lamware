@@ -51,11 +51,14 @@ def test_a_dotnet_sample_is_handed_its_decompiled_source():
 
 def test_a_native_sample_is_unchanged():
     """The native path is the one with a result behind it (#420 stage 2). This
-    change must not move it."""
+    change must not move it. The grounding text is the dict minus host paths
+    since #669 (they carry the corpus dir's family name); everything else in
+    it is still the Ghidra dict."""
     init, modality, source, _read = init_payload_for(NATIVE_REPORT)
     assert modality == "native_pe"
     assert init is NATIVE_REPORT["ghidra"]
-    assert json.loads(source) == NATIVE_REPORT["ghidra"]
+    expected = {k: v for k, v in NATIVE_REPORT["ghidra"].items() if k != "project_dir"}
+    assert json.loads(source) == expected
 
 
 def test_the_grounding_source_follows_the_modality():

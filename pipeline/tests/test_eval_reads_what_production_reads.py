@@ -22,6 +22,7 @@ from lamware_eval import runner
 from lamware_eval.corpus import CorpusSample
 from lamware_eval.metrics import aggregate
 from lamware_eval.runner import CorpusProjectMissing, init_payload_for
+from stages.interpret import without_host_paths
 
 RUN = "/opt/pipeline/reports/v661_5b4f596d3cf5"
 FORMBOOK = "c95af141eb34bf5d68efd96a00ade1e089ebe6539473257bcba73a32a48188cd"
@@ -108,13 +109,14 @@ NATIVE = {"ghidra": {"triggered": True, "project_dir": "/c/amadey/project",
 
 
 def test_a_native_report_is_handed_exactly_what_it_was_before(tmp_path):
-    """The native path has the #420 stage-2 result behind it. Same object, same
-    source text, and the verifier never runs — even with a corpus dir and a
-    family-labelled payload present, because no routed flag is set."""
+    """The native path has the #420 stage-2 result behind it. Same object, and
+    the verifier never runs — even with a corpus dir and a family-labelled
+    payload present, because no routed flag is set. The source is the agent's
+    view of the same dict (#669 removed the host paths, nothing else)."""
     init, modality, source, read = init_payload_for(NATIVE, verify=never, corpus_dir=tmp_path)
     assert init is NATIVE["ghidra"]
     assert modality == "native_pe"
-    assert source == json.dumps(NATIVE["ghidra"])
+    assert source == json.dumps(without_host_paths(NATIVE["ghidra"]))
     assert read == {"kind": "native_pe", "wrapper_routed_by": None}
 
 
@@ -259,7 +261,50 @@ def test_an_old_format_native_entry_is_unchanged(tmp_path):
                            "project_dir": "/opt/pipeline/reports/eval-amadey/project"}]}}
     init, modality, source, _ = init_payload_for(old, verify=never, corpus_dir=tmp_path)
     assert init is old["ghidra"] and modality == "native_pe"
-    assert source == json.dumps(old["ghidra"])
+    assert source == json.dumps(without_host_paths(old["ghidra"]))
+
+
+# --- #669: the family name in a corpus path must not ground a claim ---------------
+
+def _planted() -> dict:
+    """A native report whose ONLY mention of the family is in path fields, laid
+    out as every corpus entry is: /opt/pipeline/eval-corpus/<family>_<sha8>/."""
+    corpus = "/opt/pipeline/eval-corpus/zloader_1a2b3c4d"
+    return {"ghidra": {
+        "triggered": True, "project_dir": f"{corpus}/project", "program_name": "p",
+        "analyzed_files": [{"analysis_success": True, "program_name": "p",
+                            "functions_count": 12, "strings": ["kernel32.dll"],
+                            "project_dir": "/opt/pipeline/reports/eval-zloader-1a2b3c4d/project",
+                            "host_output_dir": "/opt/pipeline/reports/eval-zloader-1a2b3c4d"}]}}
+
+
+def test_a_family_named_only_in_a_path_does_not_ground_a_claim():
+    """The claim is scored by the real grounding scorer, through compose_cell."""
+    from lamware_eval.metrics import compose_cell
+    report = _planted()
+    init, _, source, _ = init_payload_for(report)
+    assert "zloader" in json.dumps(report["ghidra"]), "fixture lost its plant"
+    sample = CorpusSample("1a2b3c4d" + "0" * 56, "zloader", "/c")
+    analysis = {"code_level_iocs": [{"value": "zloader", "type": "string"}]}
+    # The defect, reproduced: against the raw dict the path alone grounds it.
+    leaky = compose_cell("a", sample, analysis, json.dumps(report["ghidra"]),
+                         None, 0.0, 0.0, {}, None)
+    assert leaky["grounded"] == 1, "the plant no longer grounds the claim; test is vacuous"
+    cell = compose_cell("a", sample, analysis, source, None, 0.0, 0.0, {}, None)
+    assert cell["total"] == 1
+    assert cell["grounded"] == 0 and cell["grounded_ratio"] == 0.0
+    assert init["project_dir"].endswith("zloader_1a2b3c4d/project"), (
+        "the agent's init must keep project_dir: the host brokers tool calls with it")
+
+
+def test_a_value_the_agent_did_see_is_still_grounded():
+    """Control for the test above: stripping paths must not strip evidence."""
+    from lamware_eval.metrics import compose_cell
+    _, _, source, _ = init_payload_for(_planted())
+    sample = CorpusSample("1a2b3c4d" + "0" * 56, "zloader", "/c")
+    analysis = {"code_level_iocs": [{"value": "kernel32.dll", "type": "string"}]}
+    cell = compose_cell("a", sample, analysis, source, None, 0.0, 0.0, {}, None)
+    assert cell["grounded"] == 1 and cell["fabricated"] == []
 
 
 # --- a corpus missing the project fails loudly -----------------------------------
