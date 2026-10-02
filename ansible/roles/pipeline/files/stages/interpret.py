@@ -14,6 +14,7 @@ License: Apache 2.0
 
 import json
 import os
+import queue
 import re
 import subprocess
 import threading
@@ -547,6 +548,41 @@ def _start_stderr_reader(proc) -> list:
     return buf
 
 
+# Sentinel the stdout reader queues after the last line: stdout reached EOF.
+_STDOUT_EOF = object()
+
+
+def _start_stdout_reader(proc) -> "queue.Queue":
+    """Read the container's stdout on a thread, so the budget can fire while it is silent.
+
+    The loop used to call proc.stdout.readline() inline and check the clock only
+    between lines (#240). A container inside one long model request writes
+    nothing, so the 3,600s budget could not fire until the request returned:
+    redet644_1f2b22638ddb's single .NET request returned at t=5447.87s. And once
+    it did fire, the loop sent force_final, waited, and broke WITHOUT reading
+    stdout again, so the final that request produced was never parsed.
+
+    A queue fed by this thread lets the main loop wait with a deadline
+    (queue.get(timeout=...)) instead of blocking in readline, and keeps every
+    line the container wrote available to read after force_final is sent.
+    """
+    q: queue.Queue = queue.Queue()
+
+    def _reader():
+        try:
+            if proc.stdout is None:
+                return
+            for line in proc.stdout:
+                q.put(line)
+        except Exception:  # noqa: BLE001 - the main loop reports how the run ended
+            pass
+        finally:
+            q.put(_STDOUT_EOF)
+
+    threading.Thread(target=_reader, daemon=True).start()
+    return q
+
+
 def _drain_stderr(proc, buf: list | None = None) -> str:
     """The tail of what the container wrote to stderr. Never blocks, never raises.
 
@@ -655,12 +691,28 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                   interpret_cmd: str, interpret_enabled: bool,
                   interpret_timeout: int, interpret_config: dict,
                   ghidra_cmd: str, extra_evidence: dict | None = None,
-                  force_final_grace: int = 300) -> dict:
+                  force_final_grace: int = 300,
+                  synthesis_reserve: int = 0) -> dict:
     """Run the agentic LLM interpretation loop.
 
     Starts the interpret container (long-running, stdin/stdout pipes),
     sends Ghidra data, brokers tool calls to Ghidra containers, and
     collects the final analysis.
+
+    Time is bounded by two deadlines (#240):
+
+      * ``interpret_timeout`` after start, the budget. If no force_final has
+        been sent yet, one is sent then, whether or not the container is
+        currently writing anything.
+      * ``force_final_grace`` after that, the hard stop. Until then every line
+        the container writes is still read, so a final that arrives in the
+        grace window is used rather than discarded.
+
+    ``synthesis_reserve`` stops granting tool calls once that many seconds of
+    budget or fewer remain: the tool call is answered with force_final, so the
+    agent spends the rest of its time writing the analysis instead of gathering
+    evidence it then has no time to report. 0 disables it; the eval and A/B
+    harnesses rely on that so their tool-depth arms are not changed by it.
     """
     if not interpret_enabled:
         return {"enabled": False, "reason": "disabled_by_config"}
@@ -730,38 +782,77 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 max_tool_calls_per_turn=interpret_config.get("max_tool_calls_per_turn"),
                 analysis_type=ghidra_result.get("analysis_type"))
 
+    budget_deadline = start_time + interpret_timeout
+    hard_deadline = budget_deadline + force_final_grace
+    stdout_q = _start_stdout_reader(proc)
+    # How the loop ended, so the report can say what actually happened instead of
+    # one message for every way a run can end without a final.
+    force_final_reason: str | None = None
+    force_final_sent_at: float | None = None
+    force_final_delivered = False
+    stopped_at_deadline = False
+
+    def _send_force_final(reason: str) -> None:
+        """Ask for the final, once. The container reads it as its next tool result.
+
+        It reads stdin only while waiting for a tool result, so a force_final sent
+        while a model request is in flight waits in the pipe until the agent's next
+        tool call; a container already in synthesis (or on a single-shot path)
+        never reads it and simply emits its final. Either way the answer comes
+        back on stdout, which is why the loop keeps reading after this (#240).
+        """
+        nonlocal force_final_reason, force_final_sent_at, force_final_delivered
+        force_final_reason = reason
+        force_final_sent_at = time.time()
+        try:
+            proc.stdin.write(json.dumps({"type": "force_final", "reason": reason}) + "\n")
+            proc.stdin.flush()
+            force_final_delivered = True
+        except (BrokenPipeError, OSError) as e:
+            # The container has already gone. Whatever it wrote is still in the
+            # queue, so keep reading rather than turning this into a loop error.
+            trail.event("force_final_undeliverable", reason=reason,
+                        error=f"{type(e).__name__}: {e}")
+        trail.event("force_final_sent", reason=reason,
+                    budget_remaining_s=round(budget_deadline - force_final_sent_at, 1),
+                    delivered=force_final_delivered)
+        trail.phase = "synthesis"
+
     try:
         while True:
-            # Check timeout
-            elapsed = time.time() - start_time
-            if elapsed > interpret_timeout:
-                # NOT a crash — and it was reported as one. This break and the EOF
-                # break below both fell through to "Interpret container exited
-                # without final result", so a run we gave up on looked identical
-                # to a container that died. That cost three rounds of chasing
-                # tracebacks and exit codes for a container that was alive and
-                # working the whole time.
-                #
-                # Measured on salat_d26bc055, 2026-09-08: heartbeat at t=304s,
-                # break at t=334s. Exactly the 30s grace below, against a 300s
-                # budget.
+            now = time.time()
+            if now >= budget_deadline and not timed_out:
+                # NOT a crash — and it was reported as one, and then as "did not
+                # produce a forced final" when it had (#240). The budget is checked
+                # on a clock, not between lines: the queue wait below returns at the
+                # deadline even when the container has written nothing.
                 timed_out = True
-                proc.stdin.write(json.dumps({"type": "force_final", "reason": "timeout"}) + "\n")
-                proc.stdin.flush()
-                # The grace must fit the SLOWEST backend, not the fastest. A cloud
-                # model answers a forced final in seconds; the local 35B took
-                # 3m26s to reach its FIRST tool call. 30s guaranteed the forced
-                # final never arrived, so every timeout looked like a death.
+                if force_final_reason is None:
+                    _send_force_final("timeout")
+            if now >= hard_deadline:
+                # The grace is over. Take anything the container already wrote —
+                # a final that landed while we were looking at the clock is still a
+                # final — but wait for nothing more.
                 try:
-                    proc.wait(timeout=force_final_grace)
-                except subprocess.TimeoutExpired:
-                    pass
-                break
+                    line = stdout_q.get_nowait()
+                except queue.Empty:
+                    stopped_at_deadline = True
+                    break
+            else:
+                # The grace must fit the SLOWEST backend, not the fastest: the
+                # forced final is itself a synthesis, measured at 1041s on the
+                # local 35B. Waiting is bounded by whichever deadline comes next.
+                wait_until = hard_deadline if timed_out else budget_deadline
+                try:
+                    line = stdout_q.get(timeout=max(0.0, wait_until - now))
+                except queue.Empty:
+                    continue
 
-            # Read response from interpret container
-            line = proc.stdout.readline().strip()
-            if not line:
+            if line is _STDOUT_EOF:
                 break
+            line = line.strip()
+            if not line:
+                continue
 
             try:
                 msg = json.loads(line)
@@ -785,9 +876,23 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     "duration_seconds": round(duration, 1),
                     "possible_prompt_influence": influenced,
                     "analysis": analysis,
+                    # Carried through unchanged on a forced final too: the salvage is
+                    # usually the most expensive request of the run (CLAUDE.md §10).
                     "usage": msg.get("usage", {}),
                     "audit": {"tool_call_log": str(audit_path)},
                 }
+                if force_final_reason is not None:
+                    # A real analysis, written under orders to stop. Not `timed_out`:
+                    # score_report reads that as SUSPECT, and this run produced what
+                    # it was asked for. A reader still needs to know the loop was
+                    # cut short, and why.
+                    result["forced_final"] = {
+                        "reason": force_final_reason,
+                        "sent_at_s": round(force_final_sent_at - start_time, 1),
+                        "answered_after_s": round(time.time() - force_final_sent_at, 1),
+                        "budget_s": interpret_timeout,
+                        "answered": True,
+                    }
 
                 trail.final(msg, duration)
 
@@ -801,6 +906,30 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
             elif msg_type == "tool_call":
                 tool_name = msg.get("tool", "")
                 tool_args = msg.get("args", {})
+
+                if force_final_reason is not None:
+                    # The container reads exactly one message per tool call, and the
+                    # force_final already in its stdin is that message. Answering this
+                    # too would leave a stray line it never reads; running the tool
+                    # would spend Ghidra time on a result nobody will see.
+                    trail.event("tool_call_after_force_final", tool=tool_name,
+                                args=json.dumps(tool_args, default=str)[:200])
+                    continue
+
+                remaining = budget_deadline - time.time()
+                if synthesis_reserve and remaining <= synthesis_reserve:
+                    # #240: the budget covers the tool loop AND synthesis, and a run
+                    # that spends it all on tools loses everything the loop earned.
+                    # Refuse the grant; the container turns this into its final.
+                    print(f"    [!] {remaining:.0f}s of budget left, within the "
+                          f"{synthesis_reserve}s synthesis reserve: not running "
+                          f"{tool_name}, asking for the final analysis")
+                    trail.event("tool_call_refused_for_reserve", tool=tool_name,
+                                budget_remaining_s=round(remaining, 1),
+                                synthesis_reserve_s=synthesis_reserve)
+                    _send_force_final("synthesis_reserve")
+                    continue
+
                 print(f"    Tool call: {tool_name}({json.dumps(tool_args)[:80]})")
 
                 # Validate arguments; refuse outright when this analysis has
@@ -876,10 +1005,19 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                           f"container image (deploy --tags pipeline,interpret together)")
                     trail.event("unhandled_message_type", message_type=msg_type)
 
-        # stdout reached EOF. Record how the process stood RIGHT NOW: the finally
-        # block below terminate()s and kill()s it, so a returncode read afterwards
-        # describes OUR signal, not how the container actually died.
-        eof_returncode = proc.poll()
+        # Record how the process stood RIGHT NOW: the finally block below
+        # terminate()s and kill()s it, so a returncode read afterwards describes
+        # OUR signal, not how the container actually ended. At stdout EOF the exit
+        # follows within milliseconds and poll() alone could race it, so give it
+        # a moment; None after that genuinely means it closed stdout and kept
+        # running. At the deadline, do not wait: it is still running by definition.
+        if stopped_at_deadline:
+            eof_returncode = proc.poll()
+        else:
+            try:
+                eof_returncode = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                eof_returncode = None
 
     except Exception as e:
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")
@@ -893,25 +1031,49 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         except Exception:
             proc.kill()
 
-    # The container died without a final message. This is the case the trail exists for:
-    # the in-memory audit log is lost, but the trail is already on disk.
-    # HOW it died, not just that it did. stderr came back genuinely empty across
-    # three runs on 2026-09-08 — the container writes nothing before going — so
-    # the exit status is the only remaining signal. None means the process was
-    # still alive at EOF (it closed stdout and kept running); a negative value is
-    # -SIGNUM, so -9 is a kill and -11 a segfault.
-    if timed_out:
-        # Said plainly, because the previous wording sent three investigations
-        # after a crash that never happened.
-        trail.event("interpret_timeout", elapsed_s=round(time.time() - start_time, 1),
-                    budget_s=interpret_timeout, returncode=eof_returncode)
+    # No final message. This is the case the trail exists for: the in-memory audit
+    # log is lost, but the trail is already on disk. Say HOW it ended, not just
+    # that it did. Every line the container wrote up to here has been read, so
+    # "no final" now means the container never sent one, not that we stopped
+    # listening — both redet644 .NET runs (2026-09-27) were reported as "did not
+    # produce a forced final" with returncode 0, their finals unread in the pipe.
+    if force_final_reason is not None:
+        sent_at = round(force_final_sent_at - start_time, 1)
+        if stopped_at_deadline:
+            ended = "still_running_at_deadline"
+            note = (f"still running {force_final_grace}s after the {interpret_timeout}s "
+                    f"budget, so the pipeline stopped it — most likely inside a model "
+                    f"request, which force_final cannot interrupt")
+            error = (f"Interpret exceeded its {interpret_timeout}s budget. force_final "
+                     f"({force_final_reason}) was sent at t={sent_at}s and no final "
+                     f"arrived within the {force_final_grace}s grace; the container "
+                     f"was still running and the pipeline stopped it. Not a crash.")
+        else:
+            ended = "exited_without_final"
+            note = _describe_exit(eof_returncode)
+            error = (f"force_final ({force_final_reason}) was sent at t={sent_at}s; the "
+                     f"container then closed stdout without sending a final "
+                     f"({note}). Every line it wrote was read.")
+        trail.event("interpret_timeout" if timed_out else "forced_final_not_answered",
+                    elapsed_s=round(time.time() - start_time, 1),
+                    budget_s=interpret_timeout, grace_s=force_final_grace,
+                    force_final_reason=force_final_reason,
+                    force_final_sent_at_s=sent_at,
+                    force_final_delivered=force_final_delivered,
+                    ended=ended, returncode=eof_returncode)
         return {"enabled": True,
-                "error": (f"Interpret timed out after {interpret_timeout}s and did not "
-                          f"produce a forced final within {force_final_grace}s. The "
-                          f"container was still running — this is not a crash."),
-                "timed_out": True,
+                "error": error,
+                # True whenever the budget ran out, which is what score_report and
+                # the UI mean by it. A reserve-forced final the container failed to
+                # send before the budget ran out is the other failure.
+                "timed_out": timed_out,
+                "forced_final": {"reason": force_final_reason, "sent_at_s": sent_at,
+                                 "delivered": force_final_delivered,
+                                 "budget_s": interpret_timeout,
+                                 "grace_s": force_final_grace,
+                                 "answered": False, "ended": ended},
                 "container_returncode": eof_returncode,
-                "container_exit_note": _describe_exit(eof_returncode),
+                "container_exit_note": note,
                 "container_stderr": _drain_stderr(proc, stderr_buf),
                 "audit": {"turn_trail": str(trail.path)}}
 

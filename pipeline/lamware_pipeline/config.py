@@ -12,7 +12,7 @@ intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class InterpretConfig(BaseModel):
@@ -84,6 +84,10 @@ class PipelineConfig(BaseModel):
     # 30 because a local synthesis takes minutes, and at 30s the forced final
     # could never arrive — every timeout was reported as a crash.
     interpret_force_final_grace: int = 300
+    # Seconds of interpret_timeout held back for synthesis: tool calls are not
+    # granted inside it (#240). Defaulted to 0 (no reserve, the old behaviour) so
+    # an older config.json still loads; config.json.j2 always renders it.
+    interpret_synthesis_reserve: int = Field(default=0, ge=0)
     reports_dir: str
     cape_poll_interval: int
     cape_timeout: int
@@ -118,6 +122,21 @@ class PipelineConfig(BaseModel):
     # Campaign-graph relationship thresholds (2026-06-26)
     relationship_max_ioc_frequency: int
     relationship_ssdeep_threshold: int
+
+    @model_validator(mode="after")
+    def _reserve_leaves_a_tool_loop(self) -> "PipelineConfig":
+        """A reserve at or above the budget refuses every tool call.
+
+        That would not fail anything: every run would still return a final, built
+        from the initial prompt alone, and look healthy. Refuse it at load time
+        instead of letting it degrade silently.
+        """
+        if self.interpret_synthesis_reserve >= self.interpret_timeout:
+            raise ValueError(
+                f"interpret_synthesis_reserve ({self.interpret_synthesis_reserve}s) must "
+                f"be below interpret_timeout ({self.interpret_timeout}s), or no tool "
+                f"call is ever granted")
+        return self
 
     @classmethod
     def load(cls, path: str) -> "PipelineConfig":
