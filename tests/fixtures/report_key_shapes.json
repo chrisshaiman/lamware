@@ -1,0 +1,4456 @@
+{
+ "_about": "Key shape of real report.json files (#409): key paths and JSON types only, no values. Built by tests/report_keys.py from reports read off the host; '*' is a data-keyed dict, '[]' a list element.",
+ "eras": {
+  "current": {
+   "sources": [
+    "pipeline-run-e2e643",
+    "pipeline-run-e2e644",
+    "pipeline-run-redet644",
+    "pipeline-run-redet644",
+    "pipeline-run-redet644",
+    "pipeline-run-rednat",
+    "pipeline-run-rednat",
+    "pipeline-run-rednat",
+    "pipeline-run-rednat",
+    "pipeline-run-rednat",
+    "pipeline-run-v648",
+    "pipeline-run-v651",
+    "pipeline-run-v651b",
+    "pipeline-run-v655",
+    "pipeline-run-v661"
+   ],
+   "paths": {
+    "_family_source": [
+     "string"
+    ],
+    "_severity_band_with_llm": [
+     "string"
+    ],
+    "_severity_llm_inputs": [
+     "array"
+    ],
+    "_severity_llm_inputs[]": [
+     "string"
+    ],
+    "_severity_score": [
+     "number"
+    ],
+    "_severity_score_llm_context": [
+     "integer"
+    ],
+    "bazaar_family": [
+     "string"
+    ],
+    "cape": [
+     "object"
+    ],
+    "cape.detonation": [
+     "object"
+    ],
+    "cape.detonation.api_calls_total": [
+     "integer"
+    ],
+    "cape.detonation.child_image_bases": [
+     "object"
+    ],
+    "cape.detonation.child_image_bases.*": [
+     "string"
+    ],
+    "cape.detonation.clean_exit_pids": [
+     "array"
+    ],
+    "cape.detonation.clean_exit_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.duration_s": [
+     "integer"
+    ],
+    "cape.detonation.hit_analysis_timeout": [
+     "boolean"
+    ],
+    "cape.detonation.hollowed_pids": [
+     "array"
+    ],
+    "cape.detonation.hollowed_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.lost_pids": [
+     "array"
+    ],
+    "cape.detonation.lost_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.monitor_injection_failed_pids": [
+     "array"
+    ],
+    "cape.detonation.monitors_loaded": [
+     "integer"
+    ],
+    "cape.detonation.process_count": [
+     "integer"
+    ],
+    "cape.detonation.tier": [
+     "string"
+    ],
+    "cape.detonation.traced_pids": [
+     "array"
+    ],
+    "cape.detonation.traced_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.vanished_pids": [
+     "array"
+    ],
+    "cape.detonation.vanished_pids[]": [
+     "integer"
+    ],
+    "cape.extracted_configs": [
+     "array"
+    ],
+    "cape.extracted_configs[]": [
+     "object"
+    ],
+    "cape.extracted_configs[].*": [
+     "array",
+     "object"
+    ],
+    "cape.extracted_configs[].*.*": [
+     "array"
+    ],
+    "cape.extracted_configs[].*.*[]": [
+     "array",
+     "boolean",
+     "integer",
+     "string"
+    ],
+    "cape.extracted_configs[].*.*[][]": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.md5": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha1": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha256": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha3_384": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha512": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[]": [
+     "object"
+    ],
+    "cape.extracted_configs[].*[].md5": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha1": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha256": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha3_384": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha512": [
+     "string"
+    ],
+    "cape.injection_buffers": [
+     "array"
+    ],
+    "cape.injection_buffers[]": [
+     "object"
+    ],
+    "cape.injection_buffers[].all_targets": [
+     "array"
+    ],
+    "cape.injection_buffers[].all_targets[]": [
+     "object"
+    ],
+    "cape.injection_buffers[].all_targets[].address": [
+     "string"
+    ],
+    "cape.injection_buffers[].all_targets[].pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].api": [
+     "string"
+    ],
+    "cape.injection_buffers[].content_hash": [
+     "string"
+    ],
+    "cape.injection_buffers[].declared_size": [
+     "integer"
+    ],
+    "cape.injection_buffers[].filename": [
+     "string"
+    ],
+    "cape.injection_buffers[].injection_address": [
+     "string"
+    ],
+    "cape.injection_buffers[].path": [
+     "string"
+    ],
+    "cape.injection_buffers[].size": [
+     "integer"
+    ],
+    "cape.injection_buffers[].source_pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].source_process": [
+     "string"
+    ],
+    "cape.injection_buffers[].target_pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].truncated": [
+     "boolean"
+    ],
+    "cape.injection_details": [
+     "array"
+    ],
+    "cape.injection_details[]": [
+     "string"
+    ],
+    "cape.injection_pids": [
+     "array"
+    ],
+    "cape.injection_pids[]": [
+     "integer"
+    ],
+    "cape.large_payloads": [
+     "array"
+    ],
+    "cape.large_payloads[]": [
+     "object"
+    ],
+    "cape.large_payloads[].cape_type": [
+     "string"
+    ],
+    "cape.large_payloads[].path": [
+     "string"
+    ],
+    "cape.large_payloads[].sha256": [
+     "string"
+    ],
+    "cape.large_payloads[].size": [
+     "integer"
+    ],
+    "cape.machine_ran_on": [
+     "string"
+    ],
+    "cape.machine_requested": [
+     "string"
+    ],
+    "cape.malscore": [
+     "number"
+    ],
+    "cape.memory_dump_requested": [
+     "boolean"
+    ],
+    "cape.mitre_ttps": [
+     "array"
+    ],
+    "cape.mitre_ttps[]": [
+     "object"
+    ],
+    "cape.mitre_ttps[].id": [
+     "string"
+    ],
+    "cape.mitre_ttps[].source_signature": [
+     "string"
+    ],
+    "cape.mutex_iocs": [
+     "array"
+    ],
+    "cape.mutex_iocs[]": [
+     "object"
+    ],
+    "cape.mutex_iocs[].action": [
+     "string"
+    ],
+    "cape.mutex_iocs[].api": [
+     "string"
+    ],
+    "cape.mutex_iocs[].name": [
+     "string"
+    ],
+    "cape.mutex_iocs[].pid": [
+     "integer"
+    ],
+    "cape.mutex_iocs[].process": [
+     "string"
+    ],
+    "cape.mutex_iocs[].timestamp": [
+     "integer"
+    ],
+    "cape.network": [
+     "object"
+    ],
+    "cape.network.dns_queries": [
+     "array"
+    ],
+    "cape.network.dns_queries[]": [
+     "object"
+    ],
+    "cape.network.dns_queries[].answers": [
+     "array"
+    ],
+    "cape.network.dns_queries[].answers[]": [
+     "object"
+    ],
+    "cape.network.dns_queries[].answers[].data": [
+     "string"
+    ],
+    "cape.network.dns_queries[].answers[].type": [
+     "string"
+    ],
+    "cape.network.dns_queries[].domain": [
+     "string"
+    ],
+    "cape.network.dns_queries[].type": [
+     "string"
+    ],
+    "cape.network.domains": [
+     "array"
+    ],
+    "cape.network.domains[]": [
+     "object"
+    ],
+    "cape.network.domains[].domain": [
+     "string"
+    ],
+    "cape.network.domains[].ip": [
+     "string"
+    ],
+    "cape.network.http_requests": [
+     "array"
+    ],
+    "cape.network.http_requests[]": [
+     "object"
+    ],
+    "cape.network.http_requests[].host": [
+     "string"
+    ],
+    "cape.network.http_requests[].method": [
+     "string"
+    ],
+    "cape.network.http_requests[].url": [
+     "string"
+    ],
+    "cape.network.tcp_attempts_total": [
+     "integer"
+    ],
+    "cape.network.tcp_connections": [
+     "array"
+    ],
+    "cape.network.tcp_connections[]": [
+     "object"
+    ],
+    "cape.network.tcp_connections[].attempts": [
+     "integer"
+    ],
+    "cape.network.tcp_connections[].dst": [
+     "string"
+    ],
+    "cape.network.tcp_destinations_total": [
+     "integer"
+    ],
+    "cape.payload_samples": [
+     "array"
+    ],
+    "cape.payload_samples[]": [
+     "object"
+    ],
+    "cape.payload_samples[].sha256": [
+     "string"
+    ],
+    "cape.payload_samples[].size": [
+     "integer"
+    ],
+    "cape.payloads_extracted": [
+     "integer"
+    ],
+    "cape.process_activity": [
+     "object"
+    ],
+    "cape.process_activity.api_calls_total": [
+     "integer"
+    ],
+    "cape.process_activity.limits": [
+     "object"
+    ],
+    "cape.process_activity.limits.max_apis_per_process": [
+     "integer"
+    ],
+    "cape.process_activity.limits.max_categories": [
+     "integer"
+    ],
+    "cape.process_activity.limits.max_command_line_chars": [
+     "integer"
+    ],
+    "cape.process_activity.limits.max_processes": [
+     "integer"
+    ],
+    "cape.process_activity.process_count": [
+     "integer"
+    ],
+    "cape.process_activity.processes": [
+     "array"
+    ],
+    "cape.process_activity.processes[]": [
+     "object"
+    ],
+    "cape.process_activity.processes[].api_calls": [
+     "integer"
+    ],
+    "cape.process_activity.processes[].apis": [
+     "object"
+    ],
+    "cape.process_activity.processes[].apis.*": [
+     "integer"
+    ],
+    "cape.process_activity.processes[].apis_distinct": [
+     "integer"
+    ],
+    "cape.process_activity.processes[].apis_truncated": [
+     "boolean"
+    ],
+    "cape.process_activity.processes[].categories": [
+     "object"
+    ],
+    "cape.process_activity.processes[].categories.*": [
+     "integer"
+    ],
+    "cape.process_activity.processes[].categories_truncated": [
+     "boolean"
+    ],
+    "cape.process_activity.processes[].command_line": [
+     "string"
+    ],
+    "cape.process_activity.processes[].first_seen": [
+     "string"
+    ],
+    "cape.process_activity.processes[].module_path": [
+     "string"
+    ],
+    "cape.process_activity.processes[].name": [
+     "string"
+    ],
+    "cape.process_activity.processes[].pid": [
+     "integer"
+    ],
+    "cape.process_activity.processes[].ppid": [
+     "integer"
+    ],
+    "cape.process_activity.processes_omitted": [
+     "integer"
+    ],
+    "cape.process_activity.processes_truncated": [
+     "boolean"
+    ],
+    "cape.process_activity.schema": [
+     "integer"
+    ],
+    "cape.process_activity.source": [
+     "string"
+    ],
+    "cape.process_cmdlines": [
+     "object"
+    ],
+    "cape.process_cmdlines.*": [
+     "string"
+    ],
+    "cape.signatures": [
+     "array"
+    ],
+    "cape.signatures[]": [
+     "object"
+    ],
+    "cape.signatures[].description": [
+     "string"
+    ],
+    "cape.signatures[].name": [
+     "string"
+    ],
+    "cape.signatures[].severity": [
+     "integer"
+    ],
+    "cape.status": [
+     "string"
+    ],
+    "cape.task_id": [
+     "integer"
+    ],
+    "completed_at": [
+     "string"
+    ],
+    "correlation_warnings": [
+     "array"
+    ],
+    "correlation_warnings[]": [
+     "string"
+    ],
+    "cross_correlations": [
+     "array"
+    ],
+    "cross_correlations[]": [
+     "object"
+    ],
+    "cross_correlations[].address": [
+     "string"
+    ],
+    "cross_correlations[].after": [
+     "string"
+    ],
+    "cross_correlations[].before": [
+     "string"
+    ],
+    "cross_correlations[].detail": [
+     "string"
+    ],
+    "cross_correlations[].indicator": [
+     "string"
+    ],
+    "cross_correlations[].mitre": [
+     "string"
+    ],
+    "cross_correlations[].pid": [
+     "integer"
+    ],
+    "cross_correlations[].severity": [
+     "string"
+    ],
+    "cross_correlations[].sources": [
+     "array"
+    ],
+    "cross_correlations[].sources[]": [
+     "string"
+    ],
+    "cross_correlations[].title": [
+     "string"
+    ],
+    "cross_correlations[].type": [
+     "string"
+    ],
+    "dotnet_analysis": [
+     "object"
+    ],
+    "dotnet_analysis.analysis_success": [
+     "boolean"
+    ],
+    "dotnet_analysis.analysis_type": [
+     "string"
+    ],
+    "dotnet_analysis.assembly_info": [
+     "object"
+    ],
+    "dotnet_analysis.assembly_info.error": [
+     "string"
+    ],
+    "dotnet_analysis.binary": [
+     "string"
+    ],
+    "dotnet_analysis.binary_size": [
+     "integer"
+    ],
+    "dotnet_analysis.class_count": [
+     "integer"
+    ],
+    "dotnet_analysis.classes": [
+     "array"
+    ],
+    "dotnet_analysis.classes[]": [
+     "object"
+    ],
+    "dotnet_analysis.classes[].methods": [
+     "array"
+    ],
+    "dotnet_analysis.classes[].methods[]": [
+     "object"
+    ],
+    "dotnet_analysis.classes[].methods[].name": [
+     "string"
+    ],
+    "dotnet_analysis.classes[].methods[].return_type": [
+     "string"
+    ],
+    "dotnet_analysis.classes[].name": [
+     "string"
+    ],
+    "dotnet_analysis.decompilation": [
+     "object"
+    ],
+    "dotnet_analysis.decompilation.blob_bytes_elided": [
+     "integer"
+    ],
+    "dotnet_analysis.decompilation.source": [
+     "string"
+    ],
+    "dotnet_analysis.decompilation.source_length": [
+     "integer"
+    ],
+    "dotnet_analysis.decompilation.truncated": [
+     "boolean"
+    ],
+    "dotnet_analysis.deobfuscation": [
+     "object"
+    ],
+    "dotnet_analysis.deobfuscation.deobfuscated": [
+     "boolean"
+    ],
+    "dotnet_analysis.deobfuscation.deobfuscated_size": [
+     "integer"
+    ],
+    "dotnet_analysis.deobfuscation.original_size": [
+     "integer"
+    ],
+    "dotnet_analysis.deobfuscation.output_path": [
+     "string"
+    ],
+    "dotnet_analysis.deobfuscation.stdout": [
+     "string"
+    ],
+    "dotnet_analysis.strings_of_interest": [
+     "array"
+    ],
+    "dotnet_analysis.strings_of_interest[]": [
+     "object"
+    ],
+    "dotnet_analysis.strings_of_interest[].type": [
+     "string"
+    ],
+    "dotnet_analysis.strings_of_interest[].value": [
+     "string"
+    ],
+    "evasion_analysis": [
+     "object"
+    ],
+    "evasion_analysis.analysis": [
+     "object"
+    ],
+    "evasion_analysis.analysis.confidence": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_summary": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques": [
+     "array"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[]": [
+     "object"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].evidence": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].mitre_id": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].technique": [
+     "string"
+    ],
+    "evasion_analysis.analysis.likely_behavior_if_not_evading": [
+     "string"
+    ],
+    "evasion_analysis.analysis.sandbox_recommendations": [
+     "array"
+    ],
+    "evasion_analysis.analysis.sandbox_recommendations[]": [
+     "string"
+    ],
+    "evasion_analysis.audit": [
+     "object"
+    ],
+    "evasion_analysis.audit.tool_call_log": [
+     "string"
+    ],
+    "evasion_analysis.audit.turn_trail": [
+     "string"
+    ],
+    "evasion_analysis.duration_seconds": [
+     "number"
+    ],
+    "evasion_analysis.enabled": [
+     "boolean"
+    ],
+    "evasion_analysis.escalated": [
+     "boolean"
+    ],
+    "evasion_analysis.model_final": [
+     "string"
+    ],
+    "evasion_analysis.model_initial": [
+     "string"
+    ],
+    "evasion_analysis.possible_prompt_influence": [
+     "boolean"
+    ],
+    "evasion_analysis.provider": [
+     "string"
+    ],
+    "evasion_analysis.reason": [
+     "string"
+    ],
+    "evasion_analysis.tool_calls_used": [
+     "integer"
+    ],
+    "evasion_analysis.usage": [
+     "object"
+    ],
+    "evasion_analysis.usage.input_tokens": [
+     "integer"
+    ],
+    "evasion_analysis.usage.output_tokens": [
+     "integer"
+    ],
+    "executive_summary": [
+     "object"
+    ],
+    "executive_summary.attack_techniques": [
+     "array"
+    ],
+    "executive_summary.capabilities": [
+     "array"
+    ],
+    "executive_summary.executive_summary": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links": [
+     "array"
+    ],
+    "executive_summary.ioc_technique_links[]": [
+     "object"
+    ],
+    "executive_summary.ioc_technique_links[].evidence": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].ioc_type": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].ioc_value": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].technique_id": [
+     "string"
+    ],
+    "executive_summary.iocs": [
+     "array"
+    ],
+    "executive_summary.iocs[]": [
+     "object"
+    ],
+    "executive_summary.iocs[].context": [
+     "string"
+    ],
+    "executive_summary.iocs[].source": [
+     "string"
+    ],
+    "executive_summary.iocs[].type": [
+     "string"
+    ],
+    "executive_summary.iocs[].value": [
+     "string"
+    ],
+    "executive_summary.key_findings": [
+     "array"
+    ],
+    "executive_summary.key_findings[]": [
+     "string"
+    ],
+    "executive_summary.kill_chain": [
+     "array"
+    ],
+    "executive_summary.kill_chain[]": [
+     "object"
+    ],
+    "executive_summary.kill_chain[].description": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].evidence": [
+     "array"
+    ],
+    "executive_summary.kill_chain[].evidence[]": [
+     "object"
+    ],
+    "executive_summary.kill_chain[].evidence[].detail": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].evidence[].source": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].phase": [
+     "string"
+    ],
+    "executive_summary.malware_family_guess": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques": [
+     "array"
+    ],
+    "executive_summary.mitre_techniques[]": [
+     "object"
+    ],
+    "executive_summary.mitre_techniques[].id": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques[].name": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques[].sources": [
+     "array"
+    ],
+    "executive_summary.mitre_techniques[].sources[]": [
+     "string"
+    ],
+    "executive_summary.model": [
+     "string"
+    ],
+    "executive_summary.narrative": [
+     "string"
+    ],
+    "executive_summary.parse_note": [
+     "string"
+    ],
+    "executive_summary.recommended_actions": [
+     "array"
+    ],
+    "executive_summary.recommended_actions[]": [
+     "string"
+    ],
+    "executive_summary.risk_assessment": [
+     "string"
+    ],
+    "executive_summary.severity": [
+     "string"
+    ],
+    "executive_summary.usage": [
+     "object"
+    ],
+    "executive_summary.usage.input_tokens": [
+     "integer"
+    ],
+    "executive_summary.usage.output_tokens": [
+     "integer"
+    ],
+    "executive_summary.working_notes": [
+     "string"
+    ],
+    "extracted_iocs": [
+     "array"
+    ],
+    "extracted_iocs[]": [
+     "object"
+    ],
+    "extracted_iocs[].context": [
+     "string"
+    ],
+    "extracted_iocs[].source": [
+     "string"
+    ],
+    "extracted_iocs[].type": [
+     "string"
+    ],
+    "extracted_iocs[].value": [
+     "string"
+    ],
+    "family": [
+     "string"
+    ],
+    "ghidra": [
+     "object"
+    ],
+    "ghidra.analysis_warnings": [
+     "array"
+    ],
+    "ghidra.analysis_warnings[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files": [
+     "array"
+    ],
+    "ghidra.analyzed_files[]": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].analysis_success": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].analysis_warnings": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].architecture": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].architecture_detection": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].base_address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].cape_type": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[]": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].name": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].pseudocode": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].entry_point": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].external_functions_count": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].filename": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].filter_score": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].functions_count": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].ghidra_returncode": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].ghidra_stderr": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].ghidra_stdout": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].host_output_dir": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].imports": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].imports[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].imports_total": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].imports_truncated": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].in_project": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].injection_address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].no_functions_detected": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].note": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].pid": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].process": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].processor": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].program_name": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].project_dir": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].region_size": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].sha256": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.dll_names": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.dll_names[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.embedded_pe": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.file_paths": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.file_paths[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.interesting_strings": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.interesting_strings[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.pe_offsets": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.pe_offsets[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.resolved_apis": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.resolved_apis[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].source": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].source_pid": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].source_process": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].strings_of_interest": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].strings_of_interest[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].strings_truncated": [
+     "boolean"
+    ],
+    "ghidra.dotnet_routed": [
+     "boolean"
+    ],
+    "ghidra.error": [
+     "string"
+    ],
+    "ghidra.original_sample_note": [
+     "string"
+    ],
+    "ghidra.original_sample_source": [
+     "string"
+    ],
+    "ghidra.pe_load_skipped": [
+     "array"
+    ],
+    "ghidra.pe_load_skipped[]": [
+     "string"
+    ],
+    "ghidra.pe_load_skipped_reason": [
+     "string"
+    ],
+    "ghidra.program_name": [
+     "string"
+    ],
+    "ghidra.project_dir": [
+     "string"
+    ],
+    "ghidra.trigger_reason": [
+     "string"
+    ],
+    "ghidra.trigger_signatures": [
+     "array"
+    ],
+    "ghidra.trigger_signatures[]": [
+     "string"
+    ],
+    "ghidra.triggered": [
+     "boolean"
+    ],
+    "ioc_technique_mappings": [
+     "array"
+    ],
+    "ioc_technique_mappings[]": [
+     "object"
+    ],
+    "ioc_technique_mappings[].confidence": [
+     "string"
+    ],
+    "ioc_technique_mappings[].evidence": [
+     "string"
+    ],
+    "ioc_technique_mappings[].ioc_type": [
+     "string"
+    ],
+    "ioc_technique_mappings[].ioc_value": [
+     "string"
+    ],
+    "ioc_technique_mappings[].method": [
+     "string"
+    ],
+    "ioc_technique_mappings[].technique_id": [
+     "string"
+    ],
+    "ioc_technique_mappings[].technique_name": [
+     "string"
+    ],
+    "llm_interpretation": [
+     "object"
+    ],
+    "llm_interpretation.analysis": [
+     "object"
+    ],
+    "llm_interpretation.analysis.attack_techniques": [
+     "array"
+    ],
+    "llm_interpretation.analysis.attack_techniques[]": [
+     "object"
+    ],
+    "llm_interpretation.analysis.attack_techniques[].id": [
+     "string"
+    ],
+    "llm_interpretation.analysis.attack_techniques[].name": [
+     "string"
+    ],
+    "llm_interpretation.analysis.capabilities": [
+     "array"
+    ],
+    "llm_interpretation.analysis.capabilities[]": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs": [
+     "array"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[]": [
+     "object"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].context": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].type": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].value": [
+     "string"
+    ],
+    "llm_interpretation.analysis.deobfuscated_payload": [
+     "string"
+    ],
+    "llm_interpretation.analysis.malware_family_guess": [
+     "string"
+    ],
+    "llm_interpretation.analysis.narr": [
+     "string"
+    ],
+    "llm_interpretation.analysis.narrative": [
+     "string"
+    ],
+    "llm_interpretation.analysis.novel_techniques": [
+     "array"
+    ],
+    "llm_interpretation.analysis.novel_techniques[]": [
+     "string"
+    ],
+    "llm_interpretation.analysis.risk_assessment": [
+     "string"
+    ],
+    "llm_interpretation.analysis.working_notes": [
+     "string"
+    ],
+    "llm_interpretation.analysis.yara_suggestion": [
+     "string"
+    ],
+    "llm_interpretation.audit": [
+     "object"
+    ],
+    "llm_interpretation.audit.tool_call_log": [
+     "string"
+    ],
+    "llm_interpretation.audit.turn_trail": [
+     "string"
+    ],
+    "llm_interpretation.container_exit_note": [
+     "string"
+    ],
+    "llm_interpretation.container_returncode": [
+     "integer"
+    ],
+    "llm_interpretation.container_stderr": [
+     "string"
+    ],
+    "llm_interpretation.duration_seconds": [
+     "number"
+    ],
+    "llm_interpretation.enabled": [
+     "boolean"
+    ],
+    "llm_interpretation.error": [
+     "string"
+    ],
+    "llm_interpretation.escalated": [
+     "boolean"
+    ],
+    "llm_interpretation.input": [
+     "object"
+    ],
+    "llm_interpretation.input.cape_type": [
+     "string"
+    ],
+    "llm_interpretation.input.chosen_because": [
+     "string"
+    ],
+    "llm_interpretation.input.functions_count": [
+     "integer"
+    ],
+    "llm_interpretation.input.kind": [
+     "string"
+    ],
+    "llm_interpretation.input.program_name": [
+     "string"
+    ],
+    "llm_interpretation.input.source": [
+     "string"
+    ],
+    "llm_interpretation.input.wrapper_routed_by": [
+     "string"
+    ],
+    "llm_interpretation.model_final": [
+     "string"
+    ],
+    "llm_interpretation.model_initial": [
+     "string"
+    ],
+    "llm_interpretation.possible_prompt_influence": [
+     "boolean"
+    ],
+    "llm_interpretation.provider": [
+     "string"
+    ],
+    "llm_interpretation.reason": [
+     "string"
+    ],
+    "llm_interpretation.timed_out": [
+     "boolean"
+    ],
+    "llm_interpretation.tool_calls_used": [
+     "integer"
+    ],
+    "llm_interpretation.usage": [
+     "object"
+    ],
+    "llm_interpretation.usage.input_tokens": [
+     "integer"
+    ],
+    "llm_interpretation.usage.output_tokens": [
+     "integer"
+    ],
+    "mitre_mapping": [
+     "array"
+    ],
+    "mitre_mapping[]": [
+     "object"
+    ],
+    "mitre_mapping[].id": [
+     "string"
+    ],
+    "mitre_mapping[].name": [
+     "string"
+    ],
+    "mitre_mapping[].source_signature": [
+     "string"
+    ],
+    "mitre_mapping[].sources": [
+     "array"
+    ],
+    "mitre_mapping[].sources[]": [
+     "string"
+    ],
+    "pcap_analysis": [
+     "object"
+    ],
+    "pcap_analysis.pcap": [
+     "string"
+    ],
+    "pcap_analysis.pcap_size": [
+     "integer"
+    ],
+    "pcap_analysis.suricata": [
+     "object"
+    ],
+    "pcap_analysis.suricata.alerts": [
+     "array"
+    ],
+    "pcap_analysis.suricata.summary": [
+     "object"
+    ],
+    "pcap_analysis.suricata.summary.categories": [
+     "array"
+    ],
+    "pcap_analysis.suricata.summary.total_alerts": [
+     "integer"
+    ],
+    "pcap_analysis.suricata.summary.unique_alerts": [
+     "integer"
+    ],
+    "pcap_analysis.zeek": [
+     "object"
+    ],
+    "pcap_analysis.zeek.connections": [
+     "array"
+    ],
+    "pcap_analysis.zeek.connections[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.connections[].*": [
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.dns": [
+     "array"
+    ],
+    "pcap_analysis.zeek.dns[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.dns[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.dns[].*[]": [
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.files": [
+     "array"
+    ],
+    "pcap_analysis.zeek.files[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.files[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.http": [
+     "array"
+    ],
+    "pcap_analysis.zeek.http[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.http[].*": [
+     "array",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.http[].*[]": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs": [
+     "array"
+    ],
+    "pcap_analysis.zeek.iocs[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.iocs[].method": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].source": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].type": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].value": [
+     "string"
+    ],
+    "pcap_analysis.zeek.summary": [
+     "object"
+    ],
+    "pcap_analysis.zeek.summary.anomalies": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.dns_queries": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.files_transferred": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.http_transactions": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.tls_sessions": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.total_connections": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.unique_destinations": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.tls": [
+     "array"
+    ],
+    "pcap_analysis.zeek.tls[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.tls[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.tls[].*[]": [
+     "string"
+    ],
+    "plain_english_model": [
+     "string"
+    ],
+    "plain_english_summary": [
+     "string"
+    ],
+    "plain_english_usage": [
+     "object"
+    ],
+    "plain_english_usage.input_tokens": [
+     "integer"
+    ],
+    "plain_english_usage.output_tokens": [
+     "integer"
+    ],
+    "powershell_analysis": [
+     "object"
+    ],
+    "powershell_analysis.analysis_success": [
+     "boolean"
+    ],
+    "powershell_analysis.analysis_type": [
+     "string"
+    ],
+    "powershell_analysis.cape_extracted": [
+     "boolean"
+    ],
+    "powershell_analysis.decoded_layers": [
+     "array"
+    ],
+    "powershell_analysis.extraction_count": [
+     "integer"
+    ],
+    "powershell_analysis.extraction_pid": [
+     "integer"
+    ],
+    "powershell_analysis.final_decoded": [
+     "string"
+    ],
+    "powershell_analysis.input_mode": [
+     "string"
+    ],
+    "powershell_analysis.iocs_extracted": [
+     "object"
+    ],
+    "powershell_analysis.iocs_extracted.domains": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.file_paths": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.ips": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.registry_keys": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.urls": [
+     "array"
+    ],
+    "powershell_analysis.layer_count": [
+     "integer"
+    ],
+    "powershell_analysis.obfuscation_techniques": [
+     "array"
+    ],
+    "powershell_analysis.original_script": [
+     "string"
+    ],
+    "powershell_analysis.psdecode_error": [
+     "string"
+    ],
+    "powershell_analysis.psdecode_success": [
+     "boolean"
+    ],
+    "powershell_analysis.strings_of_interest": [
+     "array"
+    ],
+    "sample": [
+     "string"
+    ],
+    "sample_name": [
+     "string"
+    ],
+    "screenshots": [
+     "object"
+    ],
+    "screenshots.analysis_success": [
+     "boolean"
+    ],
+    "screenshots.evasion_signal": [
+     "boolean"
+    ],
+    "screenshots.frames_base64": [
+     "array"
+    ],
+    "screenshots.frames_base64[]": [
+     "object"
+    ],
+    "screenshots.frames_base64[].base64": [
+     "string"
+    ],
+    "screenshots.frames_base64[].filename": [
+     "string"
+    ],
+    "screenshots.qr_codes": [
+     "array"
+    ],
+    "screenshots.total_screenshots": [
+     "integer"
+    ],
+    "screenshots.unique_count": [
+     "integer"
+    ],
+    "screenshots.unique_frames": [
+     "array"
+    ],
+    "screenshots.unique_frames[]": [
+     "object"
+    ],
+    "screenshots.unique_frames[].filename": [
+     "string"
+    ],
+    "screenshots.unique_frames[].hash": [
+     "string"
+    ],
+    "screenshots.unique_frames[].height": [
+     "integer"
+    ],
+    "screenshots.unique_frames[].path": [
+     "string"
+    ],
+    "screenshots.unique_frames[].size": [
+     "integer"
+    ],
+    "screenshots.unique_frames[].width": [
+     "integer"
+    ],
+    "severity": [
+     "string"
+    ],
+    "started_at": [
+     "string"
+    ],
+    "task_id": [
+     "string"
+    ],
+    "timing": [
+     "object"
+    ],
+    "timing.cape": [
+     "number"
+    ],
+    "timing.ghidra": [
+     "number"
+    ],
+    "timing.interpret": [
+     "number"
+    ],
+    "timing.pcap": [
+     "number"
+    ],
+    "timing.summary": [
+     "number"
+    ],
+    "timing.total": [
+     "number"
+    ],
+    "timing.triage": [
+     "number"
+    ],
+    "timing.volatility": [
+     "number"
+    ],
+    "triage": [
+     "object"
+    ],
+    "triage.entropy": [
+     "number"
+    ],
+    "triage.file_mime": [
+     "string"
+    ],
+    "triage.file_size": [
+     "integer"
+    ],
+    "triage.file_type": [
+     "string"
+    ],
+    "triage.floss": [
+     "object"
+    ],
+    "triage.floss.decoded_strings": [
+     "integer"
+    ],
+    "triage.floss.interesting": [
+     "array"
+    ],
+    "triage.floss.interesting[]": [
+     "string"
+    ],
+    "triage.floss.static_strings": [
+     "integer"
+    ],
+    "triage.hashes": [
+     "object"
+    ],
+    "triage.hashes.md5": [
+     "string"
+    ],
+    "triage.hashes.sha1": [
+     "string"
+    ],
+    "triage.hashes.sha256": [
+     "string"
+    ],
+    "triage.pe_compile_timestamp": [
+     "string"
+    ],
+    "triage.routing_tags_added": [
+     "array"
+    ],
+    "triage.routing_tags_added[]": [
+     "string"
+    ],
+    "triage.sections": [
+     "array"
+    ],
+    "triage.sections[]": [
+     "object"
+    ],
+    "triage.sections[].entropy": [
+     "number"
+    ],
+    "triage.sections[].name": [
+     "string"
+    ],
+    "triage.sections[].size": [
+     "integer"
+    ],
+    "triage.ssdeep": [
+     "string"
+    ],
+    "triage.yara_matches": [
+     "array"
+    ],
+    "visual_analysis": [
+     "object"
+    ],
+    "visual_analysis.analysis": [
+     "object"
+    ],
+    "visual_analysis.analysis.evasion_signal": [
+     "boolean"
+    ],
+    "visual_analysis.analysis.notable_events": [
+     "array"
+    ],
+    "visual_analysis.analysis.notable_events[]": [
+     "object"
+    ],
+    "visual_analysis.analysis.notable_events[].description": [
+     "string"
+    ],
+    "visual_analysis.analysis.notable_events[].significance": [
+     "string"
+    ],
+    "visual_analysis.analysis.notable_events[].timestamp": [
+     "string"
+    ],
+    "visual_analysis.analysis.payment_info": [
+     "array"
+    ],
+    "visual_analysis.analysis.ransom_note_detected": [
+     "boolean"
+    ],
+    "visual_analysis.analysis.visual_iocs": [
+     "array"
+    ],
+    "visual_analysis.analysis.visual_iocs[]": [
+     "object"
+    ],
+    "visual_analysis.analysis.visual_iocs[].context": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_iocs[].significance": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_iocs[].type": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_iocs[].value": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_summary": [
+     "string"
+    ],
+    "visual_analysis.audit": [
+     "object"
+    ],
+    "visual_analysis.audit.tool_call_log": [
+     "string"
+    ],
+    "visual_analysis.audit.turn_trail": [
+     "string"
+    ],
+    "visual_analysis.duration_seconds": [
+     "number"
+    ],
+    "visual_analysis.enabled": [
+     "boolean"
+    ],
+    "visual_analysis.escalated": [
+     "boolean"
+    ],
+    "visual_analysis.model_final": [
+     "string"
+    ],
+    "visual_analysis.model_initial": [
+     "string"
+    ],
+    "visual_analysis.possible_prompt_influence": [
+     "boolean"
+    ],
+    "visual_analysis.provider": [
+     "string"
+    ],
+    "visual_analysis.tool_calls_used": [
+     "integer"
+    ],
+    "visual_analysis.usage": [
+     "object"
+    ],
+    "visual_analysis.usage.input_tokens": [
+     "integer"
+    ],
+    "visual_analysis.usage.output_tokens": [
+     "integer"
+    ],
+    "volatility": [
+     "object"
+    ],
+    "volatility.insights": [
+     "object"
+    ],
+    "volatility.insights.mutex_summary": [
+     "object"
+    ],
+    "volatility.insights.mutex_summary.most_shared": [
+     "string"
+    ],
+    "volatility.insights.mutex_summary.most_shared_count": [
+     "integer"
+    ],
+    "volatility.insights.mutex_summary.total_handles": [
+     "integer"
+    ],
+    "volatility.insights.mutex_summary.unique_names": [
+     "integer"
+    ],
+    "volatility.insights.mutexes": [
+     "array"
+    ],
+    "volatility.insights.mutexes[]": [
+     "object"
+    ],
+    "volatility.insights.mutexes[].holder_count": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].holders": [
+     "array"
+    ],
+    "volatility.insights.mutexes[].holders[]": [
+     "object"
+    ],
+    "volatility.insights.mutexes[].holders[].pid": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].holders[].process": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].mutex": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].pid": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].process": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].unique_processes": [
+     "array"
+    ],
+    "volatility.insights.mutexes[].unique_processes[]": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines": [
+     "array"
+    ],
+    "volatility.insights.suspicious_cmdlines[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_cmdlines[].cmdline": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines[].pattern": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_cmdlines[].process": [
+     "string"
+    ],
+    "volatility.insights.suspicious_dlls": [
+     "array"
+    ],
+    "volatility.insights.suspicious_dlls[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_dlls[].dll_path": [
+     "string"
+    ],
+    "volatility.insights.suspicious_dlls[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_dlls[].process": [
+     "string"
+    ],
+    "volatility.insights.suspicious_files": [
+     "array"
+    ],
+    "volatility.insights.suspicious_files[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_files[].path": [
+     "string"
+    ],
+    "volatility.insights.suspicious_files[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_files[].process": [
+     "string"
+    ],
+    "volatility.plugins": [
+     "object"
+    ],
+    "volatility.plugins.cmdline": [
+     "array"
+    ],
+    "volatility.plugins.cmdline[]": [
+     "object"
+    ],
+    "volatility.plugins.cmdline[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.dlllist": [
+     "array"
+    ],
+    "volatility.plugins.dlllist[]": [
+     "object"
+    ],
+    "volatility.plugins.dlllist[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.handles": [
+     "array"
+    ],
+    "volatility.plugins.handles[]": [
+     "object"
+    ],
+    "volatility.plugins.handles[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.malfind": [
+     "array"
+    ],
+    "volatility.plugins.malfind[]": [
+     "object"
+    ],
+    "volatility.plugins.malfind[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.psscan": [
+     "array"
+    ],
+    "volatility.plugins.psscan[]": [
+     "object"
+    ],
+    "volatility.plugins.psscan[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree": [
+     "array"
+    ],
+    "volatility.plugins.pstree[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.vadinfo": [
+     "array"
+    ],
+    "volatility.plugins.vadinfo[]": [
+     "object"
+    ],
+    "volatility.plugins.vadinfo[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins_run": [
+     "array"
+    ],
+    "volatility.plugins_run[]": [
+     "string"
+    ],
+    "volatility.reason": [
+     "string"
+    ],
+    "volatility.summary": [
+     "object"
+    ],
+    "volatility.summary.injected_processes": [
+     "integer"
+    ],
+    "volatility.summary.suspicious_connections": [
+     "integer"
+    ],
+    "volatility.timing": [
+     "object"
+    ],
+    "volatility.timing.plugins_seconds": [
+     "number"
+    ],
+    "volatility.timing.total_seconds": [
+     "number"
+    ],
+    "volatility.trigger_signatures": [
+     "array"
+    ],
+    "volatility.trigger_signatures[]": [
+     "string"
+    ],
+    "volatility.triggered": [
+     "boolean"
+    ],
+    "volatility.vad_dump_dir": [
+     "string"
+    ]
+   }
+  },
+  "older": {
+   "sources": [
+    "eval-corpus-01",
+    "eval-corpus-02",
+    "eval-corpus-03",
+    "eval-corpus-04",
+    "eval-corpus-05",
+    "eval-corpus-06",
+    "eval-corpus-07",
+    "eval-corpus-08",
+    "eval-corpus-09",
+    "eval-corpus-10",
+    "eval-corpus-11",
+    "eval-corpus-12",
+    "eval-corpus-13",
+    "eval-corpus-14",
+    "eval-corpus-15",
+    "eval-corpus-16",
+    "analyses-row-2026-05-05",
+    "analyses-row-2026-05-07",
+    "analyses-row-2026-05-09",
+    "analyses-row-2026-05-10",
+    "analyses-row-2026-05-11",
+    "analyses-row-2026-05-11",
+    "analyses-row-2026-05-11",
+    "analyses-row-2026-05-12",
+    "analyses-row-2026-05-14",
+    "analyses-row-2026-05-14",
+    "analyses-row-2026-05-14",
+    "analyses-row-2026-05-15",
+    "analyses-row-2026-05-15",
+    "analyses-row-2026-05-15",
+    "analyses-row-2026-05-16",
+    "analyses-row-2026-05-16",
+    "analyses-row-2026-05-17",
+    "analyses-row-2026-05-27",
+    "analyses-row-2026-05-29",
+    "analyses-row-2026-05-29",
+    "analyses-row-2026-05-29",
+    "analyses-row-2026-06-05",
+    "analyses-row-2026-06-05",
+    "analyses-row-2026-06-07",
+    "analyses-row-2026-06-08",
+    "analyses-row-2026-06-08",
+    "analyses-row-2026-06-09",
+    "analyses-row-2026-06-09",
+    "analyses-row-2026-06-10",
+    "analyses-row-2026-07-01",
+    "analyses-row-2026-07-04",
+    "analyses-row-2026-07-05",
+    "analyses-row-2026-07-05",
+    "analyses-row-2026-07-09",
+    "analyses-row-2026-07-10",
+    "analyses-row-2026-07-10",
+    "analyses-row-2026-08-21",
+    "analyses-row-2026-08-26",
+    "analyses-row-2026-09-07",
+    "analyses-row-2026-09-09"
+   ],
+   "paths": {
+    "_family_source": [
+     "string"
+    ],
+    "_severity_band_with_llm": [
+     "string"
+    ],
+    "_severity_llm_inputs": [
+     "array"
+    ],
+    "_severity_llm_inputs[]": [
+     "string"
+    ],
+    "_severity_score": [
+     "integer",
+     "number"
+    ],
+    "_severity_score_llm_context": [
+     "integer"
+    ],
+    "bazaar_family": [
+     "string"
+    ],
+    "cape": [
+     "object"
+    ],
+    "cape.detonation": [
+     "object"
+    ],
+    "cape.detonation.api_calls_total": [
+     "integer"
+    ],
+    "cape.detonation.child_image_bases": [
+     "object"
+    ],
+    "cape.detonation.child_image_bases.*": [
+     "string"
+    ],
+    "cape.detonation.clean_exit_pids": [
+     "array"
+    ],
+    "cape.detonation.clean_exit_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.duration_s": [
+     "integer"
+    ],
+    "cape.detonation.hit_analysis_timeout": [
+     "boolean"
+    ],
+    "cape.detonation.hollowed_pids": [
+     "array"
+    ],
+    "cape.detonation.hollowed_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.lost_pids": [
+     "array"
+    ],
+    "cape.detonation.lost_pids[]": [
+     "integer"
+    ],
+    "cape.detonation.monitor_injection_failed_pids": [
+     "array"
+    ],
+    "cape.detonation.monitors_loaded": [
+     "integer"
+    ],
+    "cape.detonation.process_count": [
+     "integer"
+    ],
+    "cape.detonation.tier": [
+     "string"
+    ],
+    "cape.detonation.traced_pids": [
+     "array"
+    ],
+    "cape.detonation.vanished_pids": [
+     "array"
+    ],
+    "cape.detonation.vanished_pids[]": [
+     "integer"
+    ],
+    "cape.error": [
+     "string"
+    ],
+    "cape.extracted_configs": [
+     "array"
+    ],
+    "cape.extracted_configs[]": [
+     "object"
+    ],
+    "cape.extracted_configs[].*": [
+     "array",
+     "object"
+    ],
+    "cape.extracted_configs[].*.*": [
+     "array"
+    ],
+    "cape.extracted_configs[].*.*[]": [
+     "array",
+     "boolean",
+     "integer",
+     "string"
+    ],
+    "cape.extracted_configs[].*.*[][]": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.address": [
+     "array"
+    ],
+    "cape.extracted_configs[].*.address[]": [
+     "array"
+    ],
+    "cape.extracted_configs[].*.address[][]": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.md5": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha1": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha256": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha3_384": [
+     "string"
+    ],
+    "cape.extracted_configs[].*.sha512": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[]": [
+     "object"
+    ],
+    "cape.extracted_configs[].*[].md5": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha1": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha256": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha3_384": [
+     "string"
+    ],
+    "cape.extracted_configs[].*[].sha512": [
+     "string"
+    ],
+    "cape.injection_buffers": [
+     "array"
+    ],
+    "cape.injection_buffers[]": [
+     "object"
+    ],
+    "cape.injection_buffers[].all_targets": [
+     "array"
+    ],
+    "cape.injection_buffers[].all_targets[]": [
+     "object"
+    ],
+    "cape.injection_buffers[].all_targets[].address": [
+     "string"
+    ],
+    "cape.injection_buffers[].all_targets[].pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].api": [
+     "string"
+    ],
+    "cape.injection_buffers[].content_hash": [
+     "string"
+    ],
+    "cape.injection_buffers[].declared_size": [
+     "integer"
+    ],
+    "cape.injection_buffers[].filename": [
+     "string"
+    ],
+    "cape.injection_buffers[].injection_address": [
+     "string"
+    ],
+    "cape.injection_buffers[].path": [
+     "string"
+    ],
+    "cape.injection_buffers[].size": [
+     "integer"
+    ],
+    "cape.injection_buffers[].source_pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].source_process": [
+     "string"
+    ],
+    "cape.injection_buffers[].target_pid": [
+     "integer"
+    ],
+    "cape.injection_buffers[].truncated": [
+     "boolean"
+    ],
+    "cape.injection_details": [
+     "array"
+    ],
+    "cape.injection_details[]": [
+     "string"
+    ],
+    "cape.injection_pids": [
+     "array"
+    ],
+    "cape.injection_pids[]": [
+     "integer"
+    ],
+    "cape.large_payloads": [
+     "array"
+    ],
+    "cape.large_payloads[]": [
+     "object"
+    ],
+    "cape.large_payloads[].cape_type": [
+     "string"
+    ],
+    "cape.large_payloads[].path": [
+     "string"
+    ],
+    "cape.large_payloads[].sha256": [
+     "string"
+    ],
+    "cape.large_payloads[].size": [
+     "integer"
+    ],
+    "cape.machine_ran_on": [
+     "string"
+    ],
+    "cape.machine_requested": [
+     "string"
+    ],
+    "cape.malscore": [
+     "integer",
+     "number"
+    ],
+    "cape.memory_dump_requested": [
+     "boolean"
+    ],
+    "cape.mitre_ttps": [
+     "array"
+    ],
+    "cape.mitre_ttps[]": [
+     "object"
+    ],
+    "cape.mitre_ttps[].id": [
+     "string"
+    ],
+    "cape.mitre_ttps[].source_signature": [
+     "string"
+    ],
+    "cape.mutex_iocs": [
+     "array"
+    ],
+    "cape.mutex_iocs[]": [
+     "object"
+    ],
+    "cape.mutex_iocs[].action": [
+     "string"
+    ],
+    "cape.mutex_iocs[].api": [
+     "string"
+    ],
+    "cape.mutex_iocs[].name": [
+     "string"
+    ],
+    "cape.mutex_iocs[].pid": [
+     "integer"
+    ],
+    "cape.mutex_iocs[].process": [
+     "string"
+    ],
+    "cape.mutex_iocs[].timestamp": [
+     "integer"
+    ],
+    "cape.network": [
+     "object"
+    ],
+    "cape.network.dns_queries": [
+     "array"
+    ],
+    "cape.network.dns_queries[]": [
+     "object"
+    ],
+    "cape.network.dns_queries[].answers": [
+     "array"
+    ],
+    "cape.network.dns_queries[].answers[]": [
+     "object"
+    ],
+    "cape.network.dns_queries[].answers[].data": [
+     "string"
+    ],
+    "cape.network.dns_queries[].answers[].type": [
+     "string"
+    ],
+    "cape.network.dns_queries[].domain": [
+     "string"
+    ],
+    "cape.network.dns_queries[].type": [
+     "string"
+    ],
+    "cape.network.domains": [
+     "array"
+    ],
+    "cape.network.domains[]": [
+     "object"
+    ],
+    "cape.network.domains[].domain": [
+     "string"
+    ],
+    "cape.network.domains[].ip": [
+     "string"
+    ],
+    "cape.network.http_requests": [
+     "array"
+    ],
+    "cape.network.http_requests[]": [
+     "object"
+    ],
+    "cape.network.http_requests[].host": [
+     "string"
+    ],
+    "cape.network.http_requests[].method": [
+     "string"
+    ],
+    "cape.network.http_requests[].url": [
+     "string"
+    ],
+    "cape.network.tcp_attempts_total": [
+     "integer"
+    ],
+    "cape.network.tcp_connections": [
+     "array"
+    ],
+    "cape.network.tcp_connections[]": [
+     "object"
+    ],
+    "cape.network.tcp_connections[].attempts": [
+     "integer"
+    ],
+    "cape.network.tcp_connections[].dst": [
+     "string"
+    ],
+    "cape.network.tcp_connections[].src": [
+     "string"
+    ],
+    "cape.network.tcp_destinations_total": [
+     "integer"
+    ],
+    "cape.payload_samples": [
+     "array"
+    ],
+    "cape.payload_samples[]": [
+     "object"
+    ],
+    "cape.payload_samples[].sha256": [
+     "string"
+    ],
+    "cape.payload_samples[].size": [
+     "integer"
+    ],
+    "cape.payloads_extracted": [
+     "integer"
+    ],
+    "cape.process_cmdlines": [
+     "object"
+    ],
+    "cape.process_cmdlines.*": [
+     "string"
+    ],
+    "cape.signatures": [
+     "array"
+    ],
+    "cape.signatures[]": [
+     "object"
+    ],
+    "cape.signatures[].description": [
+     "string"
+    ],
+    "cape.signatures[].name": [
+     "string"
+    ],
+    "cape.signatures[].severity": [
+     "integer"
+    ],
+    "cape.status": [
+     "string"
+    ],
+    "cape.task_id": [
+     "integer",
+     "null"
+    ],
+    "completed_at": [
+     "string"
+    ],
+    "correlation_warnings": [
+     "array"
+    ],
+    "correlation_warnings[]": [
+     "string"
+    ],
+    "cross_correlations": [
+     "array"
+    ],
+    "cross_correlations[]": [
+     "object"
+    ],
+    "cross_correlations[].address": [
+     "string"
+    ],
+    "cross_correlations[].after": [
+     "string"
+    ],
+    "cross_correlations[].before": [
+     "string"
+    ],
+    "cross_correlations[].detail": [
+     "string"
+    ],
+    "cross_correlations[].indicator": [
+     "string"
+    ],
+    "cross_correlations[].mitre": [
+     "string"
+    ],
+    "cross_correlations[].pid": [
+     "integer"
+    ],
+    "cross_correlations[].severity": [
+     "string"
+    ],
+    "cross_correlations[].sources": [
+     "array"
+    ],
+    "cross_correlations[].sources[]": [
+     "string"
+    ],
+    "cross_correlations[].title": [
+     "string"
+    ],
+    "cross_correlations[].type": [
+     "string"
+    ],
+    "dotnet_analysis": [
+     "object"
+    ],
+    "dotnet_analysis.analysis_success": [
+     "boolean"
+    ],
+    "dotnet_analysis.analysis_type": [
+     "string"
+    ],
+    "dotnet_analysis.assembly_info": [
+     "object"
+    ],
+    "dotnet_analysis.assembly_info.error": [
+     "string"
+    ],
+    "dotnet_analysis.binary": [
+     "string"
+    ],
+    "dotnet_analysis.binary_size": [
+     "integer"
+    ],
+    "dotnet_analysis.class_count": [
+     "integer"
+    ],
+    "dotnet_analysis.classes": [
+     "array"
+    ],
+    "dotnet_analysis.classes[]": [
+     "object"
+    ],
+    "dotnet_analysis.classes[].methods": [
+     "array"
+    ],
+    "dotnet_analysis.classes[].methods[]": [
+     "object"
+    ],
+    "dotnet_analysis.classes[].methods[].name": [
+     "string"
+    ],
+    "dotnet_analysis.classes[].methods[].return_type": [
+     "string"
+    ],
+    "dotnet_analysis.classes[].name": [
+     "string"
+    ],
+    "dotnet_analysis.decompilation": [
+     "object"
+    ],
+    "dotnet_analysis.decompilation.blob_bytes_elided": [
+     "integer"
+    ],
+    "dotnet_analysis.decompilation.source": [
+     "string"
+    ],
+    "dotnet_analysis.decompilation.source_length": [
+     "integer"
+    ],
+    "dotnet_analysis.decompilation.truncated": [
+     "boolean"
+    ],
+    "dotnet_analysis.deobfuscation": [
+     "object"
+    ],
+    "dotnet_analysis.deobfuscation.deobfuscated": [
+     "boolean"
+    ],
+    "dotnet_analysis.deobfuscation.deobfuscated_size": [
+     "integer"
+    ],
+    "dotnet_analysis.deobfuscation.error": [
+     "string"
+    ],
+    "dotnet_analysis.deobfuscation.original_size": [
+     "integer"
+    ],
+    "dotnet_analysis.deobfuscation.output_path": [
+     "string"
+    ],
+    "dotnet_analysis.deobfuscation.stdout": [
+     "string"
+    ],
+    "dotnet_analysis.error": [
+     "string"
+    ],
+    "dotnet_analysis.extraction_source": [
+     "object"
+    ],
+    "dotnet_analysis.extraction_source.path": [
+     "string"
+    ],
+    "dotnet_analysis.extraction_source.sha256": [
+     "string"
+    ],
+    "dotnet_analysis.extraction_source.size": [
+     "integer"
+    ],
+    "dotnet_analysis.extraction_source.source_dir": [
+     "string"
+    ],
+    "dotnet_analysis.strings_of_interest": [
+     "array"
+    ],
+    "dotnet_analysis.strings_of_interest[]": [
+     "object"
+    ],
+    "dotnet_analysis.strings_of_interest[].type": [
+     "string"
+    ],
+    "dotnet_analysis.strings_of_interest[].value": [
+     "string"
+    ],
+    "error": [
+     "string"
+    ],
+    "evasion_analysis": [
+     "object"
+    ],
+    "evasion_analysis.analysis": [
+     "object"
+    ],
+    "evasion_analysis.analysis.confidence": [
+     "string"
+    ],
+    "evasion_analysis.analysis.error": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_summary": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques": [
+     "array"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[]": [
+     "object"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].evidence": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].mitre_id": [
+     "string"
+    ],
+    "evasion_analysis.analysis.evasion_techniques[].technique": [
+     "string"
+    ],
+    "evasion_analysis.analysis.likely_behavior_if_not_evading": [
+     "string"
+    ],
+    "evasion_analysis.analysis.likely_behavior_if_on_real_system": [
+     "string"
+    ],
+    "evasion_analysis.analysis.sandbox_recommendations": [
+     "array"
+    ],
+    "evasion_analysis.analysis.sandbox_recommendations[]": [
+     "string"
+    ],
+    "evasion_analysis.audit": [
+     "object"
+    ],
+    "evasion_analysis.audit.tool_call_log": [
+     "string"
+    ],
+    "evasion_analysis.audit.turn_trail": [
+     "string"
+    ],
+    "evasion_analysis.duration_seconds": [
+     "number"
+    ],
+    "evasion_analysis.enabled": [
+     "boolean"
+    ],
+    "evasion_analysis.escalated": [
+     "boolean"
+    ],
+    "evasion_analysis.model_final": [
+     "string"
+    ],
+    "evasion_analysis.model_initial": [
+     "string"
+    ],
+    "evasion_analysis.possible_prompt_influence": [
+     "boolean"
+    ],
+    "evasion_analysis.provider": [
+     "string"
+    ],
+    "evasion_analysis.reason": [
+     "string"
+    ],
+    "evasion_analysis.tool_calls_used": [
+     "integer"
+    ],
+    "evasion_analysis.usage": [
+     "object"
+    ],
+    "evasion_analysis.usage.input_tokens": [
+     "integer"
+    ],
+    "evasion_analysis.usage.output_tokens": [
+     "integer"
+    ],
+    "executive_summary": [
+     "object"
+    ],
+    "executive_summary.attack_techniques": [
+     "array"
+    ],
+    "executive_summary.capabilities": [
+     "array"
+    ],
+    "executive_summary.error": [
+     "string"
+    ],
+    "executive_summary.executive_summary": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links": [
+     "array"
+    ],
+    "executive_summary.ioc_technique_links[]": [
+     "object"
+    ],
+    "executive_summary.ioc_technique_links[].evidence": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].ioc_type": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].ioc_value": [
+     "string"
+    ],
+    "executive_summary.ioc_technique_links[].technique_id": [
+     "string"
+    ],
+    "executive_summary.iocs": [
+     "array"
+    ],
+    "executive_summary.iocs[]": [
+     "object"
+    ],
+    "executive_summary.iocs[].context": [
+     "string"
+    ],
+    "executive_summary.iocs[].source": [
+     "string"
+    ],
+    "executive_summary.iocs[].type": [
+     "string"
+    ],
+    "executive_summary.iocs[].value": [
+     "string"
+    ],
+    "executive_summary.key_findings": [
+     "array"
+    ],
+    "executive_summary.key_findings[]": [
+     "string"
+    ],
+    "executive_summary.kill_chain": [
+     "array"
+    ],
+    "executive_summary.kill_chain[]": [
+     "object"
+    ],
+    "executive_summary.kill_chain[].description": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].evidence": [
+     "array"
+    ],
+    "executive_summary.kill_chain[].evidence[]": [
+     "object"
+    ],
+    "executive_summary.kill_chain[].evidence[].detail": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].evidence[].source": [
+     "string"
+    ],
+    "executive_summary.kill_chain[].phase": [
+     "string"
+    ],
+    "executive_summary.malware_family_guess": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques": [
+     "array"
+    ],
+    "executive_summary.mitre_techniques[]": [
+     "object"
+    ],
+    "executive_summary.mitre_techniques[].detail": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques[].id": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques[].name": [
+     "string"
+    ],
+    "executive_summary.mitre_techniques[].sources": [
+     "array"
+    ],
+    "executive_summary.mitre_techniques[].sources[]": [
+     "string"
+    ],
+    "executive_summary.model": [
+     "string"
+    ],
+    "executive_summary.narrative": [
+     "string"
+    ],
+    "executive_summary.parse_note": [
+     "string"
+    ],
+    "executive_summary.recommended_actions": [
+     "array"
+    ],
+    "executive_summary.recommended_actions[]": [
+     "string"
+    ],
+    "executive_summary.risk_assessment": [
+     "string"
+    ],
+    "executive_summary.severity": [
+     "string"
+    ],
+    "executive_summary.usage": [
+     "object"
+    ],
+    "executive_summary.usage.input_tokens": [
+     "integer"
+    ],
+    "executive_summary.usage.output_tokens": [
+     "integer"
+    ],
+    "executive_summary.working_notes": [
+     "string"
+    ],
+    "extracted_iocs": [
+     "array"
+    ],
+    "extracted_iocs[]": [
+     "object"
+    ],
+    "extracted_iocs[].context": [
+     "string"
+    ],
+    "extracted_iocs[].source": [
+     "string"
+    ],
+    "extracted_iocs[].type": [
+     "string"
+    ],
+    "extracted_iocs[].value": [
+     "string"
+    ],
+    "family": [
+     "string"
+    ],
+    "ghidra": [
+     "object"
+    ],
+    "ghidra.analysis_warnings": [
+     "array"
+    ],
+    "ghidra.analysis_warnings[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files": [
+     "array"
+    ],
+    "ghidra.analyzed_files[]": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].analysis_success": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].analysis_warnings": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].architecture": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].architecture_detection": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].base_address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[]": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].name": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].decompiled_functions[].pseudocode": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].entry_point": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].error": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].filename": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].filter_score": [
+     "integer",
+     "null"
+    ],
+    "ghidra.analyzed_files[].functions_count": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].host_output_dir": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].imports": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].imports[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].imports_total": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].imports_truncated": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].injection_address": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].no_functions_detected": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].note": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].pid": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].process": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].processor": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].program_name": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].project_dir": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].region_size": [
+     "integer",
+     "null"
+    ],
+    "ghidra.analyzed_files[].sha256": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts": [
+     "object"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.dll_names": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.dll_names[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.embedded_pe": [
+     "boolean"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.file_paths": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.file_paths[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.interesting_strings": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.interesting_strings[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.ip_addresses": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.ip_addresses[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.pe_offsets": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.pe_offsets[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.registry_keys": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.registry_keys[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.resolved_apis": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.resolved_apis[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.urls": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].shellcode_artifacts.urls[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].source": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].source_pid": [
+     "integer"
+    ],
+    "ghidra.analyzed_files[].source_process": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].strings_of_interest": [
+     "array"
+    ],
+    "ghidra.analyzed_files[].strings_of_interest[]": [
+     "string"
+    ],
+    "ghidra.analyzed_files[].strings_truncated": [
+     "boolean"
+    ],
+    "ghidra.dotnet_routed": [
+     "boolean"
+    ],
+    "ghidra.error": [
+     "string"
+    ],
+    "ghidra.go_routed": [
+     "boolean"
+    ],
+    "ghidra.pe_load_skipped": [
+     "array"
+    ],
+    "ghidra.pe_load_skipped[]": [
+     "string"
+    ],
+    "ghidra.pe_load_skipped_reason": [
+     "string"
+    ],
+    "ghidra.program_name": [
+     "string"
+    ],
+    "ghidra.project_dir": [
+     "string"
+    ],
+    "ghidra.pyinstaller_routed": [
+     "boolean"
+    ],
+    "ghidra.script_routed": [
+     "boolean"
+    ],
+    "ghidra.trigger_reason": [
+     "string"
+    ],
+    "ghidra.trigger_signatures": [
+     "array"
+    ],
+    "ghidra.trigger_signatures[]": [
+     "string"
+    ],
+    "ghidra.triggered": [
+     "boolean"
+    ],
+    "go_analysis": [
+     "object"
+    ],
+    "go_analysis.analysis_success": [
+     "boolean"
+    ],
+    "go_analysis.analysis_type": [
+     "string"
+    ],
+    "go_analysis.binary": [
+     "string"
+    ],
+    "go_analysis.binary_size": [
+     "integer"
+    ],
+    "go_analysis.build_info": [
+     "object"
+    ],
+    "go_analysis.build_info.arch": [
+     "string"
+    ],
+    "go_analysis.build_info.build_id": [
+     "string"
+    ],
+    "go_analysis.build_info.go_version": [
+     "string"
+    ],
+    "go_analysis.build_info.module_path": [
+     "string"
+    ],
+    "go_analysis.build_info.os": [
+     "string"
+    ],
+    "go_analysis.functions": [
+     "object"
+    ],
+    "go_analysis.functions.stdlib_count": [
+     "integer"
+    ],
+    "go_analysis.functions.user_count": [
+     "integer"
+    ],
+    "go_analysis.functions.user_functions": [
+     "array"
+    ],
+    "go_analysis.functions.user_functions[]": [
+     "object"
+    ],
+    "go_analysis.functions.user_functions[].end": [
+     "integer"
+    ],
+    "go_analysis.functions.user_functions[].name": [
+     "string"
+    ],
+    "go_analysis.functions.user_functions[].package": [
+     "string"
+    ],
+    "go_analysis.functions.user_functions[].start": [
+     "integer"
+    ],
+    "go_analysis.packages": [
+     "array"
+    ],
+    "go_analysis.packages[]": [
+     "object"
+    ],
+    "go_analysis.packages[].category": [
+     "string"
+    ],
+    "go_analysis.packages[].name": [
+     "string"
+    ],
+    "go_analysis.strings_of_interest": [
+     "array"
+    ],
+    "go_analysis.strings_of_interest[]": [
+     "object"
+    ],
+    "go_analysis.strings_of_interest[].context": [
+     "string"
+    ],
+    "go_analysis.strings_of_interest[].type": [
+     "string"
+    ],
+    "go_analysis.strings_of_interest[].value": [
+     "string"
+    ],
+    "go_analysis.types": [
+     "array"
+    ],
+    "go_analysis.types[]": [
+     "object"
+    ],
+    "go_analysis.types[].kind": [
+     "string"
+    ],
+    "go_analysis.types[].name": [
+     "string"
+    ],
+    "ioc_technique_mappings": [
+     "array"
+    ],
+    "ioc_technique_mappings[]": [
+     "object"
+    ],
+    "ioc_technique_mappings[].confidence": [
+     "string"
+    ],
+    "ioc_technique_mappings[].evidence": [
+     "string"
+    ],
+    "ioc_technique_mappings[].ioc_type": [
+     "string"
+    ],
+    "ioc_technique_mappings[].ioc_value": [
+     "string"
+    ],
+    "ioc_technique_mappings[].method": [
+     "string"
+    ],
+    "ioc_technique_mappings[].technique_id": [
+     "string"
+    ],
+    "ioc_technique_mappings[].technique_name": [
+     "string"
+    ],
+    "llm_interpretation": [
+     "object"
+    ],
+    "llm_interpretation.analysis": [
+     "object"
+    ],
+    "llm_interpretation.analysis.attack_techniques": [
+     "array"
+    ],
+    "llm_interpretation.analysis.attack_techniques[]": [
+     "object"
+    ],
+    "llm_interpretation.analysis.attack_techniques[].id": [
+     "string"
+    ],
+    "llm_interpretation.analysis.attack_techniques[].name": [
+     "string"
+    ],
+    "llm_interpretation.analysis.capabilities": [
+     "array"
+    ],
+    "llm_interpretation.analysis.capabilities[]": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs": [
+     "array"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[]": [
+     "object"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].context": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].type": [
+     "string"
+    ],
+    "llm_interpretation.analysis.code_level_iocs[].value": [
+     "string"
+    ],
+    "llm_interpretation.analysis.deobfuscated_payload": [
+     "string"
+    ],
+    "llm_interpretation.analysis.error": [
+     "string"
+    ],
+    "llm_interpretation.analysis.malware_family_guess": [
+     "string"
+    ],
+    "llm_interpretation.analysis.narrative": [
+     "string"
+    ],
+    "llm_interpretation.analysis.novel_techniques": [
+     "array"
+    ],
+    "llm_interpretation.analysis.novel_techniques[]": [
+     "string"
+    ],
+    "llm_interpretation.analysis.parse_note": [
+     "string"
+    ],
+    "llm_interpretation.analysis.risk_assessment": [
+     "string"
+    ],
+    "llm_interpretation.analysis.working_notes": [
+     "string"
+    ],
+    "llm_interpretation.analysis.yara_suggestion": [
+     "string"
+    ],
+    "llm_interpretation.audit": [
+     "object"
+    ],
+    "llm_interpretation.audit.tool_call_log": [
+     "string"
+    ],
+    "llm_interpretation.audit.turn_trail": [
+     "string"
+    ],
+    "llm_interpretation.container_exit_note": [
+     "string"
+    ],
+    "llm_interpretation.container_returncode": [
+     "integer"
+    ],
+    "llm_interpretation.container_stderr": [
+     "string"
+    ],
+    "llm_interpretation.duration_seconds": [
+     "number"
+    ],
+    "llm_interpretation.enabled": [
+     "boolean"
+    ],
+    "llm_interpretation.error": [
+     "string"
+    ],
+    "llm_interpretation.escalated": [
+     "boolean"
+    ],
+    "llm_interpretation.model_final": [
+     "string"
+    ],
+    "llm_interpretation.model_initial": [
+     "string"
+    ],
+    "llm_interpretation.possible_prompt_influence": [
+     "boolean"
+    ],
+    "llm_interpretation.provider": [
+     "string"
+    ],
+    "llm_interpretation.reason": [
+     "string"
+    ],
+    "llm_interpretation.timed_out": [
+     "boolean"
+    ],
+    "llm_interpretation.tool_calls_used": [
+     "integer"
+    ],
+    "llm_interpretation.usage": [
+     "object"
+    ],
+    "llm_interpretation.usage.input_tokens": [
+     "integer"
+    ],
+    "llm_interpretation.usage.output_tokens": [
+     "integer"
+    ],
+    "mitre_mapping": [
+     "array"
+    ],
+    "mitre_mapping[]": [
+     "object"
+    ],
+    "mitre_mapping[].id": [
+     "string"
+    ],
+    "mitre_mapping[].name": [
+     "string"
+    ],
+    "mitre_mapping[].source_signature": [
+     "string"
+    ],
+    "mitre_mapping[].sources": [
+     "array"
+    ],
+    "mitre_mapping[].sources[]": [
+     "string"
+    ],
+    "pcap_analysis": [
+     "object"
+    ],
+    "pcap_analysis.error": [
+     "string"
+    ],
+    "pcap_analysis.pcap": [
+     "string"
+    ],
+    "pcap_analysis.pcap_size": [
+     "integer"
+    ],
+    "pcap_analysis.reason": [
+     "string"
+    ],
+    "pcap_analysis.skipped": [
+     "boolean"
+    ],
+    "pcap_analysis.suricata": [
+     "object"
+    ],
+    "pcap_analysis.suricata.alerts": [
+     "array"
+    ],
+    "pcap_analysis.suricata.summary": [
+     "object"
+    ],
+    "pcap_analysis.suricata.summary.categories": [
+     "array"
+    ],
+    "pcap_analysis.suricata.summary.total_alerts": [
+     "integer"
+    ],
+    "pcap_analysis.suricata.summary.unique_alerts": [
+     "integer"
+    ],
+    "pcap_analysis.zeek": [
+     "object"
+    ],
+    "pcap_analysis.zeek.connections": [
+     "array"
+    ],
+    "pcap_analysis.zeek.connections[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.connections[].*": [
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.dns": [
+     "array"
+    ],
+    "pcap_analysis.zeek.dns[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.dns[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.dns[].*[]": [
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.files": [
+     "array"
+    ],
+    "pcap_analysis.zeek.files[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.files[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.http": [
+     "array"
+    ],
+    "pcap_analysis.zeek.http[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.http[].*": [
+     "array",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.http[].*[]": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs": [
+     "array"
+    ],
+    "pcap_analysis.zeek.iocs[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.iocs[].method": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].source": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].type": [
+     "string"
+    ],
+    "pcap_analysis.zeek.iocs[].value": [
+     "string"
+    ],
+    "pcap_analysis.zeek.summary": [
+     "object"
+    ],
+    "pcap_analysis.zeek.summary.anomalies": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.dns_queries": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.files_transferred": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.http_transactions": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.tls_sessions": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.total_connections": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.summary.unique_destinations": [
+     "integer"
+    ],
+    "pcap_analysis.zeek.tls": [
+     "array"
+    ],
+    "pcap_analysis.zeek.tls[]": [
+     "object"
+    ],
+    "pcap_analysis.zeek.tls[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "number",
+     "string"
+    ],
+    "pcap_analysis.zeek.tls[].*[]": [
+     "string"
+    ],
+    "plain_english_model": [
+     "string"
+    ],
+    "plain_english_summary": [
+     "string"
+    ],
+    "plain_english_usage": [
+     "object"
+    ],
+    "plain_english_usage.input_tokens": [
+     "integer"
+    ],
+    "plain_english_usage.output_tokens": [
+     "integer"
+    ],
+    "powershell_analysis": [
+     "object"
+    ],
+    "powershell_analysis.analysis_success": [
+     "boolean"
+    ],
+    "powershell_analysis.analysis_type": [
+     "string"
+    ],
+    "powershell_analysis.cape_extracted": [
+     "boolean"
+    ],
+    "powershell_analysis.decoded_layers": [
+     "array"
+    ],
+    "powershell_analysis.extraction_count": [
+     "integer"
+    ],
+    "powershell_analysis.extraction_pid": [
+     "integer"
+    ],
+    "powershell_analysis.final_decoded": [
+     "string"
+    ],
+    "powershell_analysis.input_mode": [
+     "string"
+    ],
+    "powershell_analysis.iocs_extracted": [
+     "object"
+    ],
+    "powershell_analysis.iocs_extracted.domains": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.file_paths": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.ips": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.registry_keys": [
+     "array"
+    ],
+    "powershell_analysis.iocs_extracted.urls": [
+     "array"
+    ],
+    "powershell_analysis.layer_count": [
+     "integer"
+    ],
+    "powershell_analysis.obfuscation_techniques": [
+     "array"
+    ],
+    "powershell_analysis.original_script": [
+     "string"
+    ],
+    "powershell_analysis.psdecode_error": [
+     "string"
+    ],
+    "powershell_analysis.psdecode_success": [
+     "boolean"
+    ],
+    "powershell_analysis.strings_of_interest": [
+     "array"
+    ],
+    "pyinstaller_analysis": [
+     "object"
+    ],
+    "pyinstaller_analysis.analysis_success": [
+     "boolean"
+    ],
+    "pyinstaller_analysis.analysis_type": [
+     "string"
+    ],
+    "pyinstaller_analysis.binary": [
+     "string"
+    ],
+    "pyinstaller_analysis.binary_size": [
+     "integer"
+    ],
+    "pyinstaller_analysis.bundled_count": [
+     "integer"
+    ],
+    "pyinstaller_analysis.bundled_files": [
+     "array"
+    ],
+    "pyinstaller_analysis.bundled_files[]": [
+     "object"
+    ],
+    "pyinstaller_analysis.bundled_files[].category": [
+     "string"
+    ],
+    "pyinstaller_analysis.bundled_files[].path": [
+     "string"
+    ],
+    "pyinstaller_analysis.bundled_files[].size": [
+     "integer"
+    ],
+    "pyinstaller_analysis.decompilation": [
+     "object"
+    ],
+    "pyinstaller_analysis.decompilation.files_decompiled": [
+     "integer"
+    ],
+    "pyinstaller_analysis.decompilation.source": [
+     "string"
+    ],
+    "pyinstaller_analysis.decompilation.source_length": [
+     "integer"
+    ],
+    "pyinstaller_analysis.decompilation.truncated": [
+     "boolean"
+    ],
+    "pyinstaller_analysis.decompiled_files": [
+     "array"
+    ],
+    "pyinstaller_analysis.dll_count": [
+     "integer"
+    ],
+    "pyinstaller_analysis.extraction": [
+     "object"
+    ],
+    "pyinstaller_analysis.extraction.extract_dir": [
+     "string"
+    ],
+    "pyinstaller_analysis.extraction.extracted": [
+     "boolean"
+    ],
+    "pyinstaller_analysis.extraction.python_version": [
+     "string"
+    ],
+    "pyinstaller_analysis.extraction.stdout": [
+     "string"
+    ],
+    "pyinstaller_analysis.imports": [
+     "array"
+    ],
+    "pyinstaller_analysis.imports[]": [
+     "string"
+    ],
+    "pyinstaller_analysis.main_script": [
+     "string"
+    ],
+    "pyinstaller_analysis.pyc_count": [
+     "integer"
+    ],
+    "pyinstaller_analysis.python_version": [
+     "string"
+    ],
+    "pyinstaller_analysis.strings_of_interest": [
+     "array"
+    ],
+    "sample": [
+     "string"
+    ],
+    "sample_name": [
+     "string"
+    ],
+    "screenshots": [
+     "object"
+    ],
+    "screenshots.analysis_success": [
+     "boolean"
+    ],
+    "screenshots.evasion_signal": [
+     "boolean"
+    ],
+    "screenshots.frames_base64": [
+     "array"
+    ],
+    "screenshots.frames_base64[]": [
+     "object"
+    ],
+    "screenshots.frames_base64[].base64": [
+     "string"
+    ],
+    "screenshots.frames_base64[].filename": [
+     "string"
+    ],
+    "screenshots.qr_codes": [
+     "array"
+    ],
+    "screenshots.total_screenshots": [
+     "integer"
+    ],
+    "screenshots.unique_count": [
+     "integer"
+    ],
+    "screenshots.unique_frames": [
+     "array"
+    ],
+    "screenshots.unique_frames[]": [
+     "object"
+    ],
+    "screenshots.unique_frames[].filename": [
+     "string"
+    ],
+    "screenshots.unique_frames[].hash": [
+     "string"
+    ],
+    "screenshots.unique_frames[].height": [
+     "integer"
+    ],
+    "screenshots.unique_frames[].path": [
+     "string"
+    ],
+    "screenshots.unique_frames[].size": [
+     "integer"
+    ],
+    "screenshots.unique_frames[].width": [
+     "integer"
+    ],
+    "script_analysis": [
+     "object"
+    ],
+    "script_analysis.analysis_success": [
+     "boolean"
+    ],
+    "script_analysis.detected_patterns": [
+     "array"
+    ],
+    "script_analysis.detected_patterns[]": [
+     "string"
+    ],
+    "script_analysis.file_size": [
+     "integer"
+    ],
+    "script_analysis.source": [
+     "string"
+    ],
+    "script_analysis.source_language": [
+     "string"
+    ],
+    "severity": [
+     "string"
+    ],
+    "started_at": [
+     "string"
+    ],
+    "stderr": [
+     "string"
+    ],
+    "task_id": [
+     "string"
+    ],
+    "timing": [
+     "object"
+    ],
+    "timing.cape": [
+     "number"
+    ],
+    "timing.ghidra": [
+     "number"
+    ],
+    "timing.interpret": [
+     "number"
+    ],
+    "timing.pcap": [
+     "number"
+    ],
+    "timing.summary": [
+     "number"
+    ],
+    "timing.total": [
+     "number"
+    ],
+    "timing.triage": [
+     "number"
+    ],
+    "timing.volatility": [
+     "number"
+    ],
+    "triage": [
+     "object"
+    ],
+    "triage.entropy": [
+     "number"
+    ],
+    "triage.file_mime": [
+     "string"
+    ],
+    "triage.file_size": [
+     "integer"
+    ],
+    "triage.file_type": [
+     "string"
+    ],
+    "triage.floss": [
+     "object"
+    ],
+    "triage.floss.decoded_strings": [
+     "integer"
+    ],
+    "triage.floss.interesting": [
+     "array"
+    ],
+    "triage.floss.interesting[]": [
+     "string"
+    ],
+    "triage.floss.static_strings": [
+     "integer"
+    ],
+    "triage.hashes": [
+     "object"
+    ],
+    "triage.hashes.md5": [
+     "string"
+    ],
+    "triage.hashes.sha1": [
+     "string"
+    ],
+    "triage.hashes.sha256": [
+     "string"
+    ],
+    "triage.pe_compile_timestamp": [
+     "null",
+     "string"
+    ],
+    "triage.routing_tags_added": [
+     "array"
+    ],
+    "triage.routing_tags_added[]": [
+     "string"
+    ],
+    "triage.sections": [
+     "array"
+    ],
+    "triage.sections[]": [
+     "object"
+    ],
+    "triage.sections[].entropy": [
+     "number"
+    ],
+    "triage.sections[].name": [
+     "string"
+    ],
+    "triage.sections[].size": [
+     "integer"
+    ],
+    "triage.ssdeep": [
+     "string"
+    ],
+    "triage.yara_matches": [
+     "array"
+    ],
+    "triage.yara_matches[]": [
+     "object"
+    ],
+    "triage.yara_matches[].meta": [
+     "object"
+    ],
+    "triage.yara_matches[].meta.*": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.author": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.date": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.description": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.file_info": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.notes": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.references": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.tlp": [
+     "string"
+    ],
+    "triage.yara_matches[].meta.version": [
+     "string"
+    ],
+    "triage.yara_matches[].rule": [
+     "string"
+    ],
+    "triage.yara_matches[].source": [
+     "string"
+    ],
+    "triage.yara_matches[].tags": [
+     "array"
+    ],
+    "triage.yara_matches[].tags[]": [
+     "string"
+    ],
+    "visual_analysis": [
+     "object"
+    ],
+    "visual_analysis.analysis": [
+     "object"
+    ],
+    "visual_analysis.analysis.error": [
+     "string"
+    ],
+    "visual_analysis.analysis.evasion_signal": [
+     "boolean"
+    ],
+    "visual_analysis.analysis.notable_events": [
+     "array"
+    ],
+    "visual_analysis.analysis.notable_events[]": [
+     "object"
+    ],
+    "visual_analysis.analysis.notable_events[].description": [
+     "string"
+    ],
+    "visual_analysis.analysis.notable_events[].significance": [
+     "string"
+    ],
+    "visual_analysis.analysis.notable_events[].timestamp": [
+     "string"
+    ],
+    "visual_analysis.analysis.payment_info": [
+     "array"
+    ],
+    "visual_analysis.analysis.ransom_note_detected": [
+     "boolean"
+    ],
+    "visual_analysis.analysis.visual_iocs": [
+     "array"
+    ],
+    "visual_analysis.analysis.visual_iocs[]": [
+     "object"
+    ],
+    "visual_analysis.analysis.visual_iocs[].context": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_iocs[].type": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_iocs[].value": [
+     "string"
+    ],
+    "visual_analysis.analysis.visual_summary": [
+     "string"
+    ],
+    "visual_analysis.audit": [
+     "object"
+    ],
+    "visual_analysis.audit.tool_call_log": [
+     "string"
+    ],
+    "visual_analysis.audit.turn_trail": [
+     "string"
+    ],
+    "visual_analysis.duration_seconds": [
+     "number"
+    ],
+    "visual_analysis.enabled": [
+     "boolean"
+    ],
+    "visual_analysis.escalated": [
+     "boolean"
+    ],
+    "visual_analysis.model_final": [
+     "string"
+    ],
+    "visual_analysis.model_initial": [
+     "string"
+    ],
+    "visual_analysis.possible_prompt_influence": [
+     "boolean"
+    ],
+    "visual_analysis.provider": [
+     "string"
+    ],
+    "visual_analysis.tool_calls_used": [
+     "integer"
+    ],
+    "visual_analysis.usage": [
+     "object"
+    ],
+    "visual_analysis.usage.input_tokens": [
+     "integer"
+    ],
+    "visual_analysis.usage.output_tokens": [
+     "integer"
+    ],
+    "volatility": [
+     "object"
+    ],
+    "volatility.insights": [
+     "object"
+    ],
+    "volatility.insights.mutex_summary": [
+     "object"
+    ],
+    "volatility.insights.mutex_summary.most_shared": [
+     "string"
+    ],
+    "volatility.insights.mutex_summary.most_shared_count": [
+     "integer"
+    ],
+    "volatility.insights.mutex_summary.total_handles": [
+     "integer"
+    ],
+    "volatility.insights.mutex_summary.unique_names": [
+     "integer"
+    ],
+    "volatility.insights.mutexes": [
+     "array"
+    ],
+    "volatility.insights.mutexes[]": [
+     "object"
+    ],
+    "volatility.insights.mutexes[].holder_count": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].holders": [
+     "array"
+    ],
+    "volatility.insights.mutexes[].holders[]": [
+     "object"
+    ],
+    "volatility.insights.mutexes[].holders[].pid": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].holders[].process": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].mutex": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].pid": [
+     "integer"
+    ],
+    "volatility.insights.mutexes[].process": [
+     "string"
+    ],
+    "volatility.insights.mutexes[].unique_processes": [
+     "array"
+    ],
+    "volatility.insights.mutexes[].unique_processes[]": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines": [
+     "array"
+    ],
+    "volatility.insights.suspicious_cmdlines[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_cmdlines[].cmdline": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines[].pattern": [
+     "string"
+    ],
+    "volatility.insights.suspicious_cmdlines[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_cmdlines[].process": [
+     "string"
+    ],
+    "volatility.insights.suspicious_dlls": [
+     "array"
+    ],
+    "volatility.insights.suspicious_dlls[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_dlls[].dll_path": [
+     "string"
+    ],
+    "volatility.insights.suspicious_dlls[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_dlls[].process": [
+     "string"
+    ],
+    "volatility.insights.suspicious_files": [
+     "array"
+    ],
+    "volatility.insights.suspicious_files[]": [
+     "object"
+    ],
+    "volatility.insights.suspicious_files[].path": [
+     "string"
+    ],
+    "volatility.insights.suspicious_files[].pid": [
+     "integer"
+    ],
+    "volatility.insights.suspicious_files[].process": [
+     "string"
+    ],
+    "volatility.plugins": [
+     "object"
+    ],
+    "volatility.plugins.cmdline": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.cmdline.error": [
+     "string"
+    ],
+    "volatility.plugins.cmdline[]": [
+     "object"
+    ],
+    "volatility.plugins.cmdline[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.dlllist": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.dlllist.error": [
+     "string"
+    ],
+    "volatility.plugins.dlllist[]": [
+     "object"
+    ],
+    "volatility.plugins.dlllist[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.handles": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.handles.error": [
+     "string"
+    ],
+    "volatility.plugins.handles[]": [
+     "object"
+    ],
+    "volatility.plugins.handles[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.malfind": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.malfind.error": [
+     "string"
+    ],
+    "volatility.plugins.malfind[]": [
+     "object"
+    ],
+    "volatility.plugins.malfind[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.netscan": [
+     "array"
+    ],
+    "volatility.plugins.psscan": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.psscan.error": [
+     "string"
+    ],
+    "volatility.plugins.psscan[]": [
+     "object"
+    ],
+    "volatility.plugins.psscan[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.pstree.error": [
+     "string"
+    ],
+    "volatility.plugins.pstree[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*[]": [
+     "object"
+    ],
+    "volatility.plugins.pstree[].*[].*[].*[].*[].*[].*[].*[].*[].*[].*": [
+     "array",
+     "boolean",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins.vadinfo": [
+     "array",
+     "object"
+    ],
+    "volatility.plugins.vadinfo.error": [
+     "string"
+    ],
+    "volatility.plugins.vadinfo[]": [
+     "object"
+    ],
+    "volatility.plugins.vadinfo[].*": [
+     "array",
+     "integer",
+     "null",
+     "string"
+    ],
+    "volatility.plugins_run": [
+     "array"
+    ],
+    "volatility.plugins_run[]": [
+     "string"
+    ],
+    "volatility.reason": [
+     "string"
+    ],
+    "volatility.summary": [
+     "object"
+    ],
+    "volatility.summary.injected_processes": [
+     "integer"
+    ],
+    "volatility.summary.suspicious_connections": [
+     "integer"
+    ],
+    "volatility.timing": [
+     "object"
+    ],
+    "volatility.timing.plugins_seconds": [
+     "number"
+    ],
+    "volatility.timing.total_seconds": [
+     "number"
+    ],
+    "volatility.trigger_signatures": [
+     "array"
+    ],
+    "volatility.trigger_signatures[]": [
+     "string"
+    ],
+    "volatility.triggered": [
+     "boolean"
+    ],
+    "volatility.vad_dump_dir": [
+     "string"
+    ]
+   }
+  }
+ }
+}
