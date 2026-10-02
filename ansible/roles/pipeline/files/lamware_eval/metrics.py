@@ -33,6 +33,22 @@ def cell_error(res: dict, analysis: dict) -> str | None:
     return err
 
 
+def input_label(read: dict | None) -> str | None:
+    """One scorecard-cell string for what a cell read, e.g.
+    `unpacked_payload:c95af141eb34 (Formbook Payload, cape_family_label)`.
+
+    The modality alone does not say enough for an unpacked payload: formbook
+    carries seven loaded programs, and which one the agent read is the
+    difference between a Formbook analysis and a generic-loader one (v651).
+    """
+    if not read:
+        return None
+    if read.get("kind") != "unpacked_payload":
+        return read.get("kind")
+    return (f"unpacked_payload:{str(read.get('program_name'))[:12]} "
+            f"({read.get('cape_type') or 'unlabelled'}, {read.get('chosen_because')})")
+
+
 def technique_hits(claimed: list[str], available: list[str]) -> list[str]:
     """Claimed technique IDs that Cape independently observed (#491).
 
@@ -82,7 +98,8 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
                  ghidra_warnings: list[str] | None = None,
                  evidence: dict | None = None,
                  cape_techniques: list[str] | None = None,
-                 modality: str = "native_pe") -> dict:
+                 modality: str = "native_pe",
+                 input_read: dict | None = None) -> dict:
     """Compose one scorecard cell.
 
     `seed` is the seed REQUESTED for this cell (None = unpinned, so the run is not
@@ -173,10 +190,14 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # across the stage-2 corpus, four samples got 26-30KB and latrodectus
         # got 1.4KB — and the reader cannot tell, so "did correlation help or
         # did more text help" is unanswerable from the output.
-        # Which analyser produced what the agent read. Native PE and .NET are
-        # two experiments and are never pooled (#505); this is on the row so a
-        # scorecard that somehow mixed them would say so out loud.
+        # Which analyser produced what the agent read. Native PE, .NET and an
+        # unpacked payload (#646) are separate experiments and are never pooled
+        # (#505); this is on the row so a scorecard that mixed them says so.
         "modality": modality,
+        # WHICH program, for an unpacked payload: the label in the table, the
+        # record (production's `llm_interpretation.input` shape) in the dict.
+        "input": input_label(input_read) or modality,
+        "input_detail": dict(input_read or {}),
         "evidence_bytes": len(evidence_text or ""),
         "evidence_keys": len(evidence or {}),
         # Separate from total volume because THIS is the variable the thesis is
@@ -242,8 +263,16 @@ def aggregate(cells: list[dict]) -> dict:
         valid = [c for c in cs if not c.get("tool_layer_broken")]
         n_valid = len(valid)
         scored = [c for c in valid if (c.get("total") or 0) > 0]
+        # One manifest can now yield two modalities: a .NET corpus sample with a
+        # loaded payload is read as `unpacked_payload`, one without stays
+        # `dotnet` (#646). The separate-manifest rule (#505) no longer keeps
+        # them apart on its own, so the summary row names what it pooled.
+        mods = sorted({c.get("modality") or "?" for c in cs})
         out[arm] = {
             "n": n,
+            "modalities": ",".join(
+                f"{m}={sum(1 for c in cs if (c.get('modality') or '?') == m)}"
+                for m in mods),
             "n_valid": n_valid,
             "tool_layer_broken": len(broken),
             "n_with_claims": len(scored),

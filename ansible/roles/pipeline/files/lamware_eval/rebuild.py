@@ -103,8 +103,14 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 local = "qwen" in arm_dir.name or "local" in model
                 # Same resolver as the live path (#380): a re-score that
                 # assumed Ghidra would score a .NET cell against an empty dict
-                # and call every claim it made a fabrication.
-                _init, modality, source_head = init_payload_for(report)
+                # and call every claim it made a fabrication. It REPLAYS the
+                # input the sweep recorded rather than choosing again: there is
+                # no Ghidra here to verify a payload with, and a re-score that
+                # chose differently would ground the cell against a program it
+                # never read. A cell with no record predates #646 and replays
+                # the dispatch that produced it.
+                read = res.get("input") or {}
+                _init, modality, source_head, read = init_payload_for(report, recorded=read)
                 source = source_head + " " + tool_output_text(arm_dir)
                 # The sweep scored an evidence-fed arm against its evidence too.
                 # A re-score that did not would call those claims FABRICATED and
@@ -132,7 +138,7 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     ghidra_warnings=ghidra_warnings_for(gr),
                     evidence=evidence,
                     cape_techniques=held_out_techniques(report),
-                    modality=modality))
+                    modality=modality, input_read=read))
     provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
     return render_scorecard(label, cells, aggregate(cells), provenance), cells
 

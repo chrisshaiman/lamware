@@ -60,7 +60,9 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
     # attack_techniques are unscored, which makes them the cheapest thing for an
     # evidence-fed arm to inflate; the pilot's +corr arm doubled them, 3 to 6,
     # with two that appear nowhere in its evidence.
-    cols = ["n", "n_valid", "tool_layer_broken",
+    # `modalities` sits beside `n` because more than one entry there means the
+    # row pools experiments that must not be pooled (#505, #646).
+    cols = ["n", "modalities", "n_valid", "tool_layer_broken",
             "n_with_claims", "total_claims", "mean_grounded_ratio",
             "total_grounded_novel", "total_grounded_recited",
             "total_fabricated", "total_bare_symbols", "total_unscoreable",
@@ -81,7 +83,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
     cell_cols = ["arm", "seed", "sample", "family_guess", "mb_family", "claude_family",
                  "grounded", "grounded_novel", "grounded_recited",
                  "total", "fabricated", "bare_symbols", "unscoreable",
-                 "modality", "evidence_bytes", "evidence_keys", "correlations_shown",
+                 "modality", "input", "evidence_bytes", "evidence_keys", "correlations_shown",
                  "techniques", "techniques_hit", "technique_precision",
                  "technique_recall", "cape_techniques",
                  "capabilities", "completed", "parse_failed",

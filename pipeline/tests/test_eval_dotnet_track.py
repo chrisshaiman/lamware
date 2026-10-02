@@ -41,7 +41,7 @@ NATIVE_REPORT = {
 
 def test_a_dotnet_sample_is_handed_its_decompiled_source():
     """THE bug. Before this the payload was the empty Ghidra dict."""
-    init, modality, source = init_payload_for(DOTNET_REPORT)
+    init, modality, source, _read = init_payload_for(DOTNET_REPORT)
     assert modality == "dotnet"
     assert init["analysis_type"] == "dotnet"
     assert init["source_language"] == "csharp"
@@ -52,7 +52,7 @@ def test_a_dotnet_sample_is_handed_its_decompiled_source():
 def test_a_native_sample_is_unchanged():
     """The native path is the one with a result behind it (#420 stage 2). This
     change must not move it."""
-    init, modality, source = init_payload_for(NATIVE_REPORT)
+    init, modality, source, _read = init_payload_for(NATIVE_REPORT)
     assert modality == "native_pe"
     assert init is NATIVE_REPORT["ghidra"]
     assert json.loads(source) == NATIVE_REPORT["ghidra"]
@@ -61,7 +61,7 @@ def test_a_native_sample_is_unchanged():
 def test_the_grounding_source_follows_the_modality():
     """Scoring a .NET cell against json.dumps(ghidra) would score it against an
     empty dict, so every claim it made would be a fabrication."""
-    _, _, source = init_payload_for(DOTNET_REPORT)
+    _, _, source, _read = init_payload_for(DOTNET_REPORT)
     assert "analyzed_files" not in source, "still grounding against the Ghidra dump"
     assert "Inject()" in source
 
@@ -72,7 +72,7 @@ def test_a_failed_dotnet_analysis_falls_back_rather_than_shipping_nothing():
     wearing a different hat."""
     report = {**DOTNET_REPORT,
               "dotnet_analysis": {"analysis_success": False, "error": "de4dot failed"}}
-    init, modality, _ = init_payload_for(report)
+    init, modality, _, _read = init_payload_for(report)
     assert modality == "native_pe"
     assert init == report["ghidra"]
 
@@ -80,7 +80,7 @@ def test_a_failed_dotnet_analysis_falls_back_rather_than_shipping_nothing():
 def test_the_bazaar_family_reaches_the_payload():
     """Production passes its llm_context through; the eval must not drop it, or
     the two harnesses show the agent different things."""
-    init, _, _ = init_payload_for(DOTNET_REPORT)
+    init, _, _, _read = init_payload_for(DOTNET_REPORT)
     assert init["bazaar_family"] == "warzonerat"
 
 
@@ -91,7 +91,7 @@ def test_cape_signature_names_reach_the_extraction_context_path():
               "dotnet_analysis": {**DOTNET_REPORT["dotnet_analysis"],
                                   "extraction_source": {"source_dir": "/d",
                                                         "sha256": "a" * 64}}}
-    init, _, _ = init_payload_for(report)
+    init, _, _, _read = init_payload_for(report)
     assert init["extraction_context"]["cape_signatures"] == ["injection_write_process"]
 
 
