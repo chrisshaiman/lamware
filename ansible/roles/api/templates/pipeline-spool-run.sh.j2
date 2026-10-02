@@ -1,0 +1,178 @@
+#!/bin/bash
+# =============================================================================
+# pipeline-spool-run — drain the upload spool, one sample at a time (#534).
+#
+# Run by pipeline-spool.service (as the pipeline user) whenever
+# pipeline-spool.path sees the spool directory non-empty.
+#
+# Every entry leaves the spool on every run: a sample whose pipeline run exits
+# 0 is deleted; anything else is MOVED to the quarantine directory with a
+# sidecar recording why. The previous one-liner was
+#     run-pipeline "$f" && rm -f "$f"
+# and run-pipeline exits 1 on a stage failure (#579), so a failing sample stayed
+# in the spool, DirectoryNotEmpty= re-fired as soon as the service stopped, and
+# the same live sample was re-detonated in a loop. When the failure was fast
+# the path unit hit its trigger limit and every later upload silently never
+# started.
+#
+# Quarantined samples are LIVE MALWARE. The quarantine directory is 0750
+# pipeline:pipeline, outside the spool (a subdirectory of the spool would keep
+# DirectoryNotEmpty= true forever), and nothing serves it over HTTP.
+#
+# Managed by Ansible (api role). Do not edit manually.
+# =============================================================================
+
+set -uo pipefail
+
+# The API writes the same spool path as a constant (api/app/routers/samples.py).
+# api_spool_dir exists so the test can point this script at a temp dir;
+# setting it in inventory alone would split the two.
+SPOOL="{{ api_spool_dir | default('/opt/pipeline/spool') }}"
+FAILED="{{ api_spool_failed_dir | default('/opt/pipeline/spool-failed') }}"
+PIPELINE_CMD="{{ pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
+NTFY="{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py"
+TAIL_LINES=60
+# Captured output of the run in progress. On disk under the pipeline-only
+# quarantine directory rather than in /run (tmpfs, RAM-backed) because a full
+# pipeline run's output is unbounded. Fixed name so the process allowlist in
+# network-monitor can match `tee` exactly.
+RUNLOG="$FAILED/.run.log"
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+# Sidecars and the run log carry sample-derived strings: owner-only.
+umask 077
+
+# systemd stops the unit by sending SIGTERM to every process in the cgroup, so
+# the pipeline child dies with 143 at the same moment. That is the host going
+# down, not the sample failing: leave the sample in the spool for the next
+# activation instead of quarantining it.
+stopping=0
+trap 'stopping=1' TERM INT HUP
+
+log() { printf 'pipeline-spool: %s\n' "$*" >&2; }
+
+alert() {
+    # $1 title, $2 message, $3 priority. ntfy_notify exits 1 when alerts are
+    # disabled; that is not an error here, the log line above is still written.
+    timeout 30 python3 "$NTFY" "$1" "$2" --priority "$3" --tags warning \
+        >/dev/null 2>&1 || log "ntfy alert not delivered (title=$1)"
+}
+
+# Pick a destination that clobbers neither an earlier quarantined sample nor
+# its sidecar. A re-uploaded sample gets a fresh submission-id prefix from the
+# API, so this only matters when an operator re-queues a quarantined file and
+# it fails again — the first failure's record is kept.
+quarantine_dest() {
+    local name=$1 dest
+    dest="$FAILED/$name"
+    if [ -e "$dest" ] || [ -L "$dest" ] || [ -e "$dest.failure" ]; then
+        dest="$FAILED/$name.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    fi
+    printf '%s' "$dest"
+}
+
+# quarantine <path> <exit-code-or-empty> <reason>
+quarantine() {
+    local f=$1 rc=$2 reason=$3 name dest sig="none"
+    name=${f##*/}
+    dest=$(quarantine_dest "$name")
+    if [ -n "$rc" ] && [ "$rc" -gt 128 ]; then
+        sig="SIG$(kill -l $((rc - 128)) 2>/dev/null || echo "?")"
+    fi
+    if ! mv -- "$f" "$dest" || [ -e "$f" ] || [ -L "$f" ]; then
+        log "ERROR could not quarantine sample=$name — it is still in the spool and will be retried"
+        alert "Spool quarantine FAILED" \
+            "Sample $name failed (exit ${rc:-n/a}) and could not be moved to $FAILED. It is still in $SPOOL; the spool will retry it until this is fixed." \
+            urgent
+        return 1
+    fi
+    # Best effort: the API creates samples as lamware-api 0640, which the
+    # pipeline user cannot chmod. The directory's 0750 pipeline:pipeline is
+    # the control; this only tightens files pipeline happens to own.
+    chmod o-rwx -- "$dest" 2>/dev/null || :
+    {
+        printf 'sample=%s\n' "$name"
+        printf 'quarantined_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'exit_code=%s\n' "${rc:-n/a}"
+        printf 'signal=%s\n' "$sig"
+        printf 'reason=%s\n' "$reason"
+        printf 'original_path=%s\n' "$f"
+        printf 'requeue=sudo mv -- %q %q/\n' "$dest" "$SPOOL"
+        printf -- '--- last %s lines of output ---\n' "$TAIL_LINES"
+        if [ -s "$RUNLOG" ]; then tail -n "$TAIL_LINES" -- "$RUNLOG"; fi
+    } > "$dest.failure"
+    log "QUARANTINED sample=$name exit=${rc:-n/a} signal=$sig reason=$reason dest=$dest"
+    alert "Spool sample quarantined" \
+        "Sample $name failed (exit ${rc:-n/a}, signal $sig: $reason). Moved to $dest; later uploads continue. Details: $dest.failure" \
+        high
+    return 0
+}
+
+# The fallback is 0700, not 0750: under the setgid /opt/pipeline it would
+# otherwise inherit group lamware. Ansible creates it as pipeline:pipeline.
+if [ ! -d "$FAILED" ] && ! mkdir -m 0700 -p -- "$FAILED"; then
+    log "ERROR quarantine directory $FAILED does not exist and cannot be created"
+fi
+
+# Oldest first, so a burst of uploads is analysed in arrival order rather than
+# by the random submission-id prefix the API puts in front of each name.
+# NUL-delimited because the uploaded filename is user-supplied. Includes
+# dotfiles and non-regular entries: DirectoryNotEmpty= counts them too, so
+# anything this loop skipped would re-trigger the unit forever.
+mapfile -d '' -t queue < <(
+    find "$SPOOL" -mindepth 1 -maxdepth 1 -printf '%T@\t%p\0' 2>/dev/null \
+        | sort -z -n | cut -z -f2-)
+
+stuck=0
+for f in "${queue[@]}"; do
+    [ "$stopping" = 1 ] && break
+    # Consumed since the listing (a manual run, or an operator removed it).
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    name=${f##*/}
+
+    # Not a regular file: never hand it to the pipeline (a symlink could point
+    # anywhere the pipeline user can read), but do move it out of the way.
+    if [ -L "$f" ] || [ ! -f "$f" ]; then
+        : > "$RUNLOG" 2>/dev/null || :
+        quarantine "$f" "" "not a regular file" || stuck=1
+        continue
+    fi
+
+    log "start sample=$name"
+    : > "$RUNLOG" 2>/dev/null || :
+    # Output still streams to the journal; tee keeps a copy for the sidecar.
+    # Process substitution rather than a pipe so a descendant that inherits
+    # stdout and outlives the pipeline cannot hold this loop open.
+    "$PIPELINE_CMD" "$f" > >(tee -- "$RUNLOG") 2>&1
+    rc=$?
+    teepid=$!
+    # Let tee flush the tail before it is read — bounded, for the same reason.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$teepid" 2>/dev/null || break
+        sleep 0.5
+    done
+
+    if [ "$stopping" = 1 ]; then
+        log "stopping: left sample=$name in the spool (run interrupted, exit=$rc)"
+        break
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+        if rm -f -- "$f"; then
+            log "done sample=$name"
+        else
+            log "ERROR processed sample=$name but could not remove it from the spool"
+            stuck=1
+        fi
+        continue
+    fi
+
+    quarantine "$f" "$rc" "pipeline exited non-zero" || stuck=1
+done
+
+rm -f -- "$RUNLOG" 2>/dev/null || :
+
+# Non-zero only when an entry could NOT be moved out of the spool — the state
+# that wedges the path unit. A quarantined sample is the mechanism working;
+# it is reported by the alert and the log line, not by failing the unit.
+exit "$stuck"
