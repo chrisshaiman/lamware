@@ -1,0 +1,1519 @@
+{
+ "insert": [
+  [
+   "INSERT INTO samples (sha256, filename, file_type, file_mime, entropy, ssdeep) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (sha256) DO UPDATE SET last_seen = NOW(), filename = COALESCE(NULLIF(EXCLUDED.filename, ''), samples.filename), file_type = COALESCE(NULLIF(EXCLUDED.file_type, ''), samples.file_type), file_mime = COALESCE(NULLIF(EXCLUDED.file_mime, ''), samples.file_mime), entropy = COALESCE(EXCLUDED.entropy, samples.entropy), ssdeep = COALESCE(NULLIF(EXCLUDED.ssdeep, ''), samples.ssdeep) RETURNING id",
+   [
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194",
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194.exe",
+    "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+    "application/vnd.microsoft.portable-executable",
+    7.78,
+    "24576:synthetic:synthetic"
+   ]
+  ],
+  [
+   "INSERT INTO analyses (sample_id, task_id, started_at, completed_at, severity, malscore, malware_family_guess, triage_completed, cape_completed, cape_task_id, volatility_completed, volatility_triggered, ghidra_completed, ghidra_triggered, interpret_completed, summary_completed, interpret_model, interpret_tool_calls, interpret_duration_secs, interpret_escalated, possible_prompt_influence, narrative, working_notes, executive_summary, plain_english_summary, pipeline_status, stage_timings, report_json, llm_cost_usd) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+   [
+    101,
+    "v655_5b4f596d3cf5",
+    "2026-10-01T07:01:28.847471+00:00",
+    "2026-10-01T07:43:39.324106+00:00",
+    "critical",
+    10.0,
+    "packer/loader component",
+    true,
+    true,
+    1275,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    "local-qwen-llamacpp-re",
+    10,
+    1255.3,
+    false,
+    false,
+    "Synthetic narrative placeholder.",
+    "Synthetic working notes placeholder.",
+    "Synthetic executive summary placeholder.",
+    "Synthetic plain-English placeholder.",
+    "completed",
+    {
+     "$json": {
+      "triage": 2.1,
+      "cape": 390.6,
+      "pcap": 1.4,
+      "volatility": 122.6,
+      "ghidra": 194.2,
+      "interpret": 1262.5,
+      "summary": 424.4,
+      "total": 2530.5
+     }
+    },
+    {
+     "$json": {
+      "task_id": "v655_5b4f596d3cf5",
+      "sample_name": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194.exe",
+      "started_at": "2026-10-01T07:01:28.847471+00:00",
+      "completed_at": "2026-10-01T07:43:39.324106+00:00",
+      "triage": {
+       "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+       "file_mime": "application/vnd.microsoft.portable-executable",
+       "file_size": 1102336,
+       "hashes": {
+        "md5": "00000000000000000000000000000000",
+        "sha1": "0000000000000000000000000000000000000000",
+        "sha256": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194"
+       },
+       "ssdeep": "24576:synthetic:synthetic",
+       "entropy": 7.78
+      },
+      "cape": {
+       "task_id": 1275,
+       "status": "reported",
+       "malscore": 10.0,
+       "signatures": [
+        {
+         "name": "stealth_network",
+         "severity": 1,
+         "description": "Network activity detected but not expressed in monitor API logs"
+        },
+        {
+         "name": "antivm_checks_available_memory",
+         "severity": 1,
+         "description": "Checks available memory"
+        },
+        {
+         "name": "queries_computer_name",
+         "severity": 1,
+         "description": "Queries computer hostname"
+        },
+        {
+         "name": "queries_user_name",
+         "severity": 1,
+         "description": "Queries the username"
+        }
+       ],
+       "mitre_ttps": [
+        {
+         "id": "T1071",
+         "source_signature": "stealth_network"
+        },
+        {
+         "id": "T1082",
+         "source_signature": "hardware_id_profiling"
+        },
+        {
+         "id": "T1082",
+         "source_signature": "antivm_checks_available_memory"
+        },
+        {
+         "id": "T1542.003",
+         "source_signature": "suspicious_iocontrol_codes"
+        }
+       ],
+       "network": {
+        "dns_queries": [
+         {
+          "domain": "c2.example.invalid",
+          "type": "A",
+          "answers": [
+           {
+            "type": "A",
+            "data": "192.0.2.10"
+           }
+          ]
+         }
+        ],
+        "domains": [
+         "c2.example.invalid"
+        ],
+        "http_requests": [
+         {
+          "method": "GET",
+          "url": "http://c2.example.invalid/p",
+          "host": "c2.example.invalid"
+         }
+        ],
+        "tcp_connections": [
+         {
+          "dst": "192.0.2.10:443",
+          "attempts": 97
+         },
+         {
+          "dst": "192.0.2.10:80",
+          "attempts": 23
+         },
+         {
+          "src": "192.0.2.200:49711",
+          "dst": "192.0.2.10:8080"
+         }
+        ],
+        "tcp_attempts_total": 120,
+        "tcp_destinations_total": 2
+       }
+      },
+      "volatility": {
+       "triggered": true,
+       "plugins": {
+        "cmdline": [],
+        "pstree": [],
+        "dlllist": [],
+        "psscan": [],
+        "handles": [],
+        "malfind": [],
+        "vadinfo": []
+       }
+      },
+      "ghidra": {
+       "triggered": true,
+       "dotnet_routed": true,
+       "analyzed_files": [
+        {
+         "filename": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+         "sha256": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+         "analysis_success": true,
+         "functions_count": 7
+        }
+       ]
+      },
+      "llm_interpretation": {
+       "enabled": true,
+       "provider": "anthropic",
+       "model_initial": "local-qwen-llamacpp-re",
+       "model_final": "local-qwen-llamacpp-re",
+       "escalated": false,
+       "tool_calls_used": 10,
+       "duration_seconds": 1255.3,
+       "possible_prompt_influence": false,
+       "usage": {
+        "input_tokens": 11643,
+        "output_tokens": 1498
+       },
+       "analysis": {
+        "malware_family_guess": "Packer/Loader Component",
+        "capabilities": [
+         "Runtime payload decryption",
+         "Memory manipulation",
+         "Dynamic initialization",
+         "Configuration parsing"
+        ],
+        "narrative": "Synthetic narrative placeholder.",
+        "working_notes": "Synthetic working notes placeholder.",
+        "attack_techniques": [
+         {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information"
+         },
+         {
+          "id": "T1055",
+          "name": "Process Injection"
+         },
+         {
+          "id": "T1070",
+          "name": "Indicator Removal"
+         }
+        ],
+        "risk_assessment": "placeholder"
+       }
+      },
+      "executive_summary": {
+       "severity": "high",
+       "usage": {
+        "input_tokens": 3975,
+        "output_tokens": 4096
+       },
+       "model": "local-qwen-llamacpp",
+       "executive_summary": "Synthetic executive summary placeholder."
+      },
+      "evasion_analysis": {
+       "enabled": false,
+       "reason": "not_triggered"
+      },
+      "visual_analysis": {
+       "enabled": true,
+       "model_final": "local-qwen-llamacpp-re",
+       "usage": {
+        "input_tokens": 1494,
+        "output_tokens": 514
+       }
+      },
+      "plain_english_summary": "Synthetic plain-English placeholder.",
+      "plain_english_usage": {
+       "input_tokens": 644,
+       "output_tokens": 77
+      },
+      "plain_english_model": "local-qwen-llamacpp",
+      "severity": "critical",
+      "family": "packer/loader component",
+      "_family_source": "llm_interpretation",
+      "timing": {
+       "triage": 2.1,
+       "cape": 390.6,
+       "pcap": 1.4,
+       "volatility": 122.6,
+       "ghidra": 194.2,
+       "interpret": 1262.5,
+       "summary": 424.4,
+       "total": 2530.5
+      },
+      "extracted_iocs": [
+       {
+        "type": "file:hashes.SHA-256",
+        "value": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194",
+        "source": "Triage",
+        "context": "Sample hash"
+       },
+       {
+        "type": "domain-name",
+        "value": "c2.example.invalid",
+        "source": "Cape",
+        "context": "DNS query"
+       },
+       {
+        "type": "ipv4-addr",
+        "value": "192.0.2.10",
+        "source": "PCAP (Zeek)",
+        "context": "Connection"
+       },
+       {
+        "type": "mutex",
+        "value": "Global\\synthetic",
+        "source": "Volatility"
+       }
+      ],
+      "ioc_technique_mappings": [
+       {
+        "ioc_type": "domain-name",
+        "ioc_value": "c2.example.invalid",
+        "technique_id": "T1071",
+        "technique_name": "Application Layer Protocol",
+        "evidence": "Domain contacted during detonation",
+        "method": "programmatic",
+        "confidence": "high"
+       },
+       {
+        "ioc_type": "ipv4-addr",
+        "ioc_value": "192.0.2.10",
+        "technique_id": "T1095",
+        "technique_name": "Non-Application Layer Protocol",
+        "evidence": "Direct TCP connection to remote host"
+       }
+      ],
+      "cross_correlations": [
+       {
+        "type": "cmdline_spoofing",
+        "severity": "critical",
+        "title": "Command line spoofing detected in PID 1448",
+        "detail": "Process command line changed between execution and memory dump.",
+        "pid": 1448,
+        "sources": [
+         "Cape",
+         "Volatility"
+        ],
+        "mitre": "T1036 — Masquerading"
+       },
+       {
+        "type": "injection_corroborated",
+        "severity": "medium",
+        "title": "Process injection into PID 1364 corroborated in memory",
+        "detail": "Synthetic detail.",
+        "pid": 1364,
+        "sources": [
+         "Cape",
+         "Volatility"
+        ],
+        "mitre": "T1055 — Process Injection"
+       }
+      ],
+      "correlation_warnings": [
+       "synthetic: volatility insights unavailable"
+      ]
+     }
+    },
+    0.0
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "file:hashes.SHA-256",
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    102,
+    103,
+    "Triage",
+    "Sample hash"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "domain-name",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    102,
+    104,
+    "Cape",
+    "DNS query"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "ipv4-addr",
+    "192.0.2.10"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    102,
+    105,
+    "PCAP (Zeek)",
+    "Connection"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "mutex",
+    "Global\\synthetic"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    102,
+    106,
+    "Volatility",
+    ""
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1027",
+    "Obfuscated Files or Information",
+    [
+     "defense-evasion"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    107,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1055",
+    "Process Injection",
+    [
+     "defense-evasion",
+     "privilege-escalation"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    108,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1070",
+    "Indicator Removal",
+    [
+     "defense-evasion"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    109,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1071",
+    "stealth_network",
+    [
+     "command-and-control"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    110,
+    "Cape",
+    "stealth_network"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1082",
+    "hardware_id_profiling",
+    [
+     "discovery"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    111,
+    "Cape",
+    "hardware_id_profiling"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1082",
+    "antivm_checks_available_memory",
+    [
+     "discovery"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    112,
+    "Cape",
+    "antivm_checks_available_memory"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1542.003",
+    "suspicious_iocontrol_codes",
+    null
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    102,
+    113,
+    "Cape",
+    "suspicious_iocontrol_codes"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    102,
+    "Runtime payload decryption",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    102,
+    "Memory manipulation",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    102,
+    "Dynamic initialization",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    102,
+    "Configuration parsing",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    102,
+    "stealth_network",
+    1,
+    "Network activity detected but not expressed in monitor API logs"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    102,
+    "antivm_checks_available_memory",
+    1,
+    "Checks available memory"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    102,
+    "queries_computer_name",
+    1,
+    "Queries computer hostname"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    102,
+    "queries_user_name",
+    1,
+    "Queries the username"
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers) VALUES (%s, 'dns', %s, %s, %s)",
+   [
+    102,
+    "c2.example.invalid",
+    "A",
+    {
+     "$json": [
+      {
+       "type": "A",
+       "data": "192.0.2.10"
+      }
+     ]
+    }
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host) VALUES (%s, 'http', %s, %s, %s)",
+   [
+    102,
+    "GET",
+    "http://c2.example.invalid/p",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "SELECT 1 FROM information_schema.columns WHERE table_name = 'network_events' AND column_name = 'attempts'",
+   []
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    102,
+    "",
+    0,
+    "192.0.2.10",
+    443,
+    97
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    102,
+    "",
+    0,
+    "192.0.2.10",
+    80,
+    23
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    102,
+    "192.0.2.200",
+    49711,
+    "192.0.2.10",
+    8080,
+    null
+   ]
+  ],
+  [
+   "SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+   [
+    "domain-name",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name) VALUES (%s, %s) ON CONFLICT (technique_id) DO NOTHING RETURNING id",
+   [
+    "T1071",
+    "Application Layer Protocol"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_technique_mappings (analysis_id, ioc_id, technique_id, evidence, method, confidence) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING",
+   [
+    102,
+    115,
+    116,
+    "Domain contacted during detonation",
+    "programmatic",
+    "high"
+   ]
+  ],
+  [
+   "SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+   [
+    "ipv4-addr",
+    "192.0.2.10"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name) VALUES (%s, %s) ON CONFLICT (technique_id) DO NOTHING RETURNING id",
+   [
+    "T1095",
+    "Non-Application Layer Protocol"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_technique_mappings (analysis_id, ioc_id, technique_id, evidence, method, confidence) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING",
+   [
+    102,
+    117,
+    118,
+    "Direct TCP connection to remote host",
+    "programmatic",
+    "high"
+   ]
+  ],
+  [
+   "DELETE FROM correlations WHERE analysis_id = %s",
+   [
+    102
+   ]
+  ],
+  [
+   "INSERT INTO correlations (analysis_id, type, severity, title, detail, sources, mitre, pid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+   [
+    102,
+    "cmdline_spoofing",
+    "critical",
+    "Command line spoofing detected in PID 1448",
+    "Process command line changed between execution and memory dump.",
+    [
+     "Cape",
+     "Volatility"
+    ],
+    "T1036 — Masquerading",
+    "1448"
+   ]
+  ],
+  [
+   "INSERT INTO correlations (analysis_id, type, severity, title, detail, sources, mitre, pid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+   [
+    102,
+    "injection_corroborated",
+    "medium",
+    "Process injection into PID 1364 corroborated in memory",
+    "Synthetic detail.",
+    [
+     "Cape",
+     "Volatility"
+    ],
+    "T1055 — Process Injection",
+    "1364"
+   ]
+  ],
+  [
+   "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
+   [
+    [
+     "synthetic: volatility insights unavailable"
+    ],
+    102
+   ]
+  ]
+ ],
+ "update": [
+  [
+   "INSERT INTO samples (sha256, filename, file_type, file_mime, entropy, ssdeep) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (sha256) DO UPDATE SET last_seen = NOW(), filename = COALESCE(NULLIF(EXCLUDED.filename, ''), samples.filename), file_type = COALESCE(NULLIF(EXCLUDED.file_type, ''), samples.file_type), file_mime = COALESCE(NULLIF(EXCLUDED.file_mime, ''), samples.file_mime), entropy = COALESCE(EXCLUDED.entropy, samples.entropy), ssdeep = COALESCE(NULLIF(EXCLUDED.ssdeep, ''), samples.ssdeep) RETURNING id",
+   [
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194",
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194.exe",
+    "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+    "application/vnd.microsoft.portable-executable",
+    7.78,
+    "24576:synthetic:synthetic"
+   ]
+  ],
+  [
+   "UPDATE analyses SET sample_id = %s, task_id = %s, started_at = %s, completed_at = %s, severity = %s, malscore = %s, malware_family_guess = %s, triage_completed = %s, cape_completed = %s, cape_task_id = %s, volatility_completed = %s, volatility_triggered = %s, ghidra_completed = %s, ghidra_triggered = %s, interpret_completed = %s, summary_completed = %s, interpret_model = %s, interpret_tool_calls = %s, interpret_duration_secs = %s, interpret_escalated = %s, possible_prompt_influence = %s, narrative = %s, working_notes = %s, executive_summary = %s, plain_english_summary = %s, pipeline_status = %s, stage_timings = %s, report_json = %s, llm_cost_usd = %s WHERE id = %s",
+   [
+    101,
+    "v655_5b4f596d3cf5",
+    "2026-10-01T07:01:28.847471+00:00",
+    "2026-10-01T07:43:39.324106+00:00",
+    "critical",
+    10.0,
+    "packer/loader component",
+    true,
+    true,
+    1275,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    "local-qwen-llamacpp-re",
+    10,
+    1255.3,
+    false,
+    false,
+    "Synthetic narrative placeholder.",
+    "Synthetic working notes placeholder.",
+    "Synthetic executive summary placeholder.",
+    "Synthetic plain-English placeholder.",
+    "completed",
+    {
+     "$json": {
+      "triage": 2.1,
+      "cape": 390.6,
+      "pcap": 1.4,
+      "volatility": 122.6,
+      "ghidra": 194.2,
+      "interpret": 1262.5,
+      "summary": 424.4,
+      "total": 2530.5
+     }
+    },
+    {
+     "$json": {
+      "task_id": "v655_5b4f596d3cf5",
+      "sample_name": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194.exe",
+      "started_at": "2026-10-01T07:01:28.847471+00:00",
+      "completed_at": "2026-10-01T07:43:39.324106+00:00",
+      "triage": {
+       "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+       "file_mime": "application/vnd.microsoft.portable-executable",
+       "file_size": 1102336,
+       "hashes": {
+        "md5": "00000000000000000000000000000000",
+        "sha1": "0000000000000000000000000000000000000000",
+        "sha256": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194"
+       },
+       "ssdeep": "24576:synthetic:synthetic",
+       "entropy": 7.78
+      },
+      "cape": {
+       "task_id": 1275,
+       "status": "reported",
+       "malscore": 10.0,
+       "signatures": [
+        {
+         "name": "stealth_network",
+         "severity": 1,
+         "description": "Network activity detected but not expressed in monitor API logs"
+        },
+        {
+         "name": "antivm_checks_available_memory",
+         "severity": 1,
+         "description": "Checks available memory"
+        },
+        {
+         "name": "queries_computer_name",
+         "severity": 1,
+         "description": "Queries computer hostname"
+        },
+        {
+         "name": "queries_user_name",
+         "severity": 1,
+         "description": "Queries the username"
+        }
+       ],
+       "mitre_ttps": [
+        {
+         "id": "T1071",
+         "source_signature": "stealth_network"
+        },
+        {
+         "id": "T1082",
+         "source_signature": "hardware_id_profiling"
+        },
+        {
+         "id": "T1082",
+         "source_signature": "antivm_checks_available_memory"
+        },
+        {
+         "id": "T1542.003",
+         "source_signature": "suspicious_iocontrol_codes"
+        }
+       ],
+       "network": {
+        "dns_queries": [
+         {
+          "domain": "c2.example.invalid",
+          "type": "A",
+          "answers": [
+           {
+            "type": "A",
+            "data": "192.0.2.10"
+           }
+          ]
+         }
+        ],
+        "domains": [
+         "c2.example.invalid"
+        ],
+        "http_requests": [
+         {
+          "method": "GET",
+          "url": "http://c2.example.invalid/p",
+          "host": "c2.example.invalid"
+         }
+        ],
+        "tcp_connections": [
+         {
+          "dst": "192.0.2.10:443",
+          "attempts": 97
+         },
+         {
+          "dst": "192.0.2.10:80",
+          "attempts": 23
+         },
+         {
+          "src": "192.0.2.200:49711",
+          "dst": "192.0.2.10:8080"
+         }
+        ],
+        "tcp_attempts_total": 120,
+        "tcp_destinations_total": 2
+       }
+      },
+      "volatility": {
+       "triggered": true,
+       "plugins": {
+        "cmdline": [],
+        "pstree": [],
+        "dlllist": [],
+        "psscan": [],
+        "handles": [],
+        "malfind": [],
+        "vadinfo": []
+       }
+      },
+      "ghidra": {
+       "triggered": true,
+       "dotnet_routed": true,
+       "analyzed_files": [
+        {
+         "filename": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+         "sha256": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+         "analysis_success": true,
+         "functions_count": 7
+        }
+       ]
+      },
+      "llm_interpretation": {
+       "enabled": true,
+       "provider": "anthropic",
+       "model_initial": "local-qwen-llamacpp-re",
+       "model_final": "local-qwen-llamacpp-re",
+       "escalated": false,
+       "tool_calls_used": 10,
+       "duration_seconds": 1255.3,
+       "possible_prompt_influence": false,
+       "usage": {
+        "input_tokens": 11643,
+        "output_tokens": 1498
+       },
+       "analysis": {
+        "malware_family_guess": "Packer/Loader Component",
+        "capabilities": [
+         "Runtime payload decryption",
+         "Memory manipulation",
+         "Dynamic initialization",
+         "Configuration parsing"
+        ],
+        "narrative": "Synthetic narrative placeholder.",
+        "working_notes": "Synthetic working notes placeholder.",
+        "attack_techniques": [
+         {
+          "id": "T1027",
+          "name": "Obfuscated Files or Information"
+         },
+         {
+          "id": "T1055",
+          "name": "Process Injection"
+         },
+         {
+          "id": "T1070",
+          "name": "Indicator Removal"
+         }
+        ],
+        "risk_assessment": "placeholder"
+       }
+      },
+      "executive_summary": {
+       "severity": "high",
+       "usage": {
+        "input_tokens": 3975,
+        "output_tokens": 4096
+       },
+       "model": "local-qwen-llamacpp",
+       "executive_summary": "Synthetic executive summary placeholder."
+      },
+      "evasion_analysis": {
+       "enabled": false,
+       "reason": "not_triggered"
+      },
+      "visual_analysis": {
+       "enabled": true,
+       "model_final": "local-qwen-llamacpp-re",
+       "usage": {
+        "input_tokens": 1494,
+        "output_tokens": 514
+       }
+      },
+      "plain_english_summary": "Synthetic plain-English placeholder.",
+      "plain_english_usage": {
+       "input_tokens": 644,
+       "output_tokens": 77
+      },
+      "plain_english_model": "local-qwen-llamacpp",
+      "severity": "critical",
+      "family": "packer/loader component",
+      "_family_source": "llm_interpretation",
+      "timing": {
+       "triage": 2.1,
+       "cape": 390.6,
+       "pcap": 1.4,
+       "volatility": 122.6,
+       "ghidra": 194.2,
+       "interpret": 1262.5,
+       "summary": 424.4,
+       "total": 2530.5
+      },
+      "extracted_iocs": [
+       {
+        "type": "file:hashes.SHA-256",
+        "value": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194",
+        "source": "Triage",
+        "context": "Sample hash"
+       },
+       {
+        "type": "domain-name",
+        "value": "c2.example.invalid",
+        "source": "Cape",
+        "context": "DNS query"
+       },
+       {
+        "type": "ipv4-addr",
+        "value": "192.0.2.10",
+        "source": "PCAP (Zeek)",
+        "context": "Connection"
+       },
+       {
+        "type": "mutex",
+        "value": "Global\\synthetic",
+        "source": "Volatility"
+       }
+      ],
+      "ioc_technique_mappings": [
+       {
+        "ioc_type": "domain-name",
+        "ioc_value": "c2.example.invalid",
+        "technique_id": "T1071",
+        "technique_name": "Application Layer Protocol",
+        "evidence": "Domain contacted during detonation",
+        "method": "programmatic",
+        "confidence": "high"
+       },
+       {
+        "ioc_type": "ipv4-addr",
+        "ioc_value": "192.0.2.10",
+        "technique_id": "T1095",
+        "technique_name": "Non-Application Layer Protocol",
+        "evidence": "Direct TCP connection to remote host"
+       }
+      ],
+      "cross_correlations": [
+       {
+        "type": "cmdline_spoofing",
+        "severity": "critical",
+        "title": "Command line spoofing detected in PID 1448",
+        "detail": "Process command line changed between execution and memory dump.",
+        "pid": 1448,
+        "sources": [
+         "Cape",
+         "Volatility"
+        ],
+        "mitre": "T1036 — Masquerading"
+       },
+       {
+        "type": "injection_corroborated",
+        "severity": "medium",
+        "title": "Process injection into PID 1364 corroborated in memory",
+        "detail": "Synthetic detail.",
+        "pid": 1364,
+        "sources": [
+         "Cape",
+         "Volatility"
+        ],
+        "mitre": "T1055 — Process Injection"
+       }
+      ],
+      "correlation_warnings": [
+       "synthetic: volatility insights unavailable"
+      ]
+     }
+    },
+    0.0,
+    7
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "file:hashes.SHA-256",
+    "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    7,
+    102,
+    "Triage",
+    "Sample hash"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "domain-name",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    7,
+    103,
+    "Cape",
+    "DNS query"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "ipv4-addr",
+    "192.0.2.10"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    7,
+    104,
+    "PCAP (Zeek)",
+    "Connection"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_values (type, value) VALUES (%s, %s) ON CONFLICT (type, value) DO UPDATE SET last_seen = NOW() RETURNING id",
+   [
+    "mutex",
+    "Global\\synthetic"
+   ]
+  ],
+  [
+   "INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING",
+   [
+    7,
+    105,
+    "Volatility",
+    ""
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1027",
+    "Obfuscated Files or Information",
+    [
+     "defense-evasion"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    106,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1055",
+    "Process Injection",
+    [
+     "defense-evasion",
+     "privilege-escalation"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    107,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1070",
+    "Indicator Removal",
+    [
+     "defense-evasion"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage) VALUES (%s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    108,
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1071",
+    "stealth_network",
+    [
+     "command-and-control"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    109,
+    "Cape",
+    "stealth_network"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1082",
+    "hardware_id_profiling",
+    [
+     "discovery"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    110,
+    "Cape",
+    "hardware_id_profiling"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1082",
+    "antivm_checks_available_memory",
+    [
+     "discovery"
+    ]
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    111,
+    "Cape",
+    "antivm_checks_available_memory"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name, tactics) VALUES (%s, %s, %s) ON CONFLICT (technique_id) DO UPDATE SET tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics) RETURNING id",
+   [
+    "T1542.003",
+    "suspicious_iocontrol_codes",
+    null
+   ]
+  ],
+  [
+   "INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail) VALUES (%s, %s, %s, %s) ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING",
+   [
+    7,
+    112,
+    "Cape",
+    "suspicious_iocontrol_codes"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    7,
+    "Runtime payload decryption",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    7,
+    "Memory manipulation",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    7,
+    "Dynamic initialization",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO capabilities (analysis_id, description, source_stage) VALUES (%s, %s, %s)",
+   [
+    7,
+    "Configuration parsing",
+    "AI Reverse Engineering"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    7,
+    "stealth_network",
+    1,
+    "Network activity detected but not expressed in monitor API logs"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    7,
+    "antivm_checks_available_memory",
+    1,
+    "Checks available memory"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    7,
+    "queries_computer_name",
+    1,
+    "Queries computer hostname"
+   ]
+  ],
+  [
+   "INSERT INTO signatures (analysis_id, name, severity, description) VALUES (%s, %s, %s, %s)",
+   [
+    7,
+    "queries_user_name",
+    1,
+    "Queries the username"
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers) VALUES (%s, 'dns', %s, %s, %s)",
+   [
+    7,
+    "c2.example.invalid",
+    "A",
+    {
+     "$json": [
+      {
+       "type": "A",
+       "data": "192.0.2.10"
+      }
+     ]
+    }
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host) VALUES (%s, 'http', %s, %s, %s)",
+   [
+    7,
+    "GET",
+    "http://c2.example.invalid/p",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "SELECT 1 FROM information_schema.columns WHERE table_name = 'network_events' AND column_name = 'attempts'",
+   []
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    7,
+    "",
+    0,
+    "192.0.2.10",
+    443,
+    97
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    7,
+    "",
+    0,
+    "192.0.2.10",
+    80,
+    23
+   ]
+  ],
+  [
+   "INSERT INTO network_events (analysis_id, event_type, src_ip, src_port, dst_ip, dst_port, attempts) VALUES (%s, 'tcp', %s, %s, %s, %s, %s)",
+   [
+    7,
+    "192.0.2.200",
+    49711,
+    "192.0.2.10",
+    8080,
+    null
+   ]
+  ],
+  [
+   "SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+   [
+    "domain-name",
+    "c2.example.invalid"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name) VALUES (%s, %s) ON CONFLICT (technique_id) DO NOTHING RETURNING id",
+   [
+    "T1071",
+    "Application Layer Protocol"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_technique_mappings (analysis_id, ioc_id, technique_id, evidence, method, confidence) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING",
+   [
+    7,
+    114,
+    115,
+    "Domain contacted during detonation",
+    "programmatic",
+    "high"
+   ]
+  ],
+  [
+   "SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+   [
+    "ipv4-addr",
+    "192.0.2.10"
+   ]
+  ],
+  [
+   "INSERT INTO technique_values (technique_id, technique_name) VALUES (%s, %s) ON CONFLICT (technique_id) DO NOTHING RETURNING id",
+   [
+    "T1095",
+    "Non-Application Layer Protocol"
+   ]
+  ],
+  [
+   "INSERT INTO ioc_technique_mappings (analysis_id, ioc_id, technique_id, evidence, method, confidence) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING",
+   [
+    7,
+    116,
+    117,
+    "Direct TCP connection to remote host",
+    "programmatic",
+    "high"
+   ]
+  ],
+  [
+   "DELETE FROM correlations WHERE analysis_id = %s",
+   [
+    7
+   ]
+  ],
+  [
+   "INSERT INTO correlations (analysis_id, type, severity, title, detail, sources, mitre, pid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+   [
+    7,
+    "cmdline_spoofing",
+    "critical",
+    "Command line spoofing detected in PID 1448",
+    "Process command line changed between execution and memory dump.",
+    [
+     "Cape",
+     "Volatility"
+    ],
+    "T1036 — Masquerading",
+    "1448"
+   ]
+  ],
+  [
+   "INSERT INTO correlations (analysis_id, type, severity, title, detail, sources, mitre, pid) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+   [
+    7,
+    "injection_corroborated",
+    "medium",
+    "Process injection into PID 1364 corroborated in memory",
+    "Synthetic detail.",
+    [
+     "Cape",
+     "Volatility"
+    ],
+    "T1055 — Process Injection",
+    "1364"
+   ]
+  ],
+  [
+   "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
+   [
+    [
+     "synthetic: volatility insights unavailable"
+    ],
+    7
+   ]
+  ]
+ ]
+}

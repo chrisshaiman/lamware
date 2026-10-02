@@ -137,7 +137,7 @@ def test_db_ingest_does_not_take_the_models_word_for_severity():
     """
     src = (ROOT / "ansible" / "roles" / "pipeline" / "files"
            / "db_ingest.py").read_text(encoding="utf-8")
-    idx = src.index("severity = (report.get(")
+    idx = src.index("severity = (root.text(")
     expr = src[idx:idx + 200]
     assert "risk_assessment" not in expr, (
         f"db_ingest still falls back to the model's risk_assessment: {expr!r}")

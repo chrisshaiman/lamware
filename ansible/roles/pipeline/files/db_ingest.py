@@ -5,7 +5,9 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import math
 import os
+from datetime import datetime
 
 from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.correlation_rules import correlation_rows
@@ -151,6 +153,199 @@ _LOCAL_MODEL_PREFIX = "local-"
 _ZERO_PRICING = {"input": 0.00, "output": 0.00}
 
 
+# -------------------------------------------------------------------------
+# Shape-checked reads from the report (#171)
+# -------------------------------------------------------------------------
+#
+# Most of report.json is shaped by the sample (CAPE output, filenames, payload
+# labels) or by a model that read the sample (the interpretation). dict.get(k, {})
+# returns the default only when k is ABSENT, not when it is present as null, a
+# string or a list — so `report.get("cape", {}).get("malscore")` raised on
+# {"cape": null}, and every raise in ingest_to_db lands in its blanket
+# `except: rollback` (#450). One wrong-typed field cost the analysis every row:
+# sample, verdict, IOCs, techniques, signatures.
+#
+# Every read below goes through _Node instead. The rule it enforces:
+#   - absent or null      -> the caller's default, silently (null carries no data;
+#                            nullable columns still get NULL, as they always did)
+#   - present, right type -> the value, unchanged
+#   - present, wrong type -> the default, AND a warning naming the path
+#     (or a value its column cannot hold: int4/float4 range, non-ISO timestamp)
+# so a well-formed report ingests exactly as before, and nothing a malformed one
+# loses is lost silently. The warnings travel in report_json["_ingest_warnings"]
+# (no schema change) and on stdout.
+
+_INT4_MAX = 2**31 - 1
+_FLOAT4_MAX = 3.4028234e38      # `real` columns: a larger finite value is an
+                                # out-of-range error in PostgreSQL, not a clamp
+_LLM_COST_LIMIT = 10_000        # analyses.llm_cost_usd is numeric(8,4)
+_MAX_INGEST_WARNINGS = 50       # a 100k-element list of junk is one problem, not 100k
+
+
+def _type_name(value) -> str:
+    return {dict: "object", list: "array", str: "string", bool: "boolean",
+            int: "integer", float: "number", type(None): "null"}.get(
+                type(value), type(value).__name__)
+
+
+class _Node:
+    """One object in the report, with typed accessors that never raise.
+
+    `path` is built from our own key names and list indices only — never from
+    report content — so a warning cannot carry sample-chosen text into the log.
+    """
+
+    __slots__ = ("data", "path", "warnings")
+
+    def __init__(self, data: dict, path: str, warnings: list[str]):
+        self.data = data
+        self.path = path
+        self.warnings = warnings
+
+    def __bool__(self) -> bool:
+        return bool(self.data)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.data
+
+    def _at(self, key: str) -> str:
+        return f"{self.path}.{key}" if self.path else key
+
+    def _drop(self, key: str, expected: str, value) -> None:
+        self.warnings.append(
+            f"{self._at(key)}: expected {expected}, got {_type_name(value)} — not ingested")
+
+    def raw(self, key: str, default=None):
+        """The value as-is, for consumers that accept any JSON (jsonb, truthiness)."""
+        return self.data.get(key, default)
+
+    def obj(self, key: str) -> "_Node":
+        value = self.data.get(key)
+        if not isinstance(value, dict):
+            if value is not None:
+                self._drop(key, "object", value)
+            value = {}
+        return _Node(value, self._at(key), self.warnings)
+
+    def array(self, key: str) -> list:
+        value = self.data.get(key)
+        if isinstance(value, list):
+            return value
+        if value is not None:
+            self._drop(key, "array", value)
+        return []
+
+    def items(self, key: str) -> list["_Node"]:
+        """The object elements of a list; any other element is dropped and named."""
+        out = []
+        for i, item in enumerate(self.array(key)):
+            if isinstance(item, dict):
+                out.append(_Node(item, f"{self._at(key)}[{i}]", self.warnings))
+            else:
+                self._drop(f"{key}[{i}]", "object", item)
+        return out
+
+    def texts(self, key: str) -> list[str]:
+        out = []
+        for i, item in enumerate(self.array(key)):
+            if isinstance(item, str):
+                out.append(item)
+            else:
+                self._drop(f"{key}[{i}]", "string", item)
+        return out
+
+    def text(self, key: str, default: str | None = "", nullable: bool = True) -> str | None:
+        """A string. `nullable=False` for NOT NULL columns, where null takes the default."""
+        if key not in self.data:
+            return default
+        value = self.data[key]
+        if isinstance(value, str):
+            return value
+        if value is None:
+            return None if nullable else default
+        self._drop(key, "string", value)
+        return default
+
+    def integer(self, key: str, default: int | None = None) -> int | None:
+        """An int that fits an `integer` column. bool is not an int here."""
+        if key not in self.data:
+            return default
+        value = self.data[key]
+        if value is None:
+            return None
+        if type(value) is not int:
+            self._drop(key, "integer", value)
+            return default
+        if not -_INT4_MAX - 1 <= value <= _INT4_MAX:
+            self.warnings.append(f"{self._at(key)}: integer out of range — not ingested")
+            return default
+        return value
+
+    def number(self, key: str, default: float | None = None) -> float | int | None:
+        """An int or float that fits a `real` column."""
+        if key not in self.data:
+            return default
+        value = self.data[key]
+        if value is None:
+            return None
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            self._drop(key, "number", value)
+            return default
+        if math.isfinite(value) and abs(value) > _FLOAT4_MAX:
+            self.warnings.append(f"{self._at(key)}: number out of range — not ingested")
+            return default
+        return value
+
+    def flag(self, key: str, default: bool | None = False) -> bool | None:
+        if key not in self.data:
+            return default
+        value = self.data[key]
+        if value is None or isinstance(value, bool):
+            return value
+        self._drop(key, "boolean", value)
+        return default
+
+    def timestamp(self, key: str) -> str | None:
+        """An ISO-8601 string, or None. A non-timestamp string would fail the
+        INSERT as surely as a wrong type."""
+        value = self.text(key, None)
+        if value is None:
+            return None
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            self.warnings.append(f"{self._at(key)}: not an ISO-8601 timestamp — not ingested")
+            return None
+        return value
+
+    def required_texts(self, *keys: str) -> tuple[str, ...] | None:
+        """All of `keys` as strings, or None (with one warning) if any is
+        missing or wrong — for rows that cannot exist without them."""
+        values = tuple(self.text(k, None) for k in keys)
+        if any(v is None for v in values):
+            missing = [k for k, v in zip(keys, values, strict=True) if v is None]
+            self.warnings.append(
+                f"{self.path}: missing {', '.join(missing)} — row not ingested")
+            return None
+        return values
+
+
+def _read_report(report, warnings: list[str]) -> _Node:
+    if not isinstance(report, dict):
+        warnings.append(f"report: expected object, got {_type_name(report)} — not ingested")
+        report = {}
+    return _Node(report, "", warnings)
+
+
+def _capped(warnings: list[str]) -> list[str]:
+    """Deduplicated (a field read twice warns twice), then bounded."""
+    unique = list(dict.fromkeys(warnings))
+    if len(unique) <= _MAX_INGEST_WARNINGS:
+        return unique
+    return unique[:_MAX_INGEST_WARNINGS] + [
+        f"... and {len(unique) - _MAX_INGEST_WARNINGS} more"]
+
+
 def _price_for_model(model: str) -> dict:
     """Per-Mtok pricing for a model name, resolved fail-loud rather than fail-silent.
 
@@ -172,13 +367,18 @@ def _price_for_model(model: str) -> dict:
     return _LLM_PRICING["default"]
 
 
-def _calculate_llm_cost(report: dict) -> float:
+def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
     """Calculate total LLM API cost from token usage across all stages.
 
     Reads usage data from llm_interpretation, executive_summary,
     evasion_analysis, and visual_analysis sections of the report.
     Falls back to $0.50 estimate if no usage data available.
+
+    `root` is the ingest's shape-checked view of the same report, so wrong-typed
+    usage fields are named in its warnings; called on its own, they are skipped.
     """
+    if root is None:
+        root = _read_report(report, [])
     total_cost = 0.0
     has_usage = False
 
@@ -191,18 +391,23 @@ def _calculate_llm_cost(report: dict) -> float:
     ]
 
     for section_key in llm_sections:
-        section = report.get(section_key, {})
+        section = root.obj(section_key)
 
-        usage = section.get("usage", {})
+        usage = section.obj("usage")
         if not usage:
             continue
 
-        model = section.get("model_used", section.get("model_final",
-                section.get("model", "default")))
+        # First of these keys PRESENT wins, even when its value is null — the
+        # nested-.get() order this replaces, kept so pricing does not move.
+        model = "default"
+        for model_key in ("model_used", "model_final", "model"):
+            if model_key in section:
+                model = section.text(model_key, None)
+                break
         pricing = _price_for_model(model)
 
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
+        input_tokens = usage.number("input_tokens", 0) or 0
+        output_tokens = usage.number("output_tokens", 0) or 0
 
         if input_tokens or output_tokens:
             has_usage = True
@@ -211,15 +416,15 @@ def _calculate_llm_cost(report: dict) -> float:
             total_cost += cost
 
     # Plain English summary usage (stored separately at report root)
-    pe_usage = report.get("plain_english_usage", {})
+    pe_usage = root.obj("plain_english_usage")
     if pe_usage:
-        input_tokens = pe_usage.get("input_tokens", 0)
-        output_tokens = pe_usage.get("output_tokens", 0)
+        input_tokens = pe_usage.number("input_tokens", 0) or 0
+        output_tokens = pe_usage.number("output_tokens", 0) or 0
         if input_tokens or output_tokens:
             has_usage = True
             # Price by the actual plain-English model (may be local = $0), falling
             # back to Haiku for older reports that didn't record the model.
-            pe_model = report.get("plain_english_model") or "claude-haiku-4-5"
+            pe_model = root.text("plain_english_model", None) or "claude-haiku-4-5"
             pricing = _price_for_model(pe_model)
             cost = (input_tokens * pricing["input"] / 1_000_000) + \
                    (output_tokens * pricing["output"] / 1_000_000)
@@ -267,27 +472,44 @@ def tcp_event_rows(cape_net: dict) -> list:
     and nothing queries it, but it exists in those reports, and dropping data
     during a re-ingest to match a newer convention would make the old rows
     describe something they are not.
+
+    `cape_net` is a dict (tests, older callers) or the ingest's _Node, in which
+    case malformed entries are named in its warnings.
     """
+    net = cape_net if isinstance(cape_net, _Node) else _Node(
+        cape_net if isinstance(cape_net, dict) else {}, "cape.network", [])
     rows = []
-    for c in cape_net.get("tcp_connections", []):
-        if not isinstance(c, dict):
-            continue
-        dst = c.get("dst", "") or ""
-        src = c.get("src", "") or ""
+    for c in net.items("tcp_connections"):
+        dst = c.text("dst", "") or ""
+        src = c.text("src", "") or ""
         dst_ip, dst_port = (dst.rsplit(":", 1) + ["0"])[:2] if ":" in dst else (dst, "0")
         src_ip, src_port = (src.rsplit(":", 1) + ["0"])[:2] if ":" in src else (src, "0")
-        attempts = c.get("attempts")
         rows.append((
             src_ip,
-            int(src_port) if src_port.isdigit() else 0,
+            _port(src_port, c, "src"),
             dst_ip,
-            int(dst_port) if dst_port.isdigit() else 0,
-            int(attempts) if isinstance(attempts, int) else None,
+            _port(dst_port, c, "dst"),
+            c.integer("attempts"),
         ))
     return rows
 
 
-def insert_tcp_events(cur, analysis_id: int, cape_net: dict) -> int:
+def _port(text: str, node: _Node, key: str) -> int:
+    """A TCP port from the text after the last ':', or 0.
+
+    isdecimal, not isdigit: '²'.isdigit() is True and int('²') raises. A port
+    outside 0-65535 is not a port, and one past int4 would fail the INSERT.
+    """
+    if not text.isdecimal():
+        return 0
+    port = int(text)
+    if port > 65535:
+        node.warnings.append(f"{node._at(key)}: port out of range — stored as 0")
+        return 0
+    return port
+
+
+def insert_tcp_events(cur, analysis_id: int, cape_net) -> int:
     """Write this analysis's tcp rows; return how many. Extracted so the choice
     between the two INSERTs is testable — a branch that only exists inside
     ingest_to_db is one no test reaches without a live database, which is how a
@@ -327,6 +549,10 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
 
     Inserts/updates samples, analyses, IOCs, techniques, capabilities,
     signatures, and network events. Returns analysis_id on success.
+
+    Every read from `report` is shape-checked (_Node): a wrong-typed field is
+    skipped and named in report_json["_ingest_warnings"], and the rest of the
+    analysis is still written (#171).
     """
     if not DB_PASSWORD:
         print("  [!] DB ingestion skipped — no database password configured")
@@ -351,18 +577,21 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         return False
 
     try:
+        warnings: list[str] = []
+        root = _read_report(report, warnings)
+
         # --- Upsert sample ---
-        triage = report.get("triage", {})
+        triage = root.obj("triage")
         # SHA-256: prefer triage hashes, then extract from sample filename, then task_id
-        sha256 = triage.get("hashes", {}).get("sha256", "")
+        sha256 = triage.obj("hashes").text("sha256", "")
         if not sha256:
-            name = report.get("sample_name", "")
+            name = root.text("sample_name", "") or ""
             # Sample filenames are often <sha256>.exe — extract if 64+ hex chars
             stem = name.rsplit(".", 1)[0] if "." in name else name
             if len(stem) == 64 and all(c in "0123456789abcdef" for c in stem.lower()):
                 sha256 = stem.lower()
         if not sha256:
-            sha256 = report.get("task_id", "unknown")
+            sha256 = root.text("task_id", "unknown") or "unknown"
 
         # The conflict path has to write the triage columns, not just touch
         # last_seen. create_analysis_row() (pipeline_status.py) inserts this row
@@ -391,18 +620,21 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             RETURNING id
         """, (
             sha256,
-            report.get("sample_name", ""),
-            triage.get("file_type", ""),
-            triage.get("file_mime", ""),
-            triage.get("entropy"),
-            triage.get("ssdeep", ""),
+            root.text("sample_name", ""),
+            triage.text("file_type", ""),
+            triage.text("file_mime", ""),
+            triage.number("entropy"),
+            triage.text("ssdeep", ""),
         ))
         sample_id = cur.fetchone()[0]
 
         # --- Insert analysis ---
-        interp = report.get("llm_interpretation", {})
-        analysis = interp.get("analysis", {})
-        summary = report.get("executive_summary", {})
+        interp = root.obj("llm_interpretation")
+        analysis = interp.obj("analysis")
+        summary = root.obj("executive_summary")
+        cape = root.obj("cape")
+        volatility = root.obj("volatility")
+        ghidra = root.obj("ghidra")
 
         # Programmatic analysis is authoritative for severity. The LLM's
         # `risk_assessment` used to be the last fallback here, which meant that
@@ -414,45 +646,53 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # act on; a model-supplied one looks identical to a real verdict and is
         # trusted like one. The model's view is still stored on the analysis row
         # via the interpretation fields, so nothing is lost but the authority.
-        severity = (report.get("severity")
-                    or summary.get("severity"))
-        family = (report.get("family")
-                  or analysis.get("malware_family_guess"))
+        severity = (root.text("severity", None)
+                    or summary.text("severity", None))
+        family = (root.text("family", None)
+                  or analysis.text("malware_family_guess", None))
+        # model_final if the key is present (even as null), else model_initial —
+        # the nested .get() this replaces.
+        interpret_model = (interp.text("model_final", None) if "model_final" in interp
+                           else interp.text("model_initial", None))
 
         # Analysis row values (shared between INSERT and UPDATE)
         analysis_values = {
             "sample_id": sample_id,
-            "task_id": report.get("task_id", ""),
-            "started_at": report.get("started_at"),
-            "completed_at": report.get("completed_at"),
+            "task_id": root.text("task_id", "", nullable=False),
+            "started_at": root.timestamp("started_at"),
+            "completed_at": root.timestamp("completed_at"),
             "severity": severity,
-            "malscore": report.get("cape", {}).get("malscore"),
+            "malscore": cape.number("malscore"),
             "malware_family_guess": family,
             "triage_completed": bool(triage),
-            "cape_completed": report.get("cape", {}).get("status") == "reported",
-            "cape_task_id": report.get("cape", {}).get("task_id"),
-            "volatility_completed": bool(report.get("volatility", {}).get("plugins")),
-            "volatility_triggered": report.get("volatility", {}).get("triggered", False),
-            "ghidra_completed": bool(report.get("ghidra", {}).get("analyzed_files")),
-            "ghidra_triggered": report.get("ghidra", {}).get("triggered", False),
-            "interpret_completed": interp.get("enabled", False) and "error" not in interp,
-            "summary_completed": bool(summary.get("executive_summary")),
-            "interpret_model": interp.get("model_final", interp.get("model_initial")),
-            "interpret_tool_calls": interp.get("tool_calls_used", 0),
-            "interpret_duration_secs": interp.get("duration_seconds"),
-            "interpret_escalated": interp.get("escalated", False),
-            "possible_prompt_influence": interp.get("possible_prompt_influence", False),
-            "narrative": analysis.get("narrative", ""),
-            "working_notes": analysis.get("working_notes", ""),
-            "executive_summary": summary.get("executive_summary", ""),
-            "plain_english_summary": report.get("plain_english_summary", ""),
+            "cape_completed": cape.raw("status") == "reported",
+            "cape_task_id": cape.integer("task_id"),
+            "volatility_completed": bool(volatility.raw("plugins")),
+            "volatility_triggered": volatility.flag("triggered", False),
+            "ghidra_completed": bool(ghidra.raw("analyzed_files")),
+            "ghidra_triggered": ghidra.flag("triggered", False),
+            "interpret_completed": interp.flag("enabled", False) and "error" not in interp,
+            "summary_completed": bool(summary.raw("executive_summary")),
+            "interpret_model": interpret_model,
+            "interpret_tool_calls": interp.integer("tool_calls_used", 0),
+            "interpret_duration_secs": interp.number("duration_seconds"),
+            "interpret_escalated": interp.flag("escalated", False),
+            "possible_prompt_influence": interp.flag("possible_prompt_influence", False),
+            "narrative": analysis.text("narrative", ""),
+            "working_notes": analysis.text("working_notes", ""),
+            "executive_summary": summary.text("executive_summary", ""),
+            "plain_english_summary": root.text("plain_english_summary", ""),
             "pipeline_status": "completed",
-            "stage_timings": psycopg2.extras.Json(report.get("timing", {})),
+            # jsonb takes any JSON value, so these two are stored as they came.
+            "stage_timings": psycopg2.extras.Json(root.raw("timing", {})),
             "report_json": psycopg2.extras.Json(report),
         }
 
         # Calculate LLM API cost from token usage
-        llm_cost = _calculate_llm_cost(report)
+        llm_cost = _calculate_llm_cost(report, root)
+        if not (math.isfinite(llm_cost) and llm_cost < _LLM_COST_LIMIT):
+            warnings.append("llm cost: token usage prices outside numeric(8,4) — not ingested")
+            llm_cost = None
         analysis_values["llm_cost_usd"] = llm_cost
 
         if existing_analysis_id:
@@ -471,26 +711,30 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             analysis_id = cur.fetchone()[0]
 
         # --- Insert IOCs ---
-        for ioc in report.get("extracted_iocs", []):
+        for ioc in root.items("extracted_iocs"):
+            required = ioc.required_texts("type", "value", "source")
+            if required is None:
+                continue
+            ioc_type, ioc_value, ioc_source = required
             cur.execute("""
                 INSERT INTO ioc_values (type, value)
                 VALUES (%s, %s)
                 ON CONFLICT (type, value) DO UPDATE SET
                     last_seen = NOW()
                 RETURNING id
-            """, (ioc["type"], ioc["value"]))
+            """, (ioc_type, ioc_value))
             ioc_id = cur.fetchone()[0]
 
             cur.execute("""
                 INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING
-            """, (analysis_id, ioc_id, ioc["source"], ioc.get("context", "")))
+            """, (analysis_id, ioc_id, ioc_source, ioc.text("context", "")))
 
         # --- Insert MITRE techniques ---
         # From AI RE
-        for t in analysis.get("attack_techniques", []):
-            tid = t.get("id", "")
+        for t in analysis.items("attack_techniques"):
+            tid = t.text("id", "", nullable=False)
             tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
                 INSERT INTO technique_values (technique_id, technique_name, tactics)
@@ -498,13 +742,13 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 ON CONFLICT (technique_id) DO UPDATE SET
                     tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (tid, t.get("name", ""), tactics or None))
+            """, (tid, t.text("name", ""), tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
             else:
                 cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (t.get("id", ""),))
+                            (tid,))
                 tech_id = cur.fetchone()[0]
 
             cur.execute("""
@@ -514,8 +758,9 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             """, (analysis_id, tech_id, "AI Reverse Engineering"))
 
         # From Cape TTPs
-        for t in report.get("cape", {}).get("mitre_ttps", []):
-            tid = t.get("id", "")
+        for t in cape.items("mitre_ttps"):
+            tid = t.text("id", "", nullable=False)
+            source_signature = t.text("source_signature", "")
             tactics = MITRE_TACTICS.get(tid, [])
             cur.execute("""
                 INSERT INTO technique_values (technique_id, technique_name, tactics)
@@ -523,50 +768,50 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 ON CONFLICT (technique_id) DO UPDATE SET
                     tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
                 RETURNING id
-            """, (tid, t.get("source_signature", ""), tactics or None))
+            """, (tid, source_signature, tactics or None))
             row = cur.fetchone()
             if row:
                 tech_id = row[0]
             else:
                 cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (t.get("id", ""),))
+                            (tid,))
                 tech_id = cur.fetchone()[0]
 
             cur.execute("""
                 INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
-            """, (analysis_id, tech_id, "Cape", t.get("source_signature", "")))
+            """, (analysis_id, tech_id, "Cape", source_signature))
 
         # --- Insert capabilities ---
-        for cap in analysis.get("capabilities", []):
+        for cap in analysis.texts("capabilities"):
             cur.execute("""
                 INSERT INTO capabilities (analysis_id, description, source_stage)
                 VALUES (%s, %s, %s)
             """, (analysis_id, cap, "AI Reverse Engineering"))
 
         # --- Insert signatures ---
-        for sig in report.get("cape", {}).get("signatures", []):
+        for sig in cape.items("signatures"):
             cur.execute("""
                 INSERT INTO signatures (analysis_id, name, severity, description)
                 VALUES (%s, %s, %s, %s)
-            """, (analysis_id, sig.get("name", ""), sig.get("severity", 0),
-                  sig.get("description", "")))
+            """, (analysis_id, sig.text("name", "", nullable=False),
+                  sig.integer("severity", 0), sig.text("description", "")))
 
         # --- Insert network events ---
-        cape_net = report.get("cape", {}).get("network", {})
-        for d in cape_net.get("dns_queries", []):
+        cape_net = cape.obj("network")
+        for d in cape_net.items("dns_queries"):
             cur.execute("""
                 INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers)
                 VALUES (%s, 'dns', %s, %s, %s)
-            """, (analysis_id, d.get("domain", ""), d.get("type", ""),
-                  psycopg2.extras.Json(d.get("answers", []))))
+            """, (analysis_id, d.text("domain", ""), d.text("type", ""),
+                  psycopg2.extras.Json(d.raw("answers", []))))
 
-        for h in cape_net.get("http_requests", []):
+        for h in cape_net.items("http_requests"):
             cur.execute("""
                 INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host)
                 VALUES (%s, 'http', %s, %s, %s)
-            """, (analysis_id, h.get("method", ""), h.get("url", ""), h.get("host", "")))
+            """, (analysis_id, h.text("method", ""), h.text("url", ""), h.text("host", "")))
 
         # One row per DESTINATION for post-#479 reports and one row per
         # CONNECTION for older ones, with `attempts` recording which — see
@@ -575,10 +820,14 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         insert_tcp_events(cur, analysis_id, cape_net)
 
         # --- Insert IOC-technique mappings ---
-        for mapping in report.get("ioc_technique_mappings", []):
+        for mapping in root.items("ioc_technique_mappings"):
+            required = mapping.required_texts("ioc_type", "ioc_value", "technique_id")
+            if required is None:
+                continue
+            ioc_type, ioc_value, technique_id = required
             # Look up ioc_id
             cur.execute("SELECT id FROM ioc_values WHERE type = %s AND value = %s",
-                        (mapping["ioc_type"], mapping["ioc_value"]))
+                        (ioc_type, ioc_value))
             ioc_row = cur.fetchone()
             if not ioc_row:
                 continue
@@ -589,11 +838,11 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 VALUES (%s, %s)
                 ON CONFLICT (technique_id) DO NOTHING
                 RETURNING id
-            """, (mapping["technique_id"], mapping.get("technique_name", "")))
+            """, (technique_id, mapping.text("technique_name", "")))
             tech_row = cur.fetchone()
             if not tech_row:
                 cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (mapping["technique_id"],))
+                            (technique_id,))
                 tech_row = cur.fetchone()
 
             if tech_row:
@@ -603,9 +852,9 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                     VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING
                 """, (analysis_id, ioc_row[0], tech_row[0],
-                      mapping.get("evidence", ""),
-                      mapping.get("method", "programmatic"),
-                      mapping.get("confidence", "high")))
+                      mapping.text("evidence", ""),
+                      mapping.text("method", "programmatic", nullable=False),
+                      mapping.text("confidence", "high")))
 
         # --- Insert cross-tool correlations (#423) ---
         #
@@ -619,7 +868,8 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # already applies to its own cache.
         cur.execute("DELETE FROM correlations WHERE analysis_id = %s", (analysis_id,))
 
-        for row in correlation_rows(report.get("cross_correlations", []) or []):
+        findings = root.items("cross_correlations")
+        for row in correlation_rows([f.data for f in findings]):
             cur.execute("""
                 INSERT INTO correlations
                     (analysis_id, type, severity, title, detail, sources, mitre, pid)
@@ -632,15 +882,27 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # non-empty means ran blind (#411). Written after the inserts and inside
         # the same transaction, so a failure part-way cannot leave an analysis
         # claiming it was correlated when nothing landed.
-        warnings = [str(w)[:500] for w in (report.get("correlation_warnings") or [])]
+        corr_warnings = [str(w)[:500] for w in root.array("correlation_warnings")]
         cur.execute(
             "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
-            (warnings, analysis_id))
+            (corr_warnings, analysis_id))
+
+        # What a malformed report cost, recorded beside the report it describes.
+        # Merged into report_json rather than a new column (no migration), and
+        # only when there is something to say, so a well-formed report's stored
+        # JSON is exactly what it was. Last, so every read has run.
+        if warnings:
+            capped = _capped(warnings)
+            cur.execute(
+                "UPDATE analyses SET report_json = report_json || %s WHERE id = %s",
+                (psycopg2.extras.Json({"_ingest_warnings": capped}), analysis_id))
+            print(f"  [!] DB: {len(set(warnings))} malformed report field(s) not ingested:")
+            for w in capped:
+                print(f"      {w}")
 
         conn.commit()
-        n_corr = len(report.get("cross_correlations", []) or [])
         print(f"  DB: ingested analysis {analysis_id} for sample {sample_id} "
-              f"({n_corr} correlations, {len(warnings)} correlation warnings)")
+              f"({len(findings)} correlations, {len(corr_warnings)} correlation warnings)")
 
         # Cross-sample campaign edges (non-fatal enrichment, separate from the
         # committed ingest above). A failure here never fails the analysis ingest.

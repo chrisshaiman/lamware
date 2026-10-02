@@ -1,0 +1,279 @@
+{
+ "task_id": "v655_5b4f596d3cf5",
+ "sample_name": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194.exe",
+ "started_at": "2026-10-01T07:01:28.847471+00:00",
+ "completed_at": "2026-10-01T07:43:39.324106+00:00",
+ "triage": {
+  "file_type": "PE32 executable for MS Windows 6.00 (GUI), Intel i386 Mono/.Net assembly, 3 sections",
+  "file_mime": "application/vnd.microsoft.portable-executable",
+  "file_size": 1102336,
+  "hashes": {
+   "md5": "00000000000000000000000000000000",
+   "sha1": "0000000000000000000000000000000000000000",
+   "sha256": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194"
+  },
+  "ssdeep": "24576:synthetic:synthetic",
+  "entropy": 7.78
+ },
+ "cape": {
+  "task_id": 1275,
+  "status": "reported",
+  "malscore": 10.0,
+  "signatures": [
+   {
+    "name": "stealth_network",
+    "severity": 1,
+    "description": "Network activity detected but not expressed in monitor API logs"
+   },
+   {
+    "name": "antivm_checks_available_memory",
+    "severity": 1,
+    "description": "Checks available memory"
+   },
+   {
+    "name": "queries_computer_name",
+    "severity": 1,
+    "description": "Queries computer hostname"
+   },
+   {
+    "name": "queries_user_name",
+    "severity": 1,
+    "description": "Queries the username"
+   }
+  ],
+  "mitre_ttps": [
+   {
+    "id": "T1071",
+    "source_signature": "stealth_network"
+   },
+   {
+    "id": "T1082",
+    "source_signature": "hardware_id_profiling"
+   },
+   {
+    "id": "T1082",
+    "source_signature": "antivm_checks_available_memory"
+   },
+   {
+    "id": "T1542.003",
+    "source_signature": "suspicious_iocontrol_codes"
+   }
+  ],
+  "network": {
+   "dns_queries": [
+    {
+     "domain": "c2.example.invalid",
+     "type": "A",
+     "answers": [
+      {
+       "type": "A",
+       "data": "192.0.2.10"
+      }
+     ]
+    }
+   ],
+   "domains": [
+    "c2.example.invalid"
+   ],
+   "http_requests": [
+    {
+     "method": "GET",
+     "url": "http://c2.example.invalid/p",
+     "host": "c2.example.invalid"
+    }
+   ],
+   "tcp_connections": [
+    {
+     "dst": "192.0.2.10:443",
+     "attempts": 97
+    },
+    {
+     "dst": "192.0.2.10:80",
+     "attempts": 23
+    },
+    {
+     "src": "192.0.2.200:49711",
+     "dst": "192.0.2.10:8080"
+    }
+   ],
+   "tcp_attempts_total": 120,
+   "tcp_destinations_total": 2
+  }
+ },
+ "volatility": {
+  "triggered": true,
+  "plugins": {
+   "cmdline": [],
+   "pstree": [],
+   "dlllist": [],
+   "psscan": [],
+   "handles": [],
+   "malfind": [],
+   "vadinfo": []
+  }
+ },
+ "ghidra": {
+  "triggered": true,
+  "dotnet_routed": true,
+  "analyzed_files": [
+   {
+    "filename": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+    "sha256": "f08ab71bad8b9299c8e385863ef294568453d0dedf70e57cd36229da1d2d2d47",
+    "analysis_success": true,
+    "functions_count": 7
+   }
+  ]
+ },
+ "llm_interpretation": {
+  "enabled": true,
+  "provider": "anthropic",
+  "model_initial": "local-qwen-llamacpp-re",
+  "model_final": "local-qwen-llamacpp-re",
+  "escalated": false,
+  "tool_calls_used": 10,
+  "duration_seconds": 1255.3,
+  "possible_prompt_influence": false,
+  "usage": {
+   "input_tokens": 11643,
+   "output_tokens": 1498
+  },
+  "analysis": {
+   "malware_family_guess": "Packer/Loader Component",
+   "capabilities": [
+    "Runtime payload decryption",
+    "Memory manipulation",
+    "Dynamic initialization",
+    "Configuration parsing"
+   ],
+   "narrative": "Synthetic narrative placeholder.",
+   "working_notes": "Synthetic working notes placeholder.",
+   "attack_techniques": [
+    {
+     "id": "T1027",
+     "name": "Obfuscated Files or Information"
+    },
+    {
+     "id": "T1055",
+     "name": "Process Injection"
+    },
+    {
+     "id": "T1070",
+     "name": "Indicator Removal"
+    }
+   ],
+   "risk_assessment": "placeholder"
+  }
+ },
+ "executive_summary": {
+  "severity": "high",
+  "usage": {
+   "input_tokens": 3975,
+   "output_tokens": 4096
+  },
+  "model": "local-qwen-llamacpp",
+  "executive_summary": "Synthetic executive summary placeholder."
+ },
+ "evasion_analysis": {
+  "enabled": false,
+  "reason": "not_triggered"
+ },
+ "visual_analysis": {
+  "enabled": true,
+  "model_final": "local-qwen-llamacpp-re",
+  "usage": {
+   "input_tokens": 1494,
+   "output_tokens": 514
+  }
+ },
+ "plain_english_summary": "Synthetic plain-English placeholder.",
+ "plain_english_usage": {
+  "input_tokens": 644,
+  "output_tokens": 77
+ },
+ "plain_english_model": "local-qwen-llamacpp",
+ "severity": "critical",
+ "family": "packer/loader component",
+ "_family_source": "llm_interpretation",
+ "timing": {
+  "triage": 2.1,
+  "cape": 390.6,
+  "pcap": 1.4,
+  "volatility": 122.6,
+  "ghidra": 194.2,
+  "interpret": 1262.5,
+  "summary": 424.4,
+  "total": 2530.5
+ },
+ "extracted_iocs": [
+  {
+   "type": "file:hashes.SHA-256",
+   "value": "4799ca9ce5fb4663f507b5f5ad0e3a01124ec97e9025195efccf5aea90ec1194",
+   "source": "Triage",
+   "context": "Sample hash"
+  },
+  {
+   "type": "domain-name",
+   "value": "c2.example.invalid",
+   "source": "Cape",
+   "context": "DNS query"
+  },
+  {
+   "type": "ipv4-addr",
+   "value": "192.0.2.10",
+   "source": "PCAP (Zeek)",
+   "context": "Connection"
+  },
+  {
+   "type": "mutex",
+   "value": "Global\\synthetic",
+   "source": "Volatility"
+  }
+ ],
+ "ioc_technique_mappings": [
+  {
+   "ioc_type": "domain-name",
+   "ioc_value": "c2.example.invalid",
+   "technique_id": "T1071",
+   "technique_name": "Application Layer Protocol",
+   "evidence": "Domain contacted during detonation",
+   "method": "programmatic",
+   "confidence": "high"
+  },
+  {
+   "ioc_type": "ipv4-addr",
+   "ioc_value": "192.0.2.10",
+   "technique_id": "T1095",
+   "technique_name": "Non-Application Layer Protocol",
+   "evidence": "Direct TCP connection to remote host"
+  }
+ ],
+ "cross_correlations": [
+  {
+   "type": "cmdline_spoofing",
+   "severity": "critical",
+   "title": "Command line spoofing detected in PID 1448",
+   "detail": "Process command line changed between execution and memory dump.",
+   "pid": 1448,
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1036 — Masquerading"
+  },
+  {
+   "type": "injection_corroborated",
+   "severity": "medium",
+   "title": "Process injection into PID 1364 corroborated in memory",
+   "detail": "Synthetic detail.",
+   "pid": 1364,
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1055 — Process Injection"
+  }
+ ],
+ "correlation_warnings": [
+  "synthetic: volatility insights unavailable"
+ ]
+}

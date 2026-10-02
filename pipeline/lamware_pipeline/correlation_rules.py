@@ -1215,6 +1215,10 @@ def _clip(value, limit: int) -> str | None:
     return text[:limit] if len(text) > limit else text
 
 
+def _or_default(value, default: str):
+    return default if value is None else value
+
+
 def correlation_rows(findings: list[dict]) -> list[tuple]:
     """Findings -> row tuples matching CORRELATION_COLUMNS.
 
@@ -1234,10 +1238,13 @@ def correlation_rows(findings: list[dict]) -> list[tuple]:
             source_list = [_clip(sources, _MAX_SOURCE)]
         else:
             source_list = None
+        # type/severity/title are NOT NULL. `.get(k, default)` falls back only
+        # when k is absent, so {"type": null} became a NULL and failed the whole
+        # ingest transaction (#171); null takes the default too.
         rows.append((
-            _clip(f.get("type", "unknown"), _MAX_TYPE),
-            _clip(f.get("severity", "unknown"), _MAX_SEVERITY),
-            _clip(f.get("title", ""), _MAX_TITLE),
+            _clip(_or_default(f.get("type"), "unknown"), _MAX_TYPE),
+            _clip(_or_default(f.get("severity"), "unknown"), _MAX_SEVERITY),
+            _clip(_or_default(f.get("title"), ""), _MAX_TITLE),
             _clip(f.get("detail"), _MAX_DETAIL),
             source_list,
             _clip(f.get("mitre"), _MAX_MITRE),
