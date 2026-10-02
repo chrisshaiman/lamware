@@ -124,6 +124,7 @@ def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, 
 
     def loaded_payload(f: dict) -> bool:
         return (bool(f.get("analysis_success"))
+                and f.get("in_project") is not False
                 and (f.get("functions_count") or 0) > 0
                 and f.get("source") in PAYLOAD_SOURCES
                 and bool(f.get("project_dir")) and bool(f.get("program_name")))
@@ -581,6 +582,55 @@ def make_ghidra_verifier(ghidra_cmd: str, timeout: int = 180):
     return verify
 
 
+def _project_programs(project: Path) -> set[str] | None:
+    """Program names a Ghidra project holds, from its own index, or None.
+
+    ``analysis.rep/idata/~index.dat`` lists one ``  <id>:<name>:<uuid>`` line
+    per stored program. None means the index could not be read, which is not
+    evidence the program is missing.
+    """
+    try:
+        text = (project / "analysis.rep" / "idata" / "~index.dat").read_text(errors="replace")
+    except OSError:
+        return None
+    names = set()
+    for line in text.splitlines():
+        parts = line.strip().split(":")
+        if len(parts) >= 3 and parts[0].isdigit():
+            names.add(parts[1])
+    return names
+
+
+def record_project_presence(analyzed_files: list[dict], output_dir: Path) -> list[str]:
+    """Mark every program claiming success with whether its project holds it.
+
+    The #490 verifier opens only the candidates selection reaches, so programs
+    lost from their project went unreported: 269 under #648, 36 under #655,
+    each still listed with a function count. This checks all of them, cheaply,
+    by reading each project's index rather than launching Ghidra per program
+    (formbook has seven). Sets ``in_project`` to True, False or None (index
+    unreadable) and returns one warning per missing program, worded like the
+    verifier's so readers of either (api/app/flow.py) match both.
+    """
+    warnings: list[str] = []
+    cache: dict[Path, set[str] | None] = {}
+    for af in analyzed_files:
+        name = af.get("program_name")
+        if not (af.get("analysis_success") and name):
+            continue
+        base = af.get("host_output_dir")
+        project = (Path(base) if base else output_dir) / "project"
+        if project not in cache:
+            cache[project] = _project_programs(project)
+        held = cache[project]
+        af["in_project"] = None if held is None else name in held
+        if af["in_project"] is False:
+            warnings.append(
+                f"Ghidra: {name[:16]} claims {af.get('functions_count') or 0} functions "
+                f"but is not in {project} — tool calls against it would all fail")
+    return warnings
+
+
 def propagate_project_dir(analyzed_files: list[dict],
                           output_dir: Path,
                           verify=None,
@@ -635,7 +685,8 @@ def propagate_project_dir(analyzed_files: list[dict],
         return str(Path(base) / "project") if base else str(output_dir / "project")
 
     usable = [af for af in analyzed_files
-              if af.get("analysis_success") and af.get("project_dir")]
+              if af.get("analysis_success") and af.get("project_dir")
+              and af.get("in_project") is not False]
     if not usable:
         return None, None
 
@@ -806,7 +857,12 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     # Analyze up to 5 dropped PEs (avoid spending hours on prolific droppers)
     for pe_path in pe_files[:5]:
         print(f"    Analyzing {pe_path.name}...")
-        file_result = run_ghidra_on_file(pe_path, output_dir, ghidra_cmd)
+        # Its own project, named by content: every headless run begins with
+        # "Creating project", so two PEs sharing output_dir/project left only
+        # the last (#655; 36 programs lost across 14 analyses). Same rule as
+        # the shellcode loader since #648.
+        pe_out = output_dir / f"pe_{_content_token({'path': pe_path})}"
+        file_result = run_ghidra_on_file(pe_path, pe_out, ghidra_cmd)
         result["analyzed_files"].append(file_result)
 
     # Analyze shellcode candidates from malfind
@@ -826,6 +882,8 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
     # Verified, not assumed. The pairing is what the interpret stage brokers
     # every tool call through, and a claimed-successful analysis is not proof
     # that its program is still retrievable from the shared project (#490).
+    presence_warnings = record_project_presence(result["analyzed_files"], output_dir)
+
     selection_warnings: list[str] = []
     project_dir, program_name = propagate_project_dir(
         result["analyzed_files"], output_dir,
@@ -835,8 +893,13 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         result["project_dir"] = project_dir
         result["program_name"] = program_name
 
+    # A program the presence check found missing is often the same one the
+    # verifier rejects; say it once.
+    selection_warnings = [w for w in selection_warnings
+                          if not any(w.split(" claims ")[0] == p.split(" claims ")[0]
+                                     for p in presence_warnings)]
     result["analysis_warnings"] = (collect_analysis_warnings(result["analyzed_files"])
-                                   + selection_warnings)
+                                   + presence_warnings + selection_warnings)
 
     return result
 
