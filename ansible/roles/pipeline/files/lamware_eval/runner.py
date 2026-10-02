@@ -254,6 +254,28 @@ def correlated_evidence(report: dict) -> dict:
     return out
 
 
+#: Labels that are not attribution. A family token has to be discriminative to be
+#: worth looking for in the evidence: "unknown" appears in plenty of clean text.
+NOT_A_FAMILY = frozenset({"unclassified", "unknown", "trojan", "generic", "malware"})
+
+
+def family_label_leak(report: dict, family: str) -> bool | None:
+    """Does the evidence an arm is shown name this sample's family? (#634)
+
+    True when the held-out label appears in `correlated_evidence(report)`, False
+    when it does not, None when `family` is not a discriminative token and so
+    cannot be checked. None is not a pass: a caller that counts it as one would
+    report every `unclassified` sample as clean without having looked.
+
+    Lives here, beside `correlated_evidence`, so the deployed-corpus test and the
+    promotion tool run the same check rather than two copies of it.
+    """
+    family = (family or "").strip().lower()
+    if not family or family in NOT_A_FAMILY:
+        return None
+    return family in json.dumps(correlated_evidence(report)).lower()
+
+
 def evidence_for(arm: Arm, report: dict) -> dict:
     """What THIS arm is shown beyond the Ghidra dump.
 

@@ -29,20 +29,27 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 MANIFESTS = sorted((ROOT / "ansible" / "roles" / "pipeline" / "files" / "eval").glob("*.json"))
 
-# Words that are not attribution: a family token has to be discriminative.
-_NOT_A_FAMILY = {"unclassified", "unknown", "trojan", "generic", "malware"}
-
 
 def _samples(manifest: Path):
     data = json.loads(manifest.read_text())
     return data.get("samples", data) if isinstance(data, dict) else data
 
 
-def _evidence_text(report: dict) -> str:
-    """Everything the correlated arm is shown, as one lowercase blob."""
+def _family_label_leak(report: dict, family: str) -> bool | None:
+    """The check itself lives in the runner so `lamware_eval.promote` runs the
+    same one before a sample enters the corpus."""
     sys.path.insert(0, str(ROOT / "ansible" / "roles" / "pipeline" / "files"))
-    from lamware_eval.runner import correlated_evidence
-    return json.dumps(correlated_evidence(report)).lower()
+    from lamware_eval.runner import family_label_leak
+    return family_label_leak(report, family)
+
+
+def test_the_check_sees_a_planted_label():
+    """Guards the guard: the corpus is absent in CI, so without this the
+    parametrized test below would skip forever and prove nothing."""
+    report = {"cape": {"signatures": [{"name": "x", "description": "Formbook C2"}]}}
+    assert _family_label_leak(report, "formbook") is True
+    assert _family_label_leak(report, "agenttesla") is False
+    assert _family_label_leak(report, "unclassified") is None
 
 
 def test_there_are_manifests_to_check():
@@ -54,13 +61,14 @@ def test_no_sample_leaks_its_family_into_behavioural_evidence(manifest):
     checked, leaks = 0, []
     for s in _samples(manifest):
         family = (s.get("mb_family") or "").strip().lower()
-        if not family or family in _NOT_A_FAMILY:
-            continue
         report_path = Path(s["corpus_dir"]) / "report.json"
         if not report_path.exists():
             continue
+        leak = _family_label_leak(json.loads(report_path.read_text()), family)
+        if leak is None:
+            continue                      # not a discriminative label
         checked += 1
-        if family in _evidence_text(json.loads(report_path.read_text())):
+        if leak:
             leaks.append(f"{Path(s['corpus_dir']).name} leaks {family!r}")
     if checked == 0:
         pytest.skip(f"{manifest.name}: corpus not deployed here")
