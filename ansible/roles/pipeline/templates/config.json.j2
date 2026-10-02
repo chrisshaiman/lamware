@@ -31,6 +31,9 @@
       backend: a cloud model answers in seconds, a local synthesis takes minutes.
       At the previous hardcoded 30s the forced final could never arrive. #}
   "interpret_force_final_grace": {{ interpret_force_final_grace | default(300) }},
+  {#- Seconds of budget held back for synthesis: no tool calls are granted inside
+      it (#240). The shipped value lives in roles/interpret/defaults/main.yml. #}
+  "interpret_synthesis_reserve": {{ interpret_synthesis_reserve | default(600) }},
   "reports_dir": {{ pipeline_reports_dir | to_json }},
   "cape_poll_interval": {{ pipeline_cape_poll_interval }},
   "cape_timeout": {{ pipeline_cape_timeout }},

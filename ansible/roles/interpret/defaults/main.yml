@@ -124,7 +124,25 @@ interpret_timeout: 3600
 # the thing measured at 1041s above. Note this grace is currently moot when the
 # container is mid-request: it exits 0 without emitting anything, which is a
 # protocol bug (#588), not something a longer grace fixes.
+#
+# Correction (#240): the "exits 0 without emitting anything" above was the
+# orchestrator, not the container. It stopped reading stdout after the grace, so
+# a final the container HAD written was never parsed. Both redet644 .NET runs
+# (2026-09-27) show it: request_result with output_tokens>0, then returncode 0
+# and "did not produce a forced final". The loop now reads until the grace ends.
 interpret_force_final_grace: 600
+
+# Synthesis reserve (#240): stop granting tool calls once this many seconds of
+# interpret_timeout remain, and answer the next tool call with force_final. The
+# budget covers the tool loop AND synthesis; without a reserve a run can spend
+# all of it on tools and lose everything the loop earned (qwen@30 run B,
+# 2026-07-27: SIGKILLed four minutes into synthesis).
+#
+# 600 because reserve + grace is the synthesis window a run is guaranteed: 1200s
+# here, against the one measured local synthesis of 1041s (salat_d26bc055). It
+# costs the tool loop 600 of its 3600s; that run's tool phase took 973s. One
+# measurement, so this is a floor, not a fit. 0 disables the reserve.
+interpret_synthesis_reserve: 600
 
 # Input caps
 interpret_max_imports: 200

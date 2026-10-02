@@ -169,22 +169,10 @@ def test_the_exit_status_is_read_before_the_orchestrator_kills_it():
 # budget, on a container that was alive and working. Three rounds of chasing
 # tracebacks and exit codes went into a crash that never happened.
 
-def _stage_src() -> str:
-    return (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
-            / "files" / "stages" / "interpret.py").read_text(encoding="utf-8")
-
-
-def test_the_timeout_path_reports_a_timeout_not_a_death():
-    """Anchored on the timeout RETURN BLOCK, not the file. "this is not a crash"
-    also appears in _describe_exit, so a whole-file search passed even after the
-    timeout message was gutted — verified by mutation."""
-    src = _stage_src()
-    start = src.index('if timed_out:')
-    block = src[start:src.index("trail.event(\"container_exited_without_final\"", start)]
-    assert '"timed_out": True' in block, "the timeout path is not distinguished in the result"
-    assert "timed out after" in block, "the timeout message does not say it timed out"
-    assert "not a crash" in block, \
-        "the timeout message does not say it is not a crash — the wording IS the bug"
+# The timeout path is now exercised against a real child process in
+# test_interpret_forced_final_read.py (#240): the source-text checks that
+# lived here asserted the `if timed_out:` block and `proc.wait(timeout=
+# force_final_grace)`, which was the construct that dropped a written final.
 
 
 def test_the_budget_fits_the_local_model():
@@ -217,20 +205,3 @@ def test_the_budget_fits_the_local_model():
     assert grace >= 300, (
         f"the forced-final grace ships as {grace}s. The forced final is itself a "
         f"synthesis over the same large context, measured at 1041s")
-
-
-def test_the_timeout_and_eof_paths_do_not_share_a_message():
-    """They converged. That convergence IS the defect being fixed."""
-    src = _stage_src()
-    ti = src.index('"timed_out": True')
-    eof = src.index('trail.event("container_exited_without_final"')
-    assert ti < eof, "the timeout case must return before the generic exited-without-final path"
-
-
-def test_the_forced_final_grace_is_not_hardcoded_to_thirty_seconds():
-    """30s could never be met by a local synthesis, so the forced final never
-    arrived and every timeout looked like a death."""
-    src = _stage_src()
-    assert "proc.wait(timeout=force_final_grace)" in src, \
-        "the forced-final grace is still hardcoded"
-    assert "force_final_grace: int = 300" in src, "the default grace is not 300s"
