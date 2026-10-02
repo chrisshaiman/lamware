@@ -31,6 +31,18 @@ log = logging.getLogger(__name__)
 
 CAPE_STORAGE = Path("/opt/CAPEv2/storage/analyses")
 
+# get_api_traces output caps. The stored summary is already bounded by the
+# pipeline (stages/process_activity.py); these bound what one tool call puts in
+# the model's context. Re-capping strings here as well is deliberate: the
+# report is sample-influenced data and older rows were not written by this code.
+_TRACE_MAX_PROCESSES_SHOWN = 20
+_TRACE_MAX_APIS_SHOWN = 25
+_TRACE_MAX_APIS_FILTERED = 50
+_TRACE_MAX_CATEGORIES_SHOWN = 32
+_TRACE_MAX_CMDLINE_CHARS = 1024
+_TRACE_MAX_NAME_CHARS = 260
+_TRACE_MAX_LABEL_CHARS = 128
+
 TOOL_DEFINITIONS = [
     {
         "name": "search_iocs",
@@ -283,8 +295,15 @@ TOOL_DEFINITIONS = [
     {
         "name": "get_api_traces",
         "description": (
-            "Get Cape API call traces for the CURRENT analysis, optionally "
-            "filtered by process name or API name substring."
+            "Get the process tree and per-process API activity CAPE recorded "
+            "for the CURRENT analysis: pid, parent pid, name, command line, and "
+            "API call COUNTS by category and by API name (not individual calls "
+            "or their arguments). Optionally filter by process name substring or "
+            "pid, and by API name substring. Shows up to "
+            f"{_TRACE_MAX_PROCESSES_SHOWN} processes and the "
+            f"{_TRACE_MAX_APIS_SHOWN} most-called APIs per process unless "
+            "api_filter is given. An error means the data is unavailable, never "
+            "that the sample made no calls."
         ),
         "input_schema": {
             "type": "object",
@@ -825,47 +844,134 @@ def _get_pcap_summary(args: dict, report: dict) -> dict:
     return {"pcap_analysis": pcap}
 
 
+def _trace_str(value: object, limit: int) -> str:
+    s = value if isinstance(value, str) else ("" if value is None else str(value))
+    return s[:limit]
+
+
+def _trace_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _trace_counts(value: object, limit: int, needle: str = "") -> tuple[dict, int]:
+    """(at most `limit` label->count pairs, how many matched before the cap)."""
+    if not isinstance(value, dict):
+        return {}, 0
+    matched = [(k, v) for k, v in value.items()
+               if isinstance(k, str) and _trace_int(v) is not None
+               and (not needle or needle in k.lower())]
+    matched.sort(key=lambda kv: -kv[1])
+    return {_trace_str(k, _TRACE_MAX_LABEL_CHARS): v for k, v in matched[:limit]}, len(matched)
+
+
 def _get_api_traces(args: dict, report: dict) -> dict:
-    cape = report.get("cape") or {}
-    behavior = cape.get("behavior") or {}
-    processes = behavior.get("processes") or []
+    """Process tree and per-process API activity CAPE recorded (#406).
 
-    proc_filter = (args.get("process") or "").lower()
-    api_filter = (args.get("api_filter") or "").lower()
+    Answers from report["cape"]["process_activity"], which the pipeline writes
+    from CAPE's behaviour log. It previously read cape.behavior, which no
+    producer wrote, and so answered "0 processes" for every analysis. The
+    property that matters: when the data is absent this says so, and never
+    answers as though the sample made no API calls.
+    """
+    cape = report.get("cape")
+    cape = cape if isinstance(cape, dict) else {}
+    activity = cape.get("process_activity")
 
-    result = []
-    max_processes = 10
-    max_calls_per_process = 100
-
-    for proc in processes[:max_processes]:
-        proc_name = proc.get("process_name", "") or ""
-        if proc_filter and proc_filter not in proc_name.lower():
-            continue
-
-        calls = proc.get("calls") or []
-        if api_filter:
-            calls = [c for c in calls if api_filter in (c.get("api") or "").lower()]
-
-        total_calls = len(calls)
-        calls = calls[:max_calls_per_process]
-
-        # Cape call entries may contain bytes/datetime — force JSON-safe via default=str
-        safe_calls = json.loads(json.dumps(calls, default=str))
-
-        result.append(
-            {
-                "process_name": proc_name,
-                "pid": proc.get("pid"),
-                "total_calls": total_calls,
-                "calls_shown": len(safe_calls),
-                "calls": safe_calls,
+    if not isinstance(activity, dict):
+        status = cape.get("status")
+        if status != "reported":
+            return {"error": (
+                f"CAPE produced no behavioural report for this analysis "
+                f"(cape status: {status or 'absent'}). Process and API activity "
+                f"is UNKNOWN, not zero — do not conclude the sample made no API calls."
+            )}
+        out: dict = {"error": (
+            "Per-process API activity was not recorded in this analysis's stored "
+            "report (it predates the process_activity summary, #406). This is "
+            "missing data, not evidence that the sample made no API calls."
+        )}
+        det = cape.get("detonation")
+        if isinstance(det, dict) and _trace_int(det.get("process_count")) is not None:
+            out["cape_recorded_totals"] = {
+                "process_count": det["process_count"],
+                "api_calls_total": _trace_int(det.get("api_calls_total")),
+                "detonation_tier": _trace_str(det.get("tier"), 32) or None,
             }
-        )
+        return out
 
-    return {
-        "processes": result,
-        "process_count": len(result),
+    raw_procs = activity.get("processes")
+    raw_procs = [p for p in raw_procs if isinstance(p, dict)] if isinstance(raw_procs, list) else []
+
+    proc_filter = (args.get("process") or "").strip().lower()
+    api_filter = (args.get("api_filter") or "").strip().lower()
+
+    # Both filters run BEFORE the display cap, so a process beyond the first N
+    # is findable (the old loop sliced to 10 first, #404 lead 3). With an
+    # api_filter, a process is kept only if it called a matching API -- or if
+    # its stored API list was capped, because then "no match" is unknown.
+    matched = []
+    for proc in raw_procs:
+        name = _trace_str(proc.get("name"), _TRACE_MAX_NAME_CHARS)
+        pid = _trace_int(proc.get("pid"))
+        if proc_filter and proc_filter not in name.lower() and proc_filter != str(pid):
+            continue
+        if api_filter:
+            apis, apis_matched = _trace_counts(
+                proc.get("apis"), _TRACE_MAX_APIS_FILTERED, api_filter)
+            if not apis_matched and not proc.get("apis_truncated"):
+                continue
+        else:
+            apis, apis_matched = _trace_counts(proc.get("apis"), _TRACE_MAX_APIS_SHOWN)
+        matched.append((proc, name, pid, apis, apis_matched))
+
+    shown = []
+    for proc, name, pid, apis, apis_matched in matched[:_TRACE_MAX_PROCESSES_SHOWN]:
+        categories, _ = _trace_counts(proc.get("categories"), _TRACE_MAX_CATEGORIES_SHOWN)
+        entry = {
+            "pid": pid,
+            "ppid": _trace_int(proc.get("ppid")),
+            "name": name,
+            "command_line": _trace_str(proc.get("command_line"), _TRACE_MAX_CMDLINE_CHARS),
+            "api_calls": _trace_int(proc.get("api_calls")),
+            "categories": categories,
+            "apis": apis,
+            "apis_shown": len(apis),
+            "apis_distinct": _trace_int(proc.get("apis_distinct")),
+            # True when the pipeline's stored list was itself capped, so an API
+            # absent from `apis` may still have been called.
+            "apis_stored_truncated": bool(proc.get("apis_truncated")),
+        }
+        if api_filter:
+            entry["apis_matching_filter"] = apis_matched
+        if proc.get("truncated_fields"):
+            entry["truncated_fields"] = proc.get("truncated_fields")
+        shown.append(entry)
+
+    result: dict = {
+        "source": "CAPE behaviour log, summarised at pipeline time",
+        "recorded_process_count": _trace_int(activity.get("process_count")),
+        "recorded_api_calls_total": _trace_int(activity.get("api_calls_total")),
+        "processes_matched": len(matched),
+        "processes_shown": len(shown),
+        "processes": shown,
     }
+    if len(matched) > len(shown):
+        result["processes_not_shown"] = len(matched) - len(shown)
+    if activity.get("processes_truncated"):
+        result["summary_truncated"] = True
+        result["processes_omitted_from_summary"] = _trace_int(activity.get("processes_omitted"))
+        result["note"] = (
+            "The stored summary keeps only the first processes CAPE recorded; "
+            "a process not found here may be among those omitted."
+        )
+    if result["recorded_process_count"] == 0:
+        det = cape.get("detonation") if isinstance(cape.get("detonation"), dict) else {}
+        result["note"] = (
+            "CAPE recorded no processes. That usually means CAPE lost "
+            "instrumentation, not that the sample did nothing"
+            + (f" (detonation tier: {_trace_str(det.get('tier'), 32)})." if det.get("tier") else ".")
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
