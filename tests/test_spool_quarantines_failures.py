@@ -403,7 +403,10 @@ def test_the_runners_real_processes_are_allowlisted(sp):
         while not sp.started.exists():
             assert time.time() < deadline
             time.sleep(0.05)
-        out = subprocess.run(["ps", "-o", "args=", "-s", str(p.pid)],
+        # -ww: without a terminal ps cuts each line to 80 columns, which drops
+        # the script path from the runner's own line (CI has no tty; it passed
+        # locally only because the terminal was wide).
+        out = subprocess.run(["ps", "-ww", "-o", "args=", "-s", str(p.pid)],
                              capture_output=True, text=True, check=True).stdout
     finally:
         os.killpg(p.pid, signal.SIGKILL)
