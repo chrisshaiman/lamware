@@ -231,9 +231,11 @@ def test_pin_finding_valid_technique():
 # ---------------------------------------------------------------------------
 
 
-def test_cape_task_id_from_id_key():
-    report = {"cape": {"id": 42, "other": "stuff"}}
-    assert _cape_task_id(report) == "42"
+def test_cape_task_id_ignores_id_which_the_pipeline_never_writes():
+    # report["cape"] carries task_id. `id` is CAPE's own task-record key, which
+    # the pipeline never copies into its report (#409); reading it was dead.
+    assert _cape_task_id({"cape": {"id": 42, "status": "reported"}}) is None
+    assert _cape_task_id({"cape": {"id": 42, "task_id": 99}}) == "99"
 
 
 def test_cape_task_id_from_task_id_key():
@@ -251,7 +253,7 @@ def test_cape_task_id_empty_cape():
 
 def test_cape_task_id_none_value():
     # Explicit None in the report should return None
-    assert _cape_task_id({"cape": {"id": None, "task_id": None}}) is None
+    assert _cape_task_id({"cape": {"task_id": None}}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +553,7 @@ def _write_payload(directory, name, size=4096):
     (directory / name).write_bytes(b"MZ\x90\x00" + b"\x00" * (size - 4))
 
 
-REPORT = {"cape": {"id": 77}}
+REPORT = {"cape": {"task_id": 77, "status": "reported"}}
 
 
 def test_payloads_found_outside_dropped(cape_storage):
