@@ -451,7 +451,13 @@ def _ghidra(nodes: list[dict], edges: list[dict], r: dict, cape: dict | None,
 
     # -- which PE-loader entries are the original, which are dropped PEs
     pe_entries = [f for f in files if f.get("source") is None]
-    if trigger == "original_sample_is_pe":
+    # Since #649 the native path analyses the original first whenever it can,
+    # dropped PEs or not, and says so in original_sample_included. Before it,
+    # dropped_pe_with_signatures meant the original was skipped.
+    original_analysed = (trigger == "original_sample_is_pe"
+                         or (trigger == "dropped_pe_with_signatures"
+                             and ghidra.get("original_sample_included") is True))
+    if original_analysed:
         originals, dropped = pe_entries[:1], pe_entries[1:]
     else:
         originals = [f for f in pe_entries
@@ -470,7 +476,7 @@ def _ghidra(nodes: list[dict], edges: list[dict], r: dict, cape: dict | None,
         edges.append(_edge(eid, "sample", "ghidra", "original sample", SKIPPED,
                            reason=f"routed to {routed_label} (wrapper, not a native program)",
                            carried=0))
-    elif trigger == "original_sample_is_pe":
+    elif original_analysed:
         source = ghidra.get("original_sample_source")
         note = ghidra.get("original_sample_note")
         items = [_ghidra_item(f, _text(r.get("sample_name") or "original sample"), lost,
@@ -488,9 +494,16 @@ def _ghidra(nodes: list[dict], edges: list[dict], r: dict, cape: dict | None,
                            reason=why, items=items, expected=1,
                            note=_text(note) if note else None))
     elif trigger == "dropped_pe_with_signatures":
+        if "original_sample_included" not in ghidra:
+            why = ("CAPE dropped PE files; before #649 the original was analysed only "
+                   "when there were none")
+        else:
+            note = ghidra.get("original_sample_note")
+            why = (_text(note) if note else
+                   "no loadable copy of the submitted sample; only dropped PEs went "
+                   "to Ghidra")
         edges.append(_edge(eid, "sample", "ghidra", "original sample", SKIPPED,
-                           reason="CAPE dropped PE files; the original is analysed only "
-                                  "when there are none", carried=0))
+                           reason=why, carried=0))
     elif trigger == "cape_payloads_via_shellcode_loader":
         edges.append(_edge(eid, "sample", "ghidra", "original sample", SKIPPED,
                            reason="no loadable original PE; only CAPE payloads went to Ghidra",
@@ -679,9 +692,13 @@ def _re_agent(nodes: list[dict], edges: list[dict], r: dict, ghidra: dict | None
         match = next((f for f in files if f.get("program_name") == prog), None)
         cape_type = inp.get("cape_type") if "cape_type" in inp else (
             _cape_type_of(match) if match else None)
-        label = _payload_label(cape_type) if (cape_type is not None
-                                              or inp.get("source") == "cape_payload") \
-            else _text(prog or "program")
+        if inp.get("source") == "original_sample":
+            # Native path since #649: the canonical program can be the sample itself.
+            label = "original sample"
+        elif cape_type is not None or inp.get("source") == "cape_payload":
+            label = _payload_label(cape_type)
+        else:
+            label = _text(prog or "program")
         chosen = inp.get("chosen_because")
         functions = _int(inp.get("functions_count"))
         item = _item(label, READ, f"program {_short(prog)}" if prog else None,

@@ -148,6 +148,77 @@ def test_native_injection_buffers_are_skipped_not_missing():
     assert "Artifact extraction only" in e["reason"]
 
 
+# --- dropper: the original alongside its dropped PEs (#649) -----------------
+
+def _cobalt_after_649() -> dict:
+    """rednat_179dcccf0614 as #649's run_ghidra would record it: the beacon
+    first in analyzed_files, then the dropped 781f65c7."""
+    r = copy.deepcopy(load(COBALT_BEFORE_648))
+    g = r["ghidra"]
+    g["original_sample_included"] = True
+    g["original_sample_source"] = "cape_storage"
+    sha = "179dcccf0614" + "0" * 52
+    g["analyzed_files"].insert(0, {"program_name": sha, "sha256": sha, "filename": sha,
+                                   "functions_count": 300, "analysis_success": True})
+    return r
+
+
+def test_a_dropper_before_649_shows_the_original_was_skipped():
+    e = edge(derive_flow(load(COBALT_BEFORE_648)), "sample-ghidra")
+    assert e["status"] == SKIPPED
+    assert "before #649" in e["reason"]
+
+
+def test_a_dropper_after_649_shows_the_original_loaded():
+    flow = derive_flow(_cobalt_after_649())
+    e = edge(flow, "sample-ghidra")
+    assert e["status"] == OK, e
+    [item] = e["items"]
+    assert item["functions"] == 300 and item["source"] == "cape_storage"
+    dropped = edge(flow, "cape-ghidra-dropped")
+    assert [i["functions"] for i in dropped["items"] if i.get("functions")] == [928], (
+        "the original was counted as a dropped PE")
+
+
+def test_a_native_canonical_input_names_the_program_read():
+    """Since the owner's decision on #649 the native path reads the canonical
+    program and records it in llm_interpretation.input."""
+    r = _cobalt_after_649()
+    r["llm_interpretation"] = {**(r.get("llm_interpretation") or {}), "input": {
+        "kind": "canonical", "program_name": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+        "source": "dropped_pe", "functions_count": 928, "cape_type": None,
+        "chosen_because": "canonical"}}
+    r["llm_interpretation"].pop("error", None)
+    e = edge(derive_flow(r), "ghidra-re_agent")
+    assert e["status"] == OK and e["reason"] == "canonical"
+    [item] = e["items"]
+    assert item["kind"] == "canonical" and item["functions"] == 928
+    assert item["sha256"] == "781f65c7f109"
+
+
+def test_a_native_input_that_is_the_original_is_labelled_so():
+    r = _cobalt_after_649()
+    r["llm_interpretation"] = {**(r.get("llm_interpretation") or {}), "input": {
+        "kind": "canonical", "program_name": "179dcccf0614" + "0" * 52,
+        "source": "original_sample", "functions_count": 300, "cape_type": None,
+        "chosen_because": "canonical"}}
+    r["llm_interpretation"].pop("error", None)
+    flow = derive_flow(r)
+    [item] = edge(flow, "ghidra-re_agent")["items"]
+    assert item["label"] == "original sample"
+    assert not [e for e in flow["edges"] if e["id"].endswith("-re_agent")
+                and e["id"] != "ghidra-re_agent"], "a native read drew a wrapper edge"
+
+
+def test_a_dropper_whose_original_could_not_be_loaded_says_why():
+    r = load(COBALT_BEFORE_648)
+    r["ghidra"]["original_sample_included"] = False
+    r["ghidra"]["original_sample_note"] = "pipeline's copy is a DIFFERENT file"
+    e = edge(derive_flow(r), "sample-ghidra")
+    assert e["status"] == SKIPPED
+    assert "DIFFERENT file" in e["reason"]
+
+
 # --- absent is never zero ---------------------------------------------------
 
 def test_a_key_the_report_does_not_have_is_absent_not_zero():

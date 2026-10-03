@@ -46,7 +46,7 @@ def discover_pe_files(cape_data: dict,
 
     Looks across every Cape extraction directory, not just ``dropped/`` —
     which this deployment never writes to, so this returned an empty list for
-    every analysis until #377. Ordered so the caller's ``[:5]`` cap keeps
+    every analysis until #377. Ordered so the caller's ``MAX_PE_FILES`` cap keeps
     Cape's unpacked extractions ahead of raw process dumps.
 
     Returns ``(files, access_error)``. An unreadable Cape storage tree yields
@@ -143,6 +143,68 @@ def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, 
             if f.get("program_name") == canonical and loaded_payload(f):
                 return f, "canonical"
     return None, None
+
+
+def select_native_target(ghidra_data: dict) -> tuple[dict | None, str | None]:
+    """The analysed file the RE agent reads on the native path.
+
+    The canonical program: the one run_ghidra ranked and verified, whose pair
+    is ``ghidra_data["project_dir"]``/``["program_name"]``. Stage 4.5 used to
+    hand the agent ``successful[0]``, the first success by LIST POSITION. The
+    eval has always passed ``report["ghidra"]`` itself, whose top-level pair is
+    the canonical program, so production and the eval read different programs
+    (#667's survey); and #651's routed path (``select_payload_target``) already
+    refuses list position. Since #649 put the submitted sample first in the
+    list, position would also have quietly decided which program the agent
+    reads, a choice the owner made explicitly instead: canonical.
+
+    Returns ``(file, "canonical")``, or ``(successful[0], "first_success_fallback")``
+    when no analysed file matches the canonical pair (a report with no verified
+    program), or ``(None, None)`` when nothing succeeded.
+    """
+    files = [f for f in (ghidra_data.get("analyzed_files") or []) if isinstance(f, dict)]
+    canonical = ghidra_data.get("program_name")
+    if canonical and ghidra_data.get("project_dir"):
+        for f in files:
+            if (f.get("program_name") == canonical and f.get("project_dir")
+                    and f.get("analysis_success")
+                    and f.get("in_project") is not False):
+                return f, "canonical"
+    successful = [f for f in files if f.get("analysis_success")]
+    if successful:
+        return successful[0], "first_success_fallback"
+    return None, None
+
+
+def is_original_sample_entry(ghidra_data: dict, entry: dict) -> bool:
+    """True when ``entry`` is the submitted sample's own analysis.
+
+    run_ghidra puts the original first among PE-loader results (source None)
+    whenever it was included (#649), or alone under original_sample_is_pe.
+    """
+    if not (ghidra_data.get("original_sample_included") is True
+            or ghidra_data.get("trigger_reason") == "original_sample_is_pe"):
+        return False
+    pe_entries = [f for f in (ghidra_data.get("analyzed_files") or [])
+                  if isinstance(f, dict) and f.get("source") is None]
+    return bool(pe_entries) and pe_entries[0] is entry
+
+
+def native_input_record(ghidra_data: dict, target: dict, reason: str) -> dict:
+    """``llm_interpretation.input`` for the native path.
+
+    Same keys as the routed branch's record in run-pipeline, so the flow view
+    and the eval read one shape whichever path ran.
+    """
+    return {
+        "kind": reason,
+        "program_name": target.get("program_name"),
+        "source": ("original_sample" if is_original_sample_entry(ghidra_data, target)
+                   else target.get("source") or "dropped_pe"),
+        "functions_count": target.get("functions_count"),
+        "cape_type": target.get("cape_type"),
+        "chosen_because": reason,
+    }
 
 
 def get_dropped_pe_files(cape_data: dict,
@@ -722,6 +784,39 @@ def propagate_project_dir(analyzed_files: list[dict],
     return host_project, best.get("program_name", "")
 
 
+# PE-loader runs per analysis: the original plus up to four dropped PEs.
+MAX_PE_FILES = 5
+
+
+def _sha256_or_none(path: Path) -> str | None:
+    try:
+        with path.open("rb") as fh:
+            return hashlib.file_digest(fh, "sha256").hexdigest()
+    except OSError:
+        return None
+
+
+def _without_copies_of(original: Path, pe_files: list[Path]
+                       ) -> tuple[list[Path], list[str]]:
+    """Drop dropped PEs that are byte-identical to the original (#649).
+
+    CAPE can extract the sample's own bytes; analysing them twice spends a
+    decompiler run and a cap slot on one program. Compared by sha256, not by
+    name: CAPE names files by hash, the pipeline's copy by upload name. A file
+    that cannot be hashed is kept — the loader will report its own failure.
+    """
+    original_sha = _sha256_or_none(original)
+    if original_sha is None:
+        return pe_files, []
+    kept, dupes = [], []
+    for p in pe_files:
+        if _sha256_or_none(p) == original_sha:
+            dupes.append(p.name)
+        else:
+            kept.append(p)
+    return kept, dupes
+
+
 def _drop_already_queued(pe_files: list[Path],
                          shellcode_candidates: list[dict] | None
                          ) -> tuple[list[Path], list[str]]:
@@ -795,12 +890,23 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         for c in (shellcode_candidates or [])
     )
 
-    # If no dropped PEs, analyze the original sample
-    if not pe_files and original_pe:
-        pe_files = [original_pe]
-        trigger_reason = "original_sample_is_pe"
-    elif pe_files:
+    # The submitted sample goes first, whatever CAPE dropped (#649). It used to
+    # be analysed only when CAPE extracted NO dropped PEs, so for a dropper or a
+    # stager the agent saw what was dropped and never the code that dropped it
+    # (all 32 dropped_pe_with_signatures analyses on the host, 2026-08-19 to
+    # 2026-10-02). First, so the MAX_PE_FILES cap below can never cut it.
+    had_dropped = bool(pe_files)
+    deduplicated: list[str] = []
+    if original_pe:
+        pe_files, deduplicated = _without_copies_of(original_pe, pe_files)
+        pe_files = [original_pe, *pe_files]
+
+    # trigger_reason still says why Ghidra ran: dropped PEs, or a PE original.
+    # Whether the original was analysed is original_sample_included, not this.
+    if had_dropped:
         trigger_reason = "dropped_pe_with_signatures"
+    elif original_pe:
+        trigger_reason = "original_sample_is_pe"
     elif will_analyse_shellcode:
         # Everything was deduped into the shellcode loader, which is the point.
         # Returning "no PE files found" here would abandon the payloads that
@@ -840,11 +946,19 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
         # Reached the original-sample fallback, but only because we could not
         # look at the extracted payloads — the report must not imply we did.
         result["payload_access_error"] = access_error
-    if trigger_reason == "original_sample_is_pe":
+    if include_original:
+        # Explicit on the native path so a reader can tell "not analysed" from
+        # a report written before #649, when dropped_pe_with_signatures alone
+        # meant the original was skipped.
+        result["original_sample_included"] = original_pe is not None
+    if original_pe is not None:
         result["original_sample_source"] = original_source
-        if original_note:
-            result["original_sample_note"] = original_note
-            print(f"    NOTE: {original_note}")
+    if original_note:
+        # A fallback taken, or one refused: either way the report says so.
+        result["original_sample_note"] = original_note
+        print(f"    NOTE: {original_note}")
+    if deduplicated:
+        result["original_sample_deduplicated"] = deduplicated
     if skipped:
         # Say what was not analysed here and why, so a shorter analyzed_files
         # list is legible instead of looking like the payloads went missing.
@@ -854,8 +968,12 @@ def run_ghidra(cape_data: dict, output_dir: Path, sample_path: Path,
             "memory-dumped payloads better than the PE loader (#390)"
         )
 
-    # Analyze up to 5 dropped PEs (avoid spending hours on prolific droppers)
-    for pe_path in pe_files[:5]:
+    # Analyze up to 5 PEs (avoid spending hours on prolific droppers). The
+    # original now takes one of the five, so a dropper with five or more PEs
+    # loses one it used to keep: name the cut, never drop it silently.
+    if len(pe_files) > MAX_PE_FILES:
+        result["pe_cap_skipped"] = [p.name for p in pe_files[MAX_PE_FILES:]]
+    for pe_path in pe_files[:MAX_PE_FILES]:
         print(f"    Analyzing {pe_path.name}...")
         # Its own project, named by content: every headless run begins with
         # "Creating project", so two PEs sharing output_dir/project left only
