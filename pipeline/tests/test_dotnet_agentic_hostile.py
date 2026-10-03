@@ -29,14 +29,8 @@ import time
 from pathlib import Path
 
 import pytest
-from stages import dotnet_tools
-from stages.dotnet_tools import (
-    CSharpIndex,
-    DotnetToolbox,
-    build_dotnet_interpret_init,
-    dotnet_input_record,
-    mask_source,
-)
+from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
+from stages.dotnet_tools import CSharpIndex, DotnetToolbox, build_map, mask_source
 from stages.interpret import run_interpret
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,6 +78,9 @@ def test_no_hostile_source_raises_or_stalls(label):
     init = build_dotnet_interpret_init(_analysis(src), {}, [], "agentic")
     assert "dotnet_agentic_failed" not in init, init.get("dotnet_agentic_failed")
     assert init["dotnet_mode"] == "agentic"
+    # The tools in-process: this is the code the sandbox runs, and the property
+    # is that it answers, whatever the input (the broker's handling of a
+    # sandbox that does not is tested in test_dotnet_tool_sandbox.py).
     tb = DotnetToolbox.from_payload(init)
     for tool, args in [("search_source", {"pattern": '"Load"'}),
                        ("get_class_source", {"class_name": "A"}),
@@ -95,8 +92,9 @@ def test_no_hostile_source_raises_or_stalls(label):
 
 
 def _build_seconds(src: str) -> float:
+    """The map build itself (the sandbox's work), without process start-up noise."""
     t0 = time.perf_counter()
-    build_dotnet_interpret_init(_analysis(src), {}, [], "agentic")
+    build_map(src)
     return time.perf_counter() - t0
 
 
@@ -143,20 +141,22 @@ def test_the_formbook_shaped_corpus_masks_as_before():
 
 # --- fallback: the run goes on as single-shot, and says why --------------------
 
-def _break_the_index(monkeypatch):
-    def boom(self, source):
-        raise RecursionError("maximum recursion depth exceeded")
-    monkeypatch.setattr(dotnet_tools.CSharpIndex, "__init__", boom)
+def _dead_sandbox(tmp_path: Path, code: int = 137) -> dict:
+    """An interpret config whose tool sandbox dies the way an OOM kill does."""
+    dead = tmp_path / "dead-sandbox"
+    dead.write_text(f"#!/bin/sh\ncat >/dev/null\nexit {code}\n")
+    dead.chmod(0o755)
+    return {"dotnet_tools_cmd": str(dead)}
 
 
-def test_a_failing_map_falls_back_to_single_shot_and_says_why(monkeypatch, caplog):
-    _break_the_index(monkeypatch)
+def test_a_failing_map_falls_back_to_single_shot_and_says_why(tmp_path, caplog):
     src = shape.formbook_shaped_source()
-    with caplog.at_level(logging.WARNING, logger="stages.dotnet_tools"):
-        init = build_dotnet_interpret_init(shape.dotnet_analysis(src), {}, [], "agentic")
+    with caplog.at_level(logging.WARNING, logger="stages.dotnet_agentic"):
+        init = build_dotnet_interpret_init(shape.dotnet_analysis(src), {}, [], "agentic",
+                                           _dead_sandbox(tmp_path))
     assert "dotnet_mode" not in init, "the fallback must be the single-shot payload"
     assert init["decompiled_source"].startswith(src[:1000])
-    assert init["dotnet_agentic_failed"].startswith("RecursionError")
+    assert "killed" in init["dotnet_agentic_failed"]
     assert "falling back to single-shot" in caplog.text
     rec = dotnet_input_record(init, "agentic")
     assert rec == {"kind": "dotnet", "dotnet_mode": "single_shot",
@@ -176,45 +176,20 @@ def _echo_container(tmp_path: Path) -> str:
     return str(fake)
 
 
-def test_stage_45_falls_back_end_to_end(tmp_path, monkeypatch):
+def test_stage_45_falls_back_end_to_end(tmp_path):
     """The Stage 4.5 sequence as run-pipeline runs it — build the init, run the
-    interpret, record the input — with the index broken. No exception; the
+    interpret, record the input — with the sandbox dead. No exception; the
     container receives the single-shot payload; the record says why."""
-    _break_the_index(monkeypatch)
     init = build_dotnet_interpret_init(
-        shape.dotnet_analysis(shape.formbook_shaped_source()), {}, [], "agentic")
+        shape.dotnet_analysis(shape.formbook_shaped_source()), {}, [], "agentic",
+        _dead_sandbox(tmp_path))
     out = tmp_path / "out"
     out.mkdir()
     res = run_interpret(init, out, _echo_container(tmp_path), True, 30, {"model": "m"},
                         "/nonexistent/run-ghidra")
     assert "error" not in res, res
     assert shape.DECOY_MARK in res["analysis"]["seen"]["decompiled_source"]
-    assert dotnet_input_record(init, "agentic", res)["agentic_failed"].startswith(
-        "RecursionError")
-
-
-def test_a_failing_toolbox_in_the_broker_falls_back_and_records_it(tmp_path, monkeypatch):
-    """The init built; the broker's own toolbox did not. run_interpret must not
-    raise before its loop: it sends the single-shot payload, writes a trail
-    event, and tags the result."""
-    import stages.interpret as interp
-    init = build_dotnet_interpret_init(
-        shape.dotnet_analysis(shape.formbook_shaped_source()), {}, [], "agentic")
-
-    def boom(*a, **kw):
-        raise MemoryError("index too large")
-    monkeypatch.setattr(interp.DotnetToolbox, "from_payload", boom)
-    out = tmp_path / "out"
-    out.mkdir()
-    res = run_interpret(init, out, _echo_container(tmp_path), True, 30, {"model": "m"},
-                        "/nonexistent/run-ghidra")
-    seen = res["analysis"]["seen"]
-    assert "dotnet_mode" not in seen and shape.DECOY_MARK in seen["decompiled_source"]
-    assert res["dotnet_agentic_failed"].startswith("MemoryError")
-    trail = [json.loads(ln) for ln in Path(res["audit"]["turn_trail"]).read_text().splitlines()]
-    assert any(e["event"] == "dotnet_agentic_failed" for e in trail)
-    rec = dotnet_input_record(init, "agentic", res)
-    assert rec["kind"] == "dotnet" and rec["agentic_failed"].startswith("MemoryError")
+    assert "killed" in dotnet_input_record(init, "agentic")["agentic_failed"]
 
 
 def test_run_pipeline_records_what_actually_ran():
@@ -226,7 +201,8 @@ def test_run_pipeline_records_what_actually_ran():
     called = {n.func.id for n in ast.walk(tree)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert {"build_dotnet_interpret_init", "dotnet_input_record"} <= called
-    assert not {"CSharpIndex", "DotnetToolbox", "build_dotnet_agentic_init"} & called
+    assert not {"CSharpIndex", "DotnetToolbox", "build_map",
+                "build_dotnet_agentic_init"} & called
 
 
 # --- one bad tool call costs one turn -------------------------------------------
@@ -239,31 +215,3 @@ def test_any_tool_exception_is_answered_not_raised(monkeypatch):
     monkeypatch.setattr(DotnetToolbox, "_t_list_classes", broken)
     r = tb.call("list_classes", {})
     assert r == {"error": "tool failed: KeyError: 'lines'"}
-
-
-def test_a_tool_exception_in_the_broker_does_not_end_the_stage(tmp_path, monkeypatch):
-    """Through run_interpret: the failing call is answered with a tool_result
-    carrying the error, and the container's next message is still read."""
-    def broken(self, args):
-        raise IndexError("list index out of range")
-    monkeypatch.setattr(DotnetToolbox, "_t_get_source_lines", broken)
-    init = build_dotnet_interpret_init(
-        shape.dotnet_analysis(shape.formbook_shaped_source()), {}, [], "agentic")
-    fake = tmp_path / "fake"
-    fake.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''
-        import json, sys
-        json.loads(sys.stdin.readline())
-        print(json.dumps({"type": "tool_call", "id": "1", "tool": "get_source_lines",
-                          "args": {"start_line": 1, "end_line": 2}}), flush=True)
-        reply = json.loads(sys.stdin.readline())
-        print(json.dumps({"type": "final", "analysis": {"reply": reply},
-                          "model_used": "m", "tool_calls_used": 1}), flush=True)
-    '''))
-    fake.chmod(0o755)
-    out = tmp_path / "out"
-    out.mkdir()
-    res = run_interpret(init, out, str(fake), True, 30, {"model": "m"}, "/nonexistent/run-ghidra")
-    assert "error" not in res, res.get("error")
-    reply = res["analysis"]["reply"]
-    assert reply["type"] == "tool_result"
-    assert reply["result"]["error"] == "tool failed: IndexError: list index out of range"

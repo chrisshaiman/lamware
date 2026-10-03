@@ -5,6 +5,18 @@
 pipeline_install_dir: /opt/pipeline
 pipeline_reports_dir: /opt/pipeline/reports
 
+# Agentic .NET tool sandbox (run-dotnet-tools, ADR-021): one python-sandbox
+# container per tool request. The source is the sample's decompiled C#, so it
+# is parsed only in here. Memory/pids/time are the sandbox's bounds; the broker
+# adds its own outside timeout (timeout + 15 s) as a backstop. 256m/1 CPU match
+# the python-sandbox role; 64 pids is far above the one process it runs.
+pipeline_dotnet_tools_container_memory: "256m"
+pipeline_dotnet_tools_container_cpus: "1"
+pipeline_dotnet_tools_container_pids: 64
+pipeline_dotnet_tools_timeout: 30
+pipeline_dotnet_tools_max_input: 8388608     # request: tool code + stored source (~0.2 MB today)
+pipeline_dotnet_tools_max_output: 1048576    # must equal dotnet_agentic.MAX_RESULT_BYTES
+
 # Cape API polling
 pipeline_cape_poll_interval: 30   # seconds between status checks
 pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape

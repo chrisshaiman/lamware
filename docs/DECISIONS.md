@@ -27,6 +27,7 @@ these describe an AWS data plane that no longer exists.
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live |
+| [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Decided (2026-10-03) — Live after #673 deploys |
 
 ### Detonation environment
 
@@ -44,7 +45,6 @@ these describe an AWS data plane that no longer exists.
 | [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
-| [021](#adr-021-net-interpretation-is-agentic-its-tools-are-brokered-by-the-pipeline) | .NET interpretation is agentic; its tools are brokered by the pipeline | Proposed (#646) — pending deploy and eval A/B |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -914,62 +914,68 @@ and is what turns a four-hour diagnosis into a red check.
 they are right to.**
 
 
-## ADR-021: .NET interpretation is agentic; its tools are brokered by the pipeline
+## ADR-021: Hostile files are interpreted only inside a sandbox; agent tools are brokered by the orchestrator and executed in one
 
-**Status:** Proposed (2026-10-02) — pending deploy and the single-shot vs agentic eval A/B
-**Issue:** #646 (this is the path for .NET samples with no usable unpacked payload; #651
-covers the ones that have one)
-
-### Context
-
-The .NET interpret path was one request: strings, class summaries and up to 100,000
-characters of ILSpy C#. On the CPU-only host that measured 38,263-57,751 input tokens
-and 2,690-5,448 s for the one call (redet644, 2026-09-27); quasarrat and warzonerat ran
-past the 3,600 s budget, which cannot interrupt a request in flight. formbook's run
-finished and described the decoy: the loader was a few lines that build a byte list
-and call `LateBinding.LateGet(Thread.GetDomain(), null, "Load", ...)`.
-
-README called single-shot "a deliberate choice, not a gap" for .NET. It was never
-measured on local inference.
+**Status:** Decided (2026-10-03) — becomes Live when PR #673 is deployed
+**Issue:** #646 (the agentic .NET path is where the question came up; the decision is general)
 
 ### Decision
 
-1. The .NET path runs **the same agentic loop as the Ghidra path**: same per-turn and
-   run limits, same forced-final and synthesis-reserve salvage, same synthesis phases.
-   The first message is a map (metadata, bounded table of contents, strings, a ranked
-   list of suspicious constructs by `Class.Method`); six tools read the C# on demand.
-2. **The tools run in the orchestrator** (`stages/dotnet_tools.py`), not in the
-   interpret container, although the container could serve them from the payload.
-   The container reads stdin only while waiting for a tool result, so a tool call is
-   the only moment `force_final` and the synthesis reserve can reach it (#240). Tools
-   answered in-process would recreate a run nothing can stop. The source never enters
-   the container; the container's network posture is unchanged.
-3. Every tool result is bounded and says when it is (`truncated`, `page`/`pages`,
-   `total_hits`); nothing the analyser stored is unreachable.
-4. The single-shot path stays behind `dotnet_mode` (role var `interpret_dotnet_mode`)
-   so the eval can compare the two (`<arm>+ss`). Default: `agentic`.
-5. **The sample's source cannot end the run.** The indexer is iterative (no call-stack
-   depth) and near-linear; if building the map or the toolbox fails anyway, the run
-   falls back to the single-shot payload and records why (`dotnet_agentic_failed` in
-   the payload/result, a trail event, `llm_interpretation.input.agentic_failed`); a
-   tool that raises answers that one call with an error. Found in review: 600 nested
-   interpolated strings raised `RecursionError` out of Stage 4.5 with no handler.
-6. **The size bounds are configuration, not design.** Page size (6,000 chars), line,
-   list and search caps and the first-message bounds are `interpret_dotnet_tool_limits`
-   (→ `InterpretConfig.dotnet_tool_limits`), sized for CPU prefill on this host. A
-   faster host raises them without a code change; "map + tools" and "the pipeline
-   serves the tools" do not depend on them.
+Hostile files are interpreted only inside a sandbox. Orchestrators (the pipeline and
+the API) may hash, peek at fixed-offset headers, read bounded byte ranges, and run
+fixed-pattern scans over bounded bytes; they never parse file formats and never run
+model-supplied logic. Agent tools are brokered by the orchestrator and executed in a
+sandbox — never in the orchestrator's own process and never answered by the interpret
+container itself.
+
+### Context
+
+Two properties, and both decide where a tool runs.
+
+**Interruptibility.** The interpret container reads stdin only while waiting for a tool
+result, so a brokered tool call is the only moment `force_final` and the synthesis
+reserve can reach the agent (#240, #663). A tool the interpret container answered for
+itself would recreate the run nothing can stop — the .NET single-shot request that ran
+5,447 s past a 3,600 s budget (redet644, 2026-09-27) was that shape.
+
+**Isolation.** The orchestrators hold what an attacker wants: the pipeline user has the
+database credentials (pipeline.env), CAPE storage, every report and rootless podman;
+the API holds the same data behind its users. The first version of #673 served the
+.NET tools in the pipeline process — interruptible, but parsing the sample's C# with
+those privileges, and running the model's regex in a child that had them too. Review
+then found the parser could be crashed by its input (600 nested interpolated strings,
+`RecursionError` out of Stage 4.5). A parser of hostile input will have defects; the
+question is only what they can reach.
+
+**Survey, 2026-10-03** (the guard test below keeps it true):
+
+- The pipeline and API import no format parser: no pefile, lief, yara, olefile/oletools,
+  zipfile/tarfile/py7zr, scapy/dpkt/pyshark, evtx, Registry or volatility.
+- Every real parser runs in a container: triage, CAPE, Volatility, Ghidra, ILSpy,
+  PyInstaller, Office, PowerShell, PCAP.
+- In-process byte handling is limited to sha256, header peeks (stages/ghidra.py,
+  dotnet.py, pyinstaller.py, cape.py), script text (script_analysis.py) and
+  fixed-pattern dump scans (volatility.py `extract_shellcode_artifacts`).
+- The analyst agent's tools: the Ghidra tools and `run_python` already execute in
+  sandboxes; `read_payload` is an allowed bounded byte read with no format parsing; the
+  rest read stored report and database JSON.
+
+So the rule already held everywhere except the agentic .NET tools.
 
 ### Consequences
 
-- The first request shrinks from ~105k characters to ~20-29k (system + tools + map),
-  measured on five host reports; each later turn adds at most three bounded results.
-- Grounding for a `dotnet_agentic` eval cell is what the agent saw: the map plus the
-  tool results, not the whole source.
-- The analyser still stores only the first 100,000 characters of a larger
-  decompilation (quasarrat: 4,468,045). The tools say so; they cannot reach past it.
-  Raising that cap is a separate decision.
-- A half-deploy (new pipeline, old interpret image) sends a payload without source
-  to a container that runs the single-shot path over it. The broker recognises that
-  request and logs it (`dotnet_agentic_payload_on_single_shot_container`), but the
-  run still produces an analysis of a map. Deploy `pipeline` and `interpret` together.
+- Ghidra tools: unchanged — the orchestrator brokers each call, `run-ghidra --tool` runs
+  it in a per-call container.
+- .NET tools: the pipeline brokers each call (`stages/dotnet_agentic.py`) and
+  `run-dotnet-tools` executes it in a per-call `python-sandbox` container (no network,
+  read-only root, no host mounts — the source arrives on stdin — memory and pids
+  limits, all capabilities dropped, no-new-privileges, `--user 65534`, podman
+  `--timeout` plus an outside backstop). The first-message map is built there too, so
+  the pipeline never parses the sample's C#. Any sandbox failure is that one call's
+  error; the run continues.
+- A container per call costs a container start and an index rebuild per call. Accepted:
+  it keeps every call a separate, killable, brokered unit, the Ghidra shape.
+- `tests/test_orchestrators_parse_no_file_formats.py` fails when an orchestrator imports
+  a format parser; an exception needs a written reason in its allowlist.
+- New tools — for the pipeline agent or the analyst agent — follow the same rule: if a
+  tool interprets sample bytes, it runs in a sandbox, brokered.

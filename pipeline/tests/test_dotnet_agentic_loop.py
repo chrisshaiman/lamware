@@ -31,11 +31,8 @@ import pytest
 
 pytest.importorskip("anthropic", reason="pip install './pipeline[test]'")
 
-from stages.dotnet_tools import (  # noqa: E402
-    DOTNET_TOOL_NAMES,
-    DotnetToolbox,
-    build_dotnet_agentic_init,
-)
+from stages.dotnet_agentic import build_dotnet_agentic_init  # noqa: E402
+from stages.dotnet_tools import DOTNET_TOOL_NAMES, DotnetToolbox  # noqa: E402
 from stages.interpret import agent_payload, run_interpret  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -363,7 +360,7 @@ def test_bad_arguments_never_reach_the_toolbox(tmp_path, monkeypatch):
     tool_error and is logged with the reason."""
     import stages.interpret as interp
     called = []
-    monkeypatch.setattr(interp.DotnetToolbox, "call",
+    monkeypatch.setattr(interp.DotnetToolBroker, "call",
                         lambda self, t, a: called.append(t) or {"ok": True})
     body = '''
 import json, sys

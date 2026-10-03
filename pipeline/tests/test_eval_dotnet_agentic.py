@@ -38,7 +38,7 @@ REPORT = {
 SHA = "5b4f596d" + "0" * 56
 
 
-def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None, broker_fallback=None):
+def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None):
     cdir = tmp_path / "c"
     cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "report.json").write_text(json.dumps(REPORT))
@@ -55,8 +55,6 @@ def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None, broker_fallback=Non
         res = {"analysis": {"malware_family_guess": "x",
                             "code_level_iocs": [{"type": "mutex", "value": MUTEX}]},
                "usage": {}, "audit": {"tool_call_log": str(audit / name)}}
-        if broker_fallback:
-            res["dotnet_agentic_failed"] = broker_fallback
         return res
 
     monkeypatch.setattr(runner, "run_interpret", fake_interpret)
@@ -146,23 +144,16 @@ def test_the_summary_keeps_the_two_dotnet_paths_apart():
 # --- fallbacks and limits (review of #673) ------------------------------------------
 
 def test_a_map_that_cannot_be_built_is_scored_as_single_shot(tmp_path, monkeypatch):
-    from stages import dotnet_tools
-
-    def boom(self, source):
-        raise RecursionError("deep")
-    monkeypatch.setattr(dotnet_tools.CSharpIndex, "__init__", boom)
-    seen = _run_arm(tmp_path, monkeypatch, "qwen@10")
+    """The sandbox fails (here: a command that exits 137, as an OOM kill does);
+    the cell is the single-shot cell production would have run."""
+    dead = tmp_path / "dead-sandbox"
+    dead.write_text("#!/bin/sh\ncat >/dev/null\nexit 137\n")
+    dead.chmod(0o755)
+    seen = _run_arm(tmp_path, monkeypatch, "qwen@10",
+                    base_cfg={"dotnet_tools_cmd": str(dead)})
     assert seen["cell"]["modality"] == "dotnet"
     rec = seen["result"]["input"]
-    assert rec["requested_mode"] == "agentic" and rec["agentic_failed"].startswith("RecursionError")
-
-
-def test_a_broker_fallback_is_scored_as_what_ran(tmp_path, monkeypatch):
-    """The init was agentic but the broker sent single-shot: the cell is a
-    single-shot cell, grounded on the source the model was actually shown."""
-    seen = _run_arm(tmp_path, monkeypatch, "qwen@10", broker_fallback="MemoryError: x")
-    assert seen["cell"]["modality"] == "dotnet"
-    assert seen["result"]["input"]["agentic_failed"] == "MemoryError: x"
+    assert rec["requested_mode"] == "agentic" and "killed" in rec["agentic_failed"]
 
 
 def test_the_configured_limits_reach_the_payload_and_the_replay(tmp_path, monkeypatch):
@@ -178,3 +169,15 @@ def test_the_configured_limits_reach_the_payload_and_the_replay(tmp_path, monkey
         {"sha256": SHA, "mb_family": "formbook", "corpus_dir": str(tmp_path / "c")}]}))
     _, cells = rebuild(str(manifest), "t")
     assert [c["modality"] for c in cells] == ["dotnet_agentic"]
+
+
+def test_a_replay_that_cannot_rebuild_the_map_says_so(tmp_path):
+    """The re-scorer must not quietly ground an agentic cell against the
+    single-shot fallback: that would change what the cell measured."""
+    dead = tmp_path / "dead-sandbox"
+    dead.write_text("#!/bin/sh\ncat >/dev/null\nexit 137\n")
+    dead.chmod(0o755)
+    with pytest.raises(ValueError, match="cannot rebuild the agentic map"):
+        runner.init_payload_for(REPORT, recorded={"kind": "dotnet_agentic",
+                                                  "wrapper_routed_by": "dotnet_routed"},
+                                dotnet_tools_cfg={"dotnet_tools_cmd": str(dead)})

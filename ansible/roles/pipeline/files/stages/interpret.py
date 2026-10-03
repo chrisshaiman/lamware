@@ -23,12 +23,8 @@ from pathlib import Path
 
 from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidra_args
 
-from stages.dotnet_tools import (
-    DotnetToolbox,
-    is_agentic_dotnet,
-    single_shot_fallback,
-    validate_dotnet_args,
-)
+from stages.dotnet_agentic import DotnetToolBroker
+from stages.dotnet_tools import is_agentic_dotnet, validate_dotnet_args
 
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
@@ -744,32 +740,15 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
 
     project_dir = ghidra_result.get("project_dir", "")
     program_name = ghidra_result.get("program_name", "")
-    # Agentic .NET (#646): the tools are served HERE, from the decompiled source
-    # the payload carries, not in the container. A tool call is the only moment
-    # the container reads stdin, so it is the only moment force_final and the
-    # synthesis reserve can reach it (#240); tools answered inside the
-    # container would leave a run nothing can stop. See stages/dotnet_tools.py.
-    #
-    # Building the index must not end the run (review of #673): on any failure
-    # the payload becomes the single-shot one, the reason is recorded on the
-    # trail and the result, and the stage goes on.
-    dotnet_tools = None
-    dotnet_fallback: str | None = None
-    if is_agentic_dotnet(ghidra_result):
-        try:
-            dotnet_tools = DotnetToolbox.from_payload(
-                ghidra_result, interpret_config.get("dotnet_tool_limits"))
-        except Exception as e:  # noqa: BLE001 - hostile source must not end the stage
-            dotnet_fallback = f"{type(e).__name__}: {e}"[:300]
-            print(f"    [!] .NET tools unavailable ({dotnet_fallback}); "
-                  f"falling back to the single-shot payload")
-            ghidra_result = single_shot_fallback(ghidra_result, dotnet_fallback)
-
-    def _tagged(res: dict) -> dict:
-        """Every result says when the agentic .NET path fell back."""
-        if dotnet_fallback:
-            res["dotnet_agentic_failed"] = dotnet_fallback
-        return res
+    # Agentic .NET (#646): tool calls are BROKERED here and EXECUTED in a
+    # sandbox container per call (ADR-021), like Ghidra's. Brokered, because a
+    # tool call is the only moment the interpret container reads stdin, so the
+    # only moment force_final and the synthesis reserve reach it (#240).
+    # Sandboxed, because the source is the sample's: this process never parses
+    # it. Constructing the broker does no work and cannot fail; every failure
+    # of a call comes back as that call's error (stages/dotnet_agentic.py).
+    dotnet_tools = (DotnetToolBroker.from_payload(ghidra_result, interpret_config)
+                    if is_agentic_dotnet(ghidra_result) else None)
 
     start_time = time.time()
 
@@ -834,8 +813,6 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 # Which .NET path ran, so a trail says whether a 0-tool-call run
                 # was the single-shot path or an agent that never asked (#646).
                 dotnet_mode=ghidra_result.get("dotnet_mode"))
-    if dotnet_fallback:
-        trail.event("dotnet_agentic_failed", reason=dotnet_fallback)
 
     budget_deadline = start_time + interpret_timeout
     hard_deadline = budget_deadline + force_final_grace
@@ -956,7 +933,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     json.dump(tool_call_log, f, indent=2)
 
                 result["audit"]["turn_trail"] = str(trail.path)
-                return _tagged(result)
+                return result
 
             elif msg_type == "tool_call":
                 tool_name = msg.get("tool", "")
@@ -1002,10 +979,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "error": error})
                     trail.tool(tool_name, tool_args, error=error)
                 elif dotnet_tools is not None:
-                    # In-process: an index lookup or a bounded search, never the
-                    # sample's code. Every result is capped and says so, for
-                    # both backends — paging, not truncation, is what keeps it
-                    # whole (stages/dotnet_tools.py).
+                    # In a sandbox container, per call; any failure there is
+                    # this call's error, never the stage's. Every result is
+                    # capped and says so, for both backends.
                     tool_result = dotnet_tools.call(tool_name, tool_args)
                     response = {"type": "tool_result", "tool": tool_name, "result": tool_result}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "result": tool_result})
@@ -1098,9 +1074,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
 
     except Exception as e:
         trail.event("loop_error", error=f"{type(e).__name__}: {e}")
-        return _tagged({"enabled": True,
-                        "error": f"Interpret loop error: {e}",
-                        "container_stderr": _drain_stderr(proc, stderr_buf)})
+        return {"enabled": True,
+                "error": f"Interpret loop error: {e}",
+                "container_stderr": _drain_stderr(proc, stderr_buf)}
     finally:
         try:
             proc.terminate()
@@ -1138,7 +1114,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                     force_final_sent_at_s=sent_at,
                     force_final_delivered=force_final_delivered,
                     ended=ended, returncode=eof_returncode)
-        return _tagged({"enabled": True,
+        return {"enabled": True,
                 "error": error,
                 # True whenever the budget ran out, which is what score_report and
                 # the UI mean by it. A reserve-forced final the container failed to
@@ -1152,15 +1128,15 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 "container_returncode": eof_returncode,
                 "container_exit_note": note,
                 "container_stderr": _drain_stderr(proc, stderr_buf),
-                "audit": {"turn_trail": str(trail.path)}})
+                "audit": {"turn_trail": str(trail.path)}}
 
     trail.event("container_exited_without_final", returncode=eof_returncode)
-    return _tagged({"enabled": True,
-                    "error": "Interpret container exited without final result",
-                    "container_returncode": eof_returncode,
-                    "container_exit_note": _describe_exit(eof_returncode),
-                    "container_stderr": _drain_stderr(proc, stderr_buf),
-                    "audit": {"turn_trail": str(trail.path)}})
+    return {"enabled": True,
+            "error": "Interpret container exited without final result",
+            "container_returncode": eof_returncode,
+            "container_exit_note": _describe_exit(eof_returncode),
+            "container_stderr": _drain_stderr(proc, stderr_buf),
+            "audit": {"turn_trail": str(trail.path)}}
 
 
 def run_summarize(report: dict, interpret_cmd: str, interpret_enabled: bool,

@@ -72,6 +72,10 @@
     "dotnet_mode": {{ interpret_dotnet_mode | default('agentic') | to_json }},
     {#- Size bounds of that path; {} keeps the defaults in InterpretConfig. #}
     "dotnet_tool_limits": {{ interpret_dotnet_tool_limits | default({}) | to_json }},
+    {#- The sandbox that executes those tools (ADR-021) and its timeout, which
+        the wrapper passes to podman --timeout; the broker adds its own. #}
+    "dotnet_tools_cmd": {{ (pipeline_install_dir ~ '/run-dotnet-tools') | to_json }},
+    "dotnet_tools_timeout": {{ pipeline_dotnet_tools_timeout | default(30) }},
     "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
     "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
     "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},

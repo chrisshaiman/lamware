@@ -88,10 +88,10 @@ def test_a_raised_limit_reaches_the_tools():
 
 
 def test_the_limits_shape_the_first_message():
-    from stages.dotnet_tools import build_dotnet_interpret_init
+    from stages.dotnet_agentic import build_dotnet_interpret_init
     src = "class A {\n" + "".join(f" void M{i}() {{ }}\n" for i in range(50)) + "}\n"
     init = build_dotnet_interpret_init({"decompilation": {"source": src}}, {}, [], "agentic",
-                                       {"toc_max_methods": 3})
+                                       {"dotnet_tool_limits": {"toc_max_methods": 3}})
     assert init["table_of_contents"]["methods_listed"] == 3
 
 
@@ -99,7 +99,7 @@ def test_run_interpret_hands_the_configured_limits_to_the_tools(tmp_path):
     import sys
     import textwrap
 
-    from stages.dotnet_tools import build_dotnet_interpret_init
+    from stages.dotnet_agentic import build_dotnet_interpret_init
     from stages.interpret import run_interpret
     src = "class A {\n void M() {\n" + "  int x = 1;\n" * 3000 + " }\n}\n"
     init = build_dotnet_interpret_init({"decompilation": {"source": src}}, {}, [], "agentic")

@@ -9,12 +9,8 @@ from pathlib import Path
 
 import requests
 from llm_ab_re import extract_metrics
-from stages.dotnet_tools import (
-    build_dotnet_interpret_init,
-    dotnet_input_record,
-    is_agentic_dotnet,
-    single_shot_fallback,
-)
+from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
+from stages.dotnet_tools import is_agentic_dotnet
 from stages.ghidra import ROUTED_FLAGS, make_ghidra_verifier, select_payload_target
 from stages.interpret import agent_payload, run_interpret
 
@@ -384,7 +380,8 @@ DOTNET_MODALITY = {"single_shot": "dotnet", "agentic": "dotnet_agentic"}
 
 
 def _wrapper_payload(report: dict, dotnet_mode: str = "agentic",
-                     dotnet_limits: dict | None = None) -> tuple[dict, str, str]:
+                     dotnet_limits: dict | None = None,
+                     dotnet_tools_cfg: dict | None = None) -> tuple[dict, str, str]:
     """The wrapper's own analyser, else the Ghidra dict.
 
     What production does for a routed sample with no usable payload, and for
@@ -397,8 +394,11 @@ def _wrapper_payload(report: dict, dotnet_mode: str = "agentic",
                      ((report.get("cape") or {}).get("signatures") or [])]
         llm_context = ({"bazaar_family": report["bazaar_family"]}
                        if report.get("bazaar_family") else {})
+        # The map is built in the tool sandbox, as production builds it
+        # (`dotnet_tools_cmd`/`dotnet_tools_timeout` from the interpret config).
+        tools_cfg = dict(dotnet_tools_cfg or {}, dotnet_tool_limits=dotnet_limits)
         init = build_dotnet_interpret_init(dotnet, llm_context, cape_sigs, dotnet_mode,
-                                           dotnet_limits)
+                                           tools_cfg)
         # By what was BUILT, not what was asked: an agentic map that could not
         # be built falls back to the single-shot payload (review of #673), and
         # the cell must be scored as what it ran.
@@ -417,7 +417,8 @@ def _wrapper_payload(report: dict, dotnet_mode: str = "agentic",
 def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = None,
                      recorded: dict | None = None,
                      dotnet_mode: str = "agentic",
-                     dotnet_limits: dict | None = None) -> tuple[dict, str, str, dict]:
+                     dotnet_limits: dict | None = None,
+                     dotnet_tools_cfg: dict | None = None) -> tuple[dict, str, str, dict]:
     """(init payload, modality, grounding source, input record) for this sample.
 
     `run_interpret`'s first parameter is named `ghidra_result` but is really an
@@ -510,7 +511,15 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
             gr, verify=_corpus_verifier(verify, gr, corpus_dir))
 
     if target is None:
-        init, modality, source = _wrapper_payload(report, dotnet_mode, dotnet_limits)
+        init, modality, source = _wrapper_payload(report, dotnet_mode, dotnet_limits,
+                                                  dotnet_tools_cfg)
+        if (recorded is not None and recorded.get("kind") == DOTNET_MODALITY["agentic"]
+                and modality != recorded["kind"]):
+            # A replay must ground the cell against the map its agent was sent.
+            # If the sandbox cannot rebuild it here, say so; scoring against
+            # the single-shot fallback would quietly change the measurement.
+            raise ValueError(f"cannot rebuild the agentic map for this cell: "
+                             f"{init.get('dotnet_agentic_failed')}")
         read = {"kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
         if modality in DOTNET_MODALITY.values():
             read.update(dotnet_input_record(init, dotnet_mode))
@@ -547,7 +556,8 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     dotnet_mode = arm.dotnet_mode or base_cfg.get("dotnet_mode") or "agentic"
     init, modality, source_head, read = init_payload_for(
         report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir,
-        dotnet_mode=dotnet_mode, dotnet_limits=base_cfg.get("dotnet_tool_limits"))
+        dotnet_mode=dotnet_mode, dotnet_limits=base_cfg.get("dotnet_tool_limits"),
+        dotnet_tools_cfg=base_cfg)
     print(f"    [eval] input: {input_label(read)}", flush=True)
     gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
@@ -617,14 +627,6 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # Whatever the agent could have read: the Ghidra dump for a native PE, the
     # decompiled C# for a .NET sample, the chosen program's entry for an
     # unpacked payload, plus the tool results in every case.
-    if res.get("dotnet_agentic_failed") and is_agentic_dotnet(init):
-        # The broker could not build its tools and sent the single-shot payload
-        # instead; record and ground the cell as what actually ran.
-        fallback = single_shot_fallback(init, res["dotnet_agentic_failed"])
-        read = {**read, **dotnet_input_record(init, dotnet_mode, res)}
-        read.pop("dotnet_tool_limits", None)
-        modality = read["kind"]
-        source_head = json.dumps(fallback["decompiled_source"])
     source = source_head + " " + tool_output_text(out)
 
     # Say what was read, where production says it (`llm_interpretation.input`).

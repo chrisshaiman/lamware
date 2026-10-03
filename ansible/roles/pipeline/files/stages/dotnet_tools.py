@@ -21,22 +21,19 @@ module gives .NET the same shape:
   * `scan_suspicious_constructs` lists the places a reader should look first
     (reflection by string name, assembly loading, byte building, P/Invoke,
     crypto, process/registry/network APIs), by `Class.Method`.
-  * `build_dotnet_agentic_init` builds the init payload: assembly metadata, a
-    bounded table of contents, strings of interest and the construct list —
-    and the full source, which the ORCHESTRATOR keeps (`agent_payload` in
-    stages/interpret.py strips it before the container sees the payload).
-  * `DotnetToolbox.call` serves the tools from that source.
+  * `build_map` builds the agent's first-message map from those: assembly
+    metadata, a bounded table of contents and the ranked construct list.
+  * `DotnetToolbox.call` serves the six tools from the same source.
 
-WHERE THE TOOLS RUN — the orchestrator, not the interpret container. The source
-could be served in-process by the container, but then no tool call would ever
-cross the stdin/stdout protocol, and that protocol is the only way the pipeline
-can stop a run: the container reads stdin only while waiting for a tool result,
-so `force_final` and the synthesis reserve (#240, #663) are delivered as the
-answer to a tool call. In-process tools would leave a run the budget cannot
-reach, which is the defect this change exists to remove. Brokering also puts
-every call in the same audit log and turn trail as a Ghidra call, which the
-eval grounds claims against. The interpret container keeps --network=none and
-gains nothing new to reach.
+THIS MODULE RUNS ONLY IN THE TOOL SANDBOX (ADR-021). The pipeline never parses
+the sample's C# in its own process: stages/dotnet_agentic.py (the broker)
+sends this file's text plus one request on stdin to `run-dotnet-tools`, which
+runs `CONTAINER_BOOTSTRAP` in a python-sandbox container — no network,
+read-only root, no host mounts, memory/pids limits, all capabilities dropped,
+a timeout enforced from outside. One container per request: the map at Stage
+4.5, then one per tool call, each brokered over the interpret protocol, so
+force_final and the synthesis reserve still reach the agent at every call
+(#240). Stdlib only, because nothing else is in that image.
 
 NOTHING IS DROPPED. Every result is bounded, and every bound says so: source is
 paged (`page`/`pages`), lists carry `total` and `truncated`. Everything the
@@ -46,30 +43,17 @@ and the paged getters. What the analyser did NOT store (it keeps the first
 is outside this index, and the payload says so.
 
 THE SOURCE IS ATTACKER-CONTROLLED. Nothing here executes it. Results are
-returned as data; the container wraps every tool result in the UNTRUSTED_DATA
-fence with `neutralize_delimiters` like any Ghidra result. The one
-model-supplied regex (`search_source`) runs in a child process with a timeout,
-because Python's `re` has none and a catastrophic pattern over 100k characters
-would otherwise hang the pipeline process itself.
+returned as data; the interpret container wraps every tool result in the
+UNTRUSTED_DATA fence with `neutralize_delimiters` like any Ghidra result. The
+model-supplied regex (`search_source`) is compiled first; a catastrophic one
+is stopped by the sandbox's outside timeout, since Python's `re` has none.
 """
 from __future__ import annotations
 
 import bisect
 import json
-import logging
 import re
-import subprocess
-import sys
 from dataclasses import dataclass, field, fields
-
-from stages.single_shot_init import (
-    CONTAINER_SOURCE_CAP,
-    _source_provenance,
-    build_dotnet_init,
-    capped,
-)
-
-log = logging.getLogger(__name__)
 
 # --- Result bounds -----------------------------------------------------------
 #
@@ -90,8 +74,6 @@ SEARCH_LINE_CHARS = 240
 LINES_MAX = 150
 #: Entries `list_methods` / `list_classes` return at most.
 LIST_MAX = 150
-#: Seconds a model-supplied regex may run before the search is abandoned.
-SEARCH_TIMEOUT_S = 10.0
 #: Longest pattern accepted.
 PATTERN_MAX = 200
 
@@ -967,135 +949,27 @@ def _class_priority(constructs: dict) -> list[str]:
     return seen
 
 
-# --- The init payload ------------------------------------------------------------
+def is_agentic_dotnet(payload: dict) -> bool:
+    """Is this init payload the agentic .NET one? (Used on both sides.)"""
+    return (isinstance(payload, dict) and payload.get("analysis_type") == "dotnet"
+            and payload.get("dotnet_mode") == "agentic")
 
-DOTNET_MODES = ("agentic", "single_shot")
 
-
-def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict,
-                              cape_sigs: list[str],
-                              limits: DotnetToolLimits | None = None) -> dict:
-    """The agentic .NET init payload.
-
-    Carries `decompiled_source` IN FULL, for the orchestrator: `run_interpret`
-    builds the tool index from it and `agent_payload` removes it before the
-    payload reaches the container. Everything else here is what the agent sees
-    in its first message.
-    """
+def build_map(source: str, limits: DotnetToolLimits | None = None) -> dict:
+    """The agent's first-message map of one decompiled source. Runs in the sandbox."""
     limits = limits or DotnetToolLimits()
-    decompilation = dotnet_data.get("decompilation", {}) or {}
-    source = decompilation.get("source", "") or ""
-    index = CSharpIndex(source)
+    index = CSharpIndex(source or "")
     constructs = scan_suspicious_constructs(index, limits.construct_max_locations)
-    extraction_source = dotnet_data.get("extraction_source")
-    deob = dotnet_data.get("deobfuscation") or {}
     return {
-        **llm_context,
-        "analysis_type": "dotnet",
-        "dotnet_mode": "agentic",
-        "source_language": "csharp",
-        "decompiled_source": source,
-        "source_bytes_indexed": len(source),
-        **_source_provenance(decompilation),
-        "blob_bytes_elided": decompilation.get("blob_bytes_elided"),
-        "deobfuscated": bool(deob.get("deobfuscated")),
         "assembly": assembly_metadata(index),
         "table_of_contents": table_of_contents(index, _class_priority(constructs),
                                                limits.toc_max_classes, limits.toc_max_methods),
         "suspicious_constructs": constructs,
-        "strings_of_interest": dotnet_data.get("strings_of_interest", []),
-        "analysis_success": True,
-        "origin": "extraction" if extraction_source else "original",
-        "extraction_context": {
-            "source_dir": extraction_source["source_dir"],
-            "sha256": extraction_source["sha256"],
-            "cape_signatures": cape_sigs[:10],
-        } if extraction_source else None,
     }
-
-
-def build_dotnet_interpret_init(dotnet_data: dict, llm_context: dict,
-                                cape_sigs: list[str], mode: str,
-                                limits: dict | DotnetToolLimits | None = None) -> dict:
-    """The .NET init payload for `mode` — the ONE place the choice is made.
-
-    run-pipeline.py and the eval harness both call this, so the eval measures
-    what production sends for the same `dotnet_mode` (#380, #667).
-
-    NEVER RAISES for the agentic mode. The source is the sample's, and this
-    runs in Stage 4.5 after CAPE, Volatility and Ghidra: an exception here left
-    main() with no report and no DB row (review of #673 — 600 nested
-    interpolated strings did it). Any failure building the map falls back to
-    the single-shot payload, marked `dotnet_agentic_failed` with the reason,
-    and is logged. An unknown `mode` is a configuration error and does raise;
-    PipelineConfig rejects it at startup.
-    """
-    if mode == "single_shot":
-        return build_dotnet_init(dotnet_data, llm_context, cape_sigs)
-    if mode != "agentic":
-        raise ValueError(f"dotnet_mode must be one of {DOTNET_MODES}, got {mode!r}")
-    if not isinstance(limits, DotnetToolLimits):
-        limits = DotnetToolLimits.from_config(limits)
-    try:
-        return build_dotnet_agentic_init(dotnet_data, llm_context, cape_sigs, limits)
-    except Exception as e:  # noqa: BLE001 - hostile input must not end the run
-        reason = _failure(e)
-        log.warning("agentic .NET init failed, falling back to single-shot: %s", reason)
-        init = build_dotnet_init(dotnet_data, llm_context, cape_sigs)
-        init["dotnet_agentic_failed"] = reason
-        return init
 
 
 def _failure(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}"[:300]
-
-
-#: Keys only the agentic payload carries; dropped when falling back.
-_AGENTIC_ONLY = ("dotnet_mode", "assembly", "table_of_contents", "suspicious_constructs",
-                 "source_bytes_indexed", "deobfuscated", "blob_bytes_elided")
-
-
-def single_shot_fallback(payload: dict, reason: str) -> dict:
-    """The single-shot payload equivalent to an agentic one, for when the tools
-    cannot be served (run_interpret builds its toolbox after the init exists).
-
-    Same shape `build_dotnet_init` produces, from the fields the agentic
-    payload already carries: the stored source capped and marked exactly as
-    the single-shot path caps it, strings, origin and context unchanged.
-    """
-    source = payload.get("decompiled_source", "") or ""
-    shown = capped(source, CONTAINER_SOURCE_CAP, "//")
-    out = {k: v for k, v in payload.items() if k not in _AGENTIC_ONLY}
-    out.update({
-        "decompiled_source": shown,
-        "source_bytes_shown": len(shown),
-        "class_count": ((payload.get("assembly") or {}).get("type_count") or 0),
-        "classes": [],
-        "dotnet_agentic_failed": reason,
-    })
-    return out
-
-
-def dotnet_input_record(init: dict, requested_mode: str, result: dict | None = None) -> dict:
-    """`llm_interpretation.input` for a .NET run: which path ACTUALLY ran.
-
-    Shared by run-pipeline.py and the eval (whose `kind` is the modality), so
-    a fallback is recorded the same way in both: the requested mode, the
-    single-shot kind, and why.
-    """
-    failed = (init or {}).get("dotnet_agentic_failed") or (result or {}).get(
-        "dotnet_agentic_failed")
-    agentic = is_agentic_dotnet(init) and not failed
-    rec = {"kind": "dotnet_agentic" if agentic else "dotnet",
-           "dotnet_mode": "agentic" if agentic else "single_shot"}
-    if failed:
-        rec.update(requested_mode=requested_mode, agentic_failed=failed)
-    return rec
-
-
-def is_agentic_dotnet(payload: dict) -> bool:
-    return (isinstance(payload, dict) and payload.get("analysis_type") == "dotnet"
-            and payload.get("dotnet_mode") == "agentic")
 
 
 # --- The tools -------------------------------------------------------------------
@@ -1224,7 +1098,6 @@ class DotnetToolbox:
             # Anything else is a defect here, not the model's request; the
             # type is kept so it reads as one. Raised, it ended the stage
             # through run_interpret's outer handler and lost the run.
-            log.warning("dotnet tool %s failed: %s", tool, _failure(e))
             return {"error": f"tool failed: {_failure(e)}"}
 
     # Each result says when the index itself is partial, so "not found" is never
@@ -1343,16 +1216,15 @@ class DotnetToolbox:
                        self.limits.search_max_hits)
         line_chars = self.limits.search_line_chars
         ctx = _int_arg(args, "context_lines", 0, 0, 3)
+        # Compiled first, so a malformed pattern is a clear answer rather than
+        # a crash. A catastrophic one is stopped by the sandbox's timeout,
+        # enforced from outside the container (DotnetToolBroker).
         try:
-            re.compile(pattern)
+            rx = re.compile(pattern)
         except re.error as e:
             return {"error": f"Invalid search pattern: {e}. Escape regex metacharacters "
                              f"such as ( ) [ ] . * + ? with a backslash."}
-        try:
-            raw = _run_search(self.index.source, pattern, max_hits)
-        except subprocess.TimeoutExpired:
-            return {"error": f"Invalid search pattern: it ran longer than "
-                             f"{SEARCH_TIMEOUT_S:.0f}s and was stopped. Use a simpler pattern."}
+        raw = _search(self.index.source, rx, max_hits)
         hits = []
         lines = self.index.source.split("\n")
         budget = self.limits.page_chars
@@ -1381,32 +1253,58 @@ class DotnetToolbox:
         return self._coverage(out)
 
 
-# The search runs in a child process: Python's `re` cannot be interrupted, the
-# pattern comes from the model (and the model reads attacker-controlled text),
-# and a catastrophic pattern over 100k characters would otherwise wedge the
-# pipeline process that brokers every other stage. A plain interpreter with -c,
-# rather than multiprocessing: no re-import of run-pipeline.py as __main__, no
-# fork of a process that is running reader threads.
-_SEARCH_CHILD = r"""
-import json, re, sys
-req = json.load(sys.stdin)
-rx = re.compile(req["pattern"])
-hits, total = [], 0
-for n, line in enumerate(req["source"].split("\n"), 1):
-    m = rx.search(line)
-    if m:
-        total += 1
-        if len(hits) < req["max_hits"]:
-            hits.append([n, m.start(), m.end() - m.start()])
-json.dump({"hits": hits, "total": total}, sys.stdout)
-"""
+def _search(source: str, rx: re.Pattern, max_hits: int) -> dict:
+    hits, total = [], 0
+    for n, line in enumerate(source.split("\n"), 1):
+        m = rx.search(line)
+        if m:
+            total += 1
+            if len(hits) < max_hits:
+                hits.append([n, m.start(), m.end() - m.start()])
+    return {"hits": hits, "total": total}
 
 
-def _run_search(source: str, pattern: str, max_hits: int) -> dict:
-    proc = subprocess.run(
-        [sys.executable, "-I", "-c", _SEARCH_CHILD],
-        input=json.dumps({"source": source, "pattern": pattern, "max_hits": max_hits}),
-        capture_output=True, text=True, timeout=SEARCH_TIMEOUT_S)
-    if proc.returncode != 0:
-        raise ValueError(f"search failed: {proc.stderr.strip()[-200:]}")
-    return json.loads(proc.stdout)
+# --- Inside the sandbox ------------------------------------------------------------
+#
+# Everything above runs ONLY in the tool sandbox (ADR-021): the pipeline never
+# parses the sample's source in its own process. The broker
+# (stages/dotnet_agentic.py) sends this module's own text and one request on
+# stdin to `run-dotnet-tools`, which runs CONTAINER_BOOTSTRAP in a
+# python-sandbox container with no network, a read-only root, no host mounts
+# and memory/pids/time limits. The module is stdlib-only for that reason.
+
+#: The container's whole program: load this module from the request, serve it.
+#: Double quotes only: the wrapper holds it in a single-quoted shell string.
+CONTAINER_BOOTSTRAP = (
+    'import json,sys,types;'
+    'q=json.load(sys.stdin);'
+    'm=types.ModuleType("dotnet_tools");sys.modules["dotnet_tools"]=m;'
+    'exec(compile(q.pop("code"),"dotnet_tools.py","exec"),m.__dict__);'
+    'm.container_main(q)'
+)
+
+
+def serve_request(req: dict) -> dict:
+    """Answer one broker request: `op` "map" (the first-message map) or "tool"
+    (one tool call). Never raises: every failure is a JSON error."""
+    try:
+        limits = DotnetToolLimits.from_config(req.get("limits"))
+        source = req.get("source") or ""
+        op = req.get("op")
+        if op == "map":
+            return build_map(source, limits)
+        if op == "tool":
+            tool, args = req.get("tool", ""), req.get("args") or {}
+            err = validate_dotnet_args(tool, args)
+            if err:
+                return {"error": err}
+            return DotnetToolbox(source, bool(req.get("analyser_truncated")),
+                                 req.get("source_bytes_total"), limits).call(tool, args)
+        return {"error": f"unknown op {op!r}"}
+    except Exception as e:  # noqa: BLE001 - the answer is the error
+        return {"error": f"tool failed: {_failure(e)}"}
+
+
+def container_main(req: dict) -> None:
+    """Entry point inside the container: one request in, one JSON line out."""
+    print(json.dumps(serve_request(req), default=str), flush=True)

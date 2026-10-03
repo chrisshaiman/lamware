@@ -72,6 +72,10 @@ class InterpretConfig(BaseModel):
     # instead of in code. Mirrors stages/dotnet_tools.DotnetToolLimits, whose
     # defaults test_dotnet_mode_config.py holds equal to these.
     dotnet_tool_limits: DotnetToolLimits = Field(default_factory=DotnetToolLimits)
+    # The sandbox that executes those tools (ADR-021: never in this process) and
+    # the container timeout it passes to podman; the broker adds 15 s on top.
+    dotnet_tools_cmd: str = "/opt/pipeline/run-dotnet-tools"
+    dotnet_tools_timeout: int = Field(default=30, ge=1)
     # Wall-clock budget for the whole summarize container run. Defaulted rather than
     # required so a config.json written before this key still loads — the eval harness
     # passes whole config dicts through and an older one would fail validation, which

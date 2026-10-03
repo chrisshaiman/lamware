@@ -22,15 +22,18 @@ from pathlib import Path
 
 import pytest
 from llm_ab_re import is_semantic_tool_error, is_transport_tool_error
-from stages import dotnet_tools
+from stages import dotnet_agentic, dotnet_tools
+from stages.dotnet_agentic import (
+    DotnetToolBroker,
+    build_dotnet_agentic_init,
+    build_dotnet_interpret_init,
+)
 from stages.dotnet_tools import (
     LINES_MAX,
     NOT_FOUND,
     SOURCE_PAGE_CHARS,
     CSharpIndex,
     DotnetToolbox,
-    build_dotnet_agentic_init,
-    build_dotnet_interpret_init,
     mask_source,
     scan_suspicious_constructs,
     validate_dotnet_args,
@@ -193,13 +196,16 @@ def test_search_with_context_returns_the_neighbouring_lines(tools):
     assert len(ctx) == 5 and any("GetExportedTypes" in line for line in ctx)
 
 
-def test_a_catastrophic_pattern_is_stopped_not_waited_for(tools, monkeypatch):
+def test_a_catastrophic_pattern_is_stopped_not_waited_for(monkeypatch):
     """The pattern is the model's, the text is the sample's, and Python's `re`
     has no timeout. `(a+)+$` against 44 a's and a '!' does not finish; the
-    search must, without blocking the process that brokers every tool call."""
-    monkeypatch.setattr(dotnet_tools, "SEARCH_TIMEOUT_S", 1.0)
+    sandbox's timeout, enforced from outside, stops it, and the broker answers
+    the call as a bad pattern without blocking the process that brokers every
+    tool call. (Here the outside timeout is the broker's backstop: the local
+    stand-in for the container has no podman --timeout.)"""
+    monkeypatch.setattr(dotnet_agentic, "STARTUP_GRACE_S", 0)
     t0 = time.monotonic()
-    r = tools.call("search_source", {"pattern": "(a+)+$"})
+    r = DotnetToolBroker(SRC, timeout=1).call("search_source", {"pattern": "(a+)+$"})
     assert time.monotonic() - t0 < 10
     assert "Invalid search pattern" in r["error"]
     assert is_semantic_tool_error({"tool": "search_source", "result": r})
