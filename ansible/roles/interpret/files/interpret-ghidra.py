@@ -3047,6 +3047,31 @@ def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: d
         })
 
 
+# Phase 2a runs with thinking ON: `/no_think` only shortens it, and the switch that
+# works (chat_template_kwargs) is dropped by the LiteLLM route (#260, measured
+# 2026-10-03). So 2a can spend its whole budget reasoning and return no text. On
+# formbook (dotnet-agentic-vs-ss-2610) it did: 16,384 tokens, stop=max_tokens,
+# and the run fell to the legacy fallback and was lost. The reasoning holds the
+# agent's conclusions; 2b only needs something to serialize, so hand it the TAIL
+# (where the conclusions accumulate), capped so 2b's prompt stays the short,
+# single-purpose request it is designed to be. The cap is a size limit sized for
+# CPU prefill (#676 will make it a profile value).
+SALVAGE_REASONING_CHARS = 24_000
+
+
+def salvage_reasoning(message: Any, limit: int = SALVAGE_REASONING_CHARS) -> str:
+    """Text for phase 2b when 2a returned only reasoning; "" if there is none."""
+    parts = [getattr(b, "thinking", "") or "" for b in getattr(message, "content", None) or []
+             if getattr(b, "type", None) == "thinking"]
+    text = "\n".join(p for p in parts if p.strip()).strip()
+    if not text:
+        return ""
+    if len(text) > limit:
+        text = text[-limit:]
+    return ("[Phase 2a produced no prose; this is the end of its reasoning, which "
+            "may be cut off. Use only what it states.]\n\n" + text)
+
+
 def main() -> None:
     """Run the agentic interpretation loop or report summarization."""
     api_key = os.environ.get("LITELLM_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
@@ -3645,6 +3670,11 @@ Technical summary: {executive}"""
                       f"(stop_reason={getattr(concl, 'stop_reason', None)}, "
                       f"out_tokens={getattr(getattr(concl, 'usage', None), 'output_tokens', None)})",
                       flush=True)
+                concl_text = salvage_reasoning(concl)
+                if concl_text:
+                    emit_status(f"synth_2a produced no prose; handing the last "
+                                f"{len(concl_text):,} chars of its reasoning to 2b (#260)",
+                                tool_calls_used)
         except anthropic.APIError as e:
             # This was a bare `pass`. A silent swallow here empties concl_text,
             # which silently SKIPS phase 2b and drops the run to the legacy

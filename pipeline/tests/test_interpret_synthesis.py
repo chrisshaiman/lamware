@@ -63,15 +63,16 @@ def test_phase2a_failure_is_logged_not_silent():
     assert "no visible text" in block, "log the empty-but-successful case too"
 
 
-def test_phase2a_disables_thinking_via_no_think():
-    """The router path cannot forward chat_template_kwargs, so /no_think is the
-    only lever. Measured 2026-07-25 it cut the call 154s -> 115s.
+def test_phase2a_appends_no_think_which_only_shortens_thinking():
+    """The router path drops chat_template_kwargs, so /no_think is the only
+    lever on this transport — and it does NOT disable thinking.
 
-    Whether the switch still does anything is OPEN (#260): a 2026-07-30 probe on
-    this transport had the /no_think arm return an empty response where the same
-    request without it produced correct prose. Unchanged pending a
-    production-scale A/B, so this guard stays -- but it asserts what the code
-    currently DOES, not that the behaviour is settled.
+    Settled 2026-10-03 (#260): direct to llama-server, the same request thought
+    5,897 chars with no switch and 4,291 with /no_think (`thinking: disabled` was
+    ignored; chat_template_kwargs gave 0, but LiteLLM's /v1/messages route drops
+    it — measured through the real socket). So 2a reasons, bounded only by
+    max_tokens, and salvage_reasoning exists for when it never reaches prose.
+    This guard asserts what the code currently DOES.
     """
     block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
     assert "/no_think" in block, "phase 2a prompt must carry the /no_think switch"
