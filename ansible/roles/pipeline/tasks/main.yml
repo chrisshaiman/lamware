@@ -526,6 +526,7 @@
     - ghidra.py
     - interpret.py
     - single_shot_init.py
+    - dotnet_tools.py
     - cape.py
     - process_activity.py
 

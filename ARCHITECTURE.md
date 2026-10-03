@@ -204,7 +204,7 @@ flowchart TB
     end
 
     subgraph "Stage 4.5 — AI Investigation"
-        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET: agentic with 6 C# tools<br/>Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
     end
 
     subgraph "Stage 4.7 — Evasion Hunter"

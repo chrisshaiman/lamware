@@ -196,11 +196,16 @@ def _labelled_only(**over) -> dict:
     return r
 
 
-def _assert_wrapper(init, modality, source, read):
-    assert modality == "dotnet"
+def _assert_wrapper(init, modality, source, read, mode="agentic"):
+    """The wrapper's C#, through production's default .NET path unless `mode`
+    says otherwise (#646: agentic since then; a replayed pre-#646 cell is
+    single-shot, because that is what produced it)."""
+    kind = {"agentic": "dotnet_agentic", "single_shot": "dotnet"}[mode]
+    assert modality == kind
     assert init["analysis_type"] == "dotnet"
+    assert init.get("dotnet_mode", "single_shot") == mode
     assert "Blackjack" in source
-    assert read == {"kind": "dotnet", "wrapper_routed_by": "dotnet_routed"}
+    assert read == {"kind": kind, "wrapper_routed_by": "dotnet_routed", "dotnet_mode": mode}
 
 
 def test_a_payload_not_in_its_project_is_never_chosen(corpus):
@@ -324,7 +329,19 @@ def test_a_recorded_payload_is_replayed_without_verifying(corpus):
 
 
 def test_a_cell_recorded_before_646_replays_the_wrapper_dispatch():
-    _assert_wrapper(*init_payload_for(v661_report(), recorded={}))
+    _assert_wrapper(*init_payload_for(v661_report(), recorded={}), mode="single_shot")
+
+
+@pytest.mark.parametrize("kind,mode", [("dotnet", "single_shot"),
+                                       ("dotnet_agentic", "agentic")])
+def test_a_recorded_dotnet_cell_replays_its_own_mode(kind, mode):
+    """The re-scorer must ground a cell against the payload it was produced
+    from, whatever the live default is now — and whatever `dotnet_mode` the
+    caller passes, which a replay ignores."""
+    other = "agentic" if mode == "single_shot" else "single_shot"
+    _assert_wrapper(*init_payload_for(
+        v661_report(), recorded={"kind": kind, "wrapper_routed_by": "dotnet_routed"},
+        dotnet_mode=other), mode=mode)
 
 
 # --- run_arm, rebuild, and the scorecard ------------------------------------------

@@ -23,6 +23,8 @@ from pathlib import Path
 
 from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidra_args
 
+from stages.dotnet_tools import DotnetToolbox, is_agentic_dotnet, validate_dotnet_args
+
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
 
 # Local models (small active-param MoE) derail on the full ~200-function list —
@@ -642,6 +644,22 @@ def without_host_paths(ghidra_result: dict) -> dict:
     return out
 
 
+def agent_payload(ghidra_result: dict) -> dict:
+    """The init payload as the AGENT receives it. One function, used by
+    `run_interpret` and by the eval's grounding (`agent_visible_text`), so what
+    a claim is scored against is what was sent.
+
+    Host paths removed (`without_host_paths`, #634/#669). For the agentic .NET
+    path also `decompiled_source`: the orchestrator keeps the source and serves
+    it through the .NET tools (#646). Sending it as well would put the 100k-char
+    prompt the change exists to remove straight back into the first message.
+    """
+    out = without_host_paths(ghidra_result)
+    if is_agentic_dotnet(out):
+        out = {k: v for k, v in out.items() if k != "decompiled_source"}
+    return out
+
+
 def run_ghidra_tool(project_dir: str, program_name: str,
                     tool_name: str, tool_args: dict,
                     ghidra_cmd: str, list_functions_cap: int | None = None,
@@ -721,6 +739,13 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
 
     project_dir = ghidra_result.get("project_dir", "")
     program_name = ghidra_result.get("program_name", "")
+    # Agentic .NET (#646): the tools are served HERE, from the decompiled source
+    # the payload carries, not in the container. A tool call is the only moment
+    # the container reads stdin, so it is the only moment force_final and the
+    # synthesis reserve can reach it (#240); tools answered inside the
+    # container would leave a run nothing can stop. See stages/dotnet_tools.py.
+    dotnet_tools = (DotnetToolbox.from_payload(ghidra_result)
+                    if is_agentic_dotnet(ghidra_result) else None)
 
     start_time = time.time()
 
@@ -745,8 +770,9 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
         "type": "init",
         # Host paths stripped: they carry our label for the sample and the agent
         # cannot use them (#634). `project_dir` and `program_name` were taken as
-        # locals above, so the tool executor is unaffected.
-        "ghidra_data": without_host_paths(ghidra_result),
+        # locals above, so the tool executor is unaffected. The agentic .NET
+        # source is stripped too; `dotnet_tools` above holds it.
+        "ghidra_data": agent_payload(ghidra_result),
         "config": interpret_config,
     }
     if ghidra_result.get("bazaar_family"):
@@ -780,7 +806,10 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 re_backend=interpret_config.get("re_backend"),
                 max_tool_calls=interpret_config.get("max_tool_calls"),
                 max_tool_calls_per_turn=interpret_config.get("max_tool_calls_per_turn"),
-                analysis_type=ghidra_result.get("analysis_type"))
+                analysis_type=ghidra_result.get("analysis_type"),
+                # Which .NET path ran, so a trail says whether a 0-tool-call run
+                # was the single-shot path or an agent that never asked (#646).
+                dotnet_mode=ghidra_result.get("dotnet_mode"))
 
     budget_deadline = start_time + interpret_timeout
     hard_deadline = budget_deadline + force_final_grace
@@ -935,14 +964,26 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 # Validate arguments; refuse outright when this analysis has
                 # no Ghidra project (non-native paths) instead of shelling out
                 # a doomed `run-ghidra --tool "" ""`.
-                error = validate_tool_args(tool_name, tool_args)
-                if not error and not (project_dir and program_name):
-                    error = ghidra_unavailable_error(ghidra_result.get("analysis_type"))
+                if dotnet_tools is not None:
+                    error = validate_dotnet_args(tool_name, tool_args)
+                else:
+                    error = validate_tool_args(tool_name, tool_args)
+                    if not error and not (project_dir and program_name):
+                        error = ghidra_unavailable_error(ghidra_result.get("analysis_type"))
                 if error:
                     print(f"    [!] Validation failed: {error}")
                     response = {"type": "tool_error", "tool": tool_name, "error": error}
                     tool_call_log.append({"tool": tool_name, "args": tool_args, "error": error})
                     trail.tool(tool_name, tool_args, error=error)
+                elif dotnet_tools is not None:
+                    # In-process: an index lookup or a bounded search, never the
+                    # sample's code. Every result is capped and says so, for
+                    # both backends — paging, not truncation, is what keeps it
+                    # whole (stages/dotnet_tools.py).
+                    tool_result = dotnet_tools.call(tool_name, tool_args)
+                    response = {"type": "tool_result", "tool": tool_name, "result": tool_result}
+                    tool_call_log.append({"tool": tool_name, "args": tool_args, "result": tool_result})
+                    trail.tool(tool_name, tool_args, result=tool_result)
                 else:
                     # Execute Ghidra tool in container. Both caps are local-backend
                     # ONLY — small models derail on the full ~200-function list, and
@@ -975,6 +1016,16 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 # What we are about to SEND. Every other event here describes what came
                 # back (#262).
                 trail.request(msg)
+                if (dotnet_tools is not None and msg.get("phase") == "dotnet"
+                        and not msg.get("has_tools")):
+                    # An interpret image from before #646 runs its single-shot .NET
+                    # path over the agentic payload, which carries no source: the
+                    # model would be asked to analyse a map. Say so where it will
+                    # be seen, rather than score that run as an analysis.
+                    print("    [!] the interpret container ran the single-shot .NET path "
+                          "on an agentic payload — its image predates this pipeline "
+                          "(deploy --tags pipeline,interpret together)")
+                    trail.event("dotnet_agentic_payload_on_single_shot_container")
 
             elif msg_type == "request_result":
                 # What that request COST, paired with the shape event above (#299).

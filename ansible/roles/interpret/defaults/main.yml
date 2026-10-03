@@ -47,6 +47,22 @@ interpret_re_backend: "local"
 # returns 0 chars. Measured, in single_shot_completion's docstring.
 interpret_single_shot_backend: "local"
 
+# Which .NET interpret path runs (#646).
+#
+#   agentic      the agent gets a map of the assembly (metadata, table of
+#                contents, strings, suspicious constructs by Class.Method) and
+#                tools that read the decompiled C# on demand, served by the
+#                pipeline from the stored source. Same loop, per-turn and run
+#                limits, and forced-final salvage as the Ghidra path.
+#   single_shot  the previous path: strings + up to 100,000 characters of C# in
+#                ONE request. 38-58k tokens, 45-90 minutes of prefill on this
+#                host, and the stage budget cannot interrupt it (redet644,
+#                2026-09-27: quasarrat and warzonerat ran past the budget;
+#                formbook described the decoy game). Kept for the eval A/B.
+#
+# Uses re_backend's transport, not single_shot_backend's: it is the agentic loop.
+interpret_dotnet_mode: "agentic"
+
 # Model selection — executive summary (structured reformatting, no tools)
 interpret_summary_model: "local-qwen-llamacpp"
 

@@ -11,6 +11,7 @@ carrying their own Jinja for them. Secrets (cape_api_key, db_password) are
 intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -44,6 +45,14 @@ class InterpretConfig(BaseModel):
     # is SEPARATE from re_backend above. Defaulted so an older config.json still
     # loads, and "cloud" reproduces the historical behaviour.
     single_shot_backend: str = "cloud"
+    # Which .NET interpret path runs (#646). "agentic": a map of the assembly
+    # plus tools that read the decompiled C# on demand, through the same loop,
+    # limits and forced-final salvage as the Ghidra path. "single_shot": the
+    # previous path, the whole stored source in one request — 38-58k tokens and
+    # 45-90 minutes of prefill on the local host, which the stage budget cannot
+    # interrupt. Kept so the eval can A/B the two. A Literal, so a typo fails at
+    # startup rather than silently choosing a path.
+    dotnet_mode: Literal["agentic", "single_shot"] = "agentic"
     # Wall-clock budget for the whole summarize container run. Defaulted rather than
     # required so a config.json written before this key still loads — the eval harness
     # passes whole config dicts through and an older one would fail validation, which

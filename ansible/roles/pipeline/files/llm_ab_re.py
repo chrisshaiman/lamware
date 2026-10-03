@@ -101,6 +101,12 @@ def is_tool_error(entry: dict) -> bool:
 _SEMANTIC_TOOL_ERRORS = (
     "function not found",
     "memory read failed",
+    # The agentic .NET tools (#646): a class, method or line the model asked
+    # for that is not there (stages/dotnet_tools.NOT_FOUND), and a regex the
+    # model wrote that does not compile or runs too long. Both are the model's
+    # request answered "no" by a working tool.
+    "not found in the decompiled source",
+    "invalid search pattern",
 )
 
 

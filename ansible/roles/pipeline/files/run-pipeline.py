@@ -49,6 +49,7 @@ from stages.cape import (
     submit_to_cape,
 )
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
+from stages.dotnet_tools import build_dotnet_interpret_init
 from stages.ghidra import (
     ROUTED_FLAGS,
     make_ghidra_verifier,
@@ -72,7 +73,6 @@ from stages.pyinstaller import is_pyinstaller_binary, run_pyinstaller_analysis
 from stages.script_analysis import is_text_script, read_script_source
 from stages.single_shot_init import (
     CONTAINER_SOURCE_CAP,
-    build_dotnet_init,
     build_go_init,
     build_ps_init,
     capped,
@@ -1007,10 +1007,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             "wrapper_routed_by": _routed_by[0],
         }
     elif dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
-        # .NET path — send C# source directly to LLM (no Ghidra tools needed)
-        log.info("\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation...")
+        # .NET path. "agentic" (default): a map of the assembly plus tools that
+        # read the C# on demand, served by run_interpret from the stored
+        # source. "single_shot": the whole stored source in one request (#646).
+        _dotnet_mode = INTERPRET_CONFIG.get("dotnet_mode", "agentic")
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation "
+                 f"({_dotnet_mode})...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
-        dotnet_init = build_dotnet_init(dotnet_data, _llm_context, cape_sigs)
+        dotnet_init = build_dotnet_interpret_init(dotnet_data, _llm_context, cape_sigs,
+                                                  _dotnet_mode)
         report["llm_interpretation"] = run_interpret(
             dotnet_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -1021,6 +1026,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
+        # Which .NET path produced this, in the shape the payload branch above
+        # writes and the eval records (`kind` is the eval's modality name).
+        report["llm_interpretation"]["input"] = {
+            "kind": "dotnet_agentic" if _dotnet_mode == "agentic" else "dotnet",
+            "dotnet_mode": _dotnet_mode,
+        }
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")

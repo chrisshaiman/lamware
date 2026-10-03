@@ -42,7 +42,11 @@ SINGLE_SHOT_PATHS = ("dotnet", "java_cfr", "office_macro", "powershell")
 
 def _path_block(analysis_type: str) -> str:
     """The body of one single-shot branch, from its guard to its sys.exit(0)."""
-    start = INTERPRET_SRC.index(f'if ghidra_data.get("analysis_type") == "{analysis_type}":')
+    # Up to the guard's closing quote, not its colon: the .NET guard carries a
+    # second condition since #646 (`and not dotnet_agentic` — the agentic .NET
+    # path runs the tool loop instead), and the block below it is still the
+    # single-shot path these tests are about.
+    start = INTERPRET_SRC.index(f'if ghidra_data.get("analysis_type") == "{analysis_type}"')
     end = INTERPRET_SRC.index("sys.exit(0)", start)
     return INTERPRET_SRC[start:end]
 

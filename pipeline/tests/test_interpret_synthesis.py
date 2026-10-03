@@ -89,7 +89,11 @@ def test_phase2a_carries_the_loop_tools_block_for_prefix_reuse():
     same block took reuse from 0% to 99.4% both directly against llama.cpp and
     through the LiteLLM router.
 
-    It must be TOOLS itself: a subset or a rebuilt block diverges just as badly.
+    It must be the loop's own block: a subset or a rebuilt block diverges just
+    as badly. Since #646 the loop's block is `loop_tools` — TOOLS on the Ghidra
+    path, DOTNET_TOOLS on the agentic .NET path — so 2a must pass that same
+    variable, and the loop must too (asserted below, so a 2a that went back to
+    TOOLS on a .NET run cannot pass).
     """
     block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
     concl = block.split("concl = create_message(", 1)
@@ -97,9 +101,13 @@ def test_phase2a_carries_the_loop_tools_block_for_prefix_reuse():
     # Up to the next statement, not to the first ")" -- the argument list contains
     # max(max_output_tokens, 8192), whose paren would truncate the slice early.
     call = concl[1].split("concl_text =", 1)[0]
-    assert "tools=TOOLS" in call, (
-        "phase 2a must pass tools=TOOLS or it re-evaluates the whole transcript (#246)"
+    assert "tools=loop_tools" in call, (
+        "phase 2a must pass the loop's tools block or it re-evaluates the whole "
+        "transcript (#246)"
     )
+    loop = _t().split("# ---- Agentic loop", 1)[1]
+    assert "tools=loop_tools," in loop.split("response = create_message_streaming(", 1)[1][:400], (
+        "the loop no longer sends loop_tools, so 2a's block no longer matches it")
 
 
 def test_phase2a_logs_a_tool_call_reply():

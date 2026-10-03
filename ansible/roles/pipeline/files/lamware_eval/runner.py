@@ -9,9 +9,9 @@ from pathlib import Path
 
 import requests
 from llm_ab_re import extract_metrics
+from stages.dotnet_tools import build_dotnet_interpret_init
 from stages.ghidra import ROUTED_FLAGS, make_ghidra_verifier, select_payload_target
-from stages.interpret import run_interpret, without_host_paths
-from stages.single_shot_init import build_dotnet_init
+from stages.interpret import agent_payload, run_interpret
 
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
@@ -153,18 +153,24 @@ def tool_output_text(out_dir: Path) -> str:
     Scoring against the dump alone reported 85% "fabrication" for the cloud arm
     on 2026-07-25, when its flagged values (`-id=`, `~%u.tmp`) were independently
     confirmed by a separate baseline run — i.e. almost all of that was artifact.
+
+    Every `tool_calls*.json` in the cell, not only `tool_calls.json`: the audit
+    file is named after the payload's analysis_type (`audit_filename`), so an
+    agentic .NET cell writes `tool_calls_dotnet.json` (#646). Reading only the
+    native name would score every claim it drew from a tool result as a
+    fabrication. A cell runs one interpret, so there is one file.
     """
-    audit = out_dir / "llm_audit" / "tool_calls.json"
-    if not audit.exists():
-        return ""
-    try:
-        records = json.loads(audit.read_text())
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        return ""  # a malformed audit must not sink the cell
-    if not isinstance(records, list):
-        return ""
-    return " ".join(json.dumps(r.get("result", ""))
-                    for r in records if isinstance(r, dict))
+    texts = []
+    for audit in sorted((out_dir / "llm_audit").glob("tool_calls*.json")):
+        try:
+            records = json.loads(audit.read_text())
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            continue  # a malformed audit must not sink the cell
+        if not isinstance(records, list):
+            continue
+        texts.append(" ".join(json.dumps(r.get("result", ""))
+                              for r in records if isinstance(r, dict)))
+    return " ".join(t for t in texts if t)
 
 
 #: A MITRE technique ID, with or without a sub-technique.
@@ -350,8 +356,11 @@ def _corpus_verifier(probe, ghidra_data: dict, corpus_dir: str | Path | None):
 def agent_visible_text(ghidra_payload: dict) -> str:
     """The grounding text for a Ghidra payload: what the agent was sent, as text.
 
-    `run_interpret` sends the agent `without_host_paths(payload)`; this scores
-    against the same thing, via the same function, for BOTH Ghidra modalities.
+    `run_interpret` sends the agent `agent_payload(payload)`; this scores
+    against the same thing, via the same function, for BOTH Ghidra modalities
+    and for the agentic .NET one, whose payload loses its `decompiled_source`
+    there (the agent reads the C# through tools, and those results are scored
+    via `tool_output_text`).
     Scoring against the raw dict also scored against `project_dir` and
     `host_output_dir`, and every corpus path is
     `/opt/pipeline/eval-corpus/<family>_<sha8>/...`, so a claim naming the
@@ -359,14 +368,22 @@ def agent_visible_text(ghidra_payload: dict) -> str:
     than a strip per branch: the native branch was left unstripped once
     already, when the payload branch was not.
     """
-    return json.dumps(without_host_paths(ghidra_payload))
+    return json.dumps(agent_payload(ghidra_payload))
 
 
-def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
-    """The pre-#646 dispatch: the wrapper's own analyser, else the Ghidra dict.
+#: The modality a .NET cell is recorded under, per `dotnet_mode`. Separate
+#: names because they are separate measurements — one request over the whole
+#: stored C#, or an agent reading it through tools — and `aggregate` counts
+#: modalities per arm so a pooled summary says so.
+DOTNET_MODALITY = {"single_shot": "dotnet", "agentic": "dotnet_agentic"}
 
-    Unchanged. It is still what production does for a routed sample with no
-    usable payload, and for every native sample.
+
+def _wrapper_payload(report: dict, dotnet_mode: str = "agentic") -> tuple[dict, str, str]:
+    """The wrapper's own analyser, else the Ghidra dict.
+
+    What production does for a routed sample with no usable payload, and for
+    every native sample. The .NET payload comes from production's own
+    `build_dotnet_interpret_init` for the given `dotnet_mode` (#646).
     """
     dotnet = report.get("dotnet_analysis") or {}
     if dotnet.get("analysis_success"):
@@ -374,8 +391,13 @@ def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
                      ((report.get("cape") or {}).get("signatures") or [])]
         llm_context = ({"bazaar_family": report["bazaar_family"]}
                        if report.get("bazaar_family") else {})
-        init = build_dotnet_init(dotnet, llm_context, cape_sigs)
-        return init, "dotnet", json.dumps(init.get("decompiled_source", ""))
+        init = build_dotnet_interpret_init(dotnet, llm_context, cape_sigs, dotnet_mode)
+        if dotnet_mode == "agentic":
+            # What the agent was SENT (the map, without the source); the C# it
+            # read arrives through the tool results, scored with them.
+            return init, DOTNET_MODALITY["agentic"], agent_visible_text(init)
+        return (init, DOTNET_MODALITY["single_shot"],
+                json.dumps(init.get("decompiled_source", "")))
     gr = report.get("ghidra") or {}
     # The init is the full dict: the host needs `project_dir` to broker tool
     # calls. Only the grounding text loses the paths (#669).
@@ -383,7 +405,8 @@ def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
 
 
 def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = None,
-                     recorded: dict | None = None) -> tuple[dict, str, str, dict]:
+                     recorded: dict | None = None,
+                     dotnet_mode: str = "agentic") -> tuple[dict, str, str, dict]:
     """(init payload, modality, grounding source, input record) for this sample.
 
     `run_interpret`'s first parameter is named `ghidra_result` but is really an
@@ -397,7 +420,10 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
        canonical one. The AGENTIC Ghidra path runs on that program (#646 option
        (c)). Programs marked `in_project: false` (#655) are never chosen; that
        rule lives in `select_payload_target`, not here.
-    2. ``dotnet`` — the wrapper's single-shot path on the decompiled C# (#505).
+    2. ``dotnet_agentic`` / ``dotnet`` — the wrapper's decompiled C#, read by
+       an agent through tools (`dotnet_mode="agentic"`, production's default)
+       or sent whole in one request (`"single_shot"`, #505). Both payloads
+       come from `build_dotnet_interpret_init`, production's selector.
     3. ``native_pe`` — the Ghidra dict, exactly as before.
 
     `select_payload_target`, `ROUTED_FLAGS` and `build_dotnet_init` are IMPORTED
@@ -421,6 +447,9 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
     re-scorer has no Ghidra to verify with, and re-deciding could disagree with
     the sweep that produced the cell (#380). `{}` — a cell from before the
     record existed — replays the pre-#646 dispatch, which is what produced it.
+    The .NET mode is replayed too: a cell recorded as `dotnet` (or with no
+    record) was single-shot, one recorded as `dotnet_agentic` was agentic;
+    `dotnet_mode` is ignored when replaying.
 
     THE GROUNDING SOURCE moves with the modality, because a claim is grounded
     only against what the agent could have read:
@@ -430,6 +459,10 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
       dotnet            the decompiled C#. Scored against the Ghidra dict it was
                         scored against an empty one, so every claim it made was
                         a fabrication.
+      dotnet_agentic    the map the agent was sent (`agent_visible_text`: no
+                        source, no host paths) plus the tool results — the C#
+                        it actually pulled. Not the whole source: a claim about
+                        code it never read is not grounded by that code.
       unpacked_payload  the chosen program's entry as the agent received it
                         (`agent_visible_text`). Not the C#, which the agent
                         never saw, and not the whole Ghidra dict, whose other
@@ -449,6 +482,8 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
 
     target, reason = None, None
     if recorded is not None:
+        dotnet_mode = ("agentic" if recorded.get("kind") == DOTNET_MODALITY["agentic"]
+                       else "single_shot")
         if recorded.get("kind") == "unpacked_payload":
             name = recorded.get("program_name")
             target = next((f for f in gr.get("analyzed_files") or []
@@ -463,9 +498,11 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
             gr, verify=_corpus_verifier(verify, gr, corpus_dir))
 
     if target is None:
-        init, modality, source = _wrapper_payload(report)
-        return init, modality, source, {
-            "kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
+        init, modality, source = _wrapper_payload(report, dotnet_mode)
+        read = {"kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
+        if modality in DOTNET_MODALITY.values():
+            read["dotnet_mode"] = dotnet_mode
+        return init, modality, source, read
 
     init = dict(target)
     if corpus_dir is not None:
@@ -488,8 +525,13 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # Production's verifier, unmodified, pointed at the corpus copies of the
     # projects (see init_payload_for). It only runs for a routed sample; a
     # native one never reaches it.
+    # The arm's .NET mode, else the deployed config's, else production's
+    # default. Passed to the payload builder AND written into cfg below, so the
+    # cell's record, its payload and the container all agree (#646).
+    dotnet_mode = arm.dotnet_mode or base_cfg.get("dotnet_mode") or "agentic"
     init, modality, source_head, read = init_payload_for(
-        report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir)
+        report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir,
+        dotnet_mode=dotnet_mode)
     print(f"    [eval] input: {input_label(read)}", flush=True)
     gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
@@ -500,7 +542,8 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # run produced no clean sonnet-5 data at all.
     cfg = {**base_cfg, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
            "escalation_model": arm.model,
-           "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384)}
+           "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384),
+           "dotnet_mode": dotnet_mode}
     if arm.re_backend == "local":
         # TWO keys, because the interpret container has two paths and they read
         # different ones. The agentic RE loop checks `re_backend`

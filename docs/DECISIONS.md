@@ -44,6 +44,7 @@ these describe an AWS data plane that no longer exists.
 | [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
+| [021](#adr-021-net-interpretation-is-agentic-its-tools-are-brokered-by-the-pipeline) | .NET interpretation is agentic; its tools are brokered by the pipeline | Proposed (#646) — pending deploy and eval A/B |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -911,3 +912,53 @@ and is what turns a four-hour diagnosis into a red check.
 
 **If you are reading this while considering ufw: the tests will stop you, and
 they are right to.**
+
+
+## ADR-021: .NET interpretation is agentic; its tools are brokered by the pipeline
+
+**Status:** Proposed (2026-10-02) — pending deploy and the single-shot vs agentic eval A/B
+**Issue:** #646 (this is the path for .NET samples with no usable unpacked payload; #651
+covers the ones that have one)
+
+### Context
+
+The .NET interpret path was one request: strings, class summaries and up to 100,000
+characters of ILSpy C#. On the CPU-only host that measured 38,263-57,751 input tokens
+and 2,690-5,448 s for the one call (redet644, 2026-09-27); quasarrat and warzonerat ran
+past the 3,600 s budget, which cannot interrupt a request in flight. formbook's run
+finished and described the decoy: the loader was a few lines that build a byte list
+and call `LateBinding.LateGet(Thread.GetDomain(), null, "Load", ...)`.
+
+README called single-shot "a deliberate choice, not a gap" for .NET. It was never
+measured on local inference.
+
+### Decision
+
+1. The .NET path runs **the same agentic loop as the Ghidra path**: same per-turn and
+   run limits, same forced-final and synthesis-reserve salvage, same synthesis phases.
+   The first message is a map (metadata, bounded table of contents, strings, a ranked
+   list of suspicious constructs by `Class.Method`); six tools read the C# on demand.
+2. **The tools run in the orchestrator** (`stages/dotnet_tools.py`), not in the
+   interpret container, although the container could serve them from the payload.
+   The container reads stdin only while waiting for a tool result, so a tool call is
+   the only moment `force_final` and the synthesis reserve can reach it (#240). Tools
+   answered in-process would recreate a run nothing can stop. The source never enters
+   the container; the container's network posture is unchanged.
+3. Every tool result is bounded and says when it is (`truncated`, `page`/`pages`,
+   `total_hits`); nothing the analyser stored is unreachable.
+4. The single-shot path stays behind `dotnet_mode` (role var `interpret_dotnet_mode`)
+   so the eval can compare the two (`<arm>+ss`). Default: `agentic`.
+
+### Consequences
+
+- The first request shrinks from ~105k characters to ~20-29k (system + tools + map),
+  measured on five host reports; each later turn adds at most three bounded results.
+- Grounding for a `dotnet_agentic` eval cell is what the agent saw: the map plus the
+  tool results, not the whole source.
+- The analyser still stores only the first 100,000 characters of a larger
+  decompilation (quasarrat: 4,468,045). The tools say so; they cannot reach past it.
+  Raising that cap is a separate decision.
+- A half-deploy (new pipeline, old interpret image) sends a payload without source
+  to a container that runs the single-shot path over it. The broker recognises that
+  request and logs it (`dotnet_agentic_payload_on_single_shot_container`), but the
+  run still produces an analysis of a map. Deploy `pipeline` and `interpret` together.
