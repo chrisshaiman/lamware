@@ -234,7 +234,7 @@ def test_the_runner_reads_the_promoted_report(report_dir, tmp_path, monkeypatch)
     (sample,) = load_corpus(str(tmp_path / "corpus.json"))
 
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
-    init, modality, _ = runner.init_payload_for(report)
+    init, modality, _, _ = runner.init_payload_for(report)
     assert modality == "native_pe"
     assert Path(init["project_dir"]).is_relative_to(sample.corpus_dir)
     assert init["program_name"] in P._project_programs(Path(init["project_dir"]))
@@ -275,3 +275,24 @@ def test_a_surviving_old_path_refuses_the_promotion(report_dir, tmp_path):
     (report_dir / "report.json").write_text(json.dumps(report))
     with pytest.raises(P.PromotionError, match="survive the rewrite"):
         _promote(report_dir, tmp_path)
+
+
+def test_a_family_labelled_payload_is_recorded_not_refused():
+    """#670, owner's choice: a program the agent may read that carries CAPE's
+    family label ("Formbook Payload") is promoted and FLAGGED, so the scorecard
+    can report clean and labelled cells separately. Refusing or redacting it
+    would hide what production actually reads."""
+    from lamware_eval.promote import agent_input_names_family
+    labelled = {"ghidra": {"analyzed_files": [
+        {"program_name": "c95af141", "cape_type": "Formbook Payload",
+         "process": "cape_Formbook Payload", "host_output_dir": "/x/formbook_5b4f/p"}]}}
+    plain = {"ghidra": {"analyzed_files": [
+        {"program_name": "573e6860", "cape_type": None, "process": "cape_unknown"}]}}
+    assert agent_input_names_family(labelled, "formbook") is True
+    assert agent_input_names_family(plain, "amadey") is False
+    # A family named only inside a host path is #669's problem, not a label the
+    # agent sees: without_host_paths strips it before this check looks.
+    pathonly = {"ghidra": {"analyzed_files": [
+        {"program_name": "x", "project_dir": "/opt/pipeline/eval-corpus/emotet_591d/p/project",
+         "host_output_dir": "/opt/pipeline/eval-corpus/emotet_591d/p"}]}}
+    assert agent_input_names_family(pathonly, "emotet") is False

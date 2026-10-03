@@ -390,6 +390,27 @@ def check_index(plan: Plan, root: Path) -> list[str]:
     return missing
 
 
+def agent_input_names_family(report: dict, family: str) -> bool:
+    """Whether a program the agent may be handed carries the family name (#670).
+
+    CAPE labels payloads by family ("Formbook Payload"), and since #651 that
+    label rides in analyzed_files[*].cape_type / .process, which the agent
+    receives. Production is right to pass it on; in the eval it means the agent
+    can recite the family's techniques instead of finding them. The owner chose
+    to REPORT such samples separately, not refuse or redact them (2026-10-02),
+    so this is recorded on the entry and in the promoted report, never a refusal.
+    Checked over every analysed program, not only the one init_payload_for picks
+    without a verifier, because the eval's real verifier may pick another.
+    """
+    needle = family.strip().lower()
+    if not needle:
+        return False
+    ghidra = report.get("ghidra") if isinstance(report.get("ghidra"), dict) else {}
+    files = ghidra.get("analyzed_files") if isinstance(ghidra.get("analyzed_files"), list) else []
+    seen = [without_host_paths(f) for f in files if isinstance(f, dict)]
+    return needle in json.dumps(seen).lower()
+
+
 def leak_check(report: dict, family: str, dest: Path) -> tuple[bool | None, list[str]]:
     """(#634 result, refusals). The corpus dir is named after the family, so a
     rewritten path reaching the agent's payload would hand it the label too."""
@@ -397,7 +418,7 @@ def leak_check(report: dict, family: str, dest: Path) -> tuple[bool | None, list
     refusals = []
     if leak:
         refusals.append(f"evidence names the family {family!r} (#634)")
-    init, _modality, _src = init_payload_for(report)
+    init, _modality, _src, _record = init_payload_for(report, corpus_dir=str(dest))
     if str(dest) in json.dumps(without_host_paths(init)):
         refusals.append("the corpus path (named after the family) reaches the agent's init payload")
     return leak, refusals
@@ -410,7 +431,8 @@ def manifest_entry(plan: Plan) -> dict:
     return {"sha256": plan.sha256, "mb_family": plan.family, "corpus_dir": str(plan.dest)}
 
 
-def update_manifest(path: Path, plan: Plan, promoted_from: str, when: str) -> str:
+def update_manifest(path: Path, plan: Plan, promoted_from: str, when: str,
+                    input_named: bool = False) -> str:
     """Add or update this sample's entry, atomically. Returns 'added' or 'updated'.
 
     Fields an operator added to an existing entry (analyst_label, role, notes)
@@ -423,7 +445,8 @@ def update_manifest(path: Path, plan: Plan, promoted_from: str, when: str) -> st
         mode = stat.S_IMODE(path.stat().st_mode)
     else:
         data, mode = {"samples": []}, 0o640
-    entry = {**manifest_entry(plan), "promoted_from": promoted_from, "promoted_at": when}
+    entry = {**manifest_entry(plan), "promoted_from": promoted_from, "promoted_at": when,
+             "agent_input_names_family": input_named}
     action = "added"
     for e in data["samples"]:
         if isinstance(e, dict) and e.get("sha256", "").lower() == plan.sha256:
@@ -485,10 +508,12 @@ def promote(report_dir: Path, family: str, corpus_root: Path, *,
     leak, refusals = leak_check(report, family, plan.dest)
     if refusals:
         raise PromotionError("; ".join(refusals))
+    input_named = agent_input_names_family(report, family)
     report["_corpus_promotion"] = {
         # The run's NAME, not its path: no string in a promoted report points
         # into the old report dir, which is what makes "none remain" checkable.
         "promoted_from": plan.report_dir.name, "promoted_at": stamp,
+        "agent_input_names_family": input_named,
         "programs": [{"program_name": p.name, "project": p.rel_project, "why": p.why}
                      for p in plan.programs],
         "unpromoted": nulled,
@@ -537,7 +562,8 @@ def promote(report_dir: Path, family: str, corpus_root: Path, *,
 
     action = None
     if manifest is not None:
-        action = update_manifest(Path(manifest), plan, str(plan.report_dir), stamp)
+        action = update_manifest(Path(manifest), plan, str(plan.report_dir), stamp,
+                                 input_named=input_named)
     return Result(plan.dest, plan.programs, files, rewritten, nulled, leak,
                   archived=archived, manifest_action=action)
 
