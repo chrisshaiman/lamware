@@ -744,9 +744,16 @@ def _get_sample_lineage(args: dict, session: Session) -> dict:
 
 
 def _cape_task_id(report: dict) -> str | None:
-    """Extract the Cape task ID from the pipeline report JSON."""
+    """Extract the Cape task ID from the pipeline report JSON.
+
+    `task_id` only. This used to try `cape.id` first, copied from the stages,
+    where `cape_data` is CAPE's own task record and does have `id`. The
+    pipeline's report["cape"] never has: no version of run-pipeline.py in the
+    git history wrote it, and none of the 71 stored reports sampled for #409
+    carries it.
+    """
     cape = report.get("cape") or {}
-    tid = cape.get("id") or cape.get("task_id")
+    tid = cape.get("task_id")
     return str(tid) if tid else None
 
 

@@ -98,6 +98,18 @@ def is_family_payload(cape_type: object) -> bool:
     return isinstance(cape_type, str) and bool(_FAMILY_PAYLOAD_RE.match(cape_type.strip()))
 
 
+def _loaded_payload(f: dict) -> bool:
+    """A payload program the agent could read: loaded, with functions, present in
+    a project it can open. Module level, not nested in select_payload_target, so
+    the #409 report-key guard can follow its reads (it does not follow closures).
+    """
+    return (bool(f.get("analysis_success"))
+            and f.get("in_project") is not False
+            and (f.get("functions_count") or 0) > 0
+            and f.get("source") in PAYLOAD_SOURCES
+            and bool(f.get("project_dir")) and bool(f.get("program_name")))
+
+
 def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, str | None]:
     """The unpacked program the RE agent should read instead of a routed wrapper.
 
@@ -122,16 +134,9 @@ def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, 
     """
     files = ghidra_data.get("analyzed_files") or []
 
-    def loaded_payload(f: dict) -> bool:
-        return (bool(f.get("analysis_success"))
-                and f.get("in_project") is not False
-                and (f.get("functions_count") or 0) > 0
-                and f.get("source") in PAYLOAD_SOURCES
-                and bool(f.get("project_dir")) and bool(f.get("program_name")))
-
     if verify is not None:
         labelled = sorted(
-            (f for f in files if loaded_payload(f) and is_family_payload(f.get("cape_type"))),
+            (f for f in files if _loaded_payload(f) and is_family_payload(f.get("cape_type"))),
             key=lambda f: -(f.get("functions_count") or 0))
         for f in labelled:
             if verify(f["project_dir"], f["program_name"]) is True:
@@ -140,7 +145,7 @@ def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, 
     canonical = ghidra_data.get("program_name")
     if canonical and ghidra_data.get("project_dir"):
         for f in files:
-            if f.get("program_name") == canonical and loaded_payload(f):
+            if f.get("program_name") == canonical and _loaded_payload(f):
                 return f, "canonical"
     return None, None
 
