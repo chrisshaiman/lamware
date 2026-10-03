@@ -589,6 +589,7 @@
     - runner.py
     - rebuild.py
     - motif.py
+    - promote.py            # report dir -> eval corpus, copied and re-pointed
     - __main__.py
 
 - name: Deploy lamware_detonate package (repeated-detonation measurement harness)
