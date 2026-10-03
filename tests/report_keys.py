@@ -636,6 +636,14 @@ class _Frame:
             return self.env[e.id]
         if e.id in self.mod.consts:
             return frozenset({_const(self.mod.consts[e.id])})
+        # `from stages.ghidra import ROUTED_FLAGS`: a constant defined in another
+        # covered module. Without this a loop over an imported constant tuple
+        # reads as a non-constant key (lamware_eval/runner.py init_payload_for).
+        imported = self.mod.imports.get(e.id)
+        if imported is not None:
+            target = self.o._mods.get(imported[0])
+            if target is not None and imported[1] in target.consts:
+                return frozenset({_const(target.consts[imported[1]])})
         return _EMPTY
 
     def _Constant(self, e: ast.Constant) -> Vals:

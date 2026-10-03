@@ -144,6 +144,25 @@ ALLOWED: dict[str, Allowed] = {
         "absent on the main agentic pass in production too; it names the audit file "
         "tool_calls.json, which lamware_eval.rebuild expects"),
 
+    # --- written since the fixture was built --------------------------------
+    "ghidra.original_sample_included": _unobserved(
+        "added by #666 (2026-10-03), after the shapes fixture was built; written "
+        "on every native run_ghidra result", f"{_FILES}/stages/ghidra.py"),
+
+    # --- run_interpret is handed ONE program's entry, not the whole section ---
+    # Since #651 (routed payload) and #666 (native canonical) the agent's target is
+    # an analyzed_files entry. These optional reads exist only on the whole ghidra
+    # section; absent on an entry means "native, no family hint", as intended.
+    "ghidra.analyzed_files[].analysis_type": _never(
+        "per-program entries carry no analysis_type; run_interpret treats absence "
+        "as the native agentic pass (same reason as ghidra.analysis_type)"),
+    "ghidra.analyzed_files[].bazaar_family": _never(
+        "per-program entries carry no bazaar_family; run_interpret sends none, "
+        "as for production's whole-section Ghidra targets (ghidra.bazaar_family)"),
+    "ghidra.analyzed_files[].analyzed_files": _never(
+        "without_host_paths strips per-file paths from a whole section; an entry "
+        "has no nested analyzed_files, so the read finds nothing to strip"),
+
     # --- routed analysers (flow.py loops over all seven) ---------------------
     **{f"{a}_analysis": _unobserved(_RARE_TYPE, _PIPE)
        for a in ("office", "java")},
