@@ -418,7 +418,10 @@ def leak_check(report: dict, family: str, dest: Path) -> tuple[bool | None, list
     refusals = []
     if leak:
         refusals.append(f"evidence names the family {family!r} (#634)")
-    init, _modality, _src, _record = init_payload_for(report, corpus_dir=str(dest))
+    # No corpus_dir: this runs BEFORE the copy, and with one the runner would
+    # look for a project copy that does not exist yet (formbook, 2026-10-03).
+    # The report's paths are already rewritten to dest, which is what we test.
+    init, _modality, _src, _record = init_payload_for(report)
     if str(dest) in json.dumps(without_host_paths(init)):
         refusals.append("the corpus path (named after the family) reaches the agent's init payload")
     return leak, refusals
