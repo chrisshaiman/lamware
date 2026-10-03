@@ -692,9 +692,13 @@ def _re_agent(nodes: list[dict], edges: list[dict], r: dict, ghidra: dict | None
         match = next((f for f in files if f.get("program_name") == prog), None)
         cape_type = inp.get("cape_type") if "cape_type" in inp else (
             _cape_type_of(match) if match else None)
-        label = _payload_label(cape_type) if (cape_type is not None
-                                              or inp.get("source") == "cape_payload") \
-            else _text(prog or "program")
+        if inp.get("source") == "original_sample":
+            # Native path since #649: the canonical program can be the sample itself.
+            label = "original sample"
+        elif cape_type is not None or inp.get("source") == "cape_payload":
+            label = _payload_label(cape_type)
+        else:
+            label = _text(prog or "program")
         chosen = inp.get("chosen_because")
         functions = _int(inp.get("functions_count"))
         item = _item(label, READ, f"program {_short(prog)}" if prog else None,

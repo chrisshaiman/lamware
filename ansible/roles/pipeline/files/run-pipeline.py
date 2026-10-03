@@ -52,7 +52,9 @@ from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_
 from stages.ghidra import (
     ROUTED_FLAGS,
     make_ghidra_verifier,
+    native_input_record,
     run_ghidra,
+    select_native_target,
     select_payload_target,
     should_run_ghidra,
 )
@@ -1226,9 +1228,20 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             log.warning(f"Error: {interp['error']}")
 
     elif successful:
-        # Native PE path — agentic Ghidra investigation
-        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output...")
-        report["llm_interpretation"] = _interpret_ghidra_program(successful[0])
+        # Native PE path — agentic Ghidra investigation of the CANONICAL
+        # program (the one run_ghidra ranked and verified), not successful[0].
+        # The eval has always handed the agent report["ghidra"], whose top-level
+        # project_dir/program_name ARE the canonical program, so production
+        # reading list position meant production and the eval read different
+        # programs (#667's survey). #651's routed path already avoids position.
+        native_target, native_reason = select_native_target(ghidra_data)
+        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output "
+                 f"({native_reason}: {str(native_target.get('program_name', '?'))[:16]})...")
+        report["llm_interpretation"] = _interpret_ghidra_program(native_target)
+        # Say what was read, in the shape the routed branch writes, so reports
+        # and the flow view can tell canonical from a fallback.
+        report["llm_interpretation"]["input"] = native_input_record(
+            ghidra_data, native_target, native_reason)
     else:
         if INTERPRET_ENABLED and (ghidra_data.get("triggered") or dotnet_data):
             log.info("\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")

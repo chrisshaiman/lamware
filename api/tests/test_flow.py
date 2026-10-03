@@ -180,6 +180,36 @@ def test_a_dropper_after_649_shows_the_original_loaded():
         "the original was counted as a dropped PE")
 
 
+def test_a_native_canonical_input_names_the_program_read():
+    """Since the owner's decision on #649 the native path reads the canonical
+    program and records it in llm_interpretation.input."""
+    r = _cobalt_after_649()
+    r["llm_interpretation"] = {**(r.get("llm_interpretation") or {}), "input": {
+        "kind": "canonical", "program_name": "781f65c7f109f41c03974d5af8df05ef5d32eb47bd665fff2c1033bd033a1c00",
+        "source": "dropped_pe", "functions_count": 928, "cape_type": None,
+        "chosen_because": "canonical"}}
+    r["llm_interpretation"].pop("error", None)
+    e = edge(derive_flow(r), "ghidra-re_agent")
+    assert e["status"] == OK and e["reason"] == "canonical"
+    [item] = e["items"]
+    assert item["kind"] == "canonical" and item["functions"] == 928
+    assert item["sha256"] == "781f65c7f109"
+
+
+def test_a_native_input_that_is_the_original_is_labelled_so():
+    r = _cobalt_after_649()
+    r["llm_interpretation"] = {**(r.get("llm_interpretation") or {}), "input": {
+        "kind": "canonical", "program_name": "179dcccf0614" + "0" * 52,
+        "source": "original_sample", "functions_count": 300, "cape_type": None,
+        "chosen_because": "canonical"}}
+    r["llm_interpretation"].pop("error", None)
+    flow = derive_flow(r)
+    [item] = edge(flow, "ghidra-re_agent")["items"]
+    assert item["label"] == "original sample"
+    assert not [e for e in flow["edges"] if e["id"].endswith("-re_agent")
+                and e["id"] != "ghidra-re_agent"], "a native read drew a wrapper edge"
+
+
 def test_a_dropper_whose_original_could_not_be_loaded_says_why():
     r = load(COBALT_BEFORE_648)
     r["ghidra"]["original_sample_included"] = False

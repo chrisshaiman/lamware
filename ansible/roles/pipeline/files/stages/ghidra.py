@@ -145,6 +145,68 @@ def select_payload_target(ghidra_data: dict, verify=None) -> tuple[dict | None, 
     return None, None
 
 
+def select_native_target(ghidra_data: dict) -> tuple[dict | None, str | None]:
+    """The analysed file the RE agent reads on the native path.
+
+    The canonical program: the one run_ghidra ranked and verified, whose pair
+    is ``ghidra_data["project_dir"]``/``["program_name"]``. Stage 4.5 used to
+    hand the agent ``successful[0]``, the first success by LIST POSITION. The
+    eval has always passed ``report["ghidra"]`` itself, whose top-level pair is
+    the canonical program, so production and the eval read different programs
+    (#667's survey); and #651's routed path (``select_payload_target``) already
+    refuses list position. Since #649 put the submitted sample first in the
+    list, position would also have quietly decided which program the agent
+    reads, a choice the owner made explicitly instead: canonical.
+
+    Returns ``(file, "canonical")``, or ``(successful[0], "first_success_fallback")``
+    when no analysed file matches the canonical pair (a report with no verified
+    program), or ``(None, None)`` when nothing succeeded.
+    """
+    files = [f for f in (ghidra_data.get("analyzed_files") or []) if isinstance(f, dict)]
+    canonical = ghidra_data.get("program_name")
+    if canonical and ghidra_data.get("project_dir"):
+        for f in files:
+            if (f.get("program_name") == canonical and f.get("project_dir")
+                    and f.get("analysis_success")
+                    and f.get("in_project") is not False):
+                return f, "canonical"
+    successful = [f for f in files if f.get("analysis_success")]
+    if successful:
+        return successful[0], "first_success_fallback"
+    return None, None
+
+
+def is_original_sample_entry(ghidra_data: dict, entry: dict) -> bool:
+    """True when ``entry`` is the submitted sample's own analysis.
+
+    run_ghidra puts the original first among PE-loader results (source None)
+    whenever it was included (#649), or alone under original_sample_is_pe.
+    """
+    if not (ghidra_data.get("original_sample_included") is True
+            or ghidra_data.get("trigger_reason") == "original_sample_is_pe"):
+        return False
+    pe_entries = [f for f in (ghidra_data.get("analyzed_files") or [])
+                  if isinstance(f, dict) and f.get("source") is None]
+    return bool(pe_entries) and pe_entries[0] is entry
+
+
+def native_input_record(ghidra_data: dict, target: dict, reason: str) -> dict:
+    """``llm_interpretation.input`` for the native path.
+
+    Same keys as the routed branch's record in run-pipeline, so the flow view
+    and the eval read one shape whichever path ran.
+    """
+    return {
+        "kind": reason,
+        "program_name": target.get("program_name"),
+        "source": ("original_sample" if is_original_sample_entry(ghidra_data, target)
+                   else target.get("source") or "dropped_pe"),
+        "functions_count": target.get("functions_count"),
+        "cape_type": target.get("cape_type"),
+        "chosen_because": reason,
+    }
+
+
 def get_dropped_pe_files(cape_data: dict,
                          storage: Path = CAPE_STORAGE) -> list[Path]:
     """PE files Cape extracted, for callers that only need the list."""
