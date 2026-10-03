@@ -92,12 +92,7 @@ class DotnetToolBroker:
     @classmethod
     def from_payload(cls, payload: dict, cfg: dict | None = None) -> DotnetToolBroker:
         """For an agentic init payload, configured from an interpret config."""
-        cfg = cfg or {}
-        return cls(payload.get("decompiled_source", "") or "",
-                   analyser_truncated=bool(payload.get("source_truncated_by_analyser")),
-                   source_bytes_total=payload.get("source_bytes_total"),
-                   limits=cfg.get("dotnet_tool_limits"),
-                   cmd=cfg.get("dotnet_tools_cmd"), timeout=cfg.get("dotnet_tools_timeout"))
+        return broker_from_payload(payload, cfg)
 
     def request(self, op: str, **fields) -> dict:
         """One request through the sandbox. Never raises."""
@@ -158,6 +153,21 @@ class DotnetToolBroker:
         result.pop("timed_out", None)
         return result
 
+
+
+def broker_from_payload(payload: dict, cfg: dict | None = None) -> DotnetToolBroker:
+    """A broker for an agentic init payload, configured from an interpret config.
+
+    A module function (DotnetToolBroker.from_payload delegates here) so the #409
+    report-key guard can follow which payload keys it reads; it does not follow
+    classmethods.
+    """
+    cfg = cfg or {}
+    return DotnetToolBroker(payload.get("decompiled_source", "") or "",
+                            analyser_truncated=bool(payload.get("source_truncated_by_analyser")),
+                            source_bytes_total=payload.get("source_bytes_total"),
+                            limits=cfg.get("dotnet_tool_limits"),
+                            cmd=cfg.get("dotnet_tools_cmd"), timeout=cfg.get("dotnet_tools_timeout"))
 
 def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict, cape_sigs: list[str],
                               cfg: dict | None = None) -> dict:

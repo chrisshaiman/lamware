@@ -23,7 +23,7 @@ from pathlib import Path
 
 from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidra_args
 
-from stages.dotnet_agentic import DotnetToolBroker
+from stages.dotnet_agentic import broker_from_payload
 from stages.dotnet_tools import is_agentic_dotnet, validate_dotnet_args
 
 PROMPT_INFLUENCE_KEYWORDS = ["benign", "not malicious", "false positive", "harmless", "safe to run"]
@@ -747,7 +747,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     # Sandboxed, because the source is the sample's: this process never parses
     # it. Constructing the broker does no work and cannot fail; every failure
     # of a call comes back as that call's error (stages/dotnet_agentic.py).
-    dotnet_tools = (DotnetToolBroker.from_payload(ghidra_result, interpret_config)
+    dotnet_tools = (broker_from_payload(ghidra_result, interpret_config)
                     if is_agentic_dotnet(ghidra_result) else None)
 
     start_time = time.time()

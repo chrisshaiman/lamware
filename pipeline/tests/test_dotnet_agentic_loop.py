@@ -358,9 +358,9 @@ def test_the_synthesis_reserve_reaches_a_dotnet_run(tmp_path):
 def test_bad_arguments_never_reach_the_toolbox(tmp_path, monkeypatch):
     """Validation happens in the broker, as for Ghidra: a refused call is a
     tool_error and is logged with the reason."""
-    import stages.interpret as interp
+    from stages.dotnet_agentic import DotnetToolBroker
     called = []
-    monkeypatch.setattr(interp.DotnetToolBroker, "call",
+    monkeypatch.setattr(DotnetToolBroker, "call",
                         lambda self, t, a: called.append(t) or {"ok": True})
     body = '''
 import json, sys
