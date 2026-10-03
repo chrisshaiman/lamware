@@ -1,0 +1,70 @@
+{
+ "generated_by": "lamware_eval.runner.correlated_evidence at 5dda856, before #674 moved it",
+ "cases": {
+  "rm630_591d32aeae05": {
+   "report_file": "correlated_evidence_rm630_591d32aeae05.json",
+   "old_output": "{\"cape_signatures\": [{\"name\": \"stealth_network\", \"severity\": 1, \"description\": \"Network activity detected but not expressed in monitor API logs\"}, {\"name\": \"antivm_checks_available_memory\", \"severity\": 1, \"description\": \"Checks available memory\"}, {\"name\": \"queries_computer_name\", \"severity\": 1, \"description\": \"Queries computer hostname\"}, {\"name\": \"queries_keyboard_layout\", \"severity\": 1, \"description\": \"Queries the keyboard layout\"}, {\"name\": \"antidebug_setunhandledexceptionfilter\", \"severity\": 1, \"description\": \"SetUnhandledExceptionFilter detected (possible anti-debug)\"}, {\"name\": \"stealth_timeout\", \"severity\": 1, \"description\": \"Possible date expiration check, exits too soon after checking local time\"}, {\"name\": \"language_check_registry\", \"severity\": 1, \"description\": \"Checks system language via registry key (possible geofencing)\"}, {\"name\": \"privilege_elevation_check\", \"severity\": 2, \"description\": \"Queries process token information to check for Administrator privileges or UAC elevation status\"}, {\"name\": \"mountpoints_volume_discovery\", \"severity\": 2, \"description\": \"Queries the mount points and then resolves volume paths to enumerate storage devices\"}, {\"name\": \"dllload_suspicious_directory\", \"severity\": 2, \"description\": \"A DLL was loaded from a suspicious directory\"}, {\"name\": \"creates_suspended_process\", \"severity\": 2, \"description\": \"Creates a process in a suspended state, likely for injection\"}, {\"name\": \"resumethread_remote_process\", \"severity\": 2, \"description\": \"Resumed a thread in another process\"}, {\"name\": \"accesses_recyclebin\", \"severity\": 2, \"description\": \"Manipulates data from or to the Recycle Bin\"}, {\"name\": \"network_http\", \"severity\": 2, \"description\": \"Performs some HTTP requests\"}, {\"name\": \"discover_registry_mount_points\", \"severity\": 2, \"description\": \"Queries registry mount points to identify historical or connected removable/network drives\"}, {\"name\": \"uses_windows_utilities\", \"severity\": 2, \"description\": \"Uses Windows utilities for basic functionality\"}, {\"name\": \"hardware_id_profiling\", \"severity\": 3, \"description\": \"Queries the Volume Serial Number or Physical Hardware ID, possibly for anti-sandbox, victim profiling or environmental keying\"}, {\"name\": \"ntdll_memory_unhooking\", \"severity\": 3, \"description\": \"Modifies the memory protection of ntdll.dll to PAGE_READWRITE, indicative of EDR unhooking\"}, {\"name\": \"persistence_autorun\", \"severity\": 3, \"description\": \"Installs itself for autorun at Windows startup\"}, {\"name\": \"persistence_autorun_tasks\", \"severity\": 3, \"description\": \"Installs itself for autorun at Windows startup\"}, {\"name\": \"procmem_yara\", \"severity\": 3, \"description\": \"Yara detections observed in process dumps, payloads or dropped files\"}, {\"name\": \"registry_credential_store_access\", \"severity\": 3, \"description\": \"Accessed credential storage registry keys\"}, {\"name\": \"deletes_self\", \"severity\": 3, \"description\": \"Deletes its original binary from disk\"}, {\"name\": \"removes_zoneid_ads\", \"severity\": 3, \"description\": \"Attempts to remove evidence of file being downloaded from the Internet\"}], \"volatility_insights\": {\"mutexes\": [{\"mutex\": \"SetupLog\", \"holder_count\": 18, \"holders\": [{\"pid\": 3944, \"process\": \"cleanmgr.exe\"}, {\"pid\": 3944, \"process\": \"cleanmgr.exe\"}, {\"pid\": 3944, \"process\": \"cleanmgr.exe\"}], \"unique_processes\": [\"TrustedInstall\", \"cleanmgr.exe\", \"la57setup.exe\", \"TiWorker.exe\", \"DismHost.exe\"], \"pid\": 3944, \"process\": \"cleanmgr.exe\"}, {\"mutex\": \"DBWinMutex\", \"holder_count\": 9, \"holders\": [{\"pid\": 3880, \"process\": \"dwm.exe\"}, {\"pid\": 5424, \"process\": \"svchost.exe\"}, {\"pid\": 5712, \"process\": \"StartMenuExper\"}], \"unique_processes\": [\"StartMenuExper\", \"dwm.exe\", \"cleanmgr.exe\", \"msedgewebview2\", \"svchost.exe\", \"la57setup.exe\"], \"pid\": 3880, \"process\": \"dwm.exe\"}, {\"mutex\": \"ZonesLockedCacheCounterMutex\", \"holder_count\": 7, \"holders\": [{\"pid\": 6592, \"process\": \"MsMpEng.exe\"}, {\"pid\": 7700, \"process\": \"SecurityHealth\"}, {\"pid\": 7360, \"process\": \"explorer.exe\"}], \"unique_processes\": [\"SecurityHealth\", \"explorer.exe\", \"MsMpEng.exe\", \"RuntimeBroker.\", \"OneDrive.exe\", \"OneDriveStanda\"], \"pid\": 6592, \"process\": \"MsMpEng.exe\"}], \"mutex_summary\": {\"unique_names\": 357, \"total_handles\": 399, \"most_shared\": \"SetupLog\", \"most_shared_count\": 18}, \"suspicious_files\": [{\"pid\": 4, \"process\": \"System\", \"path\": \"\\\\Device\\\\HarddiskVolume3\\\\Users\\\\jsmith\\\\AppData\\\\Local\\\\Microsoft\\\\Windows\\\\UsrClass.dat{bfafc967-a87f-11f1-add3-3c970e4ab210}.TMContainer00000000000000000001.regtrans-ms\"}, {\"pid\": 4, \"process\": \"System\", \"path\": \"\\\\Device\\\\HarddiskVolume3\\\\ProgramData\\\\Microsoft\\\\Windows\\\\AppRepository\\\\Packages\\\\MicrosoftWindows.Client.Photon_1000.26100.10.0_x64__cw5n1h2txyewy\\\\ActivationStore.dat.LOG2\"}, {\"pid\": 4, \"process\": \"System\", \"path\": \"\\\\Device\\\\HarddiskVolume3\\\\ProgramData\\\\Microsoft\\\\Windows\\\\AppRepository\\\\Packages\\\\MicrosoftWindows.Client.WebExperience_424.1301.270.9_x64__cw5n1h2txyewy\\\\ActivationStore.dat.LOG1\"}], \"suspicious_dlls\": [{\"pid\": 6592, \"process\": \"MsMpEng.exe\", \"dll_path\": \"C:\\\\ProgramData\\\\Microsoft\\\\Windows Defender\\\\Definition Updates\\\\{3E8103C8-4540-4DA9-941E-46C4EFC83B96}\\\\mpengine.dll\"}, {\"pid\": 5636, \"process\": \"msedgewebview2\", \"dll_path\": \"C:\\\\Users\\\\jsmith\\\\AppData\\\\Local\\\\Packages\\\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\\\LocalState\\\\EBWebView\\\\Domain Actions\\\\3.0.0.20\\\\domain_actions.dll\"}]}}"
+  },
+  "mitre_stripped": {
+   "report": {
+    "cross_correlations": [
+     {
+      "type": "dropped_file_loaded",
+      "title": "Dropped file 'System.dll' was loaded",
+      "detail": "Cape observed this",
+      "mitre": "T1059 — Execution"
+     },
+     {
+      "type": "injection_corroborated",
+      "title": "Injection into PID 1536",
+      "detail": "corroborated in memory (see T1055.012)",
+      "mitre": "T1055 — Process Injection"
+     }
+    ],
+    "correlation_warnings": [
+     "netscan unavailable: plugin timed out"
+    ],
+    "cape": {
+     "signatures": [
+      {
+       "name": "injection_write_process",
+       "severity": 3,
+       "description": "Writes to another process"
+      }
+     ],
+     "mitre_ttps": [
+      {
+       "id": "T1055"
+      }
+     ]
+    },
+    "volatility": {
+     "insights": {
+      "suspicious_cmdlines": [
+       {
+        "pid": 1,
+        "cmdline": "x"
+       }
+      ]
+     }
+    }
+   },
+   "old_output": "{\"cross_correlations\": [{\"type\": \"dropped_file_loaded\", \"title\": \"Dropped file 'System.dll' was loaded\", \"detail\": \"Cape observed this\"}, {\"type\": \"injection_corroborated\", \"title\": \"Injection into PID 1536\", \"detail\": \"corroborated in memory (see [held out])\"}], \"correlation_warnings\": [\"netscan unavailable: plugin timed out\"], \"cape_signatures\": [{\"name\": \"injection_write_process\", \"severity\": 3, \"description\": \"Writes to another process\"}], \"volatility_insights\": {\"suspicious_cmdlines\": [{\"pid\": 1, \"cmdline\": \"x\"}]}}"
+  },
+  "empty": {
+   "report": {
+    "cross_correlations": [],
+    "cape": {}
+   },
+   "old_output": "{}"
+  },
+  "warnings_only": {
+   "report": {
+    "correlation_warnings": [
+     "malfind timed out"
+    ]
+   },
+   "old_output": "{\"correlation_warnings\": [\"malfind timed out\"]}"
+  }
+ }
+}

@@ -34,6 +34,11 @@
   {#- Seconds of budget held back for synthesis: no tool calls are granted inside
       it (#240). The shipped value lives in roles/interpret/defaults/main.yml. #}
   "interpret_synthesis_reserve": {{ interpret_synthesis_reserve | default(600) }},
+  {#- Behavioural evidence in the agentic RE agent's first message (#674). An
+      orchestrator decision, so top-level and not under "interpret": that
+      section is sent to the container verbatim, and the eval's arms decide
+      evidence for themselves. #}
+  "interpret_correlated_evidence": {{ (pipeline_interpret_correlated_evidence | default(true)) | to_json }},
   "reports_dir": {{ pipeline_reports_dir | to_json }},
   "cape_poll_interval": {{ pipeline_cape_poll_interval }},
   "cape_timeout": {{ pipeline_cape_timeout }},

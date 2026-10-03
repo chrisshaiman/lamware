@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run one (sample x arm) through the agentic RE loop; return a scorecard cell."""
 import json
-import re
 import shutil
 import time
 from pathlib import Path
 
 import requests
 from llm_ab_re import extract_metrics
+from stages.correlated_evidence import correlated_evidence
 from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
 from stages.dotnet_tools import is_agentic_dotnet
 from stages.ghidra import ROUTED_FLAGS, make_ghidra_verifier, select_payload_target
@@ -174,10 +174,6 @@ def tool_output_text(out_dir: Path) -> str:
     return " ".join(t for t in texts if t)
 
 
-#: A MITRE technique ID, with or without a sub-technique.
-_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
-
-
 def held_out_techniques(report: dict) -> list[str]:
     """CAPE's MITRE observations, which NO arm is shown (#491).
 
@@ -193,72 +189,6 @@ def held_out_techniques(report: dict) -> list[str]:
     ttps = (report.get("cape") or {}).get("mitre_ttps") or []
     return sorted({t.get("id") for t in ttps
                    if isinstance(t, dict) and t.get("id")})
-
-
-def strip_technique_ids(obj):
-    """Remove every MITRE ID from an evidence payload. Returns (obj, removed).
-
-    The `mitre` field on a correlation is dropped outright; the finding's title
-    and detail carry its meaning without naming the answer. Any ID surviving
-    elsewhere is REDACTED rather than left, and counted rather than hidden — a
-    non-zero count on a sample means something leaks the answer key by another
-    route, which is a bug to find, not a number to bury.
-    """
-    removed = 0
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if k == "mitre":
-                removed += len(_TECHNIQUE_ID.findall(str(v)))
-                continue
-            sub, n = strip_technique_ids(v)
-            out[k] = sub
-            removed += n
-        return out, removed
-    if isinstance(obj, list):
-        pairs = [strip_technique_ids(v) for v in obj]
-        return [p[0] for p in pairs], sum(p[1] for p in pairs)
-    if isinstance(obj, str):
-        redacted, n = _TECHNIQUE_ID.subn("[held out]", obj)
-        return redacted, n
-    return obj, removed
-
-
-def correlated_evidence(report: dict) -> dict:
-    """The evidence an arm with evidence="correlated" is additionally shown (#420).
-
-    Deliberately narrow. Everything here is already computed by the pipeline and
-    already shown to the SUMMARY writer; the only change is that the investigating
-    agent sees it too. Nothing is derived specially for the eval, so a positive
-    result is actionable — it says move cross_correlate ahead of stage 4.5 in
-    production, not "build something new".
-
-    Returns {} when the report carries none of it, which keeps `+corr` byte-identical
-    to its base arm on those samples. That is a feature: such samples become a
-    negative control showing the two arms agree when the evidence is the same.
-    """
-    out: dict = {}
-    cc = report.get("cross_correlations") or []
-    if cc:
-        out["cross_correlations"] = cc
-    warn = report.get("correlation_warnings") or []
-    if warn:
-        # Shown deliberately. A rule that could not run is evidence about coverage,
-        # and withholding it would let the agent read an empty finding list as a
-        # clean sample — the substitution the warnings exist to prevent.
-        out["correlation_warnings"] = warn
-    cape = report.get("cape") or {}
-    sigs = cape.get("signatures") or []
-    if sigs:
-        out["cape_signatures"] = sigs
-    vol = (report.get("volatility") or {}).get("insights")
-    if vol:
-        out["volatility_insights"] = vol
-    # The MITRE IDs come out before the agent sees any of this. They are the
-    # answer key both arms are scored against (#491), and an arm shown the key
-    # is not being measured on the same thing as one that is not.
-    out, _ = strip_technique_ids(out)
-    return out
 
 
 #: Labels that are not attribution. A family token has to be discriminative to be
@@ -291,6 +221,10 @@ def evidence_for(arm: Arm, report: dict) -> dict:
     experiment reports "no difference" while having tested nothing. That is
     indistinguishable from a real null result in the output, so it has to be
     unit-testable rather than buried in run_arm.
+
+    `correlated_evidence` is production's builder (stages/correlated_evidence.py,
+    #674), imported rather than copied (#380): a `+corr` cell has to measure the
+    evidence production actually sends the agent.
     """
     if arm.evidence != "correlated":
         return {}

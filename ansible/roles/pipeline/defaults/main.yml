@@ -148,6 +148,13 @@ pipeline_evasion_hunter_enabled: true
 pipeline_evasion_max_signatures: 10      # fewer than this = suspicious
 pipeline_evasion_min_binary_size: 51200  # only for binaries > 50KB (skip tiny scripts)
 
+# Give the agentic RE agent (Ghidra, routed payload, agentic .NET) the behavioural
+# evidence -- CAPE signatures, Volatility insights, cross-tool correlations -- in its
+# first message (#674). The eval's `+corr` arm measured this (#630): empty answers
+# became grounded claims in both server sessions, zero fabrications. false restores
+# the previous behaviour (agent sees code only), so the two can be measured.
+pipeline_interpret_correlated_evidence: true
+
 # Campaign-graph cross-sample relationship thresholds (precision-first)
 pipeline_relationship_max_ioc_frequency: 20  # skip indicators shared by > N samples
 pipeline_relationship_ssdeep_threshold: 80   # min ppdeep.compare score for an ssdeep edge

@@ -380,7 +380,51 @@ def derive_flow(report: dict) -> dict:
                                "memory", SKIPPED,
                                reason="Volatility did not run; memory rules had nothing to join"))
 
+    # --- behavioural evidence shown to the RE agent (#674) --------------
+    edges.append(_evidence_edge(llm))
+
     return {"nodes": nodes, "edges": edges}
+
+
+# Why the agent was not given the behavioural evidence, by the reason
+# stages/correlated_evidence.py records. Mirrors its NOT_GIVEN_* values.
+_EVIDENCE_NOT_GIVEN = {
+    "disabled_by_config": "turned off (interpret_correlated_evidence is false)",
+    "single_shot_path": "this interpret path is single-shot and does not read it",
+    "report_has_none": "no signatures, memory insights or correlation findings to give",
+}
+
+
+def _evidence_edge(llm: dict | None) -> dict:
+    """Correlation -> RE agent: what behavioural evidence the agent was shown.
+
+    The evidence is CAPE's signatures, Volatility's insights and the correlation
+    findings and warnings (stages/correlated_evidence.py); it is drawn from the
+    Correlation node because that is the stage that assembles the cross-tool
+    view. Until #674 production never sent it, and a report from before then
+    does not record it: that is ``absent``, not ``skipped``, because whether
+    the agent saw it is unknown rather than known to be no.
+    """
+    eid, src, dst, label = "correlation-re_agent", "correlation", "re_agent", "behavioural evidence"
+    if llm is None:
+        return _edge(eid, src, dst, label, ABSENT, reason="no llm_interpretation section")
+    if llm.get("enabled") is False or llm.get("reason") in ("not_triggered", "no_analysis_data"):
+        return _edge(eid, src, dst, label, SKIPPED, reason="the RE agent did not run", carried=0)
+    inp = _dict(llm.get("input"))
+    rec = _dict(inp.get("correlated_evidence")) if inp else None
+    if rec is None:
+        return _edge(eid, src, dst, label, ABSENT,
+                     reason="report does not record whether the agent was given it "
+                            "(a single-shot path, or the report predates #674)")
+    if rec.get("given") is True:
+        keys = [k for k in _list(rec.get("keys")) or [] if isinstance(k, str)]
+        items = [_item(k, READ) for k in keys]
+        return _edge(eid, src, dst, label, OK, items=items, expected=len(items),
+                     bytes=_int(rec.get("bytes")))
+    why = rec.get("reason")
+    known = _EVIDENCE_NOT_GIVEN.get(why) if isinstance(why, str) else None
+    return _edge(eid, src, dst, label, SKIPPED, carried=0,
+                 reason=known or f"not given: {_text(why) if why else 'no reason recorded'}")
 
 
 def _analyser_detail(key: str, data: dict) -> str | None:

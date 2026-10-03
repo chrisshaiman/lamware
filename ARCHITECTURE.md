@@ -240,7 +240,8 @@ flowchart TB
     SCREENSHOTS --> VISUAL
     CAPE --> XCORR
     VOL --> XCORR
-    EVASION --> XCORR
+    XCORR -->|behavioural evidence| LLM
+    EVASION --> IOC
     XCORR --> IOC
     VISUAL --> IOC
     IOC --> SUMMARY
@@ -273,14 +274,16 @@ flowchart TB
 ```
 
 > [!NOTE]
-> **Correlation currently runs *after* interpretation, not before it.** The diagram
-> reflects the code: cross-correlation is computed once static analysis and the LLM
-> stages have completed, and its findings reach severity scoring, IOC extraction and
-> the executive summary — but **not** the agentic RE investigation, which sees only
-> its decompiler output. The project's "correlation before generation" principle is
-> therefore implemented for the summary writer and not yet for the investigator.
-> Tracked in [#420](https://github.com/chrisshaiman/lamware/issues/420), which also
-> specifies the experiment that would show whether closing the gap actually helps.
+> **Correlation runs before the AI investigation.** Cross-correlation needs only the
+> CAPE and Volatility results, so it runs after static analysis and before Stage 4.5.
+> The agentic investigator (Ghidra programs, agentic .NET) is given CAPE's signatures,
+> Volatility's insights and the correlation findings as observations to corroborate or
+> contradict ([#674](https://github.com/chrisshaiman/lamware/issues/674)), built by
+> `stages/correlated_evidence.py`, the same function the eval's `+corr` arms use
+> ([#630](https://github.com/chrisshaiman/lamware/issues/630)). MITRE technique IDs are
+> removed first, as in the eval. Single-shot paths are not given it. The report records
+> what was given in `llm_interpretation.input.correlated_evidence`, and the flow view
+> draws it as the Correlation → RE agent edge.
 
 > **LLM network path:** the interpret (LLM-broker) container — the one component touching malware-derived LLM I/O — runs with **`--network=none`** (no host network namespace) and reaches the self-hosted LiteLLM proxy solely through a **bind-mounted Unix socket** (a root `socat` bridge fronts LiteLLM's `localhost:4000`). So it cannot route to host services (Postgres/Keycloak/Mongo/CAPE) or the internet — only LiteLLM. LiteLLM is the only process with outbound HTTPS to Anthropic's API; the Anthropic API key is isolated to LiteLLM's environment — analysis containers never see it. **Every** analysis container is `--network=none`.
 

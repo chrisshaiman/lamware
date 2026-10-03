@@ -120,6 +120,12 @@ class PipelineConfig(BaseModel):
     # granted inside it (#240). Defaulted to 0 (no reserve, the old behaviour) so
     # an older config.json still loads; config.json.j2 always renders it.
     interpret_synthesis_reserve: int = Field(default=0, ge=0)
+    # Pass the behavioural evidence (stages/correlated_evidence.py) to the
+    # agentic RE agent (#674). Top-level, not in InterpretConfig: that model is
+    # dumped and sent to the container as-is, and this is the orchestrator's
+    # choice of what to send. Defaulted True so an older config.json loads with
+    # the new behaviour; false is the measured-against baseline.
+    interpret_correlated_evidence: bool = True
     reports_dir: str
     cape_poll_interval: int
     cape_timeout: int
