@@ -3690,9 +3690,13 @@ Technical summary: {executive}"""
             # No tools block. That is the prefix-breaking shape from #246, so it is
             # worth recording rather than assuming: the reader will show this diverging
             # from the loop at message 0.
-            log_request_shape("synth_legacy", "local-qwen", loop_system, None, msgs)
+            # The loop's own model, never a literal alias: this called "local-qwen"
+            # until #675, an alias #643 removed from LiteLLM, so the one fallback
+            # that exists for a runaway synthesis failed in 0.5 s every time
+            # (formbook, dotnet-agentic-vs-ss-2610: 2a hit max_tokens, then this).
+            log_request_shape("synth_legacy", current_model, loop_system, None, msgs)
             resp = client.messages.create(
-                model="local-qwen", max_tokens=max(max_output_tokens, 8192),
+                model=current_model, max_tokens=max(max_output_tokens, 8192),
                 system=loop_system, messages=msgs)
             return parse_final_response(
                 "".join(b.text for b in resp.content if b.type == "text"))
