@@ -166,6 +166,17 @@ ALLOWED: dict[str, Allowed] = {
     "ghidra.original_sample_included": _unobserved(
         "added by #666 (2026-10-03), after the shapes fixture was built; written "
         "on every native run_ghidra result", f"{_FILES}/stages/ghidra.py"),
+    # What behavioural evidence the RE agent was given (#674). run-pipeline puts
+    # the record into llm_interpretation.input on the three agentic branches;
+    # stages/correlated_evidence.evidence_record writes its fields. given/keys/
+    # bytes on a run that was given it, given/reason on one that was not.
+    "llm_interpretation.input.correlated_evidence": _unobserved(
+        "added by #674, after the shapes fixture was built; written on the routed-"
+        "payload, .NET and native Stage 4.5 branches", _PIPE),
+    **{f"llm_interpretation.input.correlated_evidence.{k}": _unobserved(
+        "added by #674, after the shapes fixture was built; a field of "
+        "evidence_record", f"{_FILES}/stages/correlated_evidence.py")
+       for k in ("given", "keys", "bytes", "reason")},
 
     # --- run_interpret is handed ONE program's entry, not the whole section ---
     # Since #651 (routed payload) and #666 (native canonical) the agent's target is
@@ -363,6 +374,22 @@ def _types() -> dict[str, set[str]]:
         for p, t in body["paths"].items():
             out.setdefault(p, set()).update(t)
     return out
+
+
+def test_the_evidence_builders_reads_are_followed(reads):
+    """#674 moved ``correlated_evidence`` out of lamware_eval.runner (a consumer)
+    into stages/correlated_evidence.py. Before that module was added to
+    FOLLOWED, runner's two calls became handoffs of the WHOLE report, which
+    ``test_no_unreviewed_blind_spots`` does not count (the report root has no
+    JSON type in the fixture), and ``volatility.insights`` dropped out of the
+    reads with every test here still green. Observed while making the move."""
+    builder = f"{_FILES}/stages/correlated_evidence.py"
+    sites = reads.reads.get(parse_path("volatility.insights"), set())
+    assert any(s.file == builder for s in sites), (
+        "the evidence builder's reads are not followed: add it to FOLLOWED")
+    lost = sorted(str(site) for site, callee, _ in reads.handoffs
+                  if callee == "correlated_evidence")
+    assert not lost, f"the report is handed to correlated_evidence unfollowed: {lost}"
 
 
 def test_every_consumer_that_reads_the_report_is_seen(reads):

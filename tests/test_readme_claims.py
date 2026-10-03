@@ -247,25 +247,27 @@ def _call_line(source: str, func: str, callee: str) -> int:
     return min(c.lineno for c in calls)
 
 
-def test_correlation_runs_after_the_investigator():
+def test_correlation_runs_before_the_investigator():
     """The claim the README makes, checked against the call order in the code
     rather than against two line numbers that happen to be written down.
 
-    If this ever fails, #420 has been closed and the README paragraph — and the
-    "central open research question" framing around it — needs rewriting, not
-    the test.
+    Inverted by #674, which moved cross_correlate ahead of Stage 4.5 so the
+    agent can be given its findings. Until then this asserted the opposite and
+    told whoever broke it to rewrite the README, which #674 did. If it fails
+    now, the agent is being handed a report with no cross_correlations in it:
+    the evidence would silently shrink to signatures and insights.
     """
     interpret = _call_line(RUN_PIPELINE, "run_pipeline", "run_interpret")
     correlate = _call_line(RUN_PIPELINE, "run_pipeline", "cross_correlate")
-    assert interpret < correlate, (
-        f"run_interpret is called at line {interpret} and cross_correlate at "
-        f"{correlate} — correlation now precedes the investigator, so the "
-        f"README's 'Correlation runs after the investigator' limitation is stale")
+    assert correlate < interpret, (
+        f"cross_correlate is called at line {correlate} and run_interpret at "
+        f"{interpret} — the investigator runs before correlation again, so the "
+        f"README's 'Correlation runs before the investigator' is false")
 
 
-def test_the_readme_states_that_ordering_limitation():
-    assert "Correlation runs after the investigator" in README, (
-        "the limitation is still true in the code; it must stay documented")
+def test_the_readme_states_that_ordering():
+    assert "Correlation runs before the investigator" in README, (
+        "the ordering is a stated property of the pipeline; it must stay documented")
 
 
 # --- the payload boundary is stated at the width it actually has -------------

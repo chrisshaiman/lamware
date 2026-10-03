@@ -230,13 +230,19 @@ The same structure explains why published threat-report IOCs cannot ground this 
 Stated here rather than left to be discovered, because the distinction that matters most
 in this project is **implemented ≠ demonstrated ≠ production-hardened**.
 
-**Correlation runs after the investigator, not before it.** `run_pipeline` calls
-`run_interpret` before it calls `cross_correlate`. Correlation findings therefore reach
-severity scoring, IOC extraction, the executive summary and the PDF — but **not** the agent, which sees only its decompiler output. The "correlation
-before generation" principle below is currently implemented for the summary writer and
-not for the investigator. Closing that loop, and measuring whether it actually helps, is
-[#420](https://github.com/chrisshaiman/lamware/issues/420) — the project's central open
-research question.
+**Correlation runs before the investigator, and its measured benefit rests on few samples.**
+`run_pipeline` calls `cross_correlate` before `run_interpret`, and the agentic investigator
+(Ghidra programs and agentic .NET) is given CAPE's signatures, Volatility's insights and the
+correlation findings in its first message, as observations to corroborate or contradict
+([#674](https://github.com/chrisshaiman/lamware/issues/674);
+`pipeline_interpret_correlated_evidence: false` turns it off). The eval's measurement of
+that change ([#630](https://github.com/chrisshaiman/lamware/issues/630)) is a handful of
+samples, one cell per arm, with session-to-session noise of the same size as most per-sample
+differences. What held in both sessions is that it turned empty answers into grounded claims
+with no fabrications. The single-shot paths (Go, Java, PowerShell, Office, scripts,
+PyInstaller, single-shot .NET) are not given it. Whether the correlation findings themselves,
+as opposed to the signatures, change what the agent concludes is
+[#420](https://github.com/chrisshaiman/lamware/issues/420), still open.
 
 **ATT&CK mapping is implemented, not validated.** Technique candidates come from CAPE
 behavioral signatures and from the LLM's reading of decompiled code. No dedicated

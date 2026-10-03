@@ -780,9 +780,10 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     }
     if ghidra_result.get("bazaar_family"):
         init_payload["bazaar_family"] = ghidra_result["bazaar_family"]
-    # Cross-tool evidence for the investigating agent (#420). Optional and absent
-    # by default, so production behaviour is unchanged until the experiment says
-    # otherwise — this ships the capability, not a decision.
+    # Cross-tool evidence for the investigating agent (#420). Built by
+    # stages/correlated_evidence.py for both callers: production's agentic paths
+    # since #674 (unless interpret_correlated_evidence is false) and the eval's
+    # `+corr` arms. Only the container's agentic loop reads it.
     if extra_evidence:
         init_payload["correlated_evidence"] = extra_evidence
     init_msg = json.dumps(init_payload)

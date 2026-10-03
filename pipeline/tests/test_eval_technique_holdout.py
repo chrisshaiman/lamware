@@ -23,9 +23,9 @@ from lamware_eval.metrics import aggregate, compose_cell, technique_hits
 from lamware_eval.runner import (
     correlated_evidence,
     held_out_techniques,
-    strip_technique_ids,
 )
 from lamware_eval.scorecard import render_scorecard
+from stages.correlated_evidence import strip_technique_ids
 
 SAMPLE = CorpusSample("42b9c406d556" + "0" * 52, "unclassified", "/tmp/x")
 

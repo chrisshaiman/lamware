@@ -193,6 +193,7 @@ FOLLOWED: tuple[str, ...] = (
     f"{_FILES}/stages/dotnet_tools.py",      # is_agentic_dotnet (#646)
     f"{_FILES}/stages/dotnet_agentic.py",    # build_dotnet_interpret_init, broker_from_payload,
                                              # dotnet_input_record, is_agentic_dotnet (#646)
+    f"{_FILES}/stages/correlated_evidence.py",  # correlated_evidence (lamware_eval.runner, #674)
 )
 
 # Abstract values. Each is a hashable tuple:

@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 import pytest
-from app.flow import ABSENT, FAILED, OK, SKIPPED, derive_flow
+from app.flow import ABSENT, FAILED, OK, ROUTED_ANALYSERS, SKIPPED, derive_flow
 
 FIXTURES = Path(__file__).parent / "fixtures" / "flow"
 
@@ -206,8 +206,11 @@ def test_a_native_input_that_is_the_original_is_labelled_so():
     flow = derive_flow(r)
     [item] = edge(flow, "ghidra-re_agent")["items"]
     assert item["label"] == "original sample"
-    assert not [e for e in flow["edges"] if e["id"].endswith("-re_agent")
-                and e["id"] != "ghidra-re_agent"], "a native read drew a wrapper edge"
+    # Edges into the agent from a routed analyser. Not "every *-re_agent edge but
+    # Ghidra's": #674 added correlation-re_agent, which is not a wrapper edge.
+    routed_nodes = {node_id for _f, _k, node_id, _l in ROUTED_ANALYSERS}
+    assert not [e for e in flow["edges"] if e["to"] == "re_agent"
+                and e["from"] in routed_nodes], "a native read drew a wrapper edge"
 
 
 def test_a_dropper_whose_original_could_not_be_loaded_says_why():
@@ -280,6 +283,56 @@ def test_a_routed_sample_before_646_shows_its_payloads_were_never_sent():
     agent = edge(flow, "ilspy-re_agent")
     assert agent["status"] == OK and agent["inferred"] is True
     assert edge(flow, "ghidra-re_agent")["status"] == SKIPPED
+
+
+# --- behavioural evidence shown to the agent (#674) --------------------------
+
+def _with_evidence_record(rec: dict | None) -> dict:
+    r = copy.deepcopy(load(NATIVE))
+    inp = {"kind": "canonical", "program_name": "25d18a2bf31f" + "0" * 52,
+           "source": "original_sample", "functions_count": 10, "chosen_because": "canonical"}
+    if rec is not None:
+        inp["correlated_evidence"] = rec
+    r["llm_interpretation"]["input"] = inp
+    return r
+
+
+def test_evidence_the_agent_was_given_is_drawn_with_its_sections():
+    rec = {"given": True, "keys": ["cape_signatures", "volatility_insights"], "bytes": 4119,
+           "counts": {"cape_signatures": 24, "volatility_insights": 4}}
+    e = edge(derive_flow(_with_evidence_record(rec)), "correlation-re_agent")
+    assert (e["from"], e["to"], e["status"]) == ("correlation", "re_agent", OK)
+    assert [i["label"] for i in e["items"]] == ["cape_signatures", "volatility_insights"]
+    assert e["carried"] == 2 and e["expected"] == 2 and e["bytes"] == 4119
+
+
+@pytest.mark.parametrize("reason, says", [
+    ("disabled_by_config", "interpret_correlated_evidence is false"),
+    ("single_shot_path", "single-shot"),
+    ("report_has_none", "no signatures"),
+    ("something_new", "not given: something_new"),
+])
+def test_evidence_not_given_is_skipped_with_the_recorded_reason(reason, says):
+    e = edge(derive_flow(_with_evidence_record({"given": False, "reason": reason})),
+             "correlation-re_agent")
+    assert e["status"] == SKIPPED and e["carried"] == 0
+    assert says in e["reason"]
+
+
+def test_a_report_from_before_674_is_absent_not_skipped():
+    """Unknown is not "no": these reports never recorded what the agent saw."""
+    for r in (load(NATIVE), _with_evidence_record(None)):
+        e = edge(derive_flow(r), "correlation-re_agent")
+        assert e["status"] == ABSENT and e["carried"] is None
+        assert "predates #674" in e["reason"]
+
+
+def test_no_agent_run_means_no_evidence_edge_claim():
+    r = copy.deepcopy(load(NATIVE))
+    r["llm_interpretation"] = {"enabled": True, "reason": "no_analysis_data"}
+    assert edge(derive_flow(r), "correlation-re_agent")["status"] == SKIPPED
+    r.pop("llm_interpretation")
+    assert edge(derive_flow(r), "correlation-re_agent")["status"] == ABSENT
 
 
 # --- the response is derived, never the report ------------------------------

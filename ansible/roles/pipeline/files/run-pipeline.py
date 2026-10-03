@@ -48,8 +48,10 @@ from stages.cape import (
     poll_cape_task,
     submit_to_cape,
 )
+from stages.correlated_evidence import evidence_for_interpret
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
 from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
+from stages.dotnet_tools import is_agentic_dotnet
 from stages.ghidra import (
     ROUTED_FLAGS,
     make_ghidra_verifier,
@@ -150,6 +152,8 @@ INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
 FORCE_FINAL_GRACE = _PIPELINE_CONFIG.interpret_force_final_grace
 SYNTHESIS_RESERVE = _PIPELINE_CONFIG.interpret_synthesis_reserve
 INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
+# Behavioural evidence for the agentic RE agent (#674); false is the old behaviour.
+CORRELATED_EVIDENCE = _PIPELINE_CONFIG.interpret_correlated_evidence
 
 # Cape + report-output scalars
 REPORTS_DIR = Path(_PIPELINE_CONFIG.reports_dir)
@@ -940,6 +944,31 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     stage_timings["ghidra"] = round(_time.time() - _ghidra_start, 1)
     update_stage(analysis_id_early, "ghidra", "completed", f"{stage_timings['ghidra']:.0f}s")
 
+    # Cross-tool correlation. Runs BEFORE Stage 4.5 so the investigating agent
+    # can be shown its findings (#674), and so before severity, which reads
+    # cross_correlations to boost the score for critical findings. Its inputs
+    # are the cape and volatility sections and their files on disk, all final
+    # by the end of Stage 3; nothing in Stages 3.5-5.5 writes either section.
+    log.info("\n[Cross-Correlation] Comparing Cape and Volatility data...")
+    report["cross_correlations"] = cross_correlate(report)
+    for finding in report["cross_correlations"]:
+        severity = finding.get("severity", "info")
+        title = finding.get("title", "?")
+        sources = " + ".join(finding.get("sources", []))
+        log.info(f"  [{severity.upper()}] {title} ({sources})")
+    # An empty finding list means "nothing correlated" ONLY if every rule had its
+    # input. correlation_warnings names the rules that could not run; without it
+    # a timed-out malfind read as a sample with no injection.
+    corr_warnings = report.get("correlation_warnings") or []
+    for warning in corr_warnings:
+        log.warning(f"  [DEGRADED] {warning}")
+    if not report["cross_correlations"]:
+        if corr_warnings:
+            log.info(f"  No cross-tool findings — but {len(corr_warnings)} rule input(s) "
+                     f"were unavailable, so this is not a clean result")
+        else:
+            log.info("  No cross-tool findings detected")
+
     # Stage 4.5: LLM Interpretation (agentic for Ghidra, single-shot for .NET/Go)
     # Common context passed to all LLM init messages for consistency
     _llm_context = {}
@@ -958,6 +987,17 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     analyzed_files = ghidra_data.get("analyzed_files", [])
     successful = [f for f in analyzed_files if f.get("analysis_success")]
 
+    # The behavioural evidence the eval's `+corr` arm gives the agent, built by
+    # the same function (#674): CAPE signatures, Volatility insights and the
+    # cross-tool findings computed just above. Every Ghidra target goes to the
+    # container's agentic loop, the only path that reads it. The single-shot
+    # paths below (Java, Office, PowerShell, scripts, PyInstaller, Go, and .NET
+    # in single_shot mode) never read `correlated_evidence`, so they are not
+    # sent it. The evasion hunter already carries the signatures in its own
+    # init. `_ghidra_evidence_record` goes into llm_interpretation.input.
+    _ghidra_evidence, _ghidra_evidence_record = evidence_for_interpret(
+        report, CORRELATED_EVIDENCE, agentic=True)
+
     def _interpret_ghidra_program(target: dict) -> dict:
         """Agentic Ghidra investigation of one loaded program, logged."""
         interp = run_interpret(
@@ -969,6 +1009,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             synthesis_reserve=SYNTHESIS_RESERVE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
+            extra_evidence=_ghidra_evidence,
         )
         if interp.get("enabled") and interp.get("analysis"):
             calls = interp.get("tool_calls_used", 0)
@@ -1005,6 +1046,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             "cape_type": payload_target.get("cape_type"),
             "chosen_because": payload_reason,
             "wrapper_routed_by": _routed_by[0],
+            "correlated_evidence": _ghidra_evidence_record,
         }
     elif dotnet_data.get("analysis_success") and INTERPRET_ENABLED:
         # .NET path. "agentic" (default): a map of the assembly plus tools that
@@ -1022,6 +1064,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if dotnet_init.get("dotnet_agentic_failed"):
             log.warning(f"  agentic .NET map failed, running single-shot instead: "
                         f"{dotnet_init['dotnet_agentic_failed']}")
+        # Decided on the init actually sent, AFTER any fallback: a map that
+        # could not be built goes single-shot, which never reads the evidence.
+        dotnet_evidence, dotnet_evidence_record = evidence_for_interpret(
+            report, CORRELATED_EVIDENCE, agentic=is_agentic_dotnet(dotnet_init))
         report["llm_interpretation"] = run_interpret(
             dotnet_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -1031,12 +1077,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             synthesis_reserve=SYNTHESIS_RESERVE,
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
+            extra_evidence=dotnet_evidence,
         )
         # Which .NET path ACTUALLY produced this — after any fallback — in the
         # shape the payload branch above writes and the eval records (`kind` is
         # the eval's modality name).
-        report["llm_interpretation"]["input"] = dotnet_input_record(
-            dotnet_init, _dotnet_mode)
+        report["llm_interpretation"]["input"] = {
+            **dotnet_input_record(dotnet_init, _dotnet_mode),
+            "correlated_evidence": dotnet_evidence_record,
+        }
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
@@ -1256,8 +1305,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         report["llm_interpretation"] = _interpret_ghidra_program(native_target)
         # Say what was read, in the shape the routed branch writes, so reports
         # and the flow view can tell canonical from a fallback.
-        report["llm_interpretation"]["input"] = native_input_record(
-            ghidra_data, native_target, native_reason)
+        report["llm_interpretation"]["input"] = {
+            **native_input_record(ghidra_data, native_target, native_reason),
+            "correlated_evidence": _ghidra_evidence_record,
+        }
     else:
         if INTERPRET_ENABLED and (ghidra_data.get("triggered") or dotnet_data):
             log.info("\n[Stage 4.5] LLM Interpretation: skipped (no successful analysis)")
@@ -1394,28 +1445,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         else:
             report["screenshots"] = {"total_screenshots": 0, "unique_count": 0,
                                      "note": "No screenshots captured (QEMU screenshots may not be enabled)"}
-
-    # Cross-tool correlation — must run BEFORE severity calculation
-    # (severity reads cross_correlations to boost score for critical findings)
-    log.info("\n[Cross-Correlation] Comparing Cape and Volatility data...")
-    report["cross_correlations"] = cross_correlate(report)
-    for finding in report["cross_correlations"]:
-        severity = finding.get("severity", "info")
-        title = finding.get("title", "?")
-        sources = " + ".join(finding.get("sources", []))
-        log.info(f"  [{severity.upper()}] {title} ({sources})")
-    # An empty finding list means "nothing correlated" ONLY if every rule had its
-    # input. correlation_warnings names the rules that could not run; without it
-    # a timed-out malfind read as a sample with no injection.
-    corr_warnings = report.get("correlation_warnings") or []
-    for warning in corr_warnings:
-        log.warning(f"  [DEGRADED] {warning}")
-    if not report["cross_correlations"]:
-        if corr_warnings:
-            log.info(f"  No cross-tool findings — but {len(corr_warnings)} rule input(s) "
-                     f"were unavailable, so this is not a clean result")
-        else:
-            log.info("  No cross-tool findings detected")
 
     # Programmatic analysis — deterministic, runs before LLM
     log.info("\n[Analysis] Programmatic analysis...")
