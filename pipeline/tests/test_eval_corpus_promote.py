@@ -296,3 +296,19 @@ def test_a_family_labelled_payload_is_recorded_not_refused():
         {"program_name": "x", "project_dir": "/opt/pipeline/eval-corpus/emotet_591d/p/project",
          "host_output_dir": "/opt/pipeline/eval-corpus/emotet_591d/p"}]}}
     assert agent_input_names_family(pathonly, "emotet") is False
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_routed_sample_promotes_before_its_copy_exists(report_dir, tmp_path, dry_run):
+    """formbook (dotnet_routed) raised CorpusProjectMissing on 2026-10-03: the
+    leak check asked the runner to resolve the corpus project before the copy
+    had been made. The fixture had no routed flag, so no test reached it."""
+    rp = report_dir / "report.json"
+    report = json.loads(rp.read_text())
+    report["ghidra"]["dotnet_routed"] = True
+    for f in report["ghidra"]["analyzed_files"]:
+        if f.get("program_name"):
+            f["source"] = "cape_payload"
+    rp.write_text(json.dumps(report))
+    r = _promote(report_dir, tmp_path, dry_run=dry_run)
+    assert r.dest.name.startswith("formbook_")
