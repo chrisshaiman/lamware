@@ -204,7 +204,7 @@ flowchart TB
     end
 
     subgraph "Stage 4.5 — AI Investigation"
-        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET/Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET: agentic with 6 C# tools<br/>Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
     end
 
     subgraph "Stage 4.7 — Evasion Hunter"
@@ -374,3 +374,23 @@ The pipeline detects the binary type and routes to the right tool:
 | PowerShell | pwsh + PSDecode | Multi-layer deobfuscation, CAPE encoded command extraction |
 
 Each path has its own LLM prompt optimized for that language's patterns.
+
+### Agentic .NET interpretation (#646)
+
+A .NET sample with no usable unpacked payload is read by the same agentic loop as a
+native PE, not in one request. The agent's first message is a **map** of the ILSpy C#:
+assembly metadata, a bounded table of contents (types → compact signatures with line
+and size), strings of interest, and suspicious constructs (reflection by string name,
+assembly loading, byte building, P/Invoke, crypto, process/registry/network APIs)
+ranked by `Class.Method`. Six tools read the source on demand: `get_method_source`,
+`get_source_lines`, `search_source`, `get_class_source`, `list_methods`,
+`list_classes`. Every result is bounded and says so (`truncated`, `page`/`pages`,
+`total_hits`); the bounds are `interpret_dotnet_tool_limits`, sized for CPU prefill.
+
+Per [ADR-021](docs/DECISIONS.md), the pipeline brokers every tool call
+(`stages/dotnet_agentic.py`) and executes it — and the map build — in a per-call
+`python-sandbox` container via `run-dotnet-tools` (`stages/dotnet_tools.py` is the code
+that runs there). A sandbox failure answers that call with an error; a map that cannot
+be built falls back to the single-shot payload, recorded in
+`llm_interpretation.input`. `interpret_dotnet_mode: single_shot` restores the previous
+one-request path for comparison (eval arms `<arm>+ss`).

@@ -27,6 +27,7 @@ these describe an AWS data plane that no longer exists.
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live |
+| [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Decided (2026-10-03) — Live after #673 deploys |
 
 ### Detonation environment
 
@@ -911,3 +912,70 @@ and is what turns a four-hour diagnosis into a red check.
 
 **If you are reading this while considering ufw: the tests will stop you, and
 they are right to.**
+
+
+## ADR-021: Hostile files are interpreted only inside a sandbox; agent tools are brokered by the orchestrator and executed in one
+
+**Status:** Decided (2026-10-03) — becomes Live when PR #673 is deployed
+**Issue:** #646 (the agentic .NET path is where the question came up; the decision is general)
+
+### Decision
+
+Hostile files are interpreted only inside a sandbox. Orchestrators (the pipeline and
+the API) may hash, peek at fixed-offset headers, read bounded byte ranges, and run
+fixed-pattern scans over bounded bytes; they never parse file formats and never run
+model-supplied logic. Agent tools are brokered by the orchestrator and executed in a
+sandbox — never in the orchestrator's own process and never answered by the interpret
+container itself.
+
+### Context
+
+Two properties, and both decide where a tool runs.
+
+**Interruptibility.** The interpret container reads stdin only while waiting for a tool
+result, so a brokered tool call is the only moment `force_final` and the synthesis
+reserve can reach the agent (#240, #663). A tool the interpret container answered for
+itself would recreate the run nothing can stop — the .NET single-shot request that ran
+5,447 s past a 3,600 s budget (redet644, 2026-09-27) was that shape.
+
+**Isolation.** The orchestrators hold what an attacker wants: the pipeline user has the
+database credentials (pipeline.env), CAPE storage, every report and rootless podman;
+the API holds the same data behind its users. The first version of #673 served the
+.NET tools in the pipeline process — interruptible, but parsing the sample's C# with
+those privileges, and running the model's regex in a child that had them too. Review
+then found the parser could be crashed by its input (600 nested interpolated strings,
+`RecursionError` out of Stage 4.5). A parser of hostile input will have defects; the
+question is only what they can reach.
+
+**Survey, 2026-10-03** (the guard test below keeps it true):
+
+- The pipeline and API import no format parser: no pefile, lief, yara, olefile/oletools,
+  zipfile/tarfile/py7zr, scapy/dpkt/pyshark, evtx, Registry or volatility.
+- Every real parser runs in a container: triage, CAPE, Volatility, Ghidra, ILSpy,
+  PyInstaller, Office, PowerShell, PCAP.
+- In-process byte handling is limited to sha256, header peeks (stages/ghidra.py,
+  dotnet.py, pyinstaller.py, cape.py), script text (script_analysis.py) and
+  fixed-pattern dump scans (volatility.py `extract_shellcode_artifacts`).
+- The analyst agent's tools: the Ghidra tools and `run_python` already execute in
+  sandboxes; `read_payload` is an allowed bounded byte read with no format parsing; the
+  rest read stored report and database JSON.
+
+So the rule already held everywhere except the agentic .NET tools.
+
+### Consequences
+
+- Ghidra tools: unchanged — the orchestrator brokers each call, `run-ghidra --tool` runs
+  it in a per-call container.
+- .NET tools: the pipeline brokers each call (`stages/dotnet_agentic.py`) and
+  `run-dotnet-tools` executes it in a per-call `python-sandbox` container (no network,
+  read-only root, no host mounts — the source arrives on stdin — memory and pids
+  limits, all capabilities dropped, no-new-privileges, `--user 65534`, podman
+  `--timeout` plus an outside backstop). The first-message map is built there too, so
+  the pipeline never parses the sample's C#. Any sandbox failure is that one call's
+  error; the run continues.
+- A container per call costs a container start and an index rebuild per call. Accepted:
+  it keeps every call a separate, killable, brokered unit, the Ghidra shape.
+- `tests/test_orchestrators_parse_no_file_formats.py` fails when an orchestrator imports
+  a format parser; an exception needs a written reason in its allowlist.
+- New tools — for the pipeline agent or the analyst agent — follow the same rule: if a
+  tool interprets sample bytes, it runs in a sandbox, brokered.

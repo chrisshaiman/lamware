@@ -144,6 +144,24 @@ ALLOWED: dict[str, Allowed] = {
         "absent on the main agentic pass in production too; it names the audit file "
         "tool_calls.json, which lamware_eval.rebuild expects"),
 
+    # --- the .NET init payload rides in the Ghidra target's argument (#646) --
+    # run_interpret and the eval's init_payload_for take EITHER a Ghidra target
+    # or a .NET init payload; the walker maps that argument to the ghidra
+    # section. These are keys of the .NET init, written by its builders.
+    **{f"ghidra.{k}": _unobserved(
+        ".NET init-payload key, read where run_interpret/init_payload_for receive "
+        "a .NET init instead of a Ghidra target", f"{_FILES}/stages/{src}")
+       for k, src in (("dotnet_mode", "dotnet_agentic.py"),
+                      ("dotnet_agentic_failed", "dotnet_agentic.py"),
+                      ("decompiled_source", "dotnet_agentic.py"),
+                      ("source_truncated_by_analyser", "single_shot_init.py"),
+                      ("source_bytes_total", "single_shot_init.py"))},
+    **{f"ghidra.analyzed_files[].{k}": _never(
+        "a per-program Ghidra target never carries .NET init keys; the read "
+        "returns the default and the target is treated as native")
+       for k in ("dotnet_mode", "dotnet_agentic_failed", "decompiled_source",
+                 "source_truncated_by_analyser", "source_bytes_total")},
+
     # --- written since the fixture was built --------------------------------
     "ghidra.original_sample_included": _unobserved(
         "added by #666 (2026-10-03), after the shapes fixture was built; written "

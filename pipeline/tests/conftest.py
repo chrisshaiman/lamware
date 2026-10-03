@@ -23,3 +23,22 @@ def pytest_configure(config):
     os.environ.setdefault("LAMWARE_PIPELINE_CONFIG", str(FIXTURE_CONFIG))
     os.environ.setdefault("CAPE_API_KEY", "dummy-test-key")
     os.environ.setdefault("PIPELINE_DB_PASSWORD", "dummy-test-pw")
+    # The agentic .NET tools run in a podman sandbox on the host (ADR-021,
+    # run-dotnet-tools). Tests run the SAME program — the container's bootstrap
+    # over the tool module on stdin — as a local process instead, so the
+    # broker's protocol is exercised for real; the isolation itself is tested
+    # against the rendered wrapper in test_dotnet_tool_sandbox.py.
+    os.environ.setdefault("LAMWARE_DOTNET_TOOLS_CMD", local_dotnet_tools_cmd())
+
+
+def local_dotnet_tools_cmd() -> str:
+    """An unsandboxed stand-in for run-dotnet-tools: the container's bootstrap,
+    run by this interpreter. Written once per session."""
+    import tempfile
+
+    sys.path.insert(0, str(PIPELINE_FILES))
+    from stages.dotnet_tools import CONTAINER_BOOTSTRAP
+    path = Path(tempfile.mkdtemp(prefix="lamware-dotnet-tools-")) / "run-dotnet-tools-local"
+    path.write_text(f"#!{sys.executable} -I\n{CONTAINER_BOOTSTRAP}\n")
+    path.chmod(0o755)
+    return str(path)

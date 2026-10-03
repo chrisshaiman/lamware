@@ -152,7 +152,7 @@ prompt written for that language's patterns. The routing table is in
 
 ### AI-driven investigation
 
-**On the native PE path**, the interpret stage uses an LLM's tool-use API with 6 Ghidra query tools. The other language paths (.NET, Go, PyInstaller, Java, Office, PowerShell) receive single-shot interpretation over their decompiler output. The agent autonomously lists functions, decompiles suspicious ones, traces cross-references, and reads data — producing a structured analysis of capabilities and candidate ATT&CK techniques, with every concrete claim checked against the evidence it was shown. It follows leads iteratively rather than making a single pass.
+**On the native PE path**, the interpret stage uses an LLM's tool-use API with 6 Ghidra query tools. **.NET** runs the same agentic loop over the ILSpy C#: the agent starts from a map of the assembly (table of contents, strings, suspicious constructs by `Class.Method`) and reads code through six source tools served by the pipeline. The other language paths (Go, PyInstaller, Java, Office, PowerShell) receive single-shot interpretation over their decompiler output. The agent autonomously lists functions, decompiles suspicious ones, traces cross-references, and reads data — producing a structured analysis of capabilities and candidate ATT&CK techniques, with every concrete claim checked against the evidence it was shown. It follows leads iteratively rather than making a single pass.
 
 The agent does not attribute a malware family, and it does not decide maliciousness. Family labels come from CAPE signatures or MalwareBazaar metadata and are presented as provenance; the verdict comes from triage, CAPE, and Volatility. See [Evaluation](#evaluation) for why, and what the stage *is* measured on.
 
@@ -165,7 +165,7 @@ The agent does not attribute a malware family, and it does not decide maliciousn
 | `list_functions` | List/search functions with xref counts |
 | `get_data_at` | Read raw bytes at an address |
 
-Single-shot is a deliberate choice there, not a gap: GoReSym and ILSpy already recover named functions, types and packages, so there is little for an agent to navigate toward.
+Single-shot is a deliberate choice for those paths, not a gap: GoReSym already recovers named functions, types and packages, so there is little for an agent to navigate toward. .NET was single-shot for the same reason until it was measured (#646): on the CPU-only host up to 100,000 characters of C# made one 38-58k-token request the stage budget could not interrupt, and on formbook the loader was a few lines inside 95k characters of decoy UI, which the single request described instead. `dotnet_mode: single_shot` keeps the old path for comparison.
 
 Model routing and cost mechanics are in [ARCHITECTURE.md](ARCHITECTURE.md); the load-bearing property is that the Anthropic key lives only in the LiteLLM proxy and never reaches an analysis container.
 

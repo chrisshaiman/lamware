@@ -85,18 +85,36 @@ def test_a_non_dict_passes_through():
     assert without_host_paths(None) is None
 
 
-def test_run_interpret_sanitises_before_sending():
+def test_run_interpret_sanitises_before_sending(tmp_path):
     """The function existing is not the fix; being CALLED on the payload is.
 
-    Asserted on the source of the payload-building statement, because reaching
-    the stdin write needs a live interpret container. Anchored on the assignment
-    rather than the word, so the explanatory comment above it cannot satisfy it.
+    Observed on what a container actually receives: a stand-in interpret
+    container (the JSON-lines protocol, as in test_interpret_forced_final_read)
+    echoes the init it read back as its final analysis. This replaced a regex
+    over the payload-building line, which stopped matching when the call moved
+    into `agent_payload` (#646) while the property still held — the source
+    shape was never the thing being guarded.
     """
-    import inspect
+    import sys
+    import textwrap
 
-    src = inspect.getsource(run_interpret)
-    line = next(ln for ln in src.splitlines() if '"ghidra_data"' in ln)
-    assert "without_host_paths(" in line, line
+    fake = tmp_path / "fake-run-interpret"
+    fake.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''
+        import json, sys
+        init = json.loads(sys.stdin.readline())
+        print(json.dumps({"type": "final", "analysis": {"seen": init["ghidra_data"]},
+                          "model_used": "m", "tool_calls_used": 0}), flush=True)
+    '''))
+    fake.chmod(0o755)
+    out = tmp_path / "out"
+    out.mkdir()
+    res = run_interpret(dict(LEAKY), out, str(fake), True, 30,
+                        {"model": "m"}, "/nonexistent/run-ghidra")
+    seen = res["analysis"]["seen"]
+    sent = json.dumps(seen)
+    for path in ("/opt/pipeline/reports", "/opt/pipeline/eval-corpus"):
+        assert path not in sent, f"{path} reached the container"
+    assert seen["program_name"] == LEAKY["program_name"]
 
 
 def test_the_tool_executor_still_gets_the_real_path():

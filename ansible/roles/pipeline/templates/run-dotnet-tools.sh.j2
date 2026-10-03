@@ -1,0 +1,66 @@
+#!/bin/bash
+# =============================================================================
+# run-dotnet-tools — execute ONE agentic .NET tool request in an isolated container
+#
+# Usage: run-dotnet-tools < request.json
+#
+# stdin:  one JSON request from the broker (stages/dotnet_agentic.py): the tool
+#         implementation (stages/dotnet_tools.py, stdlib only), the decompiled
+#         C# source, and the request — the first-message map or one tool call.
+#         Bounded to {{ pipeline_dotnet_tools_max_input }} bytes.
+# stdout: one JSON result, bounded to {{ pipeline_dotnet_tools_max_output }} bytes.
+#
+# ADR-021: agent tools are brokered by the orchestrator and executed in a
+# sandbox. The source is the sample's; this is the only place it is parsed.
+# The sandbox is the existing python-sandbox image (python:3.12-slim, no
+# packages) with the hardened flags the analysis containers use, plus a pids
+# limit, and NO host mounts: the source arrives on stdin and the root is
+# read-only. One container per request; the broker enforces a second timeout
+# from outside in case podman's does not fire.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+set -uo pipefail
+
+# Re-enter pipeline's lingering systemd user session before touching podman,
+# as run-ghidra's tool mode and run-sandbox do: from a non-login `sudo -u
+# pipeline` (the eval, a manual run) rootless podman cannot attach to its pause
+# process and fails with "image not found". The guard prevents an infinite
+# re-exec; the bus-socket check falls through when no session is reachable.
+_uid="$(id -u)"
+if [ -z "${LAMWARE_IN_USER_SESSION:-}" ] && [ -S "/run/user/${_uid}/bus" ]; then
+    exec env XDG_RUNTIME_DIR="/run/user/${_uid}" \
+             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_uid}/bus" \
+             systemd-run --user --pipe --quiet --wait --collect \
+             --setenv=LAMWARE_IN_USER_SESSION=1 -- "$0" "$@"
+fi
+
+if ! podman image exists localhost/python-sandbox:latest; then
+    echo "Error: image localhost/python-sandbox:latest not found — deploy the python-sandbox role first" >&2
+    exit 1
+fi
+
+# The program: load the tool module from the request and serve it. Fixed here,
+# not taken from the caller; it must match stages/dotnet_tools.CONTAINER_BOOTSTRAP
+# (pipeline/tests/test_dotnet_tool_sandbox.py holds the two equal).
+BOOTSTRAP='import json,sys,types;q=json.load(sys.stdin);m=types.ModuleType("dotnet_tools");sys.modules["dotnet_tools"]=m;exec(compile(q.pop("code"),"dotnet_tools.py","exec"),m.__dict__);m.container_main(q)'
+
+# --user 65534:65534 inside rootless podman's user namespace, as every analysis
+# container runs. stderr is kept apart from stdout so the broker parses only
+# the result.
+head -c {{ pipeline_dotnet_tools_max_input }} | podman run --rm -i \
+    --network=none \
+    --read-only \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --memory={{ pipeline_dotnet_tools_container_memory }} \
+    --cpus={{ pipeline_dotnet_tools_container_cpus }} \
+    --pids-limit={{ pipeline_dotnet_tools_container_pids }} \
+    --timeout={{ pipeline_dotnet_tools_timeout }} \
+    --tmpfs /tmp:size=16m \
+    --user 65534:65534 \
+    localhost/python-sandbox:latest \
+    python3 -I -u -c "$BOOTSTRAP" | head -c {{ pipeline_dotnet_tools_max_output }}
+exit "${PIPESTATUS[1]}"

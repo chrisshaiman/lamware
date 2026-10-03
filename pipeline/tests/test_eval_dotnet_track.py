@@ -40,13 +40,22 @@ NATIVE_REPORT = {
 
 
 def test_a_dotnet_sample_is_handed_its_decompiled_source():
-    """THE bug. Before this the payload was the empty Ghidra dict."""
-    init, modality, source, _read = init_payload_for(DOTNET_REPORT)
+    """THE bug. Before this the payload was the empty Ghidra dict.
+
+    Single-shot: the source rides in the payload. Agentic (#646, the default):
+    it rides in the payload for the ORCHESTRATOR, which serves it through the
+    tools and strips it before the container sees the payload."""
+    init, modality, source, _read = init_payload_for(DOTNET_REPORT, dotnet_mode="single_shot")
     assert modality == "dotnet"
     assert init["analysis_type"] == "dotnet"
     assert init["source_language"] == "csharp"
     assert "class Loader" in init["decompiled_source"]
     assert "class Loader" in source
+
+    init, modality, _source, _read = init_payload_for(DOTNET_REPORT)
+    assert modality == "dotnet_agentic"
+    assert init["dotnet_mode"] == "agentic"
+    assert "class Loader" in init["decompiled_source"]
 
 
 def test_a_native_sample_is_unchanged():
@@ -64,9 +73,21 @@ def test_a_native_sample_is_unchanged():
 def test_the_grounding_source_follows_the_modality():
     """Scoring a .NET cell against json.dumps(ghidra) would score it against an
     empty dict, so every claim it made would be a fabrication."""
-    _, _, source, _read = init_payload_for(DOTNET_REPORT)
+    _, _, source, _read = init_payload_for(DOTNET_REPORT, dotnet_mode="single_shot")
     assert "analyzed_files" not in source, "still grounding against the Ghidra dump"
     assert "Inject()" in source
+
+
+def test_the_agentic_grounding_is_what_the_agent_was_sent():
+    """Agentic .NET (#646): the agent is sent a map — class and method names,
+    strings — and reads bodies through tools, whose results are scored via
+    tool_output_text. A body it never pulled must not ground its claims, so
+    the grounding head names `Loader.Run` but not the call inside it."""
+    _, _, source, _read = init_payload_for(DOTNET_REPORT)
+    assert "analyzed_files" not in source, "still grounding against the Ghidra dump"
+    assert "Loader" in source and "Run" in source
+    assert "Inject()" not in source, "the head grounds against code the agent never read"
+    assert "decompiled_source" not in json.loads(source)
 
 
 def test_a_failed_dotnet_analysis_falls_back_rather_than_shipping_nothing():
@@ -107,7 +128,16 @@ def test_the_payload_builder_is_the_one_production_uses():
            / "files" / "lamware_eval" / "runner.py").read_text(encoding="utf-8")
     imports = {n.module for n in ast.walk(ast.parse(src))
                if isinstance(n, ast.ImportFrom)}
-    assert "stages.single_shot_init" in imports, sorted(imports)
+    # The .NET selector both production and the eval call (#646), which in
+    # turn calls single_shot_init.build_dotnet_init for the single-shot mode.
+    assert "stages.dotnet_tools" in imports, sorted(imports)
+    for path in ("lamware_eval/runner.py", "run-pipeline.py"):
+        tree = ast.parse((Path(__file__).resolve().parents[2] / "ansible" / "roles"
+                          / "pipeline" / "files" / path).read_text(encoding="utf-8"))
+        called = {n.func.id for n in ast.walk(tree)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        assert "build_dotnet_interpret_init" in called, f"{path} builds .NET its own way"
+        assert "build_dotnet_init" not in called, f"{path} bypasses the mode selector"
 
 
 @pytest.mark.parametrize("module", ["runner.py", "rebuild.py"])

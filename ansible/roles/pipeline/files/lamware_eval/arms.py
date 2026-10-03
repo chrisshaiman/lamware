@@ -40,6 +40,10 @@ class Arm:
     max_tool_calls: int
     seed: int | None = None  # None = server default; unpinned, so runs are not reproducible
     evidence: str = "ghidra"
+    # How a .NET sample with no usable unpacked payload is read (#646). None =
+    # the deployed config's `dotnet_mode` (production's: "agentic"). The `+ss`
+    # variants pin "single_shot" so the two paths can be compared on one corpus.
+    dotnet_mode: str | None = None
 
 
 _REGISTRY: dict[str, Arm] = {
@@ -128,7 +132,31 @@ def _register_seed_variants(registry: dict[str, Arm]) -> None:
                 # silently ghidra-only, so the pair would stop differing and the
                 # experiment would compare an arm against itself.
                 evidence=base.evidence,
+                dotnet_mode=base.dotnet_mode,
             )
+
+
+def _register_dotnet_single_shot_variants(registry: dict[str, Arm]) -> None:
+    """`<arm>+ss` for every arm: the same arm on the PREVIOUS .NET path (#646).
+
+    The agentic .NET path (a map of the assembly plus tools) replaced one
+    request carrying up to 100,000 characters of C#. The single-shot path is
+    kept behind `dotnet_mode` so this pair can measure the change: `qwen@10`
+    against `qwen@10+ss` differs in that one variable, and only on .NET cells
+    with no usable unpacked payload — every other cell reads the same input
+    under both names and is a negative control.
+
+    Same pairing rule as `+corr`: run the two back to back per sample, because
+    determinism does not survive a llama-server restart.
+
+    Registered BEFORE the evidence and seed variants, so `qwen@10+ss+corr:s42`
+    exists and carries all three settings.
+    """
+    for base in [a for a in list(registry.values()) if a.dotnet_mode is None]:
+        name = f"{base.name}+ss"
+        registry[name] = Arm(name, base.model, base.re_backend, base.max_tool_calls,
+                             seed=base.seed, evidence=base.evidence,
+                             dotnet_mode="single_shot")
 
 
 def _register_evidence_variants(registry: dict[str, Arm]) -> None:
@@ -150,9 +178,11 @@ def _register_evidence_variants(registry: dict[str, Arm]) -> None:
     for base in [a for a in list(registry.values()) if a.evidence == "ghidra"]:
         name = f"{base.name}+corr"
         registry[name] = Arm(name, base.model, base.re_backend, base.max_tool_calls,
-                             seed=base.seed, evidence="correlated")
+                             seed=base.seed, evidence="correlated",
+                             dotnet_mode=base.dotnet_mode)
 
 
+_register_dotnet_single_shot_variants(_REGISTRY)
 _register_evidence_variants(_REGISTRY)
 _register_seed_variants(_REGISTRY)
 

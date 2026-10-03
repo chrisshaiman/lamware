@@ -190,6 +190,9 @@ FOLLOWED: tuple[str, ...] = (
     f"{_FILES}/stages/ghidra.py",            # collect_analysis_warnings (lamware_eval.metrics)
     f"{_FILES}/stages/single_shot_init.py",  # build_dotnet_init (lamware_eval.runner)
     f"{_FILES}/stages/interpret.py",         # run_interpret (lamware_eval.runner)
+    f"{_FILES}/stages/dotnet_tools.py",      # is_agentic_dotnet (#646)
+    f"{_FILES}/stages/dotnet_agentic.py",    # build_dotnet_interpret_init, broker_from_payload,
+                                             # dotnet_input_record, is_agentic_dotnet (#646)
 )
 
 # Abstract values. Each is a hashable tuple:

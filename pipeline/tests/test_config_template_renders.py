@@ -34,8 +34,11 @@ TEMPLATE = _ROLE / "templates" / "config.json.j2"
 DEFAULTS = _ROLE / "defaults" / "main.yml"
 
 
-def _render() -> str:
+def _render(**extra) -> str:
     """Render the template with the role's ACTUAL defaults as context.
+
+    `extra` adds variables another role supplies in the same play (the
+    interpret role's `interpret_*` defaults, say); none by default.
 
     Not hand-written stand-ins: `ansible/roles/pipeline/defaults/main.yml` is what
     Ansible supplies at deploy when a play sets nothing, so rendering against it is
@@ -58,6 +61,7 @@ def _render() -> str:
               "pcap_analysis_install_dir", "triage_install_dir",
               "pipeline_db_host", "pipeline_db_name", "pipeline_db_user"):
         ctx.setdefault(k, "placeholder")
+    ctx.update(extra)
 
     def to_json(v):
         return json.dumps("placeholder" if isinstance(v, jinja2.Undefined) else v)

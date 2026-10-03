@@ -526,6 +526,8 @@
     - ghidra.py
     - interpret.py
     - single_shot_init.py
+    - dotnet_tools.py
+    - dotnet_agentic.py
     - cape.py
     - process_activity.py
 
@@ -765,6 +767,16 @@
   ansible.builtin.template:
     src: run-pipeline-wrapper.sh.j2
     dest: "{{ pipeline_install_dir }}/run-pipeline"
+    owner: pipeline
+    group: pipeline
+    mode: "0750"
+
+- name: Deploy run-dotnet-tools (agentic .NET tool sandbox, ADR-021)
+  # Runs each agentic .NET tool request in a localhost/python-sandbox container
+  # (built by the python-sandbox role). The broker is stages/dotnet_agentic.py.
+  ansible.builtin.template:
+    src: run-dotnet-tools.sh.j2
+    dest: "{{ pipeline_install_dir }}/run-dotnet-tools"
     owner: pipeline
     group: pipeline
     mode: "0750"

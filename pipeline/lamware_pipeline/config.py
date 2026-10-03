@@ -11,8 +11,23 @@ carrying their own Jinja for them. Secrets (cape_api_key, db_password) are
 intentionally NOT here — they stay in the no_log env path.
 """
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class DotnetToolLimits(BaseModel):
+    """Bounds of the agentic .NET path (#646). Every field >= 1: a zero bound
+    would return nothing without saying why."""
+    model_config = ConfigDict(extra="forbid")
+    page_chars: int = Field(default=6_000, ge=1)            # one page of source
+    lines_max: int = Field(default=150, ge=1)               # get_source_lines
+    list_max: int = Field(default=150, ge=1)                # list_methods / list_classes
+    search_max_hits: int = Field(default=50, ge=1)          # search_source
+    search_line_chars: int = Field(default=240, ge=1)       # one search hit
+    toc_max_classes: int = Field(default=200, ge=1)         # first message
+    toc_max_methods: int = Field(default=220, ge=1)         # first message
+    construct_max_locations: int = Field(default=40, ge=1)  # first message
 
 
 class InterpretConfig(BaseModel):
@@ -44,6 +59,23 @@ class InterpretConfig(BaseModel):
     # is SEPARATE from re_backend above. Defaulted so an older config.json still
     # loads, and "cloud" reproduces the historical behaviour.
     single_shot_backend: str = "cloud"
+    # Which .NET interpret path runs (#646). "agentic": a map of the assembly
+    # plus tools that read the decompiled C# on demand, through the same loop,
+    # limits and forced-final salvage as the Ghidra path. "single_shot": the
+    # previous path, the whole stored source in one request — 38-58k tokens and
+    # 45-90 minutes of prefill on the local host, which the stage budget cannot
+    # interrupt. Kept so the eval can A/B the two. A Literal, so a typo fails at
+    # startup rather than silently choosing a path.
+    dotnet_mode: Literal["agentic", "single_shot"] = "agentic"
+    # Size bounds of the agentic .NET path (map and tool results). Defaults are
+    # sized for CPU prefill on the current host; a faster host raises them here
+    # instead of in code. Mirrors stages/dotnet_tools.DotnetToolLimits, whose
+    # defaults test_dotnet_mode_config.py holds equal to these.
+    dotnet_tool_limits: DotnetToolLimits = Field(default_factory=DotnetToolLimits)
+    # The sandbox that executes those tools (ADR-021: never in this process) and
+    # the container timeout it passes to podman; the broker adds 15 s on top.
+    dotnet_tools_cmd: str = "/opt/pipeline/run-dotnet-tools"
+    dotnet_tools_timeout: int = Field(default=30, ge=1)
     # Wall-clock budget for the whole summarize container run. Defaulted rather than
     # required so a config.json written before this key still loads — the eval harness
     # passes whole config dicts through and an older one would fail validation, which

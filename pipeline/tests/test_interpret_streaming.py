@@ -38,8 +38,8 @@ def test_agentic_loop_streams():
     assert re.search(r"response = create_message(_streaming)?\(\s*\n?\s*client,"
                      r"(\s*\n\s*turn_index=tool_calls_used,)?"
                      r"\s*\n\s*model=current_model,"
-                     r"\s*\n\s*max_tokens=max_output_tokens,\s*\n\s*system=CACHED_SYSTEM,"
-                     r"\s*\n\s*tools=TOOLS,", TMPL), \
+                     r"\s*\n\s*max_tokens=max_output_tokens,\s*\n\s*system=loop_system,"
+                     r"\s*\n\s*tools=loop_tools,", TMPL), \
         "the agentic loop must stream, not call client.messages.create()"
 
 
@@ -113,8 +113,8 @@ def test_no_blocking_create_on_the_long_generation_paths():
     """Guard against a partial revert leaving one long path blocking."""
     for pattern in (
         "response = client.messages.create(\n                model=current_model,\n"
-        "                max_tokens=max_output_tokens,\n                system=CACHED_SYSTEM,\n"
-        "                tools=TOOLS,",
+        "                max_tokens=max_output_tokens,\n                system=loop_system,\n"
+        "                tools=loop_tools,",
         "final_response = client.messages.create(",
         "concl = client.messages.create(",
     ):
