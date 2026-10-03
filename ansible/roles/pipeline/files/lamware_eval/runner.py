@@ -9,12 +9,13 @@ from pathlib import Path
 
 import requests
 from llm_ab_re import extract_metrics
-from stages.interpret import run_interpret
+from stages.ghidra import ROUTED_FLAGS, make_ghidra_verifier, select_payload_target
+from stages.interpret import run_interpret, without_host_paths
 from stages.single_shot_init import build_dotnet_init
 
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
-from lamware_eval.metrics import cell_error, compose_cell, ghidra_warnings_for
+from lamware_eval.metrics import cell_error, compose_cell, ghidra_warnings_for, input_label
 
 # Harness backstop. MUST stay ABOVE the interpret container's own --timeout
 # (10800s) so the container is the thing that reaps a stuck run and we get a
@@ -267,27 +268,83 @@ def evidence_for(arm: Arm, report: dict) -> dict:
     return correlated_evidence(report)
 
 
-def init_payload_for(report: dict) -> tuple[dict, str, str]:
-    """(init payload, modality, grounding source) for this sample.
+class CorpusProjectMissing(RuntimeError):
+    """The corpus does not carry the Ghidra project for a program production reads.
 
-    `run_interpret`'s first parameter is named `ghidra_result` but is really an
-    INIT PAYLOAD, and production builds a different one per modality — .NET,
-    Java, PowerShell, Go (run-pipeline.py:800 onward). The eval only ever built
-    the Ghidra one, so five of the twelve curated samples handed the agent an
-    empty dump: they are .NET, routed to ILSpy/de4dot by design, with their
-    decompiled C# sitting unread in `report["dotnet_analysis"]` (#505).
+    Raised rather than worked around. The two quiet alternatives are both wrong:
+    reaching into `/opt/pipeline/reports/<run>/...` is the #631 defect (those
+    directories are cleaned up, and the corpus is then broken without anything
+    failing), and falling back to the wrapper's C# would measure the input
+    production stopped reading, under a cell that says nothing about it. The
+    sweep's per-cell `except` turns this into a failed cell carrying the message.
+    """
 
-    `build_dotnet_init` is IMPORTED from the same module production uses rather
-    than reimplemented here. Two copies of a payload shape that must match is
-    the #380 pattern, and the thing that would drift is what the agent sees.
 
-    The grounding source moves with the modality. Scoring a .NET cell against
-    `json.dumps(ghidra)` would score it against an empty dict, so every claim it
-    made would be a fabrication.
+def corpus_project_for(af: dict, corpus_dir: str | Path) -> Path:
+    """Where the corpus copy of this analysed file's Ghidra project lives.
 
-    Native PE and .NET are TWO EXPERIMENTS and are never pooled — that is
-    enforced by the corpus manifests being separate files (#505), not by this
-    function, which only has to build the right payload for whatever it is given.
+    The rule production uses to find a project on the host
+    (`_host_project` inside `propagate_project_dir`, stages/ghidra.py), rebased
+    from the run's report directory onto the corpus directory: a file with a
+    `host_output_dir` has its project in `<that dir's name>/project` (the
+    shellcode loader writes one per payload, `shellcode_<pid>_<addr>_<sha12>/`);
+    one without has it in the report directory's own `project/`, which is the
+    only layout an old corpus entry has.
+
+    Never falls back to the host path the report recorded; see
+    CorpusProjectMissing.
+    """
+    base = Path(corpus_dir)
+    host_out = af.get("host_output_dir")
+    project = (base / Path(host_out).name if host_out else base) / "project"
+    if not project.is_dir():
+        raise CorpusProjectMissing(
+            f"corpus {base} has no copy of the project for "
+            f"{str(af.get('program_name'))[:16]} ({af.get('cape_type') or 'unlabelled'}), "
+            f"which production reads for this sample. Copy {project.relative_to(base)} "
+            f"from the run that produced the report.")
+    return project
+
+
+def _corpus_verifier(probe, ghidra_data: dict, corpus_dir: str | Path | None):
+    """Production's tri-state verifier, asked about the corpus copy of each project.
+
+    `select_payload_target` calls `verify(project_dir, program_name)` with the
+    HOST path the report recorded. In the eval that path belongs to a run
+    directory that may be gone; what matters is whether the project THE AGENT
+    WILL USE opens the program, and that is the corpus copy.
+    """
+    if probe is None or corpus_dir is None:
+        return probe
+    by_key = {(f.get("project_dir"), f.get("program_name")): f
+              for f in ghidra_data.get("analyzed_files") or [] if isinstance(f, dict)}
+
+    def verify(project_dir: str, program_name: str):
+        af = by_key.get((project_dir, program_name)) or {"program_name": program_name}
+        return probe(str(corpus_project_for(af, corpus_dir)), program_name)
+    return verify
+
+
+def agent_visible_text(ghidra_payload: dict) -> str:
+    """The grounding text for a Ghidra payload: what the agent was sent, as text.
+
+    `run_interpret` sends the agent `without_host_paths(payload)`; this scores
+    against the same thing, via the same function, for BOTH Ghidra modalities.
+    Scoring against the raw dict also scored against `project_dir` and
+    `host_output_dir`, and every corpus path is
+    `/opt/pipeline/eval-corpus/<family>_<sha8>/...`, so a claim naming the
+    family was grounded by the directory name alone (#669). One helper rather
+    than a strip per branch: the native branch was left unstripped once
+    already, when the payload branch was not.
+    """
+    return json.dumps(without_host_paths(ghidra_payload))
+
+
+def _wrapper_payload(report: dict) -> tuple[dict, str, str]:
+    """The pre-#646 dispatch: the wrapper's own analyser, else the Ghidra dict.
+
+    Unchanged. It is still what production does for a routed sample with no
+    usable payload, and for every native sample.
     """
     dotnet = report.get("dotnet_analysis") or {}
     if dotnet.get("analysis_success"):
@@ -298,13 +355,120 @@ def init_payload_for(report: dict) -> tuple[dict, str, str]:
         init = build_dotnet_init(dotnet, llm_context, cape_sigs)
         return init, "dotnet", json.dumps(init.get("decompiled_source", ""))
     gr = report.get("ghidra") or {}
-    return gr, "native_pe", json.dumps(gr)
+    # The init is the full dict: the host needs `project_dir` to broker tool
+    # calls. Only the grounding text loses the paths (#669).
+    return gr, "native_pe", agent_visible_text(gr)
+
+
+def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = None,
+                     recorded: dict | None = None) -> tuple[dict, str, str, dict]:
+    """(init payload, modality, grounding source, input record) for this sample.
+
+    `run_interpret`'s first parameter is named `ghidra_result` but is really an
+    INIT PAYLOAD, and production builds a different one per input. This mirrors
+    production's Stage 4.5 dispatch (run-pipeline.py, `payload_target`), in
+    production's order, with production's own functions:
+
+    1. ``unpacked_payload`` — the sample was routed to another analyser (any of
+       `ROUTED_FLAGS`, not only .NET) and `select_payload_target` names a program
+       CAPE unpacked: a family-labelled payload the verifier opens, else the
+       canonical one. The AGENTIC Ghidra path runs on that program (#646 option
+       (c)). Programs marked `in_project: false` (#655) are never chosen; that
+       rule lives in `select_payload_target`, not here.
+    2. ``dotnet`` — the wrapper's single-shot path on the decompiled C# (#505).
+    3. ``native_pe`` — the Ghidra dict, exactly as before.
+
+    `select_payload_target`, `ROUTED_FLAGS` and `build_dotnet_init` are IMPORTED
+    from the modules production uses rather than reimplemented here. Two copies
+    of a dispatch that must match is the #380 pattern, and the thing that would
+    drift is what the agent sees: before this, a .NET loader like formbook was
+    measured on its 97k-character C# card game while production read the
+    "Formbook Payload".
+
+    THE VERIFIER. `verify` is the raw tri-state probe: in `run_arm`,
+    production's `make_ghidra_verifier(ghidra_cmd)`, unmodified. It is asked
+    about the CORPUS copy of each project (`corpus_project_for`), never the host
+    run directory the report names: the corpus is frozen evidence (#631), and
+    the question is whether the project the agent will use opens the program.
+    With `verify=None` the family-label preference is skipped and only the
+    canonical program qualifies, which is what production's function does too.
+    `corpus_dir` also rebases the chosen program's `project_dir`, so the agent's
+    tool calls go to the corpus copy; None leaves paths as recorded.
+
+    `recorded` REPLAYS a cell's choice instead of making it. The offline
+    re-scorer has no Ghidra to verify with, and re-deciding could disagree with
+    the sweep that produced the cell (#380). `{}` — a cell from before the
+    record existed — replays the pre-#646 dispatch, which is what produced it.
+
+    THE GROUNDING SOURCE moves with the modality, because a claim is grounded
+    only against what the agent could have read:
+
+      native_pe         report["ghidra"] as the agent received it
+                        (`agent_visible_text`: host paths removed, #669)
+      dotnet            the decompiled C#. Scored against the Ghidra dict it was
+                        scored against an empty one, so every claim it made was
+                        a fabrication.
+      unpacked_payload  the chosen program's entry as the agent received it
+                        (`agent_visible_text`). Not the C#, which the agent
+                        never saw, and not the whole Ghidra dict, whose other
+                        payloads it never saw.
+
+    Neither Ghidra source includes host paths: they carry the family name the
+    corpus directory is named for and would ground a family claim the agent
+    did not earn (#669).
+
+    The input record says which of these happened, in the shape production
+    writes to `llm_interpretation.input`, so a scorecard can say which input
+    each cell measured. The three modalities are separate measurements and are
+    never pooled; `aggregate` counts them per arm so a pooled summary says so.
+    """
+    gr = report.get("ghidra") or {}
+    routed_by = [k for k in ROUTED_FLAGS if gr.get(k)]
+
+    target, reason = None, None
+    if recorded is not None:
+        if recorded.get("kind") == "unpacked_payload":
+            name = recorded.get("program_name")
+            target = next((f for f in gr.get("analyzed_files") or []
+                           if isinstance(f, dict) and name
+                           and f.get("program_name") == name), None)
+            if target is None:
+                raise ValueError(f"cell recorded unpacked payload {str(name)[:16]}, "
+                                 f"which this report does not list")
+            reason = recorded.get("chosen_because")
+    elif routed_by:
+        target, reason = select_payload_target(
+            gr, verify=_corpus_verifier(verify, gr, corpus_dir))
+
+    if target is None:
+        init, modality, source = _wrapper_payload(report)
+        return init, modality, source, {
+            "kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
+
+    init = dict(target)
+    if corpus_dir is not None:
+        init["project_dir"] = str(corpus_project_for(target, corpus_dir))
+    read = {
+        "kind": "unpacked_payload",
+        "program_name": target.get("program_name"),
+        "source": target.get("source") or "dropped_pe",
+        "functions_count": target.get("functions_count"),
+        "cape_type": target.get("cape_type"),
+        "chosen_because": reason,
+        "wrapper_routed_by": routed_by[0] if routed_by else None,
+    }
+    return init, "unpacked_payload", agent_visible_text(target), read
 
 
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
             interpret_cmd: str, ghidra_cmd: str) -> dict:
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
-    init, modality, source_head = init_payload_for(report)
+    # Production's verifier, unmodified, pointed at the corpus copies of the
+    # projects (see init_payload_for). It only runs for a routed sample; a
+    # native one never reaches it.
+    init, modality, source_head, read = init_payload_for(
+        report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir)
+    print(f"    [eval] input: {input_label(read)}", flush=True)
     gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
     # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
@@ -370,8 +534,13 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     # `grounded_novel` is the comparable figure: grounded in the Ghidra dump and
     # tool output, WITHOUT the evidence. `grounded_recited` is the difference.
     # Whatever the agent could have read: the Ghidra dump for a native PE, the
-    # decompiled C# for a .NET sample, plus the tool results either way.
+    # decompiled C# for a .NET sample, the chosen program's entry for an
+    # unpacked payload, plus the tool results in every case.
     source = source_head + " " + tool_output_text(out)
+
+    # Say what was read, where production says it (`llm_interpretation.input`).
+    # The offline re-scorer replays this rather than re-deciding without Ghidra.
+    res["input"] = read
 
     # Persist the full interpret result. Family-ID is analyst-ADJUDICATED, which
     # is impossible after the fact if only the scorecard's one-word guess
@@ -390,4 +559,4 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
                         sampling=_server_sampling() if arm.re_backend == "local" else None,
                         ghidra_warnings=ghidra_warnings_for(gr),
                         cape_techniques=held_out_techniques(report),
-                        modality=modality)
+                        modality=modality, input_read=read)
