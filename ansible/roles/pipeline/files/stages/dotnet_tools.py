@@ -56,12 +56,20 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
-from stages.single_shot_init import _source_provenance, build_dotnet_init
+from stages.single_shot_init import (
+    CONTAINER_SOURCE_CAP,
+    _source_provenance,
+    build_dotnet_init,
+    capped,
+)
+
+log = logging.getLogger(__name__)
 
 # --- Result bounds -----------------------------------------------------------
 #
@@ -74,6 +82,8 @@ SOURCE_PAGE_CHARS = 6_000
 #: Search hits returned at most per call, and the default.
 SEARCH_MAX_HITS = 50
 SEARCH_DEFAULT_HITS = 20
+#: The largest `max_hits` an argument may carry; the configured bound clamps it.
+SEARCH_ARG_MAX = 1_000
 #: One hit's line, centred on the match.
 SEARCH_LINE_CHARS = 240
 #: Lines `get_source_lines` returns at most.
@@ -90,6 +100,38 @@ TOC_MAX_CLASSES = 200
 TOC_MAX_METHODS = 220
 CONSTRUCT_MAX_LOCATIONS = 40
 USINGS_MAX = 60
+
+
+@dataclass(frozen=True)
+class DotnetToolLimits:
+    """Every size bound the agentic .NET path applies, as configuration.
+
+    The defaults are the constants above, sized for CPU prefill on the current
+    host (~35-50 tok/s, falling as the prompt grows). They are not a property
+    of the design: a host with faster prefill can raise them through
+    `interpret_dotnet_tool_limits` (roles/interpret/defaults/main.yml ->
+    config.json.j2 -> InterpretConfig.dotnet_tool_limits) without a code
+    change. The pydantic model in lamware_pipeline/config.py validates the
+    same fields; test_dotnet_mode_config.py holds the two to the same defaults.
+    """
+    page_chars: int = SOURCE_PAGE_CHARS
+    lines_max: int = LINES_MAX
+    list_max: int = LIST_MAX
+    search_max_hits: int = SEARCH_MAX_HITS
+    search_line_chars: int = SEARCH_LINE_CHARS
+    toc_max_classes: int = TOC_MAX_CLASSES
+    toc_max_methods: int = TOC_MAX_METHODS
+    construct_max_locations: int = CONSTRUCT_MAX_LOCATIONS
+
+    @classmethod
+    def from_config(cls, cfg: dict | None) -> DotnetToolLimits:
+        """From `interpret_config["dotnet_tool_limits"]`; absent keys keep defaults.
+        Values below 1 are raised to 1: a zero bound would return nothing and
+        say nothing about why."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: max(1, int(v)) for k, v in (cfg or {}).items()
+                      if k in known and v is not None})
+
 
 #: The phrase every negative answer carries. The eval counts a tool error as a
 #: broken TOOL LAYER unless it recognises the error as the tool answering "no"
@@ -135,99 +177,130 @@ def mask_with_comments(src: str) -> tuple[str, list[tuple[int, int]]]:
             if out[k] != "\n":
                 out[k] = " "
 
-    def scan_string(i: int, verbatim: bool, interp: bool) -> int:
-        """i is at the opening quote; return the index after the closing one."""
-        j = i + 1
-        while j < n:
-            c = src[j]
+    # ITERATIVE, with an explicit stack. The first version recursed once per
+    # interpolation hole, so ~600 nested `$"{` raised RecursionError — out of
+    # Stage 4.5, where nothing caught it, so the sample denied its own report
+    # (review of #673). Nesting depth now costs memory, never the call stack.
+    #
+    # Frames: ["code", hole_start, depth] (hole_start None for the top level),
+    #         ["str", verbatim, interp].
+    stack: list[list] = [["code", None, 0]]
+    holes: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        top = stack[-1]
+        c = src[i]
+        if top[0] == "str":
+            verbatim, interp = top[1], top[2]
             if verbatim and c == '"':
-                if j + 1 < n and src[j + 1] == '"':
-                    blank(j, j + 2)
-                    j += 2
+                if i + 1 < n and src[i + 1] == '"':
+                    blank(i, i + 2)
+                    i += 2
                     continue
-                return j + 1
+                stack.pop()
+                i += 1
+                continue
             if not verbatim and c == "\\":
-                blank(j, j + 2)
-                j += 2
+                blank(i, i + 2)
+                i += 2
                 continue
             if not verbatim and c == '"':
-                return j + 1
+                stack.pop()
+                i += 1
+                continue
             if not verbatim and c == "\n":
-                return j            # unterminated: do not swallow the file
+                stack.pop()             # unterminated: do not swallow the file
+                continue
             if interp and c == "{":
-                if j + 1 < n and src[j + 1] == "{":
-                    blank(j, j + 2)
-                    j += 2
+                if i + 1 < n and src[i + 1] == "{":
+                    blank(i, i + 2)
+                    i += 2
                     continue
-                # A hole: code, masked as code would be, then blanked so its
-                # braces never reach the structural parser.
-                start = j
-                j = scan_code(j + 1, stop_at_close=True)
-                blank(start, j)
-                continue
-            if interp and c == "}" and j + 1 < n and src[j + 1] == "}":
-                blank(j, j + 2)
-                j += 2
-                continue
-            blank(j, j + 1)
-            j += 1
-        return j
-
-    def scan_code(i: int, stop_at_close: bool = False) -> int:
-        depth = 0
-        while i < n:
-            c = src[i]
-            if c == "/" and i + 1 < n and src[i + 1] == "/":
-                end = src.find("\n", i)
-                end = n if end < 0 else end
-                blank(i, end)
-                comments.append((i, end))
-                i = end
-                continue
-            if c == "/" and i + 1 < n and src[i + 1] == "*":
-                end = src.find("*/", i + 2)
-                end = n if end < 0 else end + 2
-                blank(i, end)
-                comments.append((i, end))
-                i = end
-                continue
-            if c in "$@" and i + 1 < n and src[i + 1] in '"$@':
-                # $"  @"  $@"  @$"
-                k = i
-                verbatim = interp = False
-                while k < n and src[k] in "$@":
-                    verbatim |= src[k] == "@"
-                    interp |= src[k] == "$"
-                    k += 1
-                if k < n and src[k] == '"':
-                    i = scan_string(k, verbatim, interp)
-                    continue
+                # A hole: code, masked as code is, then blanked whole when it
+                # closes so its braces never reach the structural parser.
+                stack.append(["code", i, 0])
                 i += 1
                 continue
-            if c == '"':
-                i = scan_string(i, False, False)
+            if interp and c == "}" and i + 1 < n and src[i + 1] == "}":
+                blank(i, i + 2)
+                i += 2
                 continue
-            if c == "'":
-                # Char literal: 'x', '\'', 'A'. Bounded so a stray quote
-                # (none in valid C#) cannot blank a long run.
-                m = re.match(r"'(?:\\.|\\u[0-9A-Fa-f]{4}|[^'\\\n])'", src[i:i + 8])
-                if m:
-                    blank(i + 1, i + m.end() - 1)
-                    i += m.end()
-                    continue
-                i += 1
-                continue
-            if stop_at_close:
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    if depth == 0:
-                        return i + 1
-                    depth -= 1
+            blank(i, i + 1)
             i += 1
-        return i
+            continue
 
-    scan_code(0)
+        # code (top level, or an interpolation hole)
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            end = src.find("\n", i)
+            end = n if end < 0 else end
+            blank(i, end)
+            comments.append((i, end))
+            i = end
+            continue
+        if c == "/" and i + 1 < n and src[i + 1] == "*":
+            end = src.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            blank(i, end)
+            comments.append((i, end))
+            i = end
+            continue
+        if c in "$@" and i + 1 < n and src[i + 1] in '"$@':
+            # $"  @"  $@"  @$"
+            k = i
+            verbatim = interp = False
+            while k < n and src[k] in "$@":
+                verbatim |= src[k] == "@"
+                interp |= src[k] == "$"
+                k += 1
+            if k < n and src[k] == '"':
+                stack.append(["str", verbatim, interp])
+                i = k + 1
+                continue
+            i += 1
+            continue
+        if c == '"':
+            stack.append(["str", False, False])
+            i += 1
+            continue
+        if c == "'":
+            # Char literal: 'x', '\'', 'A'. Bounded so a stray quote
+            # (none in valid C#) cannot blank a long run.
+            m = re.match(r"'(?:\\.|\\u[0-9A-Fa-f]{4}|[^'\\\n])'", src[i:i + 8])
+            if m:
+                blank(i + 1, i + m.end() - 1)
+                i += m.end()
+                continue
+            i += 1
+            continue
+        if top[1] is not None:          # inside a hole: track its braces
+            if c == "{":
+                top[2] += 1
+            elif c == "}":
+                if top[2] == 0:
+                    stack.pop()
+                    holes.append((top[1], i + 1))
+                    i += 1
+                    continue
+                top[2] -= 1
+        i += 1
+    # Holes still open at EOF (a truncated or hostile source): blank to the end,
+    # as the closing case would have.
+    for frame in stack:
+        if frame[0] == "code" and frame[1] is not None:
+            holes.append((frame[1], n))
+    # Blanked once, after merging: nested holes overlap, and blanking each as it
+    # closed was quadratic — 50,000 nested `$"{` took over 30 s.
+    holes.sort()
+    cur_a, cur_b = -1, -1
+    for a, b in holes:
+        if a > cur_b:
+            if cur_b > cur_a:
+                blank(cur_a, cur_b)
+            cur_a, cur_b = a, b
+        else:
+            cur_b = max(cur_b, b)
+    if cur_b > cur_a:
+        blank(cur_a, cur_b)
     return "".join(out), comments
 
 
@@ -395,6 +468,7 @@ class TypeDecl:
     line_start: int
     line_end: int
     members: list[Member] = field(default_factory=list)
+    parent: int | None = None       # index of the enclosing type in CSharpIndex.types
 
     @property
     def chars(self) -> int:
@@ -420,7 +494,9 @@ class CSharpIndex:
         self.types: list[TypeDecl] = []
         self.namespaces: list[str] = []
         self._parse()
-        self.types.sort(key=lambda t: t.start)
+        # Types are appended in source order (headers are found left to right),
+        # so they are not re-sorted: that would invalidate the `parent` indices.
+        self._type_starts = [t.start for t in self.types]
         # (start, end, label) for every member, sorted, for offset -> location.
         self._spans = sorted(
             ((m.start, m.end, f"{t.qualname}.{m.name}") for t in self.types for m in t.members),
@@ -454,11 +530,16 @@ class CSharpIndex:
         k = bisect.bisect_right(self._span_starts, offset) - 1
         if k >= 0 and self._spans[k][0] <= offset < self._spans[k][1]:
             return self._spans[k][2]
-        inner = None
-        for t in self.types:
-            if t.start <= offset < t.end and (inner is None or t.start >= inner.start):
-                inner = t
-        return inner.qualname if inner else "<assembly>"
+        # Innermost type: the last type starting at or before `offset`, or the
+        # nearest enclosing type up its parent chain. Scanning every type here
+        # made a source with 20,000 small classes take 15 s (review of #673).
+        k = bisect.bisect_right(self._type_starts, offset) - 1
+        while k is not None and k >= 0:
+            t = self.types[k]
+            if t.start <= offset < t.end:
+                return t.qualname
+            k = t.parent
+        return "<assembly>"
 
     # -- parse --
     def _parse(self) -> None:
@@ -537,7 +618,8 @@ class CSharpIndex:
             bases = " ".join(after[colon + 1:].split())[:160] if colon >= 0 else ""
             bases = re.split(r"\bwhere\b", bases)[0].strip()
             t = TypeDecl(qual, name, tm.group(1).split()[0], bases, hstart, len(self.source),
-                         self.line_of(hstart), self.line_count)
+                         self.line_of(hstart), self.line_count,
+                         parent=frame["type"] if kind == "type" else None)
             self.types.append(t)
             return {"kind": "type", "ns": self._ns_of(frame), "type": len(self.types) - 1}
         if kind != "type":
@@ -757,10 +839,16 @@ def scan_suspicious_constructs(index: CSharpIndex,
             entry["first"] = min(entry["first"], pos)
             cat_totals[cat] = cat_totals.get(cat, 0) + 1
     ranked = []
+    # One pass, not one search per location: per-location scans of every type
+    # were quadratic on a source of many small classes (review of #673).
+    spans = {t.qualname: (t.line_start, t.line_end, t.chars) for t in index.types}
+    for t in index.types:
+        for m in t.members:
+            spans.setdefault(f"{t.qualname}.{m.name}", (m.line_start, m.line_end, m.chars))
     for loc, entry in by_loc.items():
         findings = sorted(entry["findings"].values(), key=lambda f: (-f["weight"], f["line"]))
         score = sum(f["weight"] for f in findings)
-        span = _span_for(index, loc)
+        span = spans.get(loc)
         top = findings[0]
         line_text = _line_text(index, top["line"])
         ranked.append({
@@ -780,18 +868,6 @@ def scan_suspicious_constructs(index: CSharpIndex,
         "truncated": len(ranked) > max_locations,
         "category_totals": dict(sorted(cat_totals.items(), key=lambda kv: -kv[1])),
     }
-
-
-def _span_for(index: CSharpIndex, loc: str) -> tuple[int, int, int] | None:
-    tname, _, mname = loc.rpartition(".")
-    for t in index.types:
-        if t.qualname == tname:
-            for m in t.members:
-                if m.name == mname:
-                    return (m.line_start, m.line_end, m.chars)
-        if t.qualname == loc:
-            return (t.line_start, t.line_end, t.chars)
-    return None
 
 
 def _line_text(index: CSharpIndex, line: int) -> str:
@@ -849,10 +925,11 @@ def table_of_contents(index: CSharpIndex, priority: list[str] | None = None,
     a large assembly the budget lands where the scan pointed, and a type whose
     members were not listed says so (`methods_listed < methods`).
     """
-    priority = priority or []
+    # A dict, not list.index per key: that was quadratic in the priority list.
+    rank = {name: r for r, name in reversed(list(enumerate(priority or [])))}
     order = sorted(range(len(index.types)), key=lambda k: (
-        0 if index.types[k].qualname in priority else 1,
-        priority.index(index.types[k].qualname) if index.types[k].qualname in priority else 0,
+        0 if index.types[k].qualname in rank else 1,
+        rank.get(index.types[k].qualname, 0),
         index.types[k].start))
     budget = max_methods
     listed: dict[int, list[dict]] = {}
@@ -896,7 +973,8 @@ DOTNET_MODES = ("agentic", "single_shot")
 
 
 def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict,
-                              cape_sigs: list[str]) -> dict:
+                              cape_sigs: list[str],
+                              limits: DotnetToolLimits | None = None) -> dict:
     """The agentic .NET init payload.
 
     Carries `decompiled_source` IN FULL, for the orchestrator: `run_interpret`
@@ -904,10 +982,11 @@ def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict,
     payload reaches the container. Everything else here is what the agent sees
     in its first message.
     """
+    limits = limits or DotnetToolLimits()
     decompilation = dotnet_data.get("decompilation", {}) or {}
     source = decompilation.get("source", "") or ""
     index = CSharpIndex(source)
-    constructs = scan_suspicious_constructs(index)
+    constructs = scan_suspicious_constructs(index, limits.construct_max_locations)
     extraction_source = dotnet_data.get("extraction_source")
     deob = dotnet_data.get("deobfuscation") or {}
     return {
@@ -921,7 +1000,8 @@ def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict,
         "blob_bytes_elided": decompilation.get("blob_bytes_elided"),
         "deobfuscated": bool(deob.get("deobfuscated")),
         "assembly": assembly_metadata(index),
-        "table_of_contents": table_of_contents(index, _class_priority(constructs)),
+        "table_of_contents": table_of_contents(index, _class_priority(constructs),
+                                               limits.toc_max_classes, limits.toc_max_methods),
         "suspicious_constructs": constructs,
         "strings_of_interest": dotnet_data.get("strings_of_interest", []),
         "analysis_success": True,
@@ -935,17 +1015,82 @@ def build_dotnet_agentic_init(dotnet_data: dict, llm_context: dict,
 
 
 def build_dotnet_interpret_init(dotnet_data: dict, llm_context: dict,
-                                cape_sigs: list[str], mode: str) -> dict:
+                                cape_sigs: list[str], mode: str,
+                                limits: dict | DotnetToolLimits | None = None) -> dict:
     """The .NET init payload for `mode` — the ONE place the choice is made.
 
     run-pipeline.py and the eval harness both call this, so the eval measures
     what production sends for the same `dotnet_mode` (#380, #667).
+
+    NEVER RAISES for the agentic mode. The source is the sample's, and this
+    runs in Stage 4.5 after CAPE, Volatility and Ghidra: an exception here left
+    main() with no report and no DB row (review of #673 — 600 nested
+    interpolated strings did it). Any failure building the map falls back to
+    the single-shot payload, marked `dotnet_agentic_failed` with the reason,
+    and is logged. An unknown `mode` is a configuration error and does raise;
+    PipelineConfig rejects it at startup.
     """
     if mode == "single_shot":
         return build_dotnet_init(dotnet_data, llm_context, cape_sigs)
     if mode != "agentic":
         raise ValueError(f"dotnet_mode must be one of {DOTNET_MODES}, got {mode!r}")
-    return build_dotnet_agentic_init(dotnet_data, llm_context, cape_sigs)
+    if not isinstance(limits, DotnetToolLimits):
+        limits = DotnetToolLimits.from_config(limits)
+    try:
+        return build_dotnet_agentic_init(dotnet_data, llm_context, cape_sigs, limits)
+    except Exception as e:  # noqa: BLE001 - hostile input must not end the run
+        reason = _failure(e)
+        log.warning("agentic .NET init failed, falling back to single-shot: %s", reason)
+        init = build_dotnet_init(dotnet_data, llm_context, cape_sigs)
+        init["dotnet_agentic_failed"] = reason
+        return init
+
+
+def _failure(e: BaseException) -> str:
+    return f"{type(e).__name__}: {e}"[:300]
+
+
+#: Keys only the agentic payload carries; dropped when falling back.
+_AGENTIC_ONLY = ("dotnet_mode", "assembly", "table_of_contents", "suspicious_constructs",
+                 "source_bytes_indexed", "deobfuscated", "blob_bytes_elided")
+
+
+def single_shot_fallback(payload: dict, reason: str) -> dict:
+    """The single-shot payload equivalent to an agentic one, for when the tools
+    cannot be served (run_interpret builds its toolbox after the init exists).
+
+    Same shape `build_dotnet_init` produces, from the fields the agentic
+    payload already carries: the stored source capped and marked exactly as
+    the single-shot path caps it, strings, origin and context unchanged.
+    """
+    source = payload.get("decompiled_source", "") or ""
+    shown = capped(source, CONTAINER_SOURCE_CAP, "//")
+    out = {k: v for k, v in payload.items() if k not in _AGENTIC_ONLY}
+    out.update({
+        "decompiled_source": shown,
+        "source_bytes_shown": len(shown),
+        "class_count": ((payload.get("assembly") or {}).get("type_count") or 0),
+        "classes": [],
+        "dotnet_agentic_failed": reason,
+    })
+    return out
+
+
+def dotnet_input_record(init: dict, requested_mode: str, result: dict | None = None) -> dict:
+    """`llm_interpretation.input` for a .NET run: which path ACTUALLY ran.
+
+    Shared by run-pipeline.py and the eval (whose `kind` is the modality), so
+    a fallback is recorded the same way in both: the requested mode, the
+    single-shot kind, and why.
+    """
+    failed = (init or {}).get("dotnet_agentic_failed") or (result or {}).get(
+        "dotnet_agentic_failed")
+    agentic = is_agentic_dotnet(init) and not failed
+    rec = {"kind": "dotnet_agentic" if agentic else "dotnet",
+           "dotnet_mode": "agentic" if agentic else "single_shot"}
+    if failed:
+        rec.update(requested_mode=requested_mode, agentic_failed=failed)
+    return rec
 
 
 def is_agentic_dotnet(payload: dict) -> bool:
@@ -1006,7 +1151,7 @@ def validate_dotnet_args(tool: str, args: dict) -> str | None:
             p = args.get("pattern")
             if not isinstance(p, str) or not p or len(p) > PATTERN_MAX:
                 return f"pattern must be a non-empty string of at most {PATTERN_MAX} characters"
-            _int_arg(args, "max_hits", SEARCH_DEFAULT_HITS, 1, SEARCH_MAX_HITS)
+            _int_arg(args, "max_hits", SEARCH_DEFAULT_HITS, 1, SEARCH_ARG_MAX)
             _int_arg(args, "context_lines", 0, 0, 3)
         elif tool == "get_source_lines":
             _int_arg(args, "start_line", 1, 1, 10_000_000)
@@ -1050,16 +1195,20 @@ class DotnetToolbox:
     """Serves the .NET tools from one decompiled source. Orchestrator-side."""
 
     def __init__(self, source: str, analyser_truncated: bool = False,
-                 source_bytes_total: int | None = None) -> None:
+                 source_bytes_total: int | None = None,
+                 limits: dict | DotnetToolLimits | None = None) -> None:
         self.index = CSharpIndex(source)
         self.analyser_truncated = analyser_truncated
         self.source_bytes_total = source_bytes_total
+        self.limits = (limits if isinstance(limits, DotnetToolLimits)
+                       else DotnetToolLimits.from_config(limits))
 
     @classmethod
-    def from_payload(cls, payload: dict) -> DotnetToolbox:
+    def from_payload(cls, payload: dict,
+                     limits: dict | DotnetToolLimits | None = None) -> DotnetToolbox:
         return cls(payload.get("decompiled_source", "") or "",
                    bool(payload.get("source_truncated_by_analyser")),
-                   payload.get("source_bytes_total"))
+                   payload.get("source_bytes_total"), limits)
 
     def call(self, tool: str, args: dict) -> dict:
         """Run one tool. Arguments must already have passed validate_dotnet_args."""
@@ -1071,6 +1220,12 @@ class DotnetToolbox:
             return fn(args)
         except ValueError as e:
             return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001 - one bad call costs one turn, not the stage
+            # Anything else is a defect here, not the model's request; the
+            # type is kept so it reads as one. Raised, it ended the stage
+            # through run_interpret's outer handler and lost the run.
+            log.warning("dotnet tool %s failed: %s", tool, _failure(e))
+            return {"error": f"tool failed: {_failure(e)}"}
 
     # Each result says when the index itself is partial, so "not found" is never
     # read as "absent from the program" when the analyser cut the source.
@@ -1104,8 +1259,9 @@ class DotnetToolbox:
                  "methods": len(t.members), "chars": t.chars,
                  "lines": f"{t.line_start}-{t.line_end}"}
                 for t in self.index.types if not flt or flt in t.qualname.lower()]
-        return self._coverage({"total": len(rows), "classes": rows[:LIST_MAX],
-                               "truncated": len(rows) > LIST_MAX})
+        cap = self.limits.list_max
+        return self._coverage({"total": len(rows), "classes": rows[:cap],
+                               "truncated": len(rows) > cap})
 
     def _t_list_methods(self, args: dict) -> dict:
         t, err = self._resolve(_name_arg(args, "class_name"))
@@ -1114,8 +1270,9 @@ class DotnetToolbox:
         rows = [{"name": m.name, "kind": m.kind, "declaration": _clip(m.header, 240),
                  "lines": f"{m.line_start}-{m.line_end}", "chars": m.chars}
                 for m in t.members]
-        return {"class": t.qualname, "total": len(rows), "methods": rows[:LIST_MAX],
-                "truncated": len(rows) > LIST_MAX}
+        cap = self.limits.list_max
+        return {"class": t.qualname, "total": len(rows), "methods": rows[:cap],
+                "truncated": len(rows) > cap}
 
     def _t_get_method_source(self, args: dict) -> dict:
         t, err = self._resolve(_name_arg(args, "class_name"))
@@ -1138,7 +1295,7 @@ class DotnetToolbox:
         text = "\n\n".join(parts)
         out = {"class": t.qualname, "method": found[0].name, "overloads": len(found),
                "lines": [f"{m.line_start}-{m.line_end}" for m in found]}
-        out.update(_page(text, _int_arg(args, "page", 0, 0, 100_000)))
+        out.update(_page(text, _int_arg(args, "page", 0, 0, 100_000), self.limits.page_chars))
         return out
 
     def _t_get_class_source(self, args: dict) -> dict:
@@ -1148,7 +1305,7 @@ class DotnetToolbox:
         out = {"class": t.qualname, "lines": f"{t.line_start}-{t.line_end}",
                "methods": len(t.members)}
         out.update(_page(self.index.source[self.index.line_start_of(t.start):t.end],
-                         _int_arg(args, "page", 0, 0, 100_000)))
+                         _int_arg(args, "page", 0, 0, 100_000), self.limits.page_chars))
         return out
 
     def _t_get_source_lines(self, args: dict) -> dict:
@@ -1160,26 +1317,31 @@ class DotnetToolbox:
         if a > total:
             return self._coverage({"error": f"Line {a} {NOT_FOUND}; it has {total} lines."})
         want_b = b
-        b = min(b, total, a + LINES_MAX - 1)
+        lines_max, page_chars = self.limits.lines_max, self.limits.page_chars
+        b = min(b, total, a + lines_max - 1)
         starts = self.index._line_starts
         lo = starts[a - 1]
         hi = starts[b] if b < total else len(self.index.source)
         text = self.index.source[lo:hi]
         truncated = b < want_b
-        if len(text) > SOURCE_PAGE_CHARS:
-            text = text[:SOURCE_PAGE_CHARS]
+        if len(text) > page_chars:
+            text = text[:page_chars]
             truncated = True
         out = {"start_line": a, "end_line": b, "total_lines": total,
                "location": self.index.location_of(lo), "source": text,
                "truncated": truncated}
         if truncated:
-            out["note"] = (f"TRUNCATED at {LINES_MAX} lines / {SOURCE_PAGE_CHARS:,} chars; "
+            out["note"] = (f"TRUNCATED at {lines_max} lines / {page_chars:,} chars; "
                            f"request the next range to continue.")
         return out
 
     def _t_search_source(self, args: dict) -> dict:
         pattern = args.get("pattern", "")
-        max_hits = _int_arg(args, "max_hits", SEARCH_DEFAULT_HITS, 1, SEARCH_MAX_HITS)
+        # Clamped to the configured bound rather than refused: asking for more
+        # than the host allows is not an error worth a turn.
+        max_hits = min(_int_arg(args, "max_hits", SEARCH_DEFAULT_HITS, 1, SEARCH_ARG_MAX),
+                       self.limits.search_max_hits)
+        line_chars = self.limits.search_line_chars
         ctx = _int_arg(args, "context_lines", 0, 0, 3)
         try:
             re.compile(pattern)
@@ -1193,16 +1355,16 @@ class DotnetToolbox:
                              f"{SEARCH_TIMEOUT_S:.0f}s and was stopped. Use a simpler pattern."}
         hits = []
         lines = self.index.source.split("\n")
-        budget = SOURCE_PAGE_CHARS
+        budget = self.limits.page_chars
         shown = 0
         for line_no, col, length in raw["hits"]:
             text = lines[line_no - 1]
-            a = max(0, col - SEARCH_LINE_CHARS // 2)
-            snippet = text[a:a + SEARCH_LINE_CHARS]
+            a = max(0, col - line_chars // 2)
+            snippet = text[a:a + line_chars]
             hit = {"line": line_no, "location": self.index.location_of(
                 self.index._line_starts[line_no - 1] + col), "text": snippet.strip()}
             if ctx:
-                hit["context"] = [_clip(lines[k - 1].rstrip(), SEARCH_LINE_CHARS)
+                hit["context"] = [_clip(lines[k - 1].rstrip(), line_chars)
                                   for k in range(max(1, line_no - ctx),
                                                  min(len(lines), line_no + ctx) + 1)]
             cost = len(json.dumps(hit))

@@ -49,7 +49,7 @@ from stages.cape import (
     submit_to_cape,
 )
 from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
-from stages.dotnet_tools import build_dotnet_interpret_init
+from stages.dotnet_tools import build_dotnet_interpret_init, dotnet_input_record
 from stages.ghidra import (
     ROUTED_FLAGS,
     make_ghidra_verifier,
@@ -1014,8 +1014,14 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation "
                  f"({_dotnet_mode})...")
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
-        dotnet_init = build_dotnet_interpret_init(dotnet_data, _llm_context, cape_sigs,
-                                                  _dotnet_mode)
+        # Never raises for "agentic": a map that cannot be built falls back to
+        # the single-shot payload, marked with why (review of #673).
+        dotnet_init = build_dotnet_interpret_init(
+            dotnet_data, _llm_context, cape_sigs, _dotnet_mode,
+            INTERPRET_CONFIG.get("dotnet_tool_limits"))
+        if dotnet_init.get("dotnet_agentic_failed"):
+            log.warning(f"  agentic .NET map failed, running single-shot instead: "
+                        f"{dotnet_init['dotnet_agentic_failed']}")
         report["llm_interpretation"] = run_interpret(
             dotnet_init, output_dir,
             interpret_cmd=INTERPRET_CMD,
@@ -1026,12 +1032,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_config=INTERPRET_CONFIG,
             ghidra_cmd=GHIDRA_CMD,
         )
-        # Which .NET path produced this, in the shape the payload branch above
-        # writes and the eval records (`kind` is the eval's modality name).
-        report["llm_interpretation"]["input"] = {
-            "kind": "dotnet_agentic" if _dotnet_mode == "agentic" else "dotnet",
-            "dotnet_mode": _dotnet_mode,
-        }
+        # Which .NET path ACTUALLY produced this — after any fallback — in the
+        # shape the payload branch above writes and the eval records (`kind` is
+        # the eval's modality name).
+        report["llm_interpretation"]["input"] = dotnet_input_record(
+            dotnet_init, _dotnet_mode, report["llm_interpretation"])
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")

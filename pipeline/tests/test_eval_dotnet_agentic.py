@@ -38,7 +38,7 @@ REPORT = {
 SHA = "5b4f596d" + "0" * 56
 
 
-def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None):
+def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None, broker_fallback=None):
     cdir = tmp_path / "c"
     cdir.mkdir(parents=True, exist_ok=True)
     (cdir / "report.json").write_text(json.dumps(REPORT))
@@ -52,9 +52,12 @@ def _run_arm(tmp_path, monkeypatch, arm_name, base_cfg=None):
         (audit / name).write_text(json.dumps([{
             "tool": "get_method_source", "args": {"class_name": "BattleForm"},
             "result": {"source": f'string m = "{MUTEX}";'}}]))
-        return {"analysis": {"malware_family_guess": "x",
-                             "code_level_iocs": [{"type": "mutex", "value": MUTEX}]},
-                "usage": {}, "audit": {"tool_call_log": str(audit / name)}}
+        res = {"analysis": {"malware_family_guess": "x",
+                            "code_level_iocs": [{"type": "mutex", "value": MUTEX}]},
+               "usage": {}, "audit": {"tool_call_log": str(audit / name)}}
+        if broker_fallback:
+            res["dotnet_agentic_failed"] = broker_fallback
+        return res
 
     monkeypatch.setattr(runner, "run_interpret", fake_interpret)
     monkeypatch.setattr(runner, "make_ghidra_verifier", lambda cmd: None)
@@ -138,3 +141,40 @@ def test_the_summary_keeps_the_two_dotnet_paths_apart():
               "completed": True, "total": 0, "fabricated": []}
              for m in ("dotnet", "dotnet_agentic", "dotnet_agentic")]
     assert aggregate(cells)["a"]["modalities"] == "dotnet=1,dotnet_agentic=2"
+
+
+# --- fallbacks and limits (review of #673) ------------------------------------------
+
+def test_a_map_that_cannot_be_built_is_scored_as_single_shot(tmp_path, monkeypatch):
+    from stages import dotnet_tools
+
+    def boom(self, source):
+        raise RecursionError("deep")
+    monkeypatch.setattr(dotnet_tools.CSharpIndex, "__init__", boom)
+    seen = _run_arm(tmp_path, monkeypatch, "qwen@10")
+    assert seen["cell"]["modality"] == "dotnet"
+    rec = seen["result"]["input"]
+    assert rec["requested_mode"] == "agentic" and rec["agentic_failed"].startswith("RecursionError")
+
+
+def test_a_broker_fallback_is_scored_as_what_ran(tmp_path, monkeypatch):
+    """The init was agentic but the broker sent single-shot: the cell is a
+    single-shot cell, grounded on the source the model was actually shown."""
+    seen = _run_arm(tmp_path, monkeypatch, "qwen@10", broker_fallback="MemoryError: x")
+    assert seen["cell"]["modality"] == "dotnet"
+    assert seen["result"]["input"]["agentic_failed"] == "MemoryError: x"
+
+
+def test_the_configured_limits_reach_the_payload_and_the_replay(tmp_path, monkeypatch):
+    from lamware_eval.rebuild import rebuild
+    limits = {"toc_max_methods": 2}
+    seen = _run_arm(tmp_path, monkeypatch, "qwen@10", base_cfg={"dotnet_tool_limits": limits})
+    assert seen["init"]["table_of_contents"]["methods_listed"] == 2
+    assert seen["result"]["input"]["dotnet_tool_limits"] == limits
+    init, _, _, _ = runner.init_payload_for(REPORT, recorded=seen["result"]["input"])
+    assert init["table_of_contents"]["methods_listed"] == 2
+    manifest = tmp_path / "m.json"
+    manifest.write_text(json.dumps({"samples": [
+        {"sha256": SHA, "mb_family": "formbook", "corpus_dir": str(tmp_path / "c")}]}))
+    _, cells = rebuild(str(manifest), "t")
+    assert [c["modality"] for c in cells] == ["dotnet_agentic"]

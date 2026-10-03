@@ -63,6 +63,22 @@ interpret_single_shot_backend: "local"
 # Uses re_backend's transport, not single_shot_backend's: it is the agentic loop.
 interpret_dotnet_mode: "agentic"
 
+# Size bounds of the agentic .NET path: what one tool result and the first
+# message may hold. Sized for CPU prefill on this host (llama.cpp ~35-50 tok/s,
+# falling as the prompt grows; C# ~2.5 chars/token): 3 calls per turn x 6,000
+# chars bounds a turn at ~7k tokens of new context. These are a property of the
+# hardware, not of the design — a host with faster prefill raises them here.
+# Every value must be >= 1 (PipelineConfig rejects anything else at startup).
+interpret_dotnet_tool_limits:
+  page_chars: 6000               # one page of get_method_source / get_class_source
+  lines_max: 150                 # get_source_lines
+  list_max: 150                  # list_methods / list_classes entries
+  search_max_hits: 50            # search_source hits (a request above is clamped)
+  search_line_chars: 240         # one search hit's line
+  toc_max_classes: 200           # first message: types listed
+  toc_max_methods: 220           # first message: signatures listed
+  construct_max_locations: 40    # first message: suspicious locations listed
+
 # Model selection — executive summary (structured reformatting, no tools)
 interpret_summary_model: "local-qwen-llamacpp"
 

@@ -948,6 +948,17 @@ measured on local inference.
    `total_hits`); nothing the analyser stored is unreachable.
 4. The single-shot path stays behind `dotnet_mode` (role var `interpret_dotnet_mode`)
    so the eval can compare the two (`<arm>+ss`). Default: `agentic`.
+5. **The sample's source cannot end the run.** The indexer is iterative (no call-stack
+   depth) and near-linear; if building the map or the toolbox fails anyway, the run
+   falls back to the single-shot payload and records why (`dotnet_agentic_failed` in
+   the payload/result, a trail event, `llm_interpretation.input.agentic_failed`); a
+   tool that raises answers that one call with an error. Found in review: 600 nested
+   interpolated strings raised `RecursionError` out of Stage 4.5 with no handler.
+6. **The size bounds are configuration, not design.** Page size (6,000 chars), line,
+   list and search caps and the first-message bounds are `interpret_dotnet_tool_limits`
+   (→ `InterpretConfig.dotnet_tool_limits`), sized for CPU prefill on this host. A
+   faster host raises them without a code change; "map + tools" and "the pipeline
+   serves the tools" do not depend on them.
 
 ### Consequences
 

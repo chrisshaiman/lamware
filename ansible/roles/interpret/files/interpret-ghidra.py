@@ -1041,7 +1041,7 @@ DOTNET_TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_source_lines",
         "description": (
-            "C# source for a line range (at most 150 lines). Use it to read around "
+            "C# source for a line range (bounded; `truncated` says when). Read around "
             "a line number from the suspicious-construct list or a search hit, "
             "especially inside a long method."
         ),
@@ -1069,7 +1069,7 @@ DOTNET_TOOLS: list[dict[str, Any]] = [
                 "pattern": {"type": "string",
                             "description": "Regular expression, at most 200 characters"},
                 "max_hits": {"type": "integer",
-                             "description": "Matches to return, 1-50 (default 20)"},
+                             "description": "Matches to return (default 20; capped by the host)"},
                 "context_lines": {"type": "integer",
                                   "description": "Lines of context around each hit, 0-3 (default 0)"},
             },

@@ -70,6 +70,8 @@
         "single_shot" (the whole stored C# in one request, kept for the A/B).
         The shipped value lives in roles/interpret/defaults/main.yml. #}
     "dotnet_mode": {{ interpret_dotnet_mode | default('agentic') | to_json }},
+    {#- Size bounds of that path; {} keeps the defaults in InterpretConfig. #}
+    "dotnet_tool_limits": {{ interpret_dotnet_tool_limits | default({}) | to_json }},
     "escalation_threshold": {{ interpret_escalation_threshold | default(5) }},
     "escalation_model": {{ interpret_escalation_model | default('claude-opus-4-6') | to_json }},
     "max_output_tokens": {{ interpret_max_output_tokens | default(2048) }},
