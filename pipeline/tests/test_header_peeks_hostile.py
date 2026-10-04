@@ -8,8 +8,9 @@ wrapped, so a peek that raises ends the run and the sample's analysis with it.
 #677's probe, run against the code before this change, found:
 
     FIFO where a file is expected          every peek hung (open() waits for a writer)
-    parent directory not readable          PermissionError out of is_pyinstaller_binary
-                                           and _is_ghidra_compatible_binary (exists())
+    parent directory not readable          PermissionError out of is_pyinstaller_binary,
+                                           _is_ghidra_compatible_binary, is_text_script
+                                           and read_script_source (exists())
     2 GiB file under a 1 GiB memory limit  MemoryError out of is_pyinstaller_binary and
                                            _find_embedded_dotnet (whole-file read)
     1 MiB of "MZ"                          _find_embedded_dotnet took 9.7 s (quadratic:
@@ -28,7 +29,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from stages import dotnet, ghidra, peek, pyinstaller
+from stages import dotnet, ghidra, peek, pyinstaller, script_analysis
 
 MEI = pyinstaller.PYINSTALLER_MAGIC
 
@@ -494,3 +495,67 @@ def test_non_regular_entries_in_an_extraction_dir_are_skipped(tmp_path):
     with deadline():
         out = dotnet.find_dotnet_extractions({}, 7, storage=storage)
     assert [Path(r["path"]).name for r in out] == ["net"]
+
+
+# ---------------------------------------------------------------------------
+# script_analysis — the same exists()-then-open() shape, plus a whole-file read
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode 000")
+@pytest.mark.parametrize("shape", sorted(NOT_A_READABLE_FILE))
+def test_script_peek_and_read_survive_what_is_not_a_readable_file(tmp_path, shape):
+    """Before #677: PermissionError from exists() on an unreadable parent, and a
+    FIFO hung both. read_script_source runs for any .js/.vbs/... by NAME, so
+    the peek returning False does not protect it."""
+    p = NOT_A_READABLE_FILE[shape](tmp_path)
+    try:
+        with deadline():
+            peeked = script_analysis.is_text_script({}, p)
+            read = script_analysis.read_script_source(p, {"sample_name": "x.js"})
+    finally:
+        if (tmp_path / "locked").exists():
+            (tmp_path / "locked").chmod(0o700)
+    assert peeked is False
+    assert read["analysis_success"] is False and read["error"]
+
+
+TEXTS = {
+    "crlf": b"var a = 1;\r\nWScript.Shell\r\n" * 10,
+    "invalid_utf8": b"ok \xff\xfe bad \xc3 tail" * 100,
+    "long": b"x" * (script_analysis.MAX_SOURCE_SIZE + 17),
+    # a 3-byte character straddling the 50,000-char cut and the read chunk
+    "multibyte_at_the_cut": b"a" * (script_analysis.MAX_SOURCE_SIZE - 1) + "€".encode() * 3 + b"z",
+    "cr_at_chunk_edge": b"a" * (8192 - 1) + b"\r\n" + b"b" * 60000,
+    "empty": b"",
+}
+
+
+@pytest.mark.parametrize("name", sorted(TEXTS))
+def test_read_script_source_gives_what_read_text_gave(tmp_path, monkeypatch, name):
+    """Streaming must not change the answer: compared with the read_text()
+    semantics it replaced (newline translation, replacement characters, the
+    character count). Also compared on the host over all 930 stored samples."""
+    monkeypatch.setattr(peek, "CHUNK", 8192)
+    f = tmp_path / "s.js"
+    f.write_bytes(TEXTS[name])
+    raw = f.read_text(encoding="utf-8", errors="replace")
+    got = script_analysis.read_script_source(f, {"sample_name": "s.js"})
+    assert got["analysis_success"] is True
+    assert got["file_size"] == len(raw)
+    assert got["source"] == raw[:script_analysis.MAX_SOURCE_SIZE]
+    assert got.get("truncated", False) == (len(raw) > script_analysis.MAX_SOURCE_SIZE)
+
+
+def test_read_script_source_stops_counting_at_the_cap_and_says_so(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(peek, "SCAN_CAP", 256 << 10)
+    monkeypatch.setattr(peek, "CHUNK", 8192)
+    f = tmp_path / "big.js"
+    with f.open("wb") as fh:
+        fh.write(b"WScript.Shell ")
+        fh.truncate(2 << 30)       # 2 GiB of NULs: valid UTF-8, no disk used
+    with deadline(20):
+        got, peak = _peak_heap(lambda: script_analysis.read_script_source(f, {}))
+    assert got["source"].startswith("WScript.Shell")
+    assert (256 << 10) <= got["file_size"] < (1 << 20)
+    assert peak < (8 << 20)
+    assert any("scan cap" in r.getMessage() for r in caplog.records)

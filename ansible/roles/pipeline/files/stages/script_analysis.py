@@ -12,8 +12,16 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 
+import io
+import logging
+import os
 import re
 from pathlib import Path
+
+from stages import peek
+from stages.peek import open_regular, read_head
+
+log = logging.getLogger("pipeline")
 
 # Max source size to send to LLM (chars)
 MAX_SOURCE_SIZE = 50000
@@ -108,17 +116,15 @@ def is_text_script(report: dict, sample_path: Path = None) -> bool:
     if any(kw in file_type for kw in script_keywords):
         return True
 
-    # Last resort: try reading as text
-    if sample_path and sample_path.exists():
-        try:
-            with sample_path.open("rb") as fh:
-                head = fh.read(512)
-                # Check if it's mostly printable ASCII/UTF-8
-                printable = sum(1 for b in head if 32 <= b <= 126 or b in (9, 10, 13))
-                if len(head) > 0 and printable / len(head) > 0.85:
-                    return True
-        except (OSError, PermissionError):
-            pass
+    # Last resort: try reading as text. read_head, not exists() + open():
+    # exists() raised PermissionError on an unreadable parent directory and a
+    # FIFO passed it and then hung the open() (#677).
+    head = read_head(sample_path, 512) if sample_path else None
+    if head:
+        # Check if it's mostly printable ASCII/UTF-8
+        printable = sum(1 for b in head if 32 <= b <= 126 or b in (9, 10, 13))
+        if printable / len(head) > 0.85:
+            return True
 
     return False
 
@@ -136,13 +142,33 @@ def read_script_source(sample_path: Path, report: dict) -> dict:
         "detected_patterns": [],
     }
 
-    if not sample_path or not sample_path.exists():
-        result["error"] = f"File not found: {sample_path}"
+    fh = open_regular(sample_path) if sample_path else None
+    if fh is None:
+        result["error"] = f"Not a readable regular file: {sample_path}"
         return result
 
+    # Streamed (#677). This was read_text() — the whole sample in memory, then
+    # all but MAX_SOURCE_SIZE characters thrown away — after an exists() that
+    # raised on an unreadable parent and let a FIFO through to hang. Same text
+    # decoding and newline handling as read_text (a TextIOWrapper is what it
+    # uses), so `source` and `file_size` are unchanged; only the characters
+    # past MAX_SOURCE_SIZE are counted rather than kept, and counting stops at
+    # peek.SCAN_CAP bytes.
     try:
-        raw = sample_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as e:
+        with io.TextIOWrapper(fh, encoding="utf-8", errors="replace") as text:
+            raw = text.read(MAX_SOURCE_SIZE)
+            total = len(raw)
+            while os.lseek(fh.fileno(), 0, os.SEEK_CUR) < peek.SCAN_CAP:
+                more = text.read(peek.CHUNK)
+                if not more:
+                    break
+                total += len(more)
+            else:
+                if text.read(1):
+                    log.warning(f"  script source {sample_path.name}: longer than the "
+                                f"{peek.SCAN_CAP:#x}-byte scan cap; file_size counts "
+                                f"the characters before it only")
+    except (OSError, ValueError) as e:
         result["error"] = f"Failed to read file: {e}"
         return result
 
@@ -151,11 +177,11 @@ def read_script_source(sample_path: Path, report: dict) -> dict:
     file_type = triage.get("file_type", "").lower()
     file_mime = triage.get("file_mime", "")
 
-    result["file_size"] = len(raw)
+    result["file_size"] = total
     result["source"] = raw[:MAX_SOURCE_SIZE]
     result["source_language"] = _detect_script_language(
         name, file_type, file_mime, raw[:2000])
-    if len(raw) > MAX_SOURCE_SIZE:
+    if total > MAX_SOURCE_SIZE:
         result["truncated"] = True
         result["truncated_at"] = MAX_SOURCE_SIZE
 
