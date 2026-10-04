@@ -24,7 +24,9 @@ overflow (#450's territory); a NUL character in a text value or a NaN/Infinity
 or \\u0000 inside jsonb (PostgreSQL rejects all three; none were found in the
 14 reports on the host on 2026-10-01); whether PostgreSQL's timestamp parser
 agrees with datetime.fromisoformat; constraints, foreign keys, and anything
-PostgreSQL does at commit.
+PostgreSQL does at commit. Width overflow, NUL/NaN, and what a refused
+statement does to the transaction are modelled in
+test_db_ingest_enrichment_isolation.py (#450).
 
 Base fixture: `fixtures/ingest_report_v655.json`, the real host report
 `v655_5b4f596d3cf5` trimmed to the fields db_ingest reads, with hashes, IOC
@@ -328,10 +330,22 @@ def test_a_well_formed_report_writes_exactly_what_it_did_before(path, existing_i
     db_ingest.py. It is the "no data dropped" half of the change: the reader
     must be invisible to a report that was already well-formed. Do not
     regenerate it to make this pass; a diff here is a behaviour change.
+
+    #450 added SAVEPOINT / RELEASE SAVEPOINT around each enrichment group.
+    Those control statements are removed before comparing; every DATA
+    statement is still compared, in order, with every value. Where the
+    control statements sit is asserted exactly in
+    test_db_ingest_enrichment_isolation.py.
     """
     run = run_ingest(copy.deepcopy(BASE_REPORT), existing_analysis_id=existing_id)
     assert run.conn.committed and not run.conn.rolled_back
-    assert json.loads(json.dumps(canonical_calls(run.calls))) == _golden()[path]
+    data = [c for c in run.calls if not SAVEPOINT_CONTROL.fullmatch(c[0])]
+    assert json.loads(json.dumps(canonical_calls(data))) == _golden()[path]
+
+
+# The only statements #450 added to a well-formed ingest. fullmatch, so a data
+# statement can never be filtered out by it.
+SAVEPOINT_CONTROL = re.compile(r"(?:SAVEPOINT|RELEASE SAVEPOINT) ingest_[a-z_]+")
 
 
 def test_the_golden_reaches_every_write():

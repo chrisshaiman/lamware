@@ -7,6 +7,7 @@ License: Apache 2.0
 
 import math
 import os
+from contextlib import contextmanager
 from datetime import datetime
 
 from lamware_pipeline.config import PipelineConfig
@@ -346,6 +347,183 @@ def _capped(warnings: list[str]) -> list[str]:
         f"... and {len(unique) - _MAX_INGEST_WARNINGS} more"]
 
 
+# -------------------------------------------------------------------------
+# Values PostgreSQL refuses whatever their type (#450)
+# -------------------------------------------------------------------------
+#
+# _Node makes every value the right TYPE. Two things it cannot see still fail
+# the statement they are bound to:
+#   - a NUL character. psycopg2 refuses a str containing one before sending
+#     ("A string literal cannot contain NUL (0x00) characters"), and jsonb
+#     refuses the \u0000 escape json.dumps writes for it ("unsupported Unicode
+#     escape sequence"). Malware strings, CAPE output and model text can all
+#     carry one, and report_json carries all of them.
+#   - NaN / Infinity inside a jsonb value. json.dumps writes them as bare
+#     tokens; jsonb rejects them as invalid JSON.
+# Both are removed at ONE choke point, _CleanCursor.execute, which every
+# statement in ingest_to_db goes through — not per field, because the next
+# field added would be the one nobody remembered.
+
+_NUL = "\x00"
+
+
+class _Cleaner:
+    """Strips NUL from every string (and dict key) bound, and turns non-finite
+    floats inside jsonb into null. Counts what it changed, never what it saw."""
+
+    def __init__(self) -> None:
+        self.nul = 0
+        self.non_finite = 0
+
+    def _dirty(self, value, in_json: bool) -> bool:
+        if isinstance(value, str):
+            return _NUL in value
+        if isinstance(value, float):
+            return in_json and not math.isfinite(value)
+        if isinstance(value, dict):
+            return any(self._dirty(k, in_json) or self._dirty(v, in_json)
+                       for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return any(self._dirty(v, in_json) for v in value)
+        return False
+
+    def _clean(self, value, in_json: bool):
+        if isinstance(value, str):
+            if _NUL in value:
+                self.nul += 1
+                return value.replace(_NUL, "")
+            return value
+        if isinstance(value, float) and in_json and not math.isfinite(value):
+            self.non_finite += 1
+            return None
+        if isinstance(value, dict):
+            return {self._clean(k, in_json): self._clean(v, in_json) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(self._clean(v, in_json) for v in value)
+        return value
+
+    def param(self, value):
+        """One bound parameter, returned unchanged (the same object) when clean,
+        so a well-formed report binds exactly what it bound before."""
+        from psycopg2.extras import Json
+        if isinstance(value, Json):
+            if not self._dirty(value.adapted, True):
+                return value
+            return Json(self._clean(value.adapted, True))
+        if not self._dirty(value, False):
+            return value
+        return self._clean(value, False)
+
+    def warnings(self) -> list[str]:
+        out = []
+        if self.nul:
+            out.append(f"NUL characters removed from {self.nul} value(s) — "
+                       "PostgreSQL text and jsonb cannot store them")
+        if self.non_finite:
+            out.append(f"{self.non_finite} NaN/Infinity value(s) in jsonb stored as null")
+        return out
+
+
+class _CleanCursor:
+    """The cursor ingest_to_db writes through: every parameter passes _Cleaner."""
+
+    def __init__(self, cur, cleaner: _Cleaner):
+        self._cur = cur
+        self.cleaner = cleaner
+
+    def execute(self, query, params=None):
+        if params is None:
+            return self._cur.execute(query)
+        cleaned = [self.cleaner.param(p) for p in params]
+        return self._cur.execute(query, tuple(cleaned) if isinstance(params, tuple) else cleaned)
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def close(self):
+        return self._cur.close()
+
+
+# Core varchar columns whose value comes from the sample, the model or the
+# submission. An over-long value here fails the samples/analyses write, which
+# is the one failure no SAVEPOINT can contain: without those rows there is
+# nothing to show. Clipped, with a warning. Must match api/alembic/versions;
+# test_core_widths_match_the_migrations holds it there.
+_CORE_WIDTHS = {
+    "samples.sha256": 64,
+    "samples.filename": 500,
+    "samples.file_mime": 100,
+    "samples.ssdeep": 200,
+    "analyses.task_id": 100,
+    "analyses.severity": 20,
+    "analyses.malware_family_guess": 200,
+    "analyses.interpret_model": 100,
+}
+
+
+def _clip(value: str | None, column: str, warnings: list[str]) -> str | None:
+    width = _CORE_WIDTHS[column]
+    if value is None or len(value) <= width:
+        return value
+    warnings.append(f"{column}: {len(value)} characters clipped to {width}")
+    return value[:width]
+
+
+# -------------------------------------------------------------------------
+# Core and enrichment (#450)
+# -------------------------------------------------------------------------
+#
+# CORE is what the analysis IS: the samples row and the analyses row, with
+# report_json. Without them nothing reaches the UI. They are written and
+# COMMITTED first, on their own.
+#
+# ENRICHMENT is everything derived from the report that hangs off the
+# analysis: IOCs, techniques (AI and CAPE), capabilities, signatures, network
+# events (dns, http, tcp), IOC-technique mappings, correlations with
+# correlation_warnings, and the _ingest_warnings merge. Each GROUP runs inside
+# its own SAVEPOINT, so a statement PostgreSQL refuses (a value too long for
+# its varchar, a constraint) rolls back that group only, and is recorded in
+# report_json["_ingest_warnings"]. Before this, one refused row anywhere rolled
+# back the sample and the analysis with it.
+#
+# A new table that hangs off an analysis is enrichment: give it its own
+# `with _enrichment(...)` block. Only something the analysis cannot be shown
+# without belongs before the core commit.
+
+_ENRICHMENT_GROUPS = (
+    "iocs", "techniques_ai", "techniques_cape", "capabilities", "signatures",
+    "network_dns", "network_http", "network_tcp", "ioc_technique_mappings",
+    "correlations", "ingest_warnings",
+)
+
+
+@contextmanager
+def _enrichment(cur, group: str, failed: list[str]):
+    """Run one enrichment group inside SAVEPOINT; on any exception roll back to
+    it, record the group in `failed`, and carry on.
+
+    The savepoint name is one of our constants, never report text. Only the
+    exception's class goes into `failed` (it is stored durably); PostgreSQL's
+    DETAIL line can quote the offending value, i.e. sample-chosen text.
+    If ROLLBACK TO SAVEPOINT itself fails the connection is gone, and that
+    propagates: there is nothing left to write enrichment through.
+    """
+    if group not in _ENRICHMENT_GROUPS:
+        raise ValueError(f"unknown enrichment group {group!r}")
+    name = f"ingest_{group}"
+    cur.execute(f"SAVEPOINT {name}")
+    try:
+        yield
+    except Exception as exc:
+        cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+        failed.append(f"{group}: not ingested — {type(exc).__name__}")
+        first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        print(f"  [!] DB: enrichment group {group} rolled back: "
+              f"{type(exc).__name__}: {first_line}")
+    else:
+        cur.execute(f"RELEASE SAVEPOINT {name}")
+
+
 def _price_for_model(model: str) -> dict:
     """Per-Mtok pricing for a model name, resolved fail-loud rather than fail-silent.
 
@@ -548,11 +726,15 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     updates that row instead of inserting a new one.
 
     Inserts/updates samples, analyses, IOCs, techniques, capabilities,
-    signatures, and network events. Returns analysis_id on success.
+    signatures, and network events. Returns analysis_id once the core rows are
+    committed, None if they could not be.
 
     Every read from `report` is shape-checked (_Node): a wrong-typed field is
     skipped and named in report_json["_ingest_warnings"], and the rest of the
-    analysis is still written (#171).
+    analysis is still written (#171). The samples and analyses rows are
+    committed before any enrichment, and each enrichment group runs in its own
+    SAVEPOINT, so a row PostgreSQL refuses costs its group, not the analysis
+    (#450; see "Core and enrichment" above).
     """
     if not DB_PASSWORD:
         print("  [!] DB ingestion skipped — no database password configured")
@@ -571,11 +753,14 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             user=DB_USER, password=DB_PASSWORD,
         )
         conn.autocommit = False
-        cur = conn.cursor()
+        cleaner = _Cleaner()
+        cur = _CleanCursor(conn.cursor(), cleaner)
     except Exception as e:
         print(f"  [!] DB connection failed: {e}")
         return False
 
+    core_committed = False
+    analysis_id = None
     try:
         warnings: list[str] = []
         root = _read_report(report, warnings)
@@ -592,6 +777,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
                 sha256 = stem.lower()
         if not sha256:
             sha256 = root.text("task_id", "unknown") or "unknown"
+        sha256 = _clip(sha256, "samples.sha256", warnings)
 
         # The conflict path has to write the triage columns, not just touch
         # last_seen. create_analysis_row() (pipeline_status.py) inserts this row
@@ -620,11 +806,11 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             RETURNING id
         """, (
             sha256,
-            root.text("sample_name", ""),
+            _clip(root.text("sample_name", ""), "samples.filename", warnings),
             triage.text("file_type", ""),
-            triage.text("file_mime", ""),
+            _clip(triage.text("file_mime", ""), "samples.file_mime", warnings),
             triage.number("entropy"),
-            triage.text("ssdeep", ""),
+            _clip(triage.text("ssdeep", ""), "samples.ssdeep", warnings),
         ))
         sample_id = cur.fetchone()[0]
 
@@ -658,12 +844,13 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # Analysis row values (shared between INSERT and UPDATE)
         analysis_values = {
             "sample_id": sample_id,
-            "task_id": root.text("task_id", "", nullable=False),
+            "task_id": _clip(root.text("task_id", "", nullable=False),
+                             "analyses.task_id", warnings),
             "started_at": root.timestamp("started_at"),
             "completed_at": root.timestamp("completed_at"),
-            "severity": severity,
+            "severity": _clip(severity, "analyses.severity", warnings),
             "malscore": cape.number("malscore"),
-            "malware_family_guess": family,
+            "malware_family_guess": _clip(family, "analyses.malware_family_guess", warnings),
             "triage_completed": bool(triage),
             "cape_completed": cape.raw("status") == "reported",
             "cape_task_id": cape.integer("task_id"),
@@ -673,7 +860,7 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             "ghidra_triggered": ghidra.flag("triggered", False),
             "interpret_completed": interp.flag("enabled", False) and "error" not in interp,
             "summary_completed": bool(summary.raw("executive_summary")),
-            "interpret_model": interpret_model,
+            "interpret_model": _clip(interpret_model, "analyses.interpret_model", warnings),
             "interpret_tool_calls": interp.integer("tool_calls_used", 0),
             "interpret_duration_secs": interp.number("duration_seconds"),
             "interpret_escalated": interp.flag("escalated", False),
@@ -710,151 +897,172 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
             )
             analysis_id = cur.fetchone()[0]
 
-        # --- Insert IOCs ---
-        for ioc in root.items("extracted_iocs"):
-            required = ioc.required_texts("type", "value", "source")
-            if required is None:
-                continue
-            ioc_type, ioc_value, ioc_source = required
-            cur.execute("""
-                INSERT INTO ioc_values (type, value)
-                VALUES (%s, %s)
-                ON CONFLICT (type, value) DO UPDATE SET
-                    last_seen = NOW()
-                RETURNING id
-            """, (ioc_type, ioc_value))
-            ioc_id = cur.fetchone()[0]
+        # The analysis IS these two rows. Commit them before any enrichment
+        # runs, so nothing below can take them back (#450).
+        conn.commit()
+        core_committed = True
 
-            cur.execute("""
-                INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING
-            """, (analysis_id, ioc_id, ioc_source, ioc.text("context", "")))
+        failed: list[str] = []
+
+        # --- Insert IOCs ---
+        with _enrichment(cur, "iocs", failed):
+            for ioc in root.items("extracted_iocs"):
+                required = ioc.required_texts("type", "value", "source")
+                if required is None:
+                    continue
+                ioc_type, ioc_value, ioc_source = required
+                cur.execute("""
+                    INSERT INTO ioc_values (type, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (type, value) DO UPDATE SET
+                        last_seen = NOW()
+                    RETURNING id
+                """, (ioc_type, ioc_value))
+                ioc_id = cur.fetchone()[0]
+
+                cur.execute("""
+                    INSERT INTO analysis_iocs (analysis_id, ioc_id, source_stage, context)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (analysis_id, ioc_id, source_stage) DO NOTHING
+                """, (analysis_id, ioc_id, ioc_source, ioc.text("context", "")))
 
         # --- Insert MITRE techniques ---
         # From AI RE
-        for t in analysis.items("attack_techniques"):
-            tid = t.text("id", "", nullable=False)
-            tactics = MITRE_TACTICS.get(tid, [])
-            cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name, tactics)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (technique_id) DO UPDATE SET
-                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
-                RETURNING id
-            """, (tid, t.text("name", ""), tactics or None))
-            row = cur.fetchone()
-            if row:
-                tech_id = row[0]
-            else:
-                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (tid,))
-                tech_id = cur.fetchone()[0]
+        with _enrichment(cur, "techniques_ai", failed):
+            for t in analysis.items("attack_techniques"):
+                tid = t.text("id", "", nullable=False)
+                tactics = MITRE_TACTICS.get(tid, [])
+                cur.execute("""
+                    INSERT INTO technique_values (technique_id, technique_name, tactics)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (technique_id) DO UPDATE SET
+                        tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
+                    RETURNING id
+                """, (tid, t.text("name", ""), tactics or None))
+                row = cur.fetchone()
+                if row:
+                    tech_id = row[0]
+                else:
+                    cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                                (tid,))
+                    tech_id = cur.fetchone()[0]
 
-            cur.execute("""
-                INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
-            """, (analysis_id, tech_id, "AI Reverse Engineering"))
+                cur.execute("""
+                    INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
+                """, (analysis_id, tech_id, "AI Reverse Engineering"))
 
         # From Cape TTPs
-        for t in cape.items("mitre_ttps"):
-            tid = t.text("id", "", nullable=False)
-            source_signature = t.text("source_signature", "")
-            tactics = MITRE_TACTICS.get(tid, [])
-            cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name, tactics)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (technique_id) DO UPDATE SET
-                    tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
-                RETURNING id
-            """, (tid, source_signature, tactics or None))
-            row = cur.fetchone()
-            if row:
-                tech_id = row[0]
-            else:
-                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (tid,))
-                tech_id = cur.fetchone()[0]
+        with _enrichment(cur, "techniques_cape", failed):
+            for t in cape.items("mitre_ttps"):
+                tid = t.text("id", "", nullable=False)
+                source_signature = t.text("source_signature", "")
+                tactics = MITRE_TACTICS.get(tid, [])
+                cur.execute("""
+                    INSERT INTO technique_values (technique_id, technique_name, tactics)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (technique_id) DO UPDATE SET
+                        tactics = COALESCE(EXCLUDED.tactics, technique_values.tactics)
+                    RETURNING id
+                """, (tid, source_signature, tactics or None))
+                row = cur.fetchone()
+                if row:
+                    tech_id = row[0]
+                else:
+                    cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                                (tid,))
+                    tech_id = cur.fetchone()[0]
 
-            cur.execute("""
-                INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
-            """, (analysis_id, tech_id, "Cape", source_signature))
+                cur.execute("""
+                    INSERT INTO analysis_techniques (analysis_id, technique_id, source_stage, source_detail)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (analysis_id, technique_id, source_stage) DO NOTHING
+                """, (analysis_id, tech_id, "Cape", source_signature))
 
         # --- Insert capabilities ---
-        for cap in analysis.texts("capabilities"):
-            cur.execute("""
-                INSERT INTO capabilities (analysis_id, description, source_stage)
-                VALUES (%s, %s, %s)
-            """, (analysis_id, cap, "AI Reverse Engineering"))
+        with _enrichment(cur, "capabilities", failed):
+            for cap in analysis.texts("capabilities"):
+                cur.execute("""
+                    INSERT INTO capabilities (analysis_id, description, source_stage)
+                    VALUES (%s, %s, %s)
+                """, (analysis_id, cap, "AI Reverse Engineering"))
 
         # --- Insert signatures ---
-        for sig in cape.items("signatures"):
-            cur.execute("""
-                INSERT INTO signatures (analysis_id, name, severity, description)
-                VALUES (%s, %s, %s, %s)
-            """, (analysis_id, sig.text("name", "", nullable=False),
-                  sig.integer("severity", 0), sig.text("description", "")))
+        with _enrichment(cur, "signatures", failed):
+            for sig in cape.items("signatures"):
+                cur.execute("""
+                    INSERT INTO signatures (analysis_id, name, severity, description)
+                    VALUES (%s, %s, %s, %s)
+                """, (analysis_id, sig.text("name", "", nullable=False),
+                      sig.integer("severity", 0), sig.text("description", "")))
 
         # --- Insert network events ---
+        # Three groups, not one: a sample-chosen domain past dns_query's
+        # varchar(500) should not also cost the http and tcp rows.
         cape_net = cape.obj("network")
-        for d in cape_net.items("dns_queries"):
-            cur.execute("""
-                INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers)
-                VALUES (%s, 'dns', %s, %s, %s)
-            """, (analysis_id, d.text("domain", ""), d.text("type", ""),
-                  psycopg2.extras.Json(d.raw("answers", []))))
+        with _enrichment(cur, "network_dns", failed):
+            for d in cape_net.items("dns_queries"):
+                cur.execute("""
+                    INSERT INTO network_events (analysis_id, event_type, dns_query, dns_type, dns_answers)
+                    VALUES (%s, 'dns', %s, %s, %s)
+                """, (analysis_id, d.text("domain", ""), d.text("type", ""),
+                      psycopg2.extras.Json(d.raw("answers", []))))
 
-        for h in cape_net.items("http_requests"):
-            cur.execute("""
-                INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host)
-                VALUES (%s, 'http', %s, %s, %s)
-            """, (analysis_id, h.text("method", ""), h.text("url", ""), h.text("host", "")))
+        with _enrichment(cur, "network_http", failed):
+            for h in cape_net.items("http_requests"):
+                cur.execute("""
+                    INSERT INTO network_events (analysis_id, event_type, http_method, http_url, http_host)
+                    VALUES (%s, 'http', %s, %s, %s)
+                """, (analysis_id, h.text("method", ""), h.text("url", ""), h.text("host", "")))
 
         # One row per DESTINATION for post-#479 reports and one row per
         # CONNECTION for older ones, with `attempts` recording which — see
         # tcp_event_rows. A bare count of these rows is not comparable across
         # that boundary and must not be read as one (#488).
-        insert_tcp_events(cur, analysis_id, cape_net)
+        with _enrichment(cur, "network_tcp", failed):
+            insert_tcp_events(cur, analysis_id, cape_net)
 
         # --- Insert IOC-technique mappings ---
-        for mapping in root.items("ioc_technique_mappings"):
-            required = mapping.required_texts("ioc_type", "ioc_value", "technique_id")
-            if required is None:
-                continue
-            ioc_type, ioc_value, technique_id = required
-            # Look up ioc_id
-            cur.execute("SELECT id FROM ioc_values WHERE type = %s AND value = %s",
-                        (ioc_type, ioc_value))
-            ioc_row = cur.fetchone()
-            if not ioc_row:
-                continue
+        # If the iocs group was rolled back, the lookups below find nothing
+        # for this analysis's IOCs and those mappings are skipped, as they
+        # always were for an IOC that is not in ioc_values.
+        with _enrichment(cur, "ioc_technique_mappings", failed):
+            for mapping in root.items("ioc_technique_mappings"):
+                required = mapping.required_texts("ioc_type", "ioc_value", "technique_id")
+                if required is None:
+                    continue
+                ioc_type, ioc_value, technique_id = required
+                # Look up ioc_id
+                cur.execute("SELECT id FROM ioc_values WHERE type = %s AND value = %s",
+                            (ioc_type, ioc_value))
+                ioc_row = cur.fetchone()
+                if not ioc_row:
+                    continue
 
-            # Ensure technique exists
-            cur.execute("""
-                INSERT INTO technique_values (technique_id, technique_name)
-                VALUES (%s, %s)
-                ON CONFLICT (technique_id) DO NOTHING
-                RETURNING id
-            """, (technique_id, mapping.text("technique_name", "")))
-            tech_row = cur.fetchone()
-            if not tech_row:
-                cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
-                            (technique_id,))
-                tech_row = cur.fetchone()
-
-            if tech_row:
+                # Ensure technique exists
                 cur.execute("""
-                    INSERT INTO ioc_technique_mappings
-                        (analysis_id, ioc_id, technique_id, evidence, method, confidence)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING
-                """, (analysis_id, ioc_row[0], tech_row[0],
-                      mapping.text("evidence", ""),
-                      mapping.text("method", "programmatic", nullable=False),
-                      mapping.text("confidence", "high")))
+                    INSERT INTO technique_values (technique_id, technique_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (technique_id) DO NOTHING
+                    RETURNING id
+                """, (technique_id, mapping.text("technique_name", "")))
+                tech_row = cur.fetchone()
+                if not tech_row:
+                    cur.execute("SELECT id FROM technique_values WHERE technique_id = %s",
+                                (technique_id,))
+                    tech_row = cur.fetchone()
+
+                if tech_row:
+                    cur.execute("""
+                        INSERT INTO ioc_technique_mappings
+                            (analysis_id, ioc_id, technique_id, evidence, method, confidence)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (analysis_id, ioc_id, technique_id) DO NOTHING
+                    """, (analysis_id, ioc_row[0], tech_row[0],
+                          mapping.text("evidence", ""),
+                          mapping.text("method", "programmatic", nullable=False),
+                          mapping.text("confidence", "high")))
 
         # --- Insert cross-tool correlations (#423) ---
         #
@@ -866,43 +1074,53 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # output is wholly derived from the report, so replacing it wholesale is
         # the correct semantics — the same reasoning enrich_correlation_inputs
         # already applies to its own cache.
-        cur.execute("DELETE FROM correlations WHERE analysis_id = %s", (analysis_id,))
-
-        findings = root.items("cross_correlations")
-        for row in correlation_rows([f.data for f in findings]):
-            cur.execute("""
-                INSERT INTO correlations
-                    (analysis_id, type, severity, title, detail, sources, mitre, pid)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (analysis_id, *row))
-
+        #
         # Warnings are a column on the analysis, not rows beside the findings.
         # Setting it to a list — EMPTY LIST INCLUDED — is what records that
         # correlation ran: NULL means never recorded, '{}' means ran clean,
         # non-empty means ran blind (#411). Written after the inserts and inside
-        # the same transaction, so a failure part-way cannot leave an analysis
-        # claiming it was correlated when nothing landed.
+        # the SAME savepoint group, so a failure part-way cannot leave an
+        # analysis claiming it was correlated when nothing landed: the group
+        # rolls back whole, correlation_warnings keeps its previous value (NULL
+        # for a new row), and the failure is named in _ingest_warnings.
+        findings = root.items("cross_correlations")
         corr_warnings = [str(w)[:500] for w in root.array("correlation_warnings")]
-        cur.execute(
-            "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
-            (corr_warnings, analysis_id))
+        with _enrichment(cur, "correlations", failed):
+            cur.execute("DELETE FROM correlations WHERE analysis_id = %s", (analysis_id,))
+            for row in correlation_rows([f.data for f in findings]):
+                cur.execute("""
+                    INSERT INTO correlations
+                        (analysis_id, type, severity, title, detail, sources, mitre, pid)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (analysis_id, *row))
+            cur.execute(
+                "UPDATE analyses SET correlation_warnings = %s WHERE id = %s",
+                (corr_warnings, analysis_id))
 
-        # What a malformed report cost, recorded beside the report it describes.
-        # Merged into report_json rather than a new column (no migration), and
-        # only when there is something to say, so a well-formed report's stored
-        # JSON is exactly what it was. Last, so every read has run.
+        # What a malformed report cost, and which enrichment groups PostgreSQL
+        # refused, recorded beside the report it describes. Merged into
+        # report_json rather than a new column (no migration), and only when
+        # there is something to say, so a well-formed report's stored JSON is
+        # exactly what it was. Last, so every read and every group has run;
+        # the cleaner's counts are read here, after every statement it saw.
+        warnings.extend(failed)
+        warnings.extend(cleaner.warnings())
         if warnings:
             capped = _capped(warnings)
-            cur.execute(
-                "UPDATE analyses SET report_json = report_json || %s WHERE id = %s",
-                (psycopg2.extras.Json({"_ingest_warnings": capped}), analysis_id))
-            print(f"  [!] DB: {len(set(warnings))} malformed report field(s) not ingested:")
+            with _enrichment(cur, "ingest_warnings", failed):
+                cur.execute(
+                    "UPDATE analyses SET report_json = report_json || %s WHERE id = %s",
+                    (psycopg2.extras.Json({"_ingest_warnings": capped}), analysis_id))
+            print(f"  [!] DB: {len(set(warnings))} ingest warning(s), "
+                  "recorded in report_json._ingest_warnings:")
             for w in capped:
                 print(f"      {w}")
 
         conn.commit()
+        rolled_back = f", {len(failed)} enrichment group(s) rolled back" if failed else ""
         print(f"  DB: ingested analysis {analysis_id} for sample {sample_id} "
-              f"({len(findings)} correlations, {len(corr_warnings)} correlation warnings)")
+              f"({len(findings)} correlations, {len(corr_warnings)} correlation warnings"
+              f"{rolled_back})")
 
         # Cross-sample campaign edges (non-fatal enrichment, separate from the
         # committed ingest above). A failure here never fails the analysis ingest.
@@ -911,7 +1129,17 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         return analysis_id
 
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass  # connection already gone; the server discards the transaction
+        if core_committed:
+            # Only reachable when the connection itself failed mid-enrichment:
+            # a statement PostgreSQL refuses is contained by its savepoint. The
+            # sample and analysis rows are committed, so the analysis exists.
+            print(f"  [!] DB: enrichment aborted after analysis {analysis_id} was "
+                  f"committed: {type(e).__name__}: {e}")
+            return analysis_id
         print(f"  [!] DB ingestion error: {e}")
         return None
     finally:
