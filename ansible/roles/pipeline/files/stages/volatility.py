@@ -21,6 +21,14 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from lamware_pipeline.plugin_rows import (
+    MAX_PARSE_WARNINGS,
+    Row,
+    capped,
+    rows,
+    type_name,
+)
+
 
 def _shannon_entropy(data: bytes) -> float:
     """Calculate Shannon entropy of byte data."""
@@ -334,94 +342,19 @@ def artifacts_from_bytes(data: bytes) -> dict:
 # Shape-checked reads of plugin output (#171)
 # -------------------------------------------------------------------------
 #
-# Plugin output describes the guest: process names, command lines, DLL paths
-# and handle names are whatever the sample made them. The readers below used
-# `entry.get("Args", "").lower()`, and dict.get(k, default) returns the default
-# only when k is ABSENT, so a row that was not an object, or a field present
-# with the wrong type, raised. Nothing in run_volatility caught it and
-# run-pipeline catches only TimeoutError there, so one wrong-typed field threw
-# away every plugin's output after the plugins had already run.
-#
-# Every read goes through _Row instead, the same rule as db_ingest's _Node:
-#   - absent              -> the caller's default (exactly what .get gave)
-#   - null                -> None where the value is only copied into the
-#                            insight (as before); the default where the code
-#                            operates on it (null used to raise there)
-#   - present, right type -> the value, unchanged
-#   - present, wrong type -> the default, AND a warning naming the path
-# A row that is not an object is skipped with a warning. Warnings land in
-# volatility.parse_warnings; a well-formed output produces none.
-#
-# _Node itself is not imported: db_ingest loads PipelineConfig and psycopg2 at
-# import and its integer() enforces int4 column ranges, neither of which means
-# anything for plugin output.
+# Plugin output describes the guest, and every read of it goes through
+# lamware_pipeline.plugin_rows (Row, rows) — see that module for the rule.
+# #685 wrote the reader here; it moved to the package (#686) because
+# correlation_rules.py reads the same plugin rows and cannot import a stage
+# module. The private names stay so this module's callers and tests are
+# unchanged. Warnings land in volatility.parse_warnings; a well-formed output
+# produces none.
 
-_MAX_PARSE_WARNINGS = 50   # 60k handle rows of junk are one problem, not 60k
-
-
-def _type_name(value) -> str:
-    return {dict: "object", list: "array", str: "string", bool: "boolean",
-            int: "integer", float: "number", type(None): "null"}.get(
-                type(value), type(value).__name__)
-
-
-class _Row:
-    """One object in a plugin's JSON output, with typed reads that never raise.
-
-    `path` is built from plugin names, our own key names and list indices —
-    never from plugin output — so a warning cannot carry guest-chosen text.
-    """
-
-    __slots__ = ("data", "path", "warnings")
-
-    def __init__(self, data: dict, path: str, warnings: list[str]):
-        self.data = data
-        self.path = path
-        self.warnings = warnings
-
-    def _read(self, key: str, default, nullable: bool, ok, expected: str):
-        if key not in self.data:
-            return default
-        value = self.data[key]
-        if value is None:
-            return None if nullable else default
-        if ok(value):
-            return value
-        self.warnings.append(
-            f"{self.path}.{key}: expected {expected}, got {_type_name(value)} — not read")
-        return default
-
-    def text(self, key: str, default: str | None = "", nullable: bool = True) -> str | None:
-        return self._read(key, default, nullable, lambda v: isinstance(v, str), "string")
-
-    def integer(self, key: str, default: int | None = 0, nullable: bool = True) -> int | None:
-        """An int. bool is not one here, though Python says it is."""
-        return self._read(key, default, nullable, lambda v: type(v) is int, "integer")
-
-    def array(self, key: str, default: list | None = None) -> list | None:
-        return self._read(key, default, True, lambda v: isinstance(v, list), "array")
-
-
-def _rows(output, name: str, warnings: list[str]) -> list[_Row]:
-    """The object rows of one plugin's output.
-
-    A dict is run_single_plugin's {"error": ...} and null means the plugin
-    did not run; both were skipped silently before and still are (the failure
-    is already recorded in volatility.plugins). Any other non-list, and any
-    row that is not an object, is skipped with a warning.
-    """
-    if output is None or isinstance(output, dict):
-        return []
-    if not isinstance(output, list):
-        warnings.append(f"{name}: expected array, got {_type_name(output)} — not read")
-        return []
-    rows = []
-    for i, item in enumerate(output):
-        if isinstance(item, dict):
-            rows.append(_Row(item, f"{name}[{i}]", warnings))
-        else:
-            warnings.append(f"{name}[{i}]: expected object, got {_type_name(item)} — row skipped")
-    return rows
+_MAX_PARSE_WARNINGS = MAX_PARSE_WARNINGS
+_type_name = type_name
+_Row = Row
+_rows = rows
+_capped = capped
 
 
 def _tree_rows(output, name: str, warnings: list[str]) -> list[_Row]:
@@ -457,13 +390,6 @@ def _tree_rows(output, name: str, warnings: list[str]) -> list[_Row]:
                 warnings.append(f"{path}: expected object, got {_type_name(child)} — row skipped")
         stack.extend(reversed(pushed))
     return rows
-
-
-def _capped(warnings: list[str]) -> list[str]:
-    if len(warnings) <= _MAX_PARSE_WARNINGS:
-        return list(warnings)
-    return warnings[:_MAX_PARSE_WARNINGS] + [
-        f"... and {len(warnings) - _MAX_PARSE_WARNINGS} more"]
 
 
 def filter_malfind_json(vol_malfind_output, malfind_min_size: int,

@@ -17,7 +17,7 @@ was checked for injection and came back clean.
 Same rule as `PayloadAccessError` (lamware_shared.cape_payloads) and the Ghidra
 `analysis_warnings` surface (#315/#367): "I could not look" is its own answer.
 """
-import re
+import ast
 from pathlib import Path
 
 import lamware_pipeline.correlation_rules as cr
@@ -31,8 +31,42 @@ from lamware_pipeline.correlation_rules import (
 
 SOURCE = Path(cr.__file__).read_text(encoding="utf-8")
 
-# Matches the accessor every rule uses: .get("plugins", {}).get("<name>", ...)
-_PLUGIN_READ = re.compile(r'\.get\("plugins",\s*\{\}\)\.get\("([a-z_]+)"')
+
+
+def _plugins_read_by_rules() -> set[str]:
+    """The plugin names the registered rules read, from the parsed source.
+
+    Since #686 every rule reads its plugin through `_plugin_rows(report, "<name>",
+    ...)` (the shape-checked reader); before, it was a `.get("plugins", {})`
+    chain matched here by regex. Parsed rather than grepped so a comment or
+    docstring naming a plugin is not read as a dependency. Only the functions in
+    `_RULES` are walked: vadinfo is read by the enrichment helpers and is
+    deliberately undeclared (see _volatility_warnings).
+    """
+    rule_names = {rule.__name__ for rule in cr._RULES}
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(SOURCE)):
+        if not (isinstance(node, ast.FunctionDef) and node.name in rule_names):
+            continue
+        for call in ast.walk(node):
+            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "_plugin_rows" and len(call.args) >= 2
+                    and isinstance(call.args[1], ast.Constant)):
+                found.add(call.args[1].value)
+    return found
+
+
+def _rule_reads_plugins_directly() -> list[str]:
+    """Rules that index "plugins" themselves instead of going through
+    _plugin_rows — invisible to the declaration check above, and unguarded."""
+    rule_names = {rule.__name__ for rule in cr._RULES}
+    out = []
+    for node in ast.walk(ast.parse(SOURCE)):
+        if isinstance(node, ast.FunctionDef) and node.name in rule_names:
+            for const in ast.walk(node):
+                if isinstance(const, ast.Constant) and const.value == "plugins":
+                    out.append(node.name)
+    return out
 
 
 def _plugins(**kw):
@@ -45,8 +79,8 @@ def test_every_plugin_a_rule_reads_is_declared():
     """The failure this prevents: a new rule reads a new plugin, that plugin
     fails in production, and its silence goes unreported because nothing
     declared that anything depended on it."""
-    read_in_source = set(_PLUGIN_READ.findall(SOURCE))
-    assert read_in_source, "accessor pattern stopped matching — update _PLUGIN_READ"
+    read_in_source = _plugins_read_by_rules()
+    assert read_in_source, "no _plugin_rows call found in any rule — update the walker"
     undeclared = read_in_source - set(_PLUGIN_CONSUMERS)
     assert not undeclared, (
         f"correlation rules read Volatility plugin(s) {sorted(undeclared)} that "
@@ -54,10 +88,17 @@ def test_every_plugin_a_rule_reads_is_declared():
     )
 
 
+def test_every_rule_reads_plugins_through_the_checked_reader():
+    """A rule reading `report["volatility"]["plugins"]` itself would be both
+    unguarded against a malformed row (#686) and missing from the declaration
+    check above, which looks only at _plugin_rows calls."""
+    assert _rule_reads_plugins_directly() == []
+
+
 def test_no_declared_consumer_is_stale():
     """The mirror: a plugin declared but no longer read produces a warning about
     a rule that does not exist."""
-    read_in_source = set(_PLUGIN_READ.findall(SOURCE))
+    read_in_source = _plugins_read_by_rules()
     stale = set(_PLUGIN_CONSUMERS) - read_in_source
     assert not stale, f"_PLUGIN_CONSUMERS declares unread plugin(s): {sorted(stale)}"
 

@@ -1,0 +1,71 @@
+{
+ "findings": [
+  {
+   "type": "dropped_file_loaded",
+   "severity": "high",
+   "title": "Dropped file 'lib0.dll' was loaded and executed",
+   "detail": "Cape observed this file being written to C:\\Windows\\System32\\lib0.dll. Volatility confirms it was loaded by: proc476.exe (pid 476)",
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1059 \u2014 Execution"
+  },
+  {
+   "type": "shellcode_self_modified",
+   "severity": "high",
+   "title": "Injected shellcode self-modified in PID 1364 at 0x00400000",
+   "detail": "Cape captured 64 bytes at write time; memory at the same address differs within the first 64 bytes.",
+   "before": "90909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090909090",
+   "after": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+   "pid": 1364,
+   "address": "0x00400000",
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1027 \u2014 Obfuscated Files or Information"
+  },
+  {
+   "type": "cmdline_spoofing",
+   "severity": "critical",
+   "title": "Command line spoofing detected in PID 1448",
+   "detail": "Process command line changed between execution and memory dump.",
+   "before": "C:\\Windows\\System32\\proc1448.exe -secured -Embedding",
+   "after": "C:\\Windows\\System32\\proc1448.exe",
+   "pid": "1448",
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1036 \u2014 Masquerading"
+  },
+  {
+   "type": "c2_live_in_memory",
+   "severity": "medium",
+   "title": "C2 host c2-host.example.com found in process memory",
+   "detail": "Cape decoded c2-host.example.com from the sample's configuration; the same string is present in memory dumped from PID(s) 1364. Presence establishes the host was known to the process, not that a connection was made.",
+   "indicator": "c2-host.example.com",
+   "pid": 1364,
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1071 \u2014 Application Layer Protocol"
+  },
+  {
+   "type": "injection_corroborated",
+   "severity": "medium",
+   "title": "Process injection into PID 1364 corroborated in memory",
+   "detail": "Cape flagged injection into PID 1364; Volatility malfind found 13 anomalous executable region(s) in that process.",
+   "pid": 1364,
+   "sources": [
+    "Cape",
+    "Volatility"
+   ],
+   "mitre": "T1055 \u2014 Process Injection"
+  }
+ ],
+ "correlation_warnings": [],
+ "_produced_by": "origin/main ac1767f pipeline/lamware_pipeline/correlation_rules.py"
+}
