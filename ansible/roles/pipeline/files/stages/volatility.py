@@ -398,6 +398,9 @@ class _Row:
         """An int. bool is not one here, though Python says it is."""
         return self._read(key, default, nullable, lambda v: type(v) is int, "integer")
 
+    def array(self, key: str, default: list | None = None) -> list | None:
+        return self._read(key, default, True, lambda v: isinstance(v, list), "array")
+
 
 def _rows(output, name: str, warnings: list[str]) -> list[_Row]:
     """The object rows of one plugin's output.
@@ -418,6 +421,41 @@ def _rows(output, name: str, warnings: list[str]) -> list[_Row]:
             rows.append(_Row(item, f"{name}[{i}]", warnings))
         else:
             warnings.append(f"{name}[{i}]: expected object, got {_type_name(item)} — row skipped")
+    return rows
+
+
+def _tree_rows(output, name: str, warnings: list[str]) -> list[_Row]:
+    """Every row of a nested plugin output, in pre-order (#687).
+
+    windows.pstree returns the ROOTS of the process tree; every other process
+    is a row in some row's `__children`. Reading only the top level (as _rows
+    does) saw 4-8 roots of 13-225 processes on the host reports, and none of
+    the processes a sample spawns: those are always somebody's child.
+
+    Iterative, not recursive: the depth is set by the guest (a process may
+    spawn a chain of children), and #673 found a RecursionError in a
+    recursive scanner. A child that is not an object, or a `__children` that
+    is not an array, is skipped with a warning like any other row. The path of
+    a nested row names its root, its depth and its index among its siblings —
+    bounded in length whatever the depth, and still never guest-chosen text.
+    """
+    rows = []
+    # (row, root path, depth) — reversed pushes keep siblings in their order.
+    stack = [(row, row.path, 0) for row in reversed(_rows(output, name, warnings))]
+    while stack:
+        row, root, depth = stack.pop()
+        rows.append(row)
+        children = row.array("__children")   # absent, null or wrong-typed: None
+        if not children:
+            continue
+        pushed = []
+        for j, child in enumerate(children):
+            path = f"{root}.__children[depth {depth + 1}, {j}]"
+            if isinstance(child, dict):
+                pushed.append((_Row(child, path, warnings), root, depth + 1))
+            else:
+                warnings.append(f"{path}: expected object, got {_type_name(child)} — row skipped")
+        stack.extend(reversed(pushed))
     return rows
 
 
@@ -1156,7 +1194,9 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
             insights["suspicious_dlls"] = unique_dlls[:30]
 
     # --- pstree: anomalous parent-child relationships ---
-    pstree = _rows(plugins.get("pstree"), "pstree", warnings)
+    # Every process in the tree, not only its roots (#687): the children are
+    # where a sample's own processes are.
+    pstree = _tree_rows(plugins.get("pstree"), "pstree", warnings)
     if pstree:
         anomalous_parents = []
         # Normal parent-child expectations
@@ -1170,8 +1210,7 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
             "services.exe": ["wininit.exe"],
             "explorer.exe": ["userinit.exe", "winlogon.exe"],
         }
-        # Each row is read once: the parent lookup below is O(n^2), and
-        # reading inside it would repeat every warning n times. The lookup
+        # Each row is read once, so each warning is raised once. The lookup
         # matches on the PID as .get("PID") saw it (absent -> None); the
         # insight reports an absent PID as 0, as .get("PID", 0) did.
         procs = []
@@ -1181,15 +1220,17 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
                           row.integer("PPID", 0),
                           pid if "PID" in row.data else 0,
                           pid))
-        # pstree format varies — check if we have parent info
+        # PID -> name of the FIRST process with that PID, which is what the
+        # linear scan this replaces returned. That scan was O(n^2), harmless
+        # over 6-8 roots and not over a guest-sized tree (#687).
+        name_by_pid: dict = {}
+        for p_name, _, _, p_pid in procs:
+            name_by_pid.setdefault(p_pid, p_name)
+        # The parent is found by PPID, not by nesting: the same rule as
+        # before, and it still reads a flat (un-nested) output correctly.
         for name, ppid, pid, _ in procs:
             if name in expected_parents:
-                # Find parent process name
-                parent = None
-                for p_name, _, _, p_pid in procs:
-                    if p_pid == ppid:
-                        parent = p_name
-                        break
+                parent = name_by_pid.get(ppid)
                 if parent and parent not in expected_parents[name]:
                     anomalous_parents.append({
                         "pid": pid,

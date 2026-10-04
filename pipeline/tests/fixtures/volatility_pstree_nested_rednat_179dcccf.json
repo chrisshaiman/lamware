@@ -1,0 +1,879 @@
+[
+ {
+  "PID": 4,
+  "PPID": 0,
+  "ImageFileName": "System",
+  "__children": [
+   {
+    "PID": 2260,
+    "PPID": 4,
+    "ImageFileName": "MemCompression",
+    "__children": []
+   },
+   {
+    "PID": 476,
+    "PPID": 4,
+    "ImageFileName": "smss.exe",
+    "__children": []
+   },
+   {
+    "PID": 124,
+    "PPID": 4,
+    "ImageFileName": "Registry",
+    "__children": []
+   }
+  ]
+ },
+ {
+  "PID": 620,
+  "PPID": 612,
+  "ImageFileName": "csrss.exe",
+  "__children": []
+ },
+ {
+  "PID": 692,
+  "PPID": 612,
+  "ImageFileName": "wininit.exe",
+  "__children": [
+   {
+    "PID": 836,
+    "PPID": 692,
+    "ImageFileName": "services.exe",
+    "__children": [
+     {
+      "PID": 1536,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": []
+     },
+     {
+      "PID": 2052,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": []
+     },
+     {
+      "PID": 1528,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": []
+     },
+     {
+      "PID": 7700,
+      "PPID": 836,
+      "ImageFileName": "SecurityHealth",
+      "__children": []
+     },
+     {
+      "PID": 3140,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": [
+       {
+        "PID": 948,
+        "PPID": 3140,
+        "ImageFileName": "AggregatorHost",
+        "__children": []
+       }
+      ]
+     },
+     {
+      "PID": 9840,
+      "PPID": 836,
+      "ImageFileName": "TrustedInstall",
+      "__children": []
+     },
+     {
+      "PID": 1160,
+      "PPID": 836,
+      "ImageFileName": "SearchIndexer.",
+      "__children": []
+     },
+     {
+      "PID": 3308,
+      "PPID": 836,
+      "ImageFileName": "wlms.exe",
+      "__children": []
+     },
+     {
+      "PID": 1840,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": [
+       {
+        "PID": 5596,
+        "PPID": 1840,
+        "ImageFileName": "sihost.exe",
+        "__children": [
+         {
+          "PID": 6360,
+          "PPID": 5596,
+          "ImageFileName": "ShellHost.exe",
+          "__children": []
+         },
+         {
+          "PID": 6436,
+          "PPID": 5596,
+          "ImageFileName": "CrossDeviceRes",
+          "__children": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "PID": 2972,
+      "PPID": 836,
+      "ImageFileName": "spoolsv.exe",
+      "__children": []
+     },
+     {
+      "PID": 9632,
+      "PPID": 836,
+      "ImageFileName": "VSSVC.exe",
+      "__children": []
+     },
+     {
+      "PID": 6592,
+      "PPID": 836,
+      "ImageFileName": "MsMpEng.exe",
+      "__children": []
+     },
+     {
+      "PID": 2500,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": [
+       {
+        "PID": 4072,
+        "PPID": 2500,
+        "ImageFileName": "ctfmon.exe",
+        "__children": []
+       }
+      ]
+     },
+     {
+      "PID": 972,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": [
+       {
+        "PID": 1560,
+        "PPID": 972,
+        "ImageFileName": "smartscreen.ex",
+        "__children": []
+       },
+       {
+        "PID": 9884,
+        "PPID": 972,
+        "ImageFileName": "TiWorker.exe",
+        "__children": []
+       },
+       {
+        "PID": 8228,
+        "PPID": 972,
+        "ImageFileName": "SecurityHealth",
+        "__children": []
+       },
+       {
+        "PID": 10024,
+        "PPID": 972,
+        "ImageFileName": "dllhost.exe",
+        "__children": []
+       },
+       {
+        "PID": 3884,
+        "PPID": 972,
+        "ImageFileName": "backgroundTask",
+        "__children": []
+       },
+       {
+        "PID": 9772,
+        "PPID": 972,
+        "ImageFileName": "WidgetService.",
+        "__children": []
+       },
+       {
+        "PID": 5052,
+        "PPID": 972,
+        "ImageFileName": "RuntimeBroker.",
+        "__children": []
+       },
+       {
+        "PID": 8764,
+        "PPID": 972,
+        "ImageFileName": "ShellExperienc",
+        "__children": []
+       },
+       {
+        "PID": 6468,
+        "PPID": 972,
+        "ImageFileName": "backgroundTask",
+        "__children": []
+       },
+       {
+        "PID": 5712,
+        "PPID": 972,
+        "ImageFileName": "StartMenuExper",
+        "__children": []
+       },
+       {
+        "PID": 5584,
+        "PPID": 972,
+        "ImageFileName": "RuntimeBroker.",
+        "__children": []
+       },
+       {
+        "PID": 6736,
+        "PPID": 972,
+        "ImageFileName": "RuntimeBroker.",
+        "__children": []
+       },
+       {
+        "PID": 2772,
+        "PPID": 972,
+        "ImageFileName": "SearchHost.exe",
+        "__children": [
+         {
+          "PID": 5636,
+          "PPID": 2772,
+          "ImageFileName": "msedgewebview2",
+          "__children": [
+           {
+            "PID": 6176,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 1672,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 3212,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 2800,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 8048,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 7664,
+            "PPID": 5636,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "PID": 2388,
+        "PPID": 972,
+        "ImageFileName": "dllhost.exe",
+        "__children": []
+       },
+       {
+        "PID": 4564,
+        "PPID": 972,
+        "ImageFileName": "Widgets.exe",
+        "__children": [
+         {
+          "PID": 7296,
+          "PPID": 4564,
+          "ImageFileName": "msedgewebview2",
+          "__children": [
+           {
+            "PID": 8420,
+            "PPID": 7296,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 6216,
+            "PPID": 7296,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 2732,
+            "PPID": 7296,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 6188,
+            "PPID": 7296,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           },
+           {
+            "PID": 5520,
+            "PPID": 7296,
+            "ImageFileName": "msedgewebview2",
+            "__children": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "PID": 724,
+        "PPID": 972,
+        "ImageFileName": "WmiPrvSE.exe",
+        "__children": []
+       },
+       {
+        "PID": 4704,
+        "PPID": 972,
+        "ImageFileName": "backgroundTask",
+        "__children": []
+       },
+       {
+        "PID": 8940,
+        "PPID": 972,
+        "ImageFileName": "RuntimeBroker.",
+        "__children": []
+       },
+       {
+        "PID": 5488,
+        "PPID": 972,
+        "ImageFileName": "WmiPrvSE.exe",
+        "__children": []
+       },
+       {
+        "PID": 4336,
+        "PPID": 972,
+        "ImageFileName": "sdiagnhost.exe",
+        "__children": []
+       }
+      ]
+     },
+     {
+      "PID": 1496,
+      "PPID": 836,
+      "ImageFileName": "svchost.exe",
+      "__children": [
+       {
+        "PID": 8032,
+        "PPID": 1496,
+        "ImageFileName": "taskhostw.exe",
+        "__children": [
+         {
+          "PID": 4784,
+          "PPID": 8032,
+          "ImageFileName": "ngentask.exe",
+          "__children": [
+           {
+            "PID": 9324,
+            "PPID": 4784,
+            "ImageFileName": "conhost.exe",
+            "__children": []
+           }
+          ]
+         },
+         {
+          "PID": 4424,
+          "PPID": 8032,
+          "ImageFileName": "ngentask.exe",
+          "__children": [
+           {
+            "PID": 9352,
+            "PPID": 4424,
+            "ImageFileName": "conhost.exe",
+            "__children": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "PID": 2592,
+        "PPID": 1496,
+        "ImageFileName": "cleanmgr.exe",
+        "__children": []
+       },
+       {
+        "PID": 1248,
+        "PPID": 1496,
+        "ImageFileName": "MpCmdRun.exe",
+        "__children": [
+         {
+          "PID": 4788,
+          "PPID": 1248,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 2784,
+        "PPID": 1496,
+        "ImageFileName": "MpCmdRun.exe",
+        "__children": [
+         {
+          "PID": 5876,
+          "PPID": 2784,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 6856,
+        "PPID": 1496,
+        "ImageFileName": "MicrosoftEdgeU",
+        "__children": []
+       },
+       {
+        "PID": 5160,
+        "PPID": 1496,
+        "ImageFileName": "Defrag.exe",
+        "__children": [
+         {
+          "PID": 8084,
+          "PPID": 5160,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 1996,
+        "PPID": 1496,
+        "ImageFileName": "python.exe",
+        "__children": [
+         {
+          "PID": 2192,
+          "PPID": 1996,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         },
+         {
+          "PID": 5772,
+          "PPID": 1996,
+          "ImageFileName": "python.exe",
+          "__children": [
+           {
+            "PID": 6336,
+            "PPID": 5772,
+            "ImageFileName": "notepad.exe",
+            "__children": []
+           },
+           {
+            "PID": 8576,
+            "PPID": 5772,
+            "ImageFileName": "sample.exe",
+            "__children": [
+             {
+              "PID": 4232,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 6156,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 8076,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 7568,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": [
+               {
+                "PID": 6720,
+                "PPID": 7568,
+                "ImageFileName": "svchost.exe",
+                "__children": []
+               }
+              ]
+             },
+             {
+              "PID": 2196,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 1556,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 2456,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": [
+               {
+                "PID": 5608,
+                "PPID": 2456,
+                "ImageFileName": "wevtutil.exe",
+                "__children": []
+               },
+               {
+                "PID": 8432,
+                "PPID": 2456,
+                "ImageFileName": "wevtutil.exe",
+                "__children": []
+               },
+               {
+                "PID": 8972,
+                "PPID": 2456,
+                "ImageFileName": "wevtutil.exe",
+                "__children": []
+               }
+              ]
+             },
+             {
+              "PID": 3992,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 2460,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 4380,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": [
+               {
+                "PID": 7284,
+                "PPID": 4380,
+                "ImageFileName": "powershell.exe",
+                "__children": []
+               }
+              ]
+             },
+             {
+              "PID": 2848,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 6308,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 7076,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 5416,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 4396,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 6196,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": [
+               {
+                "PID": 6940,
+                "PPID": 6196,
+                "ImageFileName": "cmd.exe",
+                "__children": []
+               }
+              ]
+             },
+             {
+              "PID": 6964,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 952,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 6968,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 7128,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 3428,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 6628,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 9192,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 5352,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 1132,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 1140,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             },
+             {
+              "PID": 7160,
+              "PPID": 8576,
+              "ImageFileName": "sample.exe",
+              "__children": []
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "PID": 5484,
+        "PPID": 1496,
+        "ImageFileName": "taskhostw.exe",
+        "__children": []
+       },
+       {
+        "PID": 7820,
+        "PPID": 1496,
+        "ImageFileName": "la57setup.exe",
+        "__children": [
+         {
+          "PID": 1764,
+          "PPID": 7820,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 7308,
+        "PPID": 1496,
+        "ImageFileName": "lpremove.exe",
+        "__children": [
+         {
+          "PID": 6128,
+          "PPID": 7308,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 6832,
+        "PPID": 1496,
+        "ImageFileName": "MpCmdRun.exe",
+        "__children": [
+         {
+          "PID": 6496,
+          "PPID": 6832,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 720,
+        "PPID": 1496,
+        "ImageFileName": "MpCmdRun.exe",
+        "__children": [
+         {
+          "PID": 7528,
+          "PPID": 720,
+          "ImageFileName": "conhost.exe",
+          "__children": []
+         }
+        ]
+       },
+       {
+        "PID": 5652,
+        "PPID": 1496,
+        "ImageFileName": "taskhostw.exe",
+        "__children": [
+         {
+          "PID": 6288,
+          "PPID": 5652,
+          "ImageFileName": "ngentask.exe",
+          "__children": [
+           {
+            "PID": 8312,
+            "PPID": 6288,
+            "ImageFileName": "conhost.exe",
+            "__children": []
+           },
+           {
+            "PID": 2372,
+            "PPID": 6288,
+            "ImageFileName": "ngen.exe",
+            "__children": [
+             {
+              "PID": 8712,
+              "PPID": 2372,
+              "ImageFileName": "mscorsvw.exe",
+              "__children": []
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "PID": 7616,
+          "PPID": 5652,
+          "ImageFileName": "ngentask.exe",
+          "__children": [
+           {
+            "PID": 7524,
+            "PPID": 7616,
+            "ImageFileName": "conhost.exe",
+            "__children": []
+           },
+           {
+            "PID": 8172,
+            "PPID": 7616,
+            "ImageFileName": "ngen.exe",
+            "__children": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "PID": 8244,
+        "PPID": 1496,
+        "ImageFileName": "OneDriveStanda",
+        "__children": []
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "PID": 1004,
+    "PPID": 692,
+    "ImageFileName": "fontdrvhost.ex",
+    "__children": []
+   },
+   {
+    "PID": 844,
+    "PPID": 692,
+    "ImageFileName": "lsass.exe",
+    "__children": []
+   }
+  ]
+ },
+ {
+  "PID": 700,
+  "PPID": 684,
+  "ImageFileName": "csrss.exe",
+  "__children": []
+ },
+ {
+  "PID": 1940,
+  "PPID": 1756,
+  "ImageFileName": "csrss.exe",
+  "__children": []
+ },
+ {
+  "PID": 2476,
+  "PPID": 1756,
+  "ImageFileName": "winlogon.exe",
+  "__children": [
+   {
+    "PID": 560,
+    "PPID": 2476,
+    "ImageFileName": "fontdrvhost.ex",
+    "__children": []
+   },
+   {
+    "PID": 3880,
+    "PPID": 2476,
+    "ImageFileName": "dwm.exe",
+    "__children": []
+   },
+   {
+    "PID": 7368,
+    "PPID": 2476,
+    "ImageFileName": "userinit.exe",
+    "__children": [
+     {
+      "PID": 7360,
+      "PPID": 7368,
+      "ImageFileName": "explorer.exe",
+      "__children": [
+       {
+        "PID": 1936,
+        "PPID": 7360,
+        "ImageFileName": "OneDrive.exe",
+        "__children": []
+       },
+       {
+        "PID": 4996,
+        "PPID": 7360,
+        "ImageFileName": "SecurityHealth",
+        "__children": []
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]

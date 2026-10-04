@@ -66,7 +66,8 @@ MALFIND = dict(malfind_min_size=256, malfind_max_size=10485760, malfind_min_scor
 # What a warning may look like. Built only from plugin names, our key names and
 # indices: a warning that carried a value would carry guest-chosen text.
 WARNING = re.compile(
-    r"(plugins|[a-z]+(\[\d+\])?(\.[A-Za-z ()]+)?): expected (object|array|string|integer), "
+    r"(plugins|[a-z]+(\[\d+\])?(\.__children\[depth \d+, \d+\])?(\.([A-Za-z ()]+|__children))?)"
+    r": expected (object|array|string|integer), "
     r"got \w+ — (not read|row skipped)")
 
 
@@ -338,7 +339,7 @@ READ_FIELDS = {
     "netscan": ["ForeignAddr", "ForeignPort", "LocalPort", "State", "Owner", "PID"],
     "handles": ["Type", "Name", "PID", "Process"],
     "dlllist": ["Path", "PID", "Process"],
-    "pstree": ["ImageFileName", "PPID", "PID"],
+    "pstree": ["ImageFileName", "PPID", "PID", "__children"],   # #687: the walk reads it
     "malfind": ["PID", "Process", "Start VPN", "End VPN", "Protection", "File output",
                 "Hexdump"],
 }
@@ -348,6 +349,23 @@ PATHS = ([(p,) for p in READ_FIELDS]
          + [(p, i) for p in READ_FIELDS for i in range(len(PLUGINS[p]))]
          + [(p, i, k) for p, keys in READ_FIELDS.items()
             for i in range(len(PLUGINS[p])) for k in keys])
+
+
+def _nested_pstree_paths() -> list[tuple]:
+    """Paths to every row below pstree's roots, and to each of its fields
+    (#687): the anomalous-parent insight reads the whole tree now."""
+    out, stack = [], [(("pstree", i), r) for i, r in enumerate(PLUGINS["pstree"])]
+    while stack:
+        path, row = stack.pop()
+        for j, child in enumerate(row.get("__children") or []):
+            cpath = (*path, "__children", j)
+            out.append(cpath)
+            out.extend((*cpath, k) for k in READ_FIELDS["pstree"])
+            stack.append((cpath, child))
+    return out
+
+
+PATHS += _nested_pstree_paths()
 
 
 
