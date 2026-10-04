@@ -1,0 +1,1230 @@
+{
+ "insights": {
+  "active_connections": [
+   {
+    "foreign_addr": "192.0.2.10",
+    "foreign_port": 443,
+    "local_port": 49700,
+    "pid": 9001,
+    "process": "sample.exe",
+    "state": "ESTABLISHED"
+   },
+   {
+    "foreign_addr": "198.51.100.7",
+    "foreign_port": 8080,
+    "local_port": 49701,
+    "pid": 9001,
+    "process": "sample.exe",
+    "state": "SYN_SENT"
+   },
+   {
+    "foreign_addr": "203.0.113.9",
+    "foreign_port": 53,
+    "local_port": 49702,
+    "pid": 9001,
+    "process": null,
+    "state": null
+   }
+  ],
+  "anomalous_parents": [
+   {
+    "expected_parents": [
+     "services.exe"
+    ],
+    "parent_pid": 9101,
+    "parent_process": "explorer.exe",
+    "pid": 9100,
+    "process": "svchost.exe"
+   }
+  ],
+  "mutex_summary": {
+   "most_shared": "Mutex112",
+   "most_shared_count": 9,
+   "total_handles": 143,
+   "unique_names": 120
+  },
+  "mutexes": [
+   {
+    "holder_count": 9,
+    "holders": [
+     {
+      "pid": 3880,
+      "process": "dwm.exe"
+     },
+     {
+      "pid": 5424,
+      "process": "svchost.exe"
+     },
+     {
+      "pid": 5712,
+      "process": "StartMenuExper"
+     },
+     {
+      "pid": 5636,
+      "process": "msedgewebview2"
+     },
+     {
+      "pid": 8884,
+      "process": "svchost.exe"
+     },
+     {
+      "pid": 3464,
+      "process": "svchost.exe"
+     },
+     {
+      "pid": 3944,
+      "process": "cleanmgr.exe"
+     },
+     {
+      "pid": 2008,
+      "process": "sample.exe"
+     },
+     {
+      "pid": 5936,
+      "process": "msedgewebview2"
+     }
+    ],
+    "mutex": "Mutex112",
+    "pid": 3880,
+    "process": "dwm.exe",
+    "unique_processes": [
+     "StartMenuExper",
+     "cleanmgr.exe",
+     "dwm.exe",
+     "msedgewebview2",
+     "sample.exe",
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 7,
+    "holders": [
+     {
+      "pid": 6592,
+      "process": "MsMpEng.exe"
+     },
+     {
+      "pid": 7700,
+      "process": "SecurityHealth"
+     },
+     {
+      "pid": 7360,
+      "process": "explorer.exe"
+     },
+     {
+      "pid": 5052,
+      "process": "RuntimeBroker."
+     },
+     {
+      "pid": 1936,
+      "process": "OneDrive.exe"
+     },
+     {
+      "pid": 8824,
+      "process": "RuntimeBroker."
+     },
+     {
+      "pid": 8348,
+      "process": "OneDriveStanda"
+     }
+    ],
+    "mutex": "Mutex96",
+    "pid": 6592,
+    "process": "MsMpEng.exe",
+    "unique_processes": [
+     "MsMpEng.exe",
+     "OneDrive.exe",
+     "OneDriveStanda",
+     "RuntimeBroker.",
+     "SecurityHealth",
+     "explorer.exe"
+    ]
+   },
+   {
+    "holder_count": 7,
+    "holders": [
+     {
+      "pid": 6592,
+      "process": "MsMpEng.exe"
+     },
+     {
+      "pid": 7700,
+      "process": "SecurityHealth"
+     },
+     {
+      "pid": 7360,
+      "process": "explorer.exe"
+     },
+     {
+      "pid": 5052,
+      "process": "RuntimeBroker."
+     },
+     {
+      "pid": 1936,
+      "process": "OneDrive.exe"
+     },
+     {
+      "pid": 8824,
+      "process": "RuntimeBroker."
+     },
+     {
+      "pid": 8348,
+      "process": "OneDriveStanda"
+     }
+    ],
+    "mutex": "Mutex97",
+    "pid": 6592,
+    "process": "MsMpEng.exe",
+    "unique_processes": [
+     "MsMpEng.exe",
+     "OneDrive.exe",
+     "OneDriveStanda",
+     "RuntimeBroker.",
+     "SecurityHealth",
+     "explorer.exe"
+    ]
+   },
+   {
+    "holder_count": 2,
+    "holders": [
+     {
+      "pid": 4,
+      "process": "System"
+     },
+     {
+      "pid": 844,
+      "process": "lsass.exe"
+     }
+    ],
+    "mutex": "Mutex0",
+    "pid": 4,
+    "process": "System",
+    "unique_processes": [
+     "System",
+     "lsass.exe"
+    ]
+   },
+   {
+    "holder_count": 2,
+    "holders": [
+     {
+      "pid": 2500,
+      "process": "svchost.exe"
+     },
+     {
+      "pid": 4072,
+      "process": "ctfmon.exe"
+     }
+    ],
+    "mutex": "Mutex47",
+    "pid": 2500,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "ctfmon.exe",
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 2,
+    "holders": [
+     {
+      "pid": 3140,
+      "process": "svchost.exe"
+     },
+     {
+      "pid": 2352,
+      "process": "WmiPrvSE.exe"
+     }
+    ],
+    "mutex": "Mutex66",
+    "pid": 3140,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "WmiPrvSE.exe",
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 620,
+      "process": "csrss.exe"
+     }
+    ],
+    "mutex": "Mutex1",
+    "pid": 620,
+    "process": "csrss.exe",
+    "unique_processes": [
+     "csrss.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 692,
+      "process": "wininit.exe"
+     }
+    ],
+    "mutex": "Mutex2",
+    "pid": 692,
+    "process": "wininit.exe",
+    "unique_processes": [
+     "wininit.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 692,
+      "process": "wininit.exe"
+     }
+    ],
+    "mutex": "Mutex3",
+    "pid": 692,
+    "process": "wininit.exe",
+    "unique_processes": [
+     "wininit.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 836,
+      "process": "services.exe"
+     }
+    ],
+    "mutex": "Mutex4",
+    "pid": 836,
+    "process": "services.exe",
+    "unique_processes": [
+     "services.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 844,
+      "process": "lsass.exe"
+     }
+    ],
+    "mutex": "Mutex5",
+    "pid": 844,
+    "process": "lsass.exe",
+    "unique_processes": [
+     "lsass.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 972,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex6",
+    "pid": 972,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 972,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex7",
+    "pid": 972,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 972,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex8",
+    "pid": 972,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1004,
+      "process": "fontdrvhost.ex"
+     }
+    ],
+    "mutex": "Mutex9",
+    "pid": 1004,
+    "process": "fontdrvhost.ex",
+    "unique_processes": [
+     "fontdrvhost.ex"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 624,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex10",
+    "pid": 624,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 624,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex11",
+    "pid": 624,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 832,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex12",
+    "pid": 832,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 832,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex13",
+    "pid": 832,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1212,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex14",
+    "pid": 1212,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1220,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex15",
+    "pid": 1220,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1260,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex16",
+    "pid": 1260,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1260,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex17",
+    "pid": 1260,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1464,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex18",
+    "pid": 1464,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1472,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex19",
+    "pid": 1472,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1480,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex20",
+    "pid": 1480,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1496,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex21",
+    "pid": 1496,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1528,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex22",
+    "pid": 1528,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1536,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex23",
+    "pid": 1536,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1656,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex24",
+    "pid": 1656,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1656,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex25",
+    "pid": 1656,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1696,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex26",
+    "pid": 1696,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1696,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex27",
+    "pid": 1696,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1772,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex28",
+    "pid": 1772,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1840,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex29",
+    "pid": 1840,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1840,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex30",
+    "pid": 1840,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1996,
+      "process": "python.exe"
+     }
+    ],
+    "mutex": "Mutex31",
+    "pid": 1996,
+    "process": "python.exe",
+    "unique_processes": [
+     "python.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1356,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex32",
+    "pid": 1356,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 1576,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex33",
+    "pid": 1576,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2076,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex34",
+    "pid": 2076,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2076,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex35",
+    "pid": 2076,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2088,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex36",
+    "pid": 2088,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2096,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex37",
+    "pid": 2096,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2096,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex38",
+    "pid": 2096,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2272,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex39",
+    "pid": 2272,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2312,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex40",
+    "pid": 2312,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2320,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex41",
+    "pid": 2320,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2388,
+      "process": "dllhost.exe"
+     }
+    ],
+    "mutex": "Mutex42",
+    "pid": 2388,
+    "process": "dllhost.exe",
+    "unique_processes": [
+     "dllhost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2388,
+      "process": "dllhost.exe"
+     }
+    ],
+    "mutex": "Mutex43",
+    "pid": 2388,
+    "process": "dllhost.exe",
+    "unique_processes": [
+     "dllhost.exe"
+    ]
+   },
+   {
+    "holder_count": 1,
+    "holders": [
+     {
+      "pid": 2464,
+      "process": "svchost.exe"
+     }
+    ],
+    "mutex": "Mutex44",
+    "pid": 2464,
+    "process": "svchost.exe",
+    "unique_processes": [
+     "svchost.exe"
+    ]
+   }
+  ],
+  "suspicious_cmdlines": [
+   {
+    "cmdline": "powershell.exe -nop -w hidden -enc QQBBAEEAQQBBAEEAQQBBAEEAQQBBAEEA",
+    "pattern": "-nop\\b",
+    "pid": 9001,
+    "process": "sample.exe"
+   },
+   {
+    "cmdline": "cmd.exe /c start sample.exe",
+    "pattern": "cmd\\.exe\\s*/c",
+    "pid": 9002,
+    "process": "cmd.exe"
+   },
+   {
+    "cmdline": "rundll32.exe C:\\Users\\user\\AppData\\Roaming\\lib.dll,Start",
+    "pattern": "rundll32",
+    "pid": 9003,
+    "process": "rundll32.exe"
+   }
+  ],
+  "suspicious_dlls": [
+   {
+    "dll_path": "C:\\ProgramData\\Vendor\\lib41.dll",
+    "pid": 6592,
+    "process": "MsMpEng.exe"
+   },
+   {
+    "dll_path": "C:\\Users\\user\\AppData\\Roaming\\Vendor\\lib74.dll",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   }
+  ],
+  "suspicious_files": [
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file8.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file12.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file17.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file18.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file21.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file22.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file24.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file12.dat",
+    "pid": 4,
+    "process": "System"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib34.dll",
+    "pid": 1220,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 1480,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 1496,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib54.dll",
+    "pid": 2076,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file56.dat",
+    "pid": 2320,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 2824,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib59.dll",
+    "pid": 2972,
+    "process": "spoolsv.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file62.dat",
+    "pid": 3132,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file63.dat",
+    "pid": 3132,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib64.dll",
+    "pid": 3140,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file65.dat",
+    "pid": 3140,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file70.dat",
+    "pid": 3320,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib71.dll",
+    "pid": 3872,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file72.dat",
+    "pid": 4048,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file73.dat",
+    "pid": 948,
+    "process": "AggregatorHost"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib74.dll",
+    "pid": 4444,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 5084,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file75.dat",
+    "pid": 6592,
+    "process": "MsMpEng.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file77.dat",
+    "pid": 6592,
+    "process": "MsMpEng.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\ProgramData\\Vendor\\file78.dat",
+    "pid": 6592,
+    "process": "MsMpEng.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 8104,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib80.dll",
+    "pid": 8104,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog82.exe",
+    "pid": 3880,
+    "process": "dwm.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\prog35.exe",
+    "pid": 4108,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file85.dat",
+    "pid": 4108,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file86.dat",
+    "pid": 7624,
+    "process": "svchost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib90.dll",
+    "pid": 7360,
+    "process": "explorer.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib91.dll",
+    "pid": 7360,
+    "process": "explorer.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file92.dat",
+    "pid": 7360,
+    "process": "explorer.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib93.dll",
+    "pid": 7360,
+    "process": "explorer.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib94.dll",
+    "pid": 7360,
+    "process": "explorer.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib95.dll",
+    "pid": 6436,
+    "process": "CrossDeviceRes"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file98.dat",
+    "pid": 2772,
+    "process": "SearchHost.exe"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib95.dll",
+    "pid": 5712,
+    "process": "StartMenuExper"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib74.dll",
+    "pid": 5052,
+    "process": "RuntimeBroker."
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib95.dll",
+    "pid": 5584,
+    "process": "RuntimeBroker."
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib90.dll",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Windows\\System32\\lib101.dll",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file102.dat",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file103.dat",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file104.dat",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   },
+   {
+    "path": "\\Device\\HarddiskVolume3\\Users\\user\\AppData\\Local\\Vendor\\file105.dat",
+    "pid": 5636,
+    "process": "msedgewebview2"
+   }
+  ]
+ },
+ "malfind_selected": [
+  {
+   "cape_confirmed": true,
+   "file_output": "Disabled",
+   "first_bytes_hex": "4883ec28488b051000000048894424204c8b4d00488b4d08488b55104c8b4518",
+   "pid": 972,
+   "process": "svchost.exe",
+   "protection": "PAGE_EXECUTE_READWRITE",
+   "score": 8,
+   "size": 4096,
+   "start_vpn": "0x1ccb2fa0000"
+  },
+  {
+   "file_output": "Disabled",
+   "first_bytes_hex": "4c6f61644c696272617279410047657450726f63416464726573730056697274",
+   "pid": 3092,
+   "process": "SecurityHealth",
+   "protection": "PAGE_EXECUTE_READWRITE",
+   "score": 4,
+   "size": 81920,
+   "start_vpn": "0x7ff979a20000"
+  },
+  {
+   "file_output": "Disabled",
+   "first_bytes_hex": "e8000000005d81ed051040008b450050ff1520304000c311",
+   "pid": 3092,
+   "process": "SecurityHealth",
+   "protection": "PAGE_EXECUTE_READWRITE",
+   "score": 3,
+   "size": 90112,
+   "start_vpn": "0x7ff979910000"
+  }
+ ],
+ "malfind_target_pids": [
+  972,
+  3092
+ ]
+}
