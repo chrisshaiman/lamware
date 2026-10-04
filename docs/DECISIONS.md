@@ -27,7 +27,7 @@ these describe an AWS data plane that no longer exists.
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live |
-| [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Decided (2026-10-03) — Live after #673 deploys |
+| [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
 
 ### Detonation environment
 
@@ -916,7 +916,7 @@ they are right to.**
 
 ## ADR-021: Hostile files are interpreted only inside a sandbox; agent tools are brokered by the orchestrator and executed in one
 
-**Status:** Decided (2026-10-03) — becomes Live when PR #673 is deployed
+**Status:** Live (2026-10-03) — PR #673 deployed and merged (5dda856); on the host each .NET tool call ran in a sandbox container (~0.45 s per call) with memory/pids limits enforced (cgroup controllers delegated to `pipeline`)
 **Issue:** #646 (the agentic .NET path is where the question came up; the decision is general)
 
 ### Decision
