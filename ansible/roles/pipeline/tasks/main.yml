@@ -265,48 +265,87 @@
 #
 # __pycache__ is excluded for correctness as well as speed — a stale .pyc shadowing
 # deployed source has bitten this project before.
-- name: Create local package tarball (excludes caches, tests, build artifacts)
-  ansible.builtin.command:
-    cmd: >
-      tar czf /tmp/lamware-pkg-src.tar.gz
-      --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache
-      --exclude=.ruff_cache --exclude=.hypothesis --exclude=tests
-      --exclude=build --exclude='*.egg-info' --exclude='*.pyc'
-      -C {{ playbook_dir }}/.. shared pipeline
-  delegate_to: localhost
-  become: false
-  changed_when: true
-
-- name: Upload package tarball
-  ansible.builtin.copy:
-    src: /tmp/lamware-pkg-src.tar.gz
-    dest: /tmp/lamware-pkg-src.tar.gz
-    mode: "0644"
-
-# `unarchive` OVERWRITES, it does not delete — anything absent from the archive survives
-# forever. Found on the live host: .pyc files from 2026-07-01 and .hypothesis state from
-# 07-21 still staged, the oldest file dating to 06-22. Switching to a tarball without this
-# would have made deploys fast while quietly preserving every cache the excludes exist to
-# remove, including the stale bytecode that can shadow deployed source.
 #
-# Only shared/ and pipeline/ live here, both rebuilt from the archive on every run, so a
-# clean re-stage costs nothing and makes the staged tree a function of the repo alone
-# rather than of deployment history.
-- name: Clear previously staged package source
-  ansible.builtin.file:
-    path: "{{ pipeline_install_dir }}/pkg/{{ item }}"
-    state: absent
-  loop:
-    - shared
-    - pipeline
+# The archive never lives at a fixed path in a shared /tmp (#537). It was
+# /tmp/lamware-pkg-src.tar.gz on both ends. On the host, `copy` keeps the
+# ownership of whatever already sits at dest (atomic_move chowns the new file to
+# the old one's uid), so any local user who pre-created that name owned the
+# uploaded archive and could rewrite it before root unpacked it into the tree
+# both venvs pip-install. On the controller, `tar czf` followed a symlink there.
+# Each end now gets its own mkdtemp directory (0700), removed in `always`.
+- name: Stage the package source through private temp directories
+  block:
+    - name: Create a private local directory for the package tarball
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-pkg-
+      delegate_to: localhost
+      become: false
+      register: pipeline_pkg_local_tmp
 
-- name: Extract package source on server
-  ansible.builtin.unarchive:
-    src: /tmp/lamware-pkg-src.tar.gz
-    dest: "{{ pipeline_install_dir }}/pkg/"
-    remote_src: true
-    owner: pipeline
-    group: lamware
+    - name: Create local package tarball (excludes caches, tests, build artifacts)
+      ansible.builtin.command:
+        cmd: >
+          tar czf {{ pipeline_pkg_local_tmp.path }}/lamware-pkg-src.tar.gz
+          --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache
+          --exclude=.ruff_cache --exclude=.hypothesis --exclude=tests
+          --exclude=build --exclude='*.egg-info' --exclude='*.pyc'
+          -C {{ playbook_dir }}/.. shared pipeline
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Create a private directory on the server for the package tarball
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-pkg-
+      register: pipeline_pkg_remote_tmp
+
+    - name: Upload package tarball
+      ansible.builtin.copy:
+        src: "{{ pipeline_pkg_local_tmp.path }}/lamware-pkg-src.tar.gz"
+        dest: "{{ pipeline_pkg_remote_tmp.path }}/lamware-pkg-src.tar.gz"
+        mode: "0600"
+
+    # `unarchive` OVERWRITES, it does not delete — anything absent from the archive survives
+    # forever. Found on the live host: .pyc files from 2026-07-01 and .hypothesis state from
+    # 07-21 still staged, the oldest file dating to 06-22. Switching to a tarball without this
+    # would have made deploys fast while quietly preserving every cache the excludes exist to
+    # remove, including the stale bytecode that can shadow deployed source.
+    #
+    # Only shared/ and pipeline/ live here, both rebuilt from the archive on every run, so a
+    # clean re-stage costs nothing and makes the staged tree a function of the repo alone
+    # rather than of deployment history.
+    - name: Clear previously staged package source
+      ansible.builtin.file:
+        path: "{{ pipeline_install_dir }}/pkg/{{ item }}"
+        state: absent
+      loop:
+        - shared
+        - pipeline
+
+    - name: Extract package source on server
+      ansible.builtin.unarchive:
+        src: "{{ pipeline_pkg_remote_tmp.path }}/lamware-pkg-src.tar.gz"
+        dest: "{{ pipeline_install_dir }}/pkg/"
+        remote_src: true
+        owner: pipeline
+        group: lamware
+
+  always:
+    - name: Remove the server's package tarball directory
+      ansible.builtin.file:
+        path: "{{ pipeline_pkg_remote_tmp.path }}"
+        state: absent
+      when: pipeline_pkg_remote_tmp.path is defined
+
+    - name: Remove the local package tarball directory
+      ansible.builtin.file:
+        path: "{{ pipeline_pkg_local_tmp.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: pipeline_pkg_local_tmp.path is defined
 
 - name: Ensure staged package source is traversable by the lamware group
   # Both the pipeline venv (owner) and the api venv (group lamware) install

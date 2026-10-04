@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import stat
+import tempfile
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -176,9 +177,16 @@ def _update_state(updates: dict) -> bool:
 
     Reads the existing state, applies updates, writes back atomically via a
     temp file rename. Returns True on success, False on failure.
+
+    The temp file is made by mkstemp (random name, O_EXCL) in state.json's own
+    directory. It was the fixed ``state.json.tmp``, opened with a plain
+    open("w") and then chmod'ed by path: the directory is group ``lamware``
+    2770 and not sticky, so any lamware member (the pipeline user among them)
+    could plant that name as a symlink and have the API write the state JSON
+    to, and chmod, a file of its choosing (#537).
     """
     state_path = settings.auto_feeder_state
-    tmp_path = state_path + ".tmp"
+    tmp_path: str | None = None
 
     try:
         try:
@@ -200,12 +208,22 @@ def _update_state(updates: dict) -> bool:
 
         state.update(updates)
 
-        with open(tmp_path, "w") as f:
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".state.json.", dir=os.path.dirname(state_path) or ".")
+        with os.fdopen(fd, "w") as f:
             json.dump(state, f, indent=2, default=str)
+            # On the descriptor, not the path: nothing can swap what it names.
+            os.fchmod(f.fileno(), orig_mode)
 
-        os.chmod(tmp_path, orig_mode)
         os.replace(tmp_path, state_path)
+        tmp_path = None
         return True
     except Exception as exc:
         log.error("Failed to update state.json: %s", exc)
         return False
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass

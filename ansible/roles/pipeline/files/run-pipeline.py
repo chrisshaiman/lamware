@@ -49,7 +49,12 @@ from stages.cape import (
     submit_to_cape,
 )
 from stages.correlated_evidence import evidence_for_interpret
-from stages.dotnet import find_dotnet_extractions, is_dotnet_binary, run_dotnet_analysis
+from stages.dotnet import (
+    analyse_dotnet_extractions,
+    find_dotnet_extractions,
+    is_dotnet_binary,
+    run_dotnet_analysis,
+)
 from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
 from stages.dotnet_tools import is_agentic_dotnet
 from stages.ghidra import (
@@ -870,12 +875,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
         if dotnet_extractions:
             log.info(f"\n[Stage 4] .NET payload(s) found in Cape extractions ({len(dotnet_extractions)}):")
-            # Analyze the first (largest) .NET extraction
-            best = max(dotnet_extractions, key=lambda x: x["size"])
-            log.info(f"  Analyzing: {best['source_dir']}/{best['sha256'][:16]}... ({best['size']} bytes)")
-            dotnet_result = run_dotnet_analysis(
-                Path(best["path"]), output_dir, dotnet_cmd=DOTNET_CMD)
-            dotnet_result["extraction_source"] = best
+            # Analyse the largest; every carve is deleted afterwards, even if
+            # the analysis raised (#537). extraction_source records where.
+            dotnet_result = analyse_dotnet_extractions(
+                dotnet_extractions, output_dir, dotnet_cmd=DOTNET_CMD)
             report["dotnet_analysis"] = dotnet_result
             if dotnet_result.get("analysis_success"):
                 source_len = dotnet_result.get("decompilation", {}).get("source_length", 0)
