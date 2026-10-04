@@ -202,11 +202,110 @@ def extract_shellcode_artifacts(dump_path: Path) -> dict:
     return {k: v for k, v in artifacts.items() if v}
 
 
+# -------------------------------------------------------------------------
+# Shape-checked reads of plugin output (#171)
+# -------------------------------------------------------------------------
+#
+# Plugin output describes the guest: process names, command lines, DLL paths
+# and handle names are whatever the sample made them. The readers below used
+# `entry.get("Args", "").lower()`, and dict.get(k, default) returns the default
+# only when k is ABSENT, so a row that was not an object, or a field present
+# with the wrong type, raised. Nothing in run_volatility caught it and
+# run-pipeline catches only TimeoutError there, so one wrong-typed field threw
+# away every plugin's output after the plugins had already run.
+#
+# Every read goes through _Row instead, the same rule as db_ingest's _Node:
+#   - absent              -> the caller's default (exactly what .get gave)
+#   - null                -> None where the value is only copied into the
+#                            insight (as before); the default where the code
+#                            operates on it (null used to raise there)
+#   - present, right type -> the value, unchanged
+#   - present, wrong type -> the default, AND a warning naming the path
+# A row that is not an object is skipped with a warning. Warnings land in
+# volatility.parse_warnings; a well-formed output produces none.
+#
+# _Node itself is not imported: db_ingest loads PipelineConfig and psycopg2 at
+# import and its integer() enforces int4 column ranges, neither of which means
+# anything for plugin output.
+
+_MAX_PARSE_WARNINGS = 50   # 60k handle rows of junk are one problem, not 60k
+
+
+def _type_name(value) -> str:
+    return {dict: "object", list: "array", str: "string", bool: "boolean",
+            int: "integer", float: "number", type(None): "null"}.get(
+                type(value), type(value).__name__)
+
+
+class _Row:
+    """One object in a plugin's JSON output, with typed reads that never raise.
+
+    `path` is built from plugin names, our own key names and list indices —
+    never from plugin output — so a warning cannot carry guest-chosen text.
+    """
+
+    __slots__ = ("data", "path", "warnings")
+
+    def __init__(self, data: dict, path: str, warnings: list[str]):
+        self.data = data
+        self.path = path
+        self.warnings = warnings
+
+    def _read(self, key: str, default, nullable: bool, ok, expected: str):
+        if key not in self.data:
+            return default
+        value = self.data[key]
+        if value is None:
+            return None if nullable else default
+        if ok(value):
+            return value
+        self.warnings.append(
+            f"{self.path}.{key}: expected {expected}, got {_type_name(value)} — not read")
+        return default
+
+    def text(self, key: str, default: str | None = "", nullable: bool = True) -> str | None:
+        return self._read(key, default, nullable, lambda v: isinstance(v, str), "string")
+
+    def integer(self, key: str, default: int | None = 0, nullable: bool = True) -> int | None:
+        """An int. bool is not one here, though Python says it is."""
+        return self._read(key, default, nullable, lambda v: type(v) is int, "integer")
+
+
+def _rows(output, name: str, warnings: list[str]) -> list[_Row]:
+    """The object rows of one plugin's output.
+
+    A dict is run_single_plugin's {"error": ...} and null means the plugin
+    did not run; both were skipped silently before and still are (the failure
+    is already recorded in volatility.plugins). Any other non-list, and any
+    row that is not an object, is skipped with a warning.
+    """
+    if output is None or isinstance(output, dict):
+        return []
+    if not isinstance(output, list):
+        warnings.append(f"{name}: expected array, got {_type_name(output)} — not read")
+        return []
+    rows = []
+    for i, item in enumerate(output):
+        if isinstance(item, dict):
+            rows.append(_Row(item, f"{name}[{i}]", warnings))
+        else:
+            warnings.append(f"{name}[{i}]: expected object, got {_type_name(item)} — row skipped")
+    return rows
+
+
+def _capped(warnings: list[str]) -> list[str]:
+    if len(warnings) <= _MAX_PARSE_WARNINGS:
+        return list(warnings)
+    return warnings[:_MAX_PARSE_WARNINGS] + [
+        f"... and {len(warnings) - _MAX_PARSE_WARNINGS} more"]
+
+
 def filter_malfind_json(vol_malfind_output, malfind_min_size: int,
                         malfind_max_size: int, malfind_min_score: int,
                         malfind_max_candidates: int,
                         malfind_benign_processes: list[str],
-                        cape_injection_pids: list[int] | None = None) -> tuple[list[dict], set[int]]:
+                        cape_injection_pids: list[int] | None = None,
+                        warnings: list[str] | None = None) -> tuple[list[dict], set[int]]:
     """Filter malfind JSON metadata to identify shellcode candidates.
 
     Two-pass approach: this runs first (no disk I/O) to decide which PIDs
@@ -215,9 +314,14 @@ def filter_malfind_json(vol_malfind_output, malfind_min_size: int,
     If cape_injection_pids is provided, regions in those PIDs get a +5 score
     boost — Cape already confirmed injection into those processes.
 
+    Rows and fields of the wrong shape are skipped, and named in `warnings`
+    when the caller passes a list (see _Row).
+
     Returns (selected_regions, target_pids) where target_pids is the set of
     PIDs that produced at least one selected region.
     """
+    if warnings is None:
+        warnings = []
     cape_pids = set(cape_injection_pids or [])
     if cape_pids:
         print(f"    Cape injection PIDs (priority): {sorted(cape_pids)}")
@@ -231,14 +335,19 @@ def filter_malfind_json(vol_malfind_output, malfind_min_size: int,
     # Step 1: Size filter — compute from VPN range, not from a file on disk
     candidates = []
     size_filtered = 0
-    for entry in vol_malfind_output:
-        pid = entry.get("PID", 0)
-        process = entry.get("Process", "unknown")
-        start_vpn = entry.get("Start VPN", 0)
-        end_vpn = entry.get("End VPN", 0)
+    for row in _rows(vol_malfind_output, "malfind", warnings):
+        # PID and Process feed set membership, .lower() and the --pid argv,
+        # so null takes the default here rather than passing through.
+        pid = row.integer("PID", 0, nullable=False)
+        process = row.text("Process", "unknown", nullable=False)
+        # No default: a region without integer bounds has no size, so it is
+        # size-filtered (absent bounds used to read as 0..0, size 1, which the
+        # deployed malfind_min_size of 256 dropped too).
+        start_vpn = row.integer("Start VPN", None)
+        end_vpn = row.integer("End VPN", None)
 
         # Region size from address range
-        if isinstance(start_vpn, int) and isinstance(end_vpn, int) and end_vpn >= start_vpn:
+        if start_vpn is not None and end_vpn is not None and end_vpn >= start_vpn:
             size = end_vpn - start_vpn + 1
         else:
             size = 0
@@ -247,15 +356,15 @@ def filter_malfind_json(vol_malfind_output, malfind_min_size: int,
             size_filtered += 1
             continue
 
-        start_vpn_str = f"0x{start_vpn:x}" if isinstance(start_vpn, int) else str(start_vpn)
         candidates.append({
             "pid": pid,
             "process": process,
-            "start_vpn": start_vpn_str,
+            "start_vpn": f"0x{start_vpn:x}",
             "size": size,
-            "protection": entry.get("Protection", ""),
-            "file_output": entry.get("File output", ""),
-            "_hexdump": entry.get("Hexdump", ""),
+            "protection": row.text("Protection", ""),
+            # run-pipeline joins this onto a Path; a non-string raised there.
+            "file_output": row.text("File output", ""),
+            "_hexdump": row.text("Hexdump", "", nullable=False),
         })
 
     print(f"    Size filter: kept {len(candidates)}/{len(vol_malfind_output)} (dropped {size_filtered})")
@@ -588,6 +697,9 @@ def run_volatility(cape_data: dict, output_dir: Path,
             if short_name == "netscan" and isinstance(plugin_output, list):
                 result["summary"]["suspicious_connections"] = len(plugin_output)
 
+    # Rows and fields of plugin output that had the wrong shape (see _Row).
+    parse_warnings: list[str] = []
+
     # Malfind post-processing — runs after all plugins complete
     malfind_output = result["plugins"].get("malfind")
     if isinstance(malfind_output, list):
@@ -607,6 +719,7 @@ def run_volatility(cape_data: dict, output_dir: Path,
                     malfind_max_candidates=malfind_max_candidates,
                     malfind_benign_processes=malfind_benign_processes,
                     cape_injection_pids=cape_injection_pids,
+                    warnings=parse_warnings,
                 )
                 if target_pids and active_dump.exists():
                     malfind_dump_dir = run_targeted_malfind_dump(
@@ -705,7 +818,14 @@ def run_volatility(cape_data: dict, output_dir: Path,
     # Pipeline user intentionally does NOT have delete permission on CAPE storage.
 
     # Extract insights from all plugin outputs
-    result["insights"] = extract_volatility_insights(result.get("plugins", {}))
+    result["insights"] = extract_volatility_insights(result.get("plugins", {}),
+                                                     warnings=parse_warnings)
+    if parse_warnings:
+        # Only when there are any, so a well-formed run's report is unchanged.
+        # The text is built from key names and indices, never plugin output.
+        result["parse_warnings"] = _capped(parse_warnings)
+        print(f"    [!] {len(parse_warnings)} malformed plugin row(s)/field(s) not read; "
+              f"first: {parse_warnings[0]}")
     insights = result["insights"]
     if insights:
         items = []
@@ -734,18 +854,29 @@ def run_volatility(cape_data: dict, output_dir: Path,
     print(f"    Volatility total: {vol_elapsed:.0f}s (plugins: {plugins_elapsed:.0f}s)")
 
     return result
-def extract_volatility_insights(plugins: dict) -> dict:
+
+
+def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None) -> dict:
     """Extract actionable intelligence from Volatility plugin outputs.
 
     Processes psscan, pstree, cmdline, netscan, dlllist, and handles
     to find suspicious patterns, IOCs, and anomalies.
+
+    Every read is shape-checked (_Row): a row or field of the wrong type is
+    skipped and named in `warnings` when the caller passes a list, and the
+    rest of the output is still read.
     """
     import re
+    if warnings is None:
+        warnings = []
     insights = {}
+    if not isinstance(plugins, dict):
+        warnings.append(f"plugins: expected object, got {_type_name(plugins)} — not read")
+        return insights
 
     # --- cmdline: suspicious command lines ---
-    cmdline = plugins.get("cmdline", [])
-    if isinstance(cmdline, list):
+    cmdline = _rows(plugins.get("cmdline"), "cmdline", warnings)
+    if cmdline:
         suspicious_cmdlines = []
         suspicious_patterns = [
             r'-ep\s+bypass', r'-nop\b', r'-w\s+hidden', r'-enc\s+',
@@ -756,11 +887,11 @@ def extract_volatility_insights(plugins: dict) -> dict:
             r'powershell.*-e\s+[A-Za-z0-9+/=]{20,}',  # encoded powershell
         ]
         for entry in cmdline:
-            pid = entry.get("PID", 0)
-            name = entry.get("Process", "")
-            args = entry.get("Args", "")
+            args = entry.text("Args", "", nullable=False)
             if not args:
                 continue
+            pid = entry.integer("PID", 0)
+            name = entry.text("Process", "")
             args_lower = args.lower()
             for pattern in suspicious_patterns:
                 if re.search(pattern, args_lower):
@@ -775,46 +906,40 @@ def extract_volatility_insights(plugins: dict) -> dict:
             insights["suspicious_cmdlines"] = suspicious_cmdlines
 
     # --- netscan: active network connections ---
-    netscan = plugins.get("netscan", [])
-    if isinstance(netscan, list):
+    netscan = _rows(plugins.get("netscan"), "netscan", warnings)
+    if netscan:
         active_connections = []
         for conn in netscan:
-            foreign_addr = conn.get("ForeignAddr", "")
-            foreign_port = conn.get("ForeignPort", 0)
-            local_port = conn.get("LocalPort", 0)
-            state = conn.get("State", "")
-            owner = conn.get("Owner", "")
-            pid = conn.get("PID", 0)
+            foreign_addr = conn.text("ForeignAddr", "", nullable=False)
 
             # Skip localhost and empty
             if not foreign_addr or foreign_addr in ("0.0.0.0", "::", "*", "127.0.0.1"):
                 continue
 
             active_connections.append({
-                "pid": pid,
-                "process": owner,
+                "pid": conn.integer("PID", 0),
+                "process": conn.text("Owner", ""),
                 "foreign_addr": foreign_addr,
-                "foreign_port": foreign_port,
-                "local_port": local_port,
-                "state": state,
+                "foreign_port": conn.integer("ForeignPort", 0),
+                "local_port": conn.integer("LocalPort", 0),
+                "state": conn.text("State", ""),
             })
         if active_connections:
             insights["active_connections"] = active_connections
 
     # --- handles: mutex IOCs and suspicious file handles ---
-    handles = plugins.get("handles", [])
-    if isinstance(handles, list):
+    handles = _rows(plugins.get("handles"), "handles", warnings)
+    if handles:
         mutex_holders = {}  # name → list of (pid, process)
         suspicious_files = []
 
         for handle in handles:
-            handle_type = handle.get("Type", "")
-            name = handle.get("Name", "")
-            pid = handle.get("PID", 0)
-            process = handle.get("Process", "")
-
+            name = handle.text("Name", "", nullable=False)
             if not name:
                 continue
+            handle_type = handle.text("Type", "")
+            pid = handle.integer("PID", 0)
+            process = handle.text("Process", "")
 
             # Mutant/Mutex handles — often unique per malware family
             if handle_type in ("Mutant", "Mutex"):
@@ -865,15 +990,11 @@ def extract_volatility_insights(plugins: dict) -> dict:
             insights["suspicious_files"] = suspicious_files[:50]
 
     # --- dlllist: DLLs loaded from unusual paths ---
-    dlllist = plugins.get("dlllist", [])
-    if isinstance(dlllist, list):
+    dlllist = _rows(plugins.get("dlllist"), "dlllist", warnings)
+    if dlllist:
         suspicious_dlls = []
         for entry in dlllist:
-            path = entry.get("Path", "")
-            name = entry.get("Name", "")
-            pid = entry.get("PID", 0)
-            process = entry.get("Process", "")
-
+            path = entry.text("Path", "", nullable=False)
             if not path:
                 continue
 
@@ -885,8 +1006,8 @@ def extract_volatility_insights(plugins: dict) -> dict:
                 # Skip known legitimate paths
                 if "\\appdata\\local\\microsoft\\" not in path_lower:
                     suspicious_dlls.append({
-                        "pid": pid,
-                        "process": process,
+                        "pid": entry.integer("PID", 0),
+                        "process": entry.text("Process", ""),
                         "dll_path": path,
                     })
 
@@ -901,8 +1022,8 @@ def extract_volatility_insights(plugins: dict) -> dict:
             insights["suspicious_dlls"] = unique_dlls[:30]
 
     # --- pstree: anomalous parent-child relationships ---
-    pstree = plugins.get("pstree", [])
-    if isinstance(pstree, list):
+    pstree = _rows(plugins.get("pstree"), "pstree", warnings)
+    if pstree:
         anomalous_parents = []
         # Normal parent-child expectations
         expected_parents = {
@@ -915,18 +1036,25 @@ def extract_volatility_insights(plugins: dict) -> dict:
             "services.exe": ["wininit.exe"],
             "explorer.exe": ["userinit.exe", "winlogon.exe"],
         }
+        # Each row is read once: the parent lookup below is O(n^2), and
+        # reading inside it would repeat every warning n times. The lookup
+        # matches on the PID as .get("PID") saw it (absent -> None); the
+        # insight reports an absent PID as 0, as .get("PID", 0) did.
+        procs = []
+        for row in pstree:
+            pid = row.integer("PID", None)
+            procs.append((row.text("ImageFileName", "", nullable=False).lower(),
+                          row.integer("PPID", 0),
+                          pid if "PID" in row.data else 0,
+                          pid))
         # pstree format varies — check if we have parent info
-        for entry in pstree:
-            name = entry.get("ImageFileName", "").lower()
-            ppid = entry.get("PPID", 0)
-            pid = entry.get("PID", 0)
-
+        for name, ppid, pid, _ in procs:
             if name in expected_parents:
                 # Find parent process name
                 parent = None
-                for p in pstree:
-                    if p.get("PID") == ppid:
-                        parent = p.get("ImageFileName", "").lower()
+                for p_name, _, _, p_pid in procs:
+                    if p_pid == ppid:
+                        parent = p_name
                         break
                 if parent and parent not in expected_parents[name]:
                     anomalous_parents.append({
