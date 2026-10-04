@@ -17,6 +17,7 @@ import re
 import stat
 import subprocess
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -216,6 +217,20 @@ def extract_shellcode_artifacts(dump_path: Path | str) -> dict:
     return artifacts_from_bytes(data)
 
 
+def _first_seen(items: Iterable[str], cap: int) -> list[str]:
+    """The distinct items in the order they first occur in the region, at most `cap`.
+
+    Was `list(set(items))[:cap]`. A set of str iterates in an order that
+    follows PYTHONHASHSEED, random per process, so the same region gave a
+    different order every run and, past the cap, a different selection
+    (#689). These lists reach Ghidra results and the RE agent. Offset order
+    is the order `pe_offsets` and `interesting_strings` already use, and at
+    the cap it keeps what lies nearest the region's start rather than what
+    sorts first.
+    """
+    return list(dict.fromkeys(items))[:cap]
+
+
 def artifacts_from_bytes(data: bytes) -> dict:
     """The scan behind `extract_shellcode_artifacts`, over bytes already read.
 
@@ -260,15 +275,15 @@ def artifacts_from_bytes(data: bytes) -> dict:
 
     # File paths (Windows-style)
     paths = _PATH_RE.findall(text)
-    artifacts["file_paths"] = list(set(paths))[:20]
+    artifacts["file_paths"] = _first_seen(paths, 20)
 
     # DLL names
     dlls = _dll_names(text)
-    artifacts["dll_names"] = list(set(d for d in dlls if len(d) > 5))[:20]
+    artifacts["dll_names"] = _first_seen((d for d in dlls if len(d) > 5), 20)
 
     # URLs
     urls = _URL_RE.findall(text)
-    artifacts["urls"] = list(set(urls))[:20]
+    artifacts["urls"] = _first_seen(urls, 20)
 
     # IP addresses
     ips = _IP_RE.findall(text)
@@ -277,11 +292,11 @@ def artifacts_from_bytes(data: bytes) -> dict:
         parts = ip.split(".")
         if all(0 <= int(p) <= 255 for p in parts) and ip not in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
             valid_ips.append(ip)
-    artifacts["ip_addresses"] = list(set(valid_ips))[:20]
+    artifacts["ip_addresses"] = _first_seen(valid_ips, 20)
 
     # Registry keys
     reg_keys = _registry_keys(text)
-    artifacts["registry_keys"] = list(set(reg_keys))[:10]
+    artifacts["registry_keys"] = _first_seen(reg_keys, 10)
 
     # Embedded PE (MZ header anywhere in the dump)
     mz_offsets = []
@@ -1082,7 +1097,13 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
             mutexes = []
             for name, holders in sorted(mutex_holders.items(),
                                         key=lambda x: len(x[1]), reverse=True):
-                unique_processes = list({h["process"] for h in holders})
+                # Sorted, not list(set(...)): a set of str iterates in an order
+                # that follows PYTHONHASHSEED, which is random per process, so
+                # the same handles gave the RE agent a different list each run
+                # (#689). Holder order already lives in `holders`; this is a
+                # membership list. Process may be null, hence the key.
+                unique_processes = sorted({h["process"] for h in holders},
+                                          key=lambda p: (p is None, p or ""))
                 mutexes.append({
                     "mutex": name,
                     "holder_count": len(holders),
