@@ -33,7 +33,7 @@ def calls(monkeypatch):
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="stub")
 
     monkeypatch.setattr(ghidra.subprocess, "run", fake_run)
-    monkeypatch.setattr(ghidra, "extract_shellcode_artifacts", lambda _p: {})
+    monkeypatch.setattr(ghidra, "scan_shellcode_artifacts", lambda _p: ({}, None))
     return seen
 
 

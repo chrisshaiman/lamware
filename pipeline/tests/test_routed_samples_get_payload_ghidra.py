@@ -317,7 +317,7 @@ def test_cape_type_survives_to_the_ghidra_result(tmp_path, monkeypatch):
     import subprocess
     payload = tmp_path / "p.bin"
     payload.write_bytes(b"\x90" * 2048)
-    monkeypatch.setattr(ghidra, "extract_shellcode_artifacts", lambda _p: {})
+    monkeypatch.setattr(ghidra, "scan_shellcode_artifacts", lambda _p: ({}, None))
     monkeypatch.setattr(ghidra.subprocess, "run", lambda cmd, **_k: subprocess.CompletedProcess(
         cmd, 0, stdout='{"analysis_success": true, "functions_count": 3}', stderr=""))
     cand = {"source": "cape_payload", "pid": 0, "injection_address": "N/A",

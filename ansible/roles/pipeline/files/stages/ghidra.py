@@ -26,7 +26,7 @@ from lamware_shared.cape_payloads import (
     find_pe_payloads,
 )
 
-from stages.volatility import extract_shellcode_artifacts
+from stages.volatility import scan_shellcode_artifacts
 
 # Cape signatures that indicate dropped/unpacked payloads worth analyzing
 GHIDRA_TRIGGERS = [
@@ -447,6 +447,22 @@ def _content_token(candidate: dict) -> str:
     return sha[:12].lower()
 
 
+def _record_scan_error(result: dict, scan_error: str | None) -> dict:
+    """Carry a failed artifact scan onto the per-file result (#678).
+
+    `shellcode_artifacts_error` holds the message; `analysis_warnings` gets a
+    line naming only the exception type, so collect_analysis_warnings lifts it
+    to the report without the message's text reaching the interpret prompt.
+    """
+    if scan_error:
+        result["shellcode_artifacts_error"] = scan_error
+        kind = scan_error.split(":", 1)[0]
+        result["analysis_warnings"] = [
+            *(result.get("analysis_warnings") or []),
+            f"artifact scan of this region failed ({kind}); its strings, APIs and paths are missing"]
+    return result
+
+
 def run_ghidra_shellcode(candidate: dict, output_dir: Path,
                          ghidra_cmd: str) -> dict:
     """Run artifact extraction and optionally Ghidra on a shellcode candidate.
@@ -461,10 +477,12 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
         base_addr = f"0x{base_addr:x}"
     source = candidate.get("source", "malfind_injection")
 
-    # Use pre-extracted artifacts from Cape, or extract from dump file
+    # Use pre-extracted artifacts from Cape, or extract from dump file. A scan
+    # that already failed upstream is not repeated: it would fail the same way.
     artifacts = candidate.get("shellcode_artifacts")
-    if not artifacts:
-        artifacts = extract_shellcode_artifacts(dump_path)
+    scan_error = candidate.get("shellcode_artifacts_error")
+    if not artifacts and not scan_error:
+        artifacts, scan_error = scan_shellcode_artifacts(dump_path)
     if artifacts:
         api_count = len(artifacts.get("resolved_apis", []))
         path_count = len(artifacts.get("file_paths", []))
@@ -490,7 +508,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
             result["source_pid"] = candidate.get("source_pid")
         if artifacts:
             result["shellcode_artifacts"] = artifacts
-        return result
+        return _record_scan_error(result, scan_error)
 
     # After the early return: an artifact-only buffer never gets a project, so
     # it must not fail on naming one.
@@ -506,7 +524,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
             timeout=300,
         )
         if result.returncode != 0:
-            return {
+            return _record_scan_error({
                 "source": "malfind_injection",
                 "pid": candidate.get("pid"),
                 "process": candidate.get("process"),
@@ -515,26 +533,26 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
                 "filter_score": candidate.get("score"),
                 "shellcode_artifacts": artifacts or {},
                 "error": result.stderr[:200],
-            }
+            }, scan_error)
         analysis = json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return {
+        return _record_scan_error({
             "source": "malfind_injection",
             "pid": candidate.get("pid"),
             "process": candidate.get("process"),
             "injection_address": base_addr,
             "shellcode_artifacts": artifacts or {},
             "error": "timeout (300s)",
-        }
+        }, scan_error)
     except json.JSONDecodeError:
-        return {
+        return _record_scan_error({
             "source": "malfind_injection",
             "pid": candidate.get("pid"),
             "process": candidate.get("process"),
             "injection_address": base_addr,
             "shellcode_artifacts": artifacts or {},
             "error": "invalid JSON from Ghidra",
-        }
+        }, scan_error)
 
     analysis["source"] = source
     # CAPE's own label for the payload ("Formbook Payload"). The agent's input is
@@ -555,7 +573,7 @@ def run_ghidra_shellcode(candidate: dict, output_dir: Path,
     # the note in run_ghidra_on_file (#390).
     analysis["host_output_dir"] = str(sc_output)
 
-    return analysis
+    return _record_scan_error(analysis, scan_error)
 
 
 def _pick_openable(ranked: list[dict], host_project_of, verify, warnings):

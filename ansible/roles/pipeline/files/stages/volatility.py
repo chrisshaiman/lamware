@@ -12,6 +12,9 @@ License: Apache 2.0
 import hashlib
 import json
 import math
+import os
+import re
+import stat
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -92,22 +95,132 @@ def _score_shellcode(first_bytes: bytes) -> int:
     return max(score, 0)
 
 
-def extract_shellcode_artifacts(dump_path: Path) -> dict:
+# The scan reads at most this many bytes from the head of each region, whatever
+# the region's size (CAPE payloads on the host reach 61 MB). Every pattern below
+# must be linear in it: the bytes are the sample's choice (#678).
+ARTIFACT_SCAN_BYTES = 65536
+
+_PATH_RE = re.compile(r'[A-Z]:\\[\w\\.-]+\.\w{1,5}')
+_URL_RE = re.compile(r'https?://[^\x00\s\'"<>]{5,200}')
+_IP_RE = re.compile(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
+_MUTEX_RE = re.compile(r'(?:Global\\|Local\\)[\w-]+')
+_UA_RE = re.compile(r'Mozilla/[\d.]+[^"\x00]{10,100}')
+# Runs the two rewritten scans below work over. Each is a single-character-class
+# repeat, so the engine never backtracks into it.
+_DLL_RUN_RE = re.compile(r'[\w.-]+')
+_REG_RUN_RE = re.compile(r'[\w\\]+')
+_REG_LITERALS = ("SOFTWARE", "CurrentVersion", "Run", "Services")
+
+
+def _dll_names(text: str) -> list[str]:
+    r"""`re.findall(r'[\w.-]+\.dll', text, re.IGNORECASE)`, in linear time.
+
+    The regex retried from every position of a `[\w.-]` run that had no
+    `.dll`, scanning to the run's end each time: 9-12 s on 64 KB of `a.`
+    or `.dl` (#678). Every character of a match is in `[\w.-]`, so a match
+    lies inside one maximal run; the leftmost start is the run's first
+    character, greedy backtracking stops at the run's LAST `.dll`, and
+    nothing of the run is left over to match again. One `rfind` per run.
+    """
+    out = []
+    for m in _DLL_RUN_RE.finditer(text):
+        run = m.group()
+        end = run.lower().rfind(".dll")
+        if end >= 1:            # `[\w.-]+` needs one character before it
+            out.append(run[:end + 4])
+    return out
+
+
+def _registry_keys(text: str) -> list[str]:
+    r"""`re.findall(r'(?:HKEY_[\w]+|SOFTWARE|CurrentVersion|Run|Services)\\[\w\\]+', text)`,
+    in linear time.
+
+    `HKEY_\w+` scanned to the end of its backslash-free segment from every
+    `HKEY_` in it: 2.7 s on 64 KB of repeated `HKEY_` (#678). A match lies
+    inside one maximal `[\w\\]` run and always extends to that run's end (the
+    trailing `[\w\\]+` is greedy and nothing follows it), so a run yields at
+    most one match: the run from its leftmost valid start. A start is valid
+    only in a segment (text between backslashes) that is followed by a
+    backslash and then one more character; in such a segment it is the first
+    `HKEY_` with a word character after it, or a literal ending the segment.
+    """
+    out = []
+    for m in _REG_RUN_RE.finditer(text):
+        run = m.group()
+        seg_start = 0
+        while True:
+            bs = run.find("\\", seg_start)
+            if bs < 0 or bs + 1 >= len(run):
+                break           # last segment, or the backslash ends the run
+            seg = run[seg_start:bs]
+            starts = []
+            h = seg.find("HKEY_")
+            if 0 <= h and h + 5 < len(seg):
+                starts.append(h)
+            starts.extend(len(seg) - len(lit) for lit in _REG_LITERALS if seg.endswith(lit))
+            if starts:
+                out.append(run[seg_start + min(starts):])
+                break
+            seg_start = bs + 1
+    return out
+
+
+def _read_head(dump_path: Path | str) -> bytes | None:
+    """The first ARTIFACT_SCAN_BYTES of a regular file, or None.
+
+    Non-blocking open, then a regular-file check on the open descriptor: a
+    plain `open()` on a FIFO with no writer never returns (#678's probe).
+    """
+    try:
+        fd = os.open(dump_path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            return f.read(ARTIFACT_SCAN_BYTES)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def scan_shellcode_artifacts(dump_path: Path | str) -> tuple[dict, str | None]:
+    """`extract_shellcode_artifacts`, never raising: `(artifacts, error)`.
+
+    Callers run it once per region the sample produced; one region must not
+    be able to end the stage for the rest (#678). The error, when there is
+    one, is for the caller to record on that candidate.
+    """
+    try:
+        return extract_shellcode_artifacts(dump_path), None
+    except Exception as e:  # noqa: BLE001 - recorded on the candidate, not swallowed
+        return {}, f"{type(e).__name__}: {e}"[:300]
+
+
+def extract_shellcode_artifacts(dump_path: Path | str) -> dict:
     """Extract forensic artifacts from a raw memory dump.
 
     Scans the dump bytes for API names, file paths, DLL names, URLs, IPs,
     embedded PE headers, and other strings of interest. These artifacts are
     often more valuable than decompilation — they reveal what the injected
     code was designed to do without needing to find function boundaries.
+
+    Only the first ARTIFACT_SCAN_BYTES are read, and every scan is linear in
+    them. Pipeline callers use `scan_shellcode_artifacts`, which cannot raise.
     """
-    import re as _re
-
-    try:
-        with dump_path.open("rb") as f:
-            data = f.read(65536)  # first 64KB is plenty
-    except OSError:
+    data = _read_head(dump_path)
+    if data is None:
         return {}
+    return artifacts_from_bytes(data)
 
+
+def artifacts_from_bytes(data: bytes) -> dict:
+    """The scan behind `extract_shellcode_artifacts`, over bytes already read.
+
+    Separate so its growth rate can be measured past the read cap (#678).
+    """
     text = data.decode("ascii", errors="ignore")
 
     artifacts = {
@@ -146,19 +259,19 @@ def extract_shellcode_artifacts(dump_path: Path) -> dict:
             artifacts["resolved_apis"].append(api)
 
     # File paths (Windows-style)
-    paths = _re.findall(r'[A-Z]:\\[\w\\.-]+\.\w{1,5}', text)
+    paths = _PATH_RE.findall(text)
     artifacts["file_paths"] = list(set(paths))[:20]
 
     # DLL names
-    dlls = _re.findall(r'[\w.-]+\.dll', text, _re.IGNORECASE)
+    dlls = _dll_names(text)
     artifacts["dll_names"] = list(set(d for d in dlls if len(d) > 5))[:20]
 
     # URLs
-    urls = _re.findall(r'https?://[^\x00\s\'"<>]{5,200}', text)
+    urls = _URL_RE.findall(text)
     artifacts["urls"] = list(set(urls))[:20]
 
     # IP addresses
-    ips = _re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', text)
+    ips = _IP_RE.findall(text)
     valid_ips = []
     for ip in ips:
         parts = ip.split(".")
@@ -167,7 +280,7 @@ def extract_shellcode_artifacts(dump_path: Path) -> dict:
     artifacts["ip_addresses"] = list(set(valid_ips))[:20]
 
     # Registry keys
-    reg_keys = _re.findall(r'(?:HKEY_[\w]+|SOFTWARE|CurrentVersion|Run|Services)\\[\w\\]+', text)
+    reg_keys = _registry_keys(text)
     artifacts["registry_keys"] = list(set(reg_keys))[:10]
 
     # Embedded PE (MZ header anywhere in the dump)
@@ -192,9 +305,9 @@ def extract_shellcode_artifacts(dump_path: Path) -> dict:
 
     # Other interesting strings (mutex-like, user agents, etc.)
     interesting = []
-    mutex_patterns = _re.findall(r'(?:Global\\|Local\\)[\w-]+', text)
+    mutex_patterns = _MUTEX_RE.findall(text)
     interesting.extend([f"mutex:{m}" for m in mutex_patterns])
-    ua_patterns = _re.findall(r'Mozilla/[\d.]+[^"\x00]{10,100}', text)
+    ua_patterns = _UA_RE.findall(text)
     interesting.extend([f"user-agent:{ua[:80]}" for ua in ua_patterns])
     artifacts["interesting_strings"] = interesting[:10]
 
