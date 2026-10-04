@@ -26,6 +26,7 @@ from lamware_shared.cape_payloads import (
     find_pe_payloads,
 )
 
+from stages.peek import read_head
 from stages.volatility import scan_shellcode_artifacts
 
 # Cape signatures that indicate dropped/unpacked payloads worth analyzing
@@ -234,13 +235,10 @@ def get_original_sample_path(cape_data: dict,
             return None
     except OSError:
         return None
-    # Check if it's a PE
-    try:
-        with binary_path.open("rb") as fh:
-            if fh.read(2) == b"MZ":
-                return binary_path
-    except (OSError, PermissionError):
-        pass
+    # Check if it's a PE. read_head refuses a FIFO or other non-regular file
+    # instead of blocking on it (#677) and returns None when it cannot read.
+    if read_head(binary_path, 2) == b"MZ":
+        return binary_path
     return None
 
 
@@ -301,23 +299,24 @@ def resolve_original_sample(cape_data: dict, sample_path: Path | None,
 
 def _is_ghidra_compatible_binary(sample_path: Path) -> bool:
     """Check if the sample is a binary format Ghidra can analyze (PE, ELF, Mach-O)."""
-    if not sample_path or not sample_path.exists():
+    if not sample_path:
         return False
-    try:
-        with sample_path.open("rb") as fh:
-            magic_bytes = fh.read(4)
-            # PE (MZ header)
-            if magic_bytes[:2] == b"MZ":
-                return True
-            # ELF
-            if magic_bytes == b"\x7fELF":
-                return True
-            # Mach-O (32/64-bit, big/little-endian)
-            if magic_bytes in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
-                               b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe"):
-                return True
-    except (OSError, PermissionError):
-        pass
+    # No exists() first: it raises PermissionError when a parent directory is
+    # unreadable, outside any try, and a FIFO passed it and then blocked the
+    # open() forever (#677). read_head answers None for both, and for absence.
+    magic_bytes = read_head(sample_path, 4)
+    if magic_bytes is None:
+        return False
+    # PE (MZ header)
+    if magic_bytes[:2] == b"MZ":
+        return True
+    # ELF
+    if magic_bytes == b"\x7fELF":
+        return True
+    # Mach-O (32/64-bit, big/little-endian)
+    if magic_bytes in (b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                       b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe"):
+        return True
     return False
 
 

@@ -10,8 +10,13 @@ License: Apache 2.0
 """
 
 import json
+import logging
 import subprocess
 from pathlib import Path
+
+from stages import peek
+
+log = logging.getLogger("pipeline")
 
 PYINSTALLER_YARA_INDICATORS = [
     "pyinstaller", "py_installer", "python_compiled",
@@ -19,6 +24,9 @@ PYINSTALLER_YARA_INDICATORS = [
 
 # MEI magic bytes that identify PyInstaller archives
 PYINSTALLER_MAGIC = b"MEI\014\013\012\013\016"
+
+# How much of the end of an over-cap file the cookie scan also reads.
+PYINSTALLER_TAIL = 1 << 20
 
 
 def is_pyinstaller_binary(report: dict, sample_path: Path = None) -> bool:
@@ -36,15 +44,22 @@ def is_pyinstaller_binary(report: dict, sample_path: Path = None) -> bool:
         if any(indicator in rule for indicator in PYINSTALLER_YARA_INDICATORS):
             return True
 
-    # Check for MEI magic bytes in the binary
-    if sample_path and sample_path.exists():
-        try:
-            with open(sample_path, "rb") as f:
-                data = f.read()
-            if PYINSTALLER_MAGIC in data:
-                return True
-        except OSError:
-            pass
+    # Check for MEI magic bytes in the binary. Streamed and capped (#677): this
+    # used to read the whole sample into memory, so a large enough file raised
+    # MemoryError out of Stage 4, and a FIFO or an unreadable parent directory
+    # hung or raised before the read was attempted. The cookie sits at the end
+    # of the archive (88-9,376 bytes from EOF in all 36 PyInstaller samples in
+    # CAPE storage on 2026-10-03), so a file longer than the cap also has its
+    # tail scanned.
+    if sample_path:
+        found, capped = peek.contains(sample_path, PYINSTALLER_MAGIC, tail=PYINSTALLER_TAIL)
+        if capped:
+            log.warning(f"  PyInstaller cookie scan of {Path(sample_path).name}: file is "
+                        f"longer than the {peek.SCAN_CAP:#x}-byte scan cap; scanned the head "
+                        f"and the last {PYINSTALLER_TAIL:#x} bytes only "
+                        f"({'found' if found else 'not found'})")
+        if found:
+            return True
 
     return False
 
