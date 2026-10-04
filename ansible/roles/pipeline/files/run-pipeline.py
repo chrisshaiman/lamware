@@ -86,8 +86,8 @@ from stages.triage import (
     triage_error,
 )
 from stages.volatility import (
-    extract_shellcode_artifacts,
     run_volatility,
+    scan_shellcode_artifacts,
     should_run_volatility,
 )
 
@@ -258,6 +258,93 @@ def replay_output_names(replayed_at: datetime) -> tuple[str, str]:
     """
     stamp = replayed_at.strftime("%Y%m%dT%H%M%S%fZ")
     return f"report.replay-{stamp}.json", f"report.replay-{stamp}.pdf"
+
+
+def _scan_candidate_artifacts(path: Path, candidate: dict) -> dict:
+    """Scan one region's bytes; a failure is recorded on that candidate.
+
+    The bytes are the sample's (#678). An exception here used to propagate out
+    of Stage 2.5 — no handler sits around it in run_pipeline — and end the run
+    after CAPE had finished, for every region after the failing one too.
+    """
+    artifacts, error = scan_shellcode_artifacts(path)
+    if error:
+        candidate["shellcode_artifacts_error"] = error
+        log.warning(f"    [!] artifact scan failed on {path.name}: {error}")
+    return artifacts
+
+
+def build_cape_injection_candidates(report: dict) -> list[dict]:
+    """Stage 2.5: candidates from CAPE's injection buffers and large payloads.
+
+    Cape captures the exact bytes written during cross-process injection.
+    These are ground truth — no need for Volatility to find them. Each buffer
+    and payload is scanned for artifacts; one that cannot be scanned keeps its
+    candidate, with `shellcode_artifacts_error` saying why.
+    """
+    cape_injection_candidates = []
+    injection_bufs = report.get("cape", {}).get("injection_buffers", [])
+    if injection_bufs:
+        log.info(f"\n[Stage 2.5] Processing {len(injection_bufs)} Cape injection buffer(s)...")
+        for inj in injection_bufs:
+            buf_path = Path(inj["path"])
+            if not buf_path.exists():
+                continue
+            size = inj["size"]
+            candidate = {
+                "source": "cape_injection",
+                "source_pid": inj["source_pid"],
+                "source_process": inj["source_process"],
+                "pid": inj["target_pid"],
+                "process": f"target_of_{inj['source_process']}",
+                "injection_address": inj["injection_address"],
+                "region_size": size,
+                "path": buf_path,
+                "cape_confirmed": True,
+            }
+            # Artifact extraction on all buffers
+            artifacts = _scan_candidate_artifacts(buf_path, candidate)
+            candidate["shellcode_artifacts"] = artifacts
+            api_count = len(artifacts.get("resolved_apis", []))
+            path_count = len(artifacts.get("file_paths", []))
+            log.info(f"    {inj['source_process']} → pid {inj['target_pid']} at {inj['injection_address']}: {size} bytes, {api_count} APIs, {path_count} paths")
+
+            # >= 1KB: send to Ghidra + LLM for decompilation
+            if size >= 1024:
+                candidate["analyze_with_ghidra"] = True
+                log.info(f"      → Queued for Ghidra + LLM analysis ({size} bytes)")
+            else:
+                candidate["analyze_with_ghidra"] = False
+                log.info(f"      → Artifact extraction only ({size} bytes, < 1KB)")
+
+            cape_injection_candidates.append(candidate)
+
+    # Also process Cape's large extracted payloads (unpacked shellcode, > 1KB)
+    large_payloads = report.get("cape", {}).get("large_payloads", [])
+    if large_payloads:
+        log.info(f"  Cape large payloads: {len(large_payloads)} (>= 1KB, queued for Ghidra + LLM)")
+        for lp in large_payloads:
+            lp_path = Path(lp["path"])
+            if not lp_path.exists():
+                continue
+            candidate = {
+                "source": "cape_payload",
+                "pid": 0,
+                "process": f"cape_{lp.get('cape_type', 'unknown')}",
+                "injection_address": "N/A",
+                "region_size": lp["size"],
+                "path": lp_path,
+                "cape_confirmed": True,
+                "analyze_with_ghidra": lp["size"] >= 1024,
+                "cape_type": lp.get("cape_type", "unknown"),
+                "sha256": lp.get("sha256", ""),
+            }
+            artifacts = _scan_candidate_artifacts(lp_path, candidate)
+            candidate["shellcode_artifacts"] = artifacts
+            cape_injection_candidates.append(candidate)
+            api_count = len(artifacts.get("resolved_apis", []))
+            log.info(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
+    return cape_injection_candidates
 
 
 # -------------------------------------------------------------------------
@@ -442,70 +529,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     log.info(f"  [cape completed in {stage_timings['cape']:.0f}s]")
 
     # Stage 2.5: Process Cape injection buffers
-    # Cape captures the exact bytes written during cross-process injection.
-    # These are ground truth — no need for Volatility to find them.
-    cape_injection_candidates = []
-    injection_bufs = report.get("cape", {}).get("injection_buffers", [])
-    if injection_bufs:
-        log.info(f"\n[Stage 2.5] Processing {len(injection_bufs)} Cape injection buffer(s)...")
-        for inj in injection_bufs:
-            buf_path = Path(inj["path"])
-            if not buf_path.exists():
-                continue
-            size = inj["size"]
-            # Artifact extraction on all buffers
-            artifacts = extract_shellcode_artifacts(buf_path)
-            api_count = len(artifacts.get("resolved_apis", []))
-            path_count = len(artifacts.get("file_paths", []))
-            log.info(f"    {inj['source_process']} → pid {inj['target_pid']} at {inj['injection_address']}: {size} bytes, {api_count} APIs, {path_count} paths")
-
-            candidate = {
-                "source": "cape_injection",
-                "source_pid": inj["source_pid"],
-                "source_process": inj["source_process"],
-                "pid": inj["target_pid"],
-                "process": f"target_of_{inj['source_process']}",
-                "injection_address": inj["injection_address"],
-                "region_size": size,
-                "path": buf_path,
-                "shellcode_artifacts": artifacts,
-                "cape_confirmed": True,
-            }
-
-            # >= 1KB: send to Ghidra + LLM for decompilation
-            if size >= 1024:
-                candidate["analyze_with_ghidra"] = True
-                log.info(f"      → Queued for Ghidra + LLM analysis ({size} bytes)")
-            else:
-                candidate["analyze_with_ghidra"] = False
-                log.info(f"      → Artifact extraction only ({size} bytes, < 1KB)")
-
-            cape_injection_candidates.append(candidate)
-
-    # Also process Cape's large extracted payloads (unpacked shellcode, > 1KB)
-    large_payloads = report.get("cape", {}).get("large_payloads", [])
-    if large_payloads:
-        log.info(f"  Cape large payloads: {len(large_payloads)} (>= 1KB, queued for Ghidra + LLM)")
-        for lp in large_payloads:
-            lp_path = Path(lp["path"])
-            if not lp_path.exists():
-                continue
-            artifacts = extract_shellcode_artifacts(lp_path)
-            cape_injection_candidates.append({
-                "source": "cape_payload",
-                "pid": 0,
-                "process": f"cape_{lp.get('cape_type', 'unknown')}",
-                "injection_address": "N/A",
-                "region_size": lp["size"],
-                "path": lp_path,
-                "shellcode_artifacts": artifacts,
-                "cape_confirmed": True,
-                "analyze_with_ghidra": lp["size"] >= 1024,
-                "cape_type": lp.get("cape_type", "unknown"),
-                "sha256": lp.get("sha256", ""),
-            })
-            api_count = len(artifacts.get("resolved_apis", []))
-            log.info(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
+    cape_injection_candidates = build_cape_injection_candidates(report)
 
     # Stage 2.7: PCAP analysis — Zeek + Suricata on Cape's network capture
     _pcap_start = _time.time()
