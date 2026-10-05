@@ -26,7 +26,7 @@ these describe an AWS data plane that no longer exists.
 | [004](#adr-004-wireguard-scope-limited-to-admin-access-only) | WireGuard scope limited to admin access | Live (revised 2026-04-18) |
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
-| [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live |
+| [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
 
 ### Detonation environment
@@ -782,7 +782,7 @@ ID" claim is wrong, is in [FAMILY_ATTRIBUTION.md](FAMILY_ATTRIBUTION.md).
 
 ## ADR-020: One firewall mechanism — iptables-persistent, not UFW
 
-**Status:** Live (2026-09-19)
+**Status:** Live (2026-09-19; amended 2026-10-05)
 **Supersedes:** the implicit arrangement where both were installed
 **Closes:** #563 (filed 2026-09-03, which recommended exactly this)
 
@@ -851,6 +851,139 @@ and is what turns a four-hour diagnosis into a red check.
 
 **If you are reading this while considering ufw: the tests will stop you, and
 they are right to.**
+
+### Amendment (2026-10-05): guest traffic to the host is default-deny on INPUT
+
+The section above leaves default-deny inbound unpaid for. This amendment pays it for
+one source, the detonation bridge, and only that one. Everything above stands as
+written.
+
+**Amendment status:** implemented on `fix/adr-022-guest-input-default-deny`. It is in
+force on the host once `make deploy TAGS=networking` has run from that branch and the
+probes under *Verification* pass.
+
+#### Context
+
+The air-gap in `SECURITY_CONSTRAINTS.md` is two `FORWARD` rules. They govern packets
+the host *routes* from `virbr-det` to another interface. A packet from a guest
+addressed to one of the host's own addresses (the bridge gateway `192.168.100.1`, the
+WireGuard address, the public address) is not routed. The kernel delivers it
+locally, so it traverses `INPUT`, and the air-gap rules never see it.
+
+`INPUT` on the host, read 2026-10-05: policy `ACCEPT`; fail2ban jumps; nine
+`-i virbr-det … -j ACCEPT` rules for INetSim and the resultserver, inserted by
+`roles/networking`; a jump to libvirt's `LIBVIRT_INP` (DNS and DHCP on the bridge);
+empty chains left behind by ufw. The per-port ACCEPTs were written for the day *"the
+hardening role or a future policy tightens the default"* (the role's own comment).
+That day never came, so they permitted nothing the policy did not already permit.
+
+Measured 2026-10-05: across 400 CAPE pcaps, guests sent 45,481 SYNs to
+`192.168.100.1:5201`. That port is on no allowlist and nothing listens on it, and
+every SYN was answered by a RST from the host. The host's TCP stack only answers a
+packet that `INPUT` has delivered to it, so if anything had been listening on that
+port, the guest would have connected. The same holds for every host listener on an
+address the host treats as local. The section above already showed that this
+includes the CAPE UI.
+
+#### Decision
+
+Every packet that arrives on `virbr-det` for the host is decided by one chain,
+`LAMWARE-GUEST-IN`. The chain ends in a terminal REJECT and is jumped to from `INPUT`
+position 1 for `-i virbr-det`. The chain is self-sufficient: it does not rely on
+anything else in `INPUT`, before or after it.
+
+IPv4, in order. The ports come from the variables the other roles bind. The INetSim
+services are the ones [ADR-011](#adr-011-guest-network-simulation--inetsim-on-host)
+put on the gateway.
+
+| # | match | action | why |
+|---|---|---|---|
+| 1 | `conntrack ESTABLISHED,RELATED` | ACCEPT | replies to host-initiated flows (see below) |
+| 2 | udp dport 67 | ACCEPT | DHCP (libvirt's dnsmasq). No destination match, because a DISCOVER goes to the broadcast address |
+| 3–4 | `-d detonation_gateway` udp/tcp dport 53 | ACCEPT | DNS, if the PREROUTING redirect is ever absent |
+| 5–6 | `-d detonation_gateway` udp/tcp dport `inetsim_dns_port` | ACCEPT | INetSim DNS, after the 53 → 5300 redirect (ADR-011, #456) |
+| 7–10 | `-d detonation_gateway` tcp dport 80, 443, 25, 21 | ACCEPT | INetSim HTTP, HTTPS, SMTP, FTP (ADR-011; the bind ports in `inetsim.conf.j2`) |
+| 11 | `-d detonation_gateway` tcp dport `cape_resultserver_port` | ACCEPT | CAPE resultserver |
+| 12 | `-d detonation_gateway` icmp echo-request | ACCEPT | gateway ping, a common sample connectivity check |
+| 13 | tcp | REJECT `tcp-reset` | |
+| 14 | everything else | REJECT `icmp-port-unreachable` | |
+
+IPv6 has the same structure: ESTABLISHED,RELATED; neighbour solicitation and
+advertisement; echo-request; then the same two REJECTs (`icmp6-port-unreachable`). It
+has no service ACCEPTs, because no guest-facing service binds an IPv6 address. IPv6 is
+disabled host-wide today. The chain exists so that enabling IPv6 does not open the
+guest path; #343 showed what happens when only one family is covered.
+
+**ESTABLISHED,RELATED first.** CAPE drives the guest agent from the host to the guest
+(#620). The guest's replies to the host's ephemeral ports arrive on `INPUT` through
+`virbr-det`. A deny on that path without an ESTABLISHED accept breaks every
+detonation. It fails the way task 1250 failed in #620: *"guest initialization hit the
+critical timeout"*.
+
+**REJECT, not DROP.** When nothing listens on a port, the kernel already answers TCP
+with a RST and UDP with ICMP port-unreachable. REJECT sends the same answers, so a
+closed port looks the same to a guest and replies on the same timing. DROP would turn
+every refused probe into a timeout and change the timing of samples that probe the
+gateway, such as the 5201 traffic above. Neither the kernel nor REJECT sends an ICMP
+error for broadcast or multicast, so that traffic is unchanged too.
+
+**Destination-scoped allows.** A port-only match would accept a guest's packet to the
+same port on *any* host address, which is exactly the gap this amendment closes. Only
+DHCP is unscoped.
+
+**Position 1, and what the invariant actually is.** The rule is: nothing evaluated
+before the jump may accept guest traffic that the chain itself would refuse. fail2ban
+re-inserts its jumps at the top of `INPUT` whenever it restarts, so the jump will not
+always be literally first. fail2ban's chains only reject banned sources or return.
+`LIBVIRT_INP` accepts DNS and DHCP on the bridge, which the chain allows anyway. So
+neither one breaks the rule. The role puts the jump back at position 1 on every run.
+That way, an interface-agnostic ACCEPT added to `INPUT` later sits below the jump and
+never applies to guests.
+
+**Applied atomically and rebuilt every run.** `roles/networking` renders the chain to
+a file and loads it with `iptables-restore --noflush`, which replaces the chain's
+contents in one transaction. The chain is never half-built, and the order on the host
+is the order in the file. The nine per-port `INPUT` ACCEPTs move into the chain and are
+removed from `INPUT`. `netfilter-persistent save` persists the result.
+
+#### Consequences
+
+- **Everything a guest can open on the host:** DHCP; DNS and INetSim DNS, HTTP,
+  HTTPS, SMTP and FTP on the gateway; the resultserver on the gateway; ping to the
+  gateway. Nothing else, on any host address.
+- **Changed:** if a host port is *open* and not in that list, guests now get a RST or
+  port-unreachable from it. Ping to a host address other than the gateway is refused
+  instead of answered. ICMP that is neither echo-request nor part of a tracked flow
+  (a timestamp request, for example) is refused.
+- **Unchanged:** the `FORWARD` air-gap; host → guest flows, including the CAPE
+  agent; the answer to closed ports; DHCP, DNS, INetSim and the resultserver.
+- **Still unpaid:** default-deny inbound for traffic arriving on `wg0` or the
+  management (public) interface. `INPUT` policy stays `ACCEPT`. This amendment does
+  not address that, and must not be read as handling it.
+- **Not continuously watched.** `network-monitor` checks `FORWARD` and the pipeline's
+  `OUTPUT` allowlist, but not this chain. Probing the chain from the host would need a
+  probe interface attached to `virbr-det`, and this amendment does not add one. The
+  probes below verify it once, after deploy.
+
+#### Verification
+
+These checks run on the host after `make deploy TAGS=networking`:
+
+- A pcap of the next detonation shows that a guest's SYN to a closed gateway port
+  still gets a RST, and that no port outside the list answers a SYN with a SYN-ACK.
+- A probe from a clean guest to ports 22, 8000 and 443 on the gateway and on the
+  WireGuard address is refused.
+- A normal detonation completes: the guest agent is reached and the resultserver
+  receives.
+- INetSim DNS and HTTP answer.
+
+#### Rollback
+
+Delete the `INPUT` jump and the chain in both families, re-insert the nine per-port
+ACCEPTs, and run `netfilter-persistent save`. The exact commands are in the PR that
+introduced this amendment. They restore the `INPUT` the host ran until 2026-10-05.
+Reverting the code and redeploying does **not** do this: the earlier role never
+removes the chain.
 
 
 ## ADR-021: Hostile files are interpreted only inside a sandbox; agent tools are brokered by the orchestrator and executed in one
