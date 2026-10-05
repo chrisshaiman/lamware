@@ -644,31 +644,62 @@ def run_single_plugin(dump_path: Path, plugin: str, output_dir: Path,
         )
         if result.returncode != 0:
             return {"error": result.stderr[:200]}
-        # Volatility may print progress messages before the JSON output.
-        # Find the JSON array/object by locating the first [ or { and last ] or }
-        stdout = result.stdout
         try:
-            return json.loads(stdout)
-        except json.JSONDecodeError:
-            pass
-        # Try extracting JSON from within progress noise
-        for start_char, end_char in [("[", "]"), ("{", "}")]:
-            start = stdout.find(start_char)
-            end = stdout.rfind(end_char)
-            if start >= 0 and end > start:
-                try:
-                    return json.loads(stdout[start:end + 1])
-                except json.JSONDecodeError:
-                    continue
-        # Last resort: try each line
-        for line in stdout.strip().split("\n"):
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                continue
-        return {"error": "invalid JSON output", "raw": result.stdout[:500]}
+            return _parse_plugin_stdout(result.stdout)
+        except _UNREADABLE_JSON as e:
+            # The type name only: the exception's own text is ours today, but
+            # nothing guarantees that, and plugin output is guest-chosen.
+            return {"error": f"output not parsed: {type(e).__name__} "
+                             "(nested too deep, a number too long, or too large)"}
     except subprocess.TimeoutExpired:
         return {"error": f"timeout ({plugin_timeout}s)"}
+
+
+# What json.loads raises for text that is valid JSON but cannot be read here
+# (#692). JSONDecodeError is a ValueError too, but it is caught first in
+# _parse_plugin_stdout, which retries past progress noise; these are not worth a
+# retry, because the next attempt reads the same text.
+#
+#   RecursionError  a pstree 4,998 processes deep (9,998 bare `[`), measured on
+#                   Python 3.12.13. The guest sets the depth: each process
+#                   spawns the next.
+#   ValueError      an integer literal past the 4,300-digit conversion limit.
+#   MemoryError     an output the decoder cannot hold.
+#
+# Phase 1 plugins were already caught by the future's `except Exception`; the
+# vadinfo call after it was not, and run-pipeline catches only TimeoutError
+# around run_volatility, so one deep vadinfo ended the run before report.json.
+_UNREADABLE_JSON = (RecursionError, ValueError, MemoryError)
+
+
+def _parse_plugin_stdout(stdout: str):
+    """The JSON in a plugin's stdout, or an `{"error": ...}` dict if there is none.
+
+    Raises the _UNREADABLE_JSON exceptions; run_single_plugin turns them into
+    a failed plugin.
+    """
+    # Volatility may print progress messages before the JSON output.
+    # Find the JSON array/object by locating the first [ or { and last ] or }
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        pass
+    # Try extracting JSON from within progress noise
+    for start_char, end_char in [("[", "]"), ("{", "}")]:
+        start = stdout.find(start_char)
+        end = stdout.rfind(end_char)
+        if start >= 0 and end > start:
+            try:
+                return json.loads(stdout[start:end + 1])
+            except json.JSONDecodeError:
+                continue
+    # Last resort: try each line
+    for line in stdout.strip().split("\n"):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+    return {"error": "invalid JSON output", "raw": stdout[:500]}
 
 
 
