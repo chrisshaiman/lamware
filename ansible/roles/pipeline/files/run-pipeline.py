@@ -1321,11 +1321,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     elif successful:
         # Native PE path — agentic Ghidra investigation of the CANONICAL
-        # program (the one run_ghidra ranked and verified), not successful[0].
-        # The eval has always handed the agent report["ghidra"], whose top-level
-        # project_dir/program_name ARE the canonical program, so production
-        # reading list position meant production and the eval read different
-        # programs (#667's survey). #651's routed path already avoids position.
+        # program (the one run_ghidra ranked and verified), not successful[0]:
+        # list position is not a quality signal, and #651's routed path already
+        # avoids it (#667's survey). The eval imports select_native_target and
+        # sends the agent the same entry (#697).
         native_target, native_reason = select_native_target(ghidra_data)
         log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output "
                  f"({native_reason}: {str(native_target.get('program_name', '?'))[:16]})...")

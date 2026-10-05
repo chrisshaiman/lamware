@@ -19,7 +19,7 @@ SEEDS: tuple[int, ...] = (42, 1337, 8675309)
 
 #: Evidence the agent is given, ORTHOGONAL to the model axis (#420).
 #:
-#: "ghidra"     — report["ghidra"] only. What every arm has always received.
+#: "ghidra"     — the Ghidra input production sends (one analysed file, #697) only.
 #: "correlated" — the same, plus cross_correlations, Cape behavioural signatures
 #:                and Volatility insights: the evidence the platform already
 #:                computes and, until now, showed only to the summary writer.

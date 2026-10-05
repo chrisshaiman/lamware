@@ -19,7 +19,7 @@ build the right payload for whatever it is handed.
 import json
 
 import pytest
-from lamware_eval.runner import init_payload_for
+from lamware_eval.runner import NoAnalysisData, init_payload_for
 
 DOTNET_REPORT = {
     "bazaar_family": "warzonerat",
@@ -58,16 +58,15 @@ def test_a_dotnet_sample_is_handed_its_decompiled_source():
     assert "class Loader" in init["decompiled_source"]
 
 
-def test_a_native_sample_is_unchanged():
-    """The native path is the one with a result behind it (#420 stage 2). This
-    change must not move it. The grounding text is the dict minus host paths
-    since #669 (they carry the corpus dir's family name); everything else in
-    it is still the Ghidra dict."""
+def test_a_native_sample_is_handed_its_analysed_file():
+    """The native path hands the agent the file production's Stage 4.5 hands
+    it (`select_native_target`), not the `report["ghidra"]` wrapper, which
+    the container renders as an empty card (#697). The grounding text is that
+    entry minus host paths (#669)."""
     init, modality, source, _read = init_payload_for(NATIVE_REPORT)
     assert modality == "native_pe"
-    assert init is NATIVE_REPORT["ghidra"]
-    expected = {k: v for k, v in NATIVE_REPORT["ghidra"].items() if k != "project_dir"}
-    assert json.loads(source) == expected
+    assert init == NATIVE_REPORT["ghidra"]["analyzed_files"][0]
+    assert json.loads(source) == NATIVE_REPORT["ghidra"]["analyzed_files"][0]
 
 
 def test_the_grounding_source_follows_the_modality():
@@ -96,9 +95,16 @@ def test_a_failed_dotnet_analysis_falls_back_rather_than_shipping_nothing():
     wearing a different hat."""
     report = {**DOTNET_REPORT,
               "dotnet_analysis": {"analysis_success": False, "error": "de4dot failed"}}
+    # Nothing in Ghidra succeeded either: production records no_analysis_data
+    # and runs no agent, so the cell fails rather than measuring one (#697).
+    with pytest.raises(NoAnalysisData):
+        init_payload_for(report)
+    # With a successful Ghidra file, production's native branch reads it.
+    entry = {"analysis_success": True, "program_name": "p", "project_dir": "/p"}
+    report["ghidra"] = {**report["ghidra"], "analyzed_files": [entry]}
     init, modality, _, _read = init_payload_for(report)
     assert modality == "native_pe"
-    assert init == report["ghidra"]
+    assert init == entry
 
 
 def test_the_bazaar_family_reaches_the_payload():

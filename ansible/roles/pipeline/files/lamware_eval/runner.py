@@ -11,7 +11,13 @@ from llm_ab_re import extract_metrics
 from stages.correlated_evidence import correlated_evidence
 from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_record
 from stages.dotnet_tools import is_agentic_dotnet
-from stages.ghidra import ROUTED_FLAGS, make_ghidra_verifier, select_payload_target
+from stages.ghidra import (
+    ROUTED_FLAGS,
+    make_ghidra_verifier,
+    native_input_record,
+    select_native_target,
+    select_payload_target,
+)
 from stages.interpret import agent_payload, run_interpret
 
 from lamware_eval.arms import Arm
@@ -243,6 +249,18 @@ class CorpusProjectMissing(RuntimeError):
     """
 
 
+class NoAnalysisData(RuntimeError):
+    """Production would not run the RE agent on this sample at all.
+
+    Stage 4.5's native branch runs only when some analysed file succeeded
+    (`select_native_target` names one); otherwise it records
+    `{"reason": "no_analysis_data"}` and sends nothing. Before #697 the eval
+    sent the agent the `report["ghidra"]` wrapper regardless, which renders as
+    an empty card, and scored what came back. A cell for a sample production
+    never interprets measures nothing production does, so it fails instead.
+    """
+
+
 def corpus_project_for(af: dict, corpus_dir: str | Path) -> Path:
     """Where the corpus copy of this analysed file's Ghidra project lives.
 
@@ -254,12 +272,25 @@ def corpus_project_for(af: dict, corpus_dir: str | Path) -> Path:
     one without has it in the report directory's own `project/`, which is the
     only layout an old corpus entry has.
 
+    The run subdirectory is matched by its trailing path components, shortest
+    first, not by its last name alone: an injection address recorded as "N/A"
+    made the shellcode loader write `shellcode_0_N/A/`, two components, and
+    `.name` ("A") then named a directory no corpus has (latrodectus and salat,
+    found deploying #697). Every candidate is under `corpus_dir`.
+
     Never falls back to the host path the report recorded; see
     CorpusProjectMissing.
     """
     base = Path(corpus_dir)
     host_out = af.get("host_output_dir")
     project = (base / Path(host_out).name if host_out else base) / "project"
+    if host_out and not project.is_dir():
+        parts = [p for p in Path(host_out).parts if p not in ("", "/", "..", ".")]
+        for k in range(2, min(len(parts), 4) + 1):
+            candidate = base.joinpath(*parts[-k:]) / "project"
+            if candidate.is_dir():
+                project = candidate
+                break
     if not project.is_dir():
         raise CorpusProjectMissing(
             f"corpus {base} has no copy of the project for "
@@ -313,14 +344,15 @@ def agent_visible_text(ghidra_payload: dict) -> str:
 DOTNET_MODALITY = {"single_shot": "dotnet", "agentic": "dotnet_agentic"}
 
 
-def _wrapper_payload(report: dict, dotnet_mode: str = "agentic",
-                     dotnet_limits: dict | None = None,
-                     dotnet_tools_cfg: dict | None = None) -> tuple[dict, str, str]:
-    """The wrapper's own analyser, else the Ghidra dict.
+def _dotnet_payload(report: dict, dotnet_mode: str = "agentic",
+                    dotnet_limits: dict | None = None,
+                    dotnet_tools_cfg: dict | None = None) -> tuple[dict, str, str] | None:
+    """The wrapper's own .NET analysis, or None when it has none.
 
-    What production does for a routed sample with no usable payload, and for
-    every native sample. The .NET payload comes from production's own
-    `build_dotnet_interpret_init` for the given `dotnet_mode` (#646).
+    What production does for a routed sample with no usable payload. The
+    payload comes from production's own `build_dotnet_interpret_init` for the
+    given `dotnet_mode` (#646). None sends the caller to the native branch,
+    which production's dispatch reaches next for these inputs.
     """
     dotnet = report.get("dotnet_analysis") or {}
     if dotnet.get("analysis_success"):
@@ -342,10 +374,75 @@ def _wrapper_payload(report: dict, dotnet_mode: str = "agentic",
             return init, DOTNET_MODALITY["agentic"], agent_visible_text(init)
         return (init, DOTNET_MODALITY["single_shot"],
                 json.dumps(init.get("decompiled_source", "")))
-    gr = report.get("ghidra") or {}
-    # The init is the full dict: the host needs `project_dir` to broker tool
-    # calls. Only the grounding text loses the paths (#669).
-    return gr, "native_pe", agent_visible_text(gr)
+    return None
+
+
+def _native_project(gr: dict, target: dict, reason: str, corpus_dir: str | Path) -> str:
+    """The corpus copy of the native target's Ghidra project.
+
+    For the canonical program the report's top-level `project_dir` IS its
+    project (that is what canonical means: the pair run_ghidra verified), and
+    every corpus entry's top-level path already points inside its corpus dir
+    (test_corpus_is_self_contained, #631). It is the path every native cell
+    before #697 brokered tool calls against, so it is kept whenever it is
+    inside the corpus. Hand-refreshed entries can carry a per-file
+    `host_output_dir` naming a run directory whose subdir was never copied;
+    `corpus_project_for` would then fail a cell whose project is present.
+
+    A fallback target, or a top-level path outside the corpus, goes through
+    `corpus_project_for`, which refuses loudly rather than reaching into a run
+    directory (#631).
+    """
+    top = gr.get("project_dir")
+    if (reason == "canonical" and top
+            and Path(top).is_relative_to(Path(corpus_dir)) and Path(top).is_dir()):
+        return str(top)
+    return str(corpus_project_for(target, corpus_dir))
+
+
+def _native_payload(gr: dict, corpus_dir: str | Path | None,
+                    recorded: dict | None) -> tuple[dict, str, str, dict]:
+    """What production's Stage 4.5 native branch sends: ONE analysed file (#697).
+
+    `select_native_target` is production's selector, imported (#380): the
+    canonical program, else the first successful file. The init is that file's
+    entry, because `build_initial_message` reads `sha256`, `imports`,
+    `strings_of_interest` and `decompiled_functions` at the top level of what it
+    is given, and those live in `analyzed_files[i]`. Handing it the
+    `report["ghidra"]` wrapper, as the eval did until #697, rendered
+    "SHA256: unknown ... Analyze this binary" and nothing else.
+
+    The record is production's `native_input_record` with `kind` set to the
+    modality: the eval's `kind` is what a replay and the scorecard dispatch on,
+    and production's canonical/fallback distinction is kept in
+    `chosen_because`.
+
+    Replay (`recorded` with `kind: native_pe`): a record naming a program is
+    re-resolved by name. One without — every native cell before #697, and `{}`
+    from before #646 — replays the wrapper, which is what those cells were
+    sent; those cells measured an agent that started blind.
+    """
+    if recorded is not None and not recorded.get("program_name"):
+        return gr, "native_pe", agent_visible_text(gr), {}
+    if recorded is not None:
+        name = recorded["program_name"]
+        target = next((f for f in gr.get("analyzed_files") or []
+                       if isinstance(f, dict) and f.get("program_name") == name), None)
+        if target is None:
+            raise ValueError(f"cell recorded native program {str(name)[:16]}, "
+                             f"which this report does not list")
+        reason = recorded.get("chosen_because")
+    else:
+        target, reason = select_native_target(gr)
+        if target is None:
+            raise NoAnalysisData(
+                "no analysed file succeeded, so production's Stage 4.5 would not "
+                "run the RE agent on this sample (no_analysis_data)")
+    init = dict(target)
+    if corpus_dir is not None:
+        init["project_dir"] = _native_project(gr, target, reason, corpus_dir)
+    read = {**native_input_record(gr, target, reason), "kind": "native_pe"}
+    return init, "native_pe", agent_visible_text(target), read
 
 
 def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = None,
@@ -370,9 +467,15 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
        an agent through tools (`dotnet_mode="agentic"`, production's default)
        or sent whole in one request (`"single_shot"`, #505). Both payloads
        come from `build_dotnet_interpret_init`, production's selector.
-    3. ``native_pe`` — the Ghidra dict, exactly as before.
+    3. ``native_pe`` — ONE analysed file, the one `select_native_target`
+       names (the canonical program, else the first success), exactly as
+       Stage 4.5's native branch sends it. Not the `report["ghidra"]` wrapper:
+       `build_initial_message` reads the card at the top level of its input,
+       so the wrapper started every native cell blind (#697). A sample with no
+       successful file raises `NoAnalysisData`; production interprets nothing.
 
-    `select_payload_target`, `ROUTED_FLAGS` and `build_dotnet_init` are IMPORTED
+    `select_payload_target`, `select_native_target`, `native_input_record`,
+    `ROUTED_FLAGS` and `build_dotnet_init` are IMPORTED
     from the modules production uses rather than reimplemented here. Two copies
     of a dispatch that must match is the #380 pattern, and the thing that would
     drift is what the agent sees: before this, a .NET loader like formbook was
@@ -386,8 +489,9 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
     the question is whether the project the agent will use opens the program.
     With `verify=None` the family-label preference is skipped and only the
     canonical program qualifies, which is what production's function does too.
-    `corpus_dir` also rebases the chosen program's `project_dir`, so the agent's
-    tool calls go to the corpus copy; None leaves paths as recorded.
+    `corpus_dir` also rebases the chosen program's `project_dir` (payload or
+    native), so the agent's tool calls go to the corpus copy; None leaves paths
+    as recorded.
 
     `recorded` REPLAYS a cell's choice instead of making it. The offline
     re-scorer has no Ghidra to verify with, and re-deciding could disagree with
@@ -400,8 +504,9 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
     THE GROUNDING SOURCE moves with the modality, because a claim is grounded
     only against what the agent could have read:
 
-      native_pe         report["ghidra"] as the agent received it
-                        (`agent_visible_text`: host paths removed, #669)
+      native_pe         the chosen file's entry as the agent received it
+                        (`agent_visible_text`: host paths removed, #669). Not
+                        the wrapper, whose other files the agent never saw.
       dotnet            the decompiled C#. Scored against the Ghidra dict it was
                         scored against an empty one, so every claim it made was
                         a fabrication.
@@ -445,8 +550,8 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
             gr, verify=_corpus_verifier(verify, gr, corpus_dir))
 
     if target is None:
-        init, modality, source = _wrapper_payload(report, dotnet_mode, dotnet_limits,
-                                                  dotnet_tools_cfg)
+        dotnet = _dotnet_payload(report, dotnet_mode, dotnet_limits, dotnet_tools_cfg)
+        init, modality, source = dotnet if dotnet is not None else ({}, "native_pe", "")
         if (recorded is not None and recorded.get("kind") == DOTNET_MODALITY["agentic"]
                 and modality != recorded["kind"]):
             # A replay must ground the cell against the map its agent was sent.
@@ -454,6 +559,11 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
             # the single-shot fallback would quietly change the measurement.
             raise ValueError(f"cannot rebuild the agentic map for this cell: "
                              f"{init.get('dotnet_agentic_failed')}")
+        if dotnet is None:
+            init, modality, source, native_read = _native_payload(gr, corpus_dir, recorded)
+            return init, modality, source, {
+                "kind": modality, **native_read,
+                "wrapper_routed_by": routed_by[0] if routed_by else None}
         read = {"kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
         if modality in DOTNET_MODALITY.values():
             read.update(dotnet_input_record(init, dotnet_mode))
@@ -483,7 +593,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
     # Production's verifier, unmodified, pointed at the corpus copies of the
     # projects (see init_payload_for). It only runs for a routed sample; a
-    # native one never reaches it.
+    # native one never reaches it (production's native selector takes none).
     # The arm's .NET mode, else the deployed config's, else production's
     # default. Passed to the payload builder AND written into cfg below, so the
     # cell's record, its payload and the container all agree (#646).
@@ -558,9 +668,9 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
     #
     # `grounded_novel` is the comparable figure: grounded in the Ghidra dump and
     # tool output, WITHOUT the evidence. `grounded_recited` is the difference.
-    # Whatever the agent could have read: the Ghidra dump for a native PE, the
-    # decompiled C# for a .NET sample, the chosen program's entry for an
-    # unpacked payload, plus the tool results in every case.
+    # Whatever the agent could have read: the chosen file's entry for a native
+    # PE or an unpacked payload, the decompiled C# (or its map) for a .NET
+    # sample, plus the tool results in every case.
     source = source_head + " " + tool_output_text(out)
 
     # Say what was read, where production says it (`llm_interpretation.input`).

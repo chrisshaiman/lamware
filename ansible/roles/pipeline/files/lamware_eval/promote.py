@@ -57,7 +57,7 @@ from pathlib import Path
 from stages.ghidra import _project_programs, record_project_presence
 from stages.interpret import without_host_paths
 
-from lamware_eval.runner import family_label_leak, init_payload_for
+from lamware_eval.runner import NoAnalysisData, family_label_leak, init_payload_for
 
 #: Lowercase family token. No `_` (it separates family from sha8 in the directory
 #: name) and nothing that could walk out of the corpus root.
@@ -421,7 +421,13 @@ def leak_check(report: dict, family: str, dest: Path) -> tuple[bool | None, list
     # No corpus_dir: this runs BEFORE the copy, and with one the runner would
     # look for a project copy that does not exist yet (formbook, 2026-10-03).
     # The report's paths are already rewritten to dest, which is what we test.
-    init, _modality, _src, _record = init_payload_for(report)
+    try:
+        init, _modality, _src, _record = init_payload_for(report)
+    except NoAnalysisData as e:
+        # Production sends the agent nothing for this sample (#697), so the eval
+        # has nothing to measure; it used to be measured blind instead.
+        refusals.append(f"production's RE agent would read nothing: {e}")
+        return leak, refusals
     if str(dest) in json.dumps(without_host_paths(init)):
         refusals.append("the corpus path (named after the family) reaches the agent's init payload")
     return leak, refusals
