@@ -358,8 +358,12 @@ def _dotnet_payload(report: dict, dotnet_mode: str = "agentic",
     if dotnet.get("analysis_success"):
         cape_sigs = [s.get("name", "") for s in
                      ((report.get("cape") or {}).get("signatures") or [])]
-        llm_context = ({"bazaar_family": report["bazaar_family"]}
-                       if report.get("bazaar_family") else {})
+        # Production passes the MalwareBazaar family here (`**llm_context`), and
+        # interpret-ghidra's `_bazaar_context` writes it into the prompt as a
+        # "starting hypothesis". The eval withholds it (#705): a cell given the
+        # label scores recall of the label, which ADR-019 says is not what this
+        # stage is measured on. The input record says it was withheld.
+        llm_context: dict = {}
         # The map is built in the tool sandbox, as production builds it
         # (`dotnet_tools_cmd`/`dotnet_tools_timeout` from the interpret config).
         tools_cfg = dict(dotnet_tools_cfg or {}, dotnet_tool_limits=dotnet_limits)
@@ -567,6 +571,8 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
         read = {"kind": modality, "wrapper_routed_by": routed_by[0] if routed_by else None}
         if modality in DOTNET_MODALITY.values():
             read.update(dotnet_input_record(init, dotnet_mode))
+            if report.get("bazaar_family"):
+                read["bazaar_family_withheld"] = True
             if is_agentic_dotnet(init) and dotnet_limits:
                 # Replayed with the same bounds, so the map it rebuilds is the
                 # map the agent was sent.
@@ -603,6 +609,10 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         dotnet_mode=dotnet_mode, dotnet_limits=base_cfg.get("dotnet_tool_limits"),
         dotnet_tools_cfg=base_cfg)
     print(f"    [eval] input: {input_label(read)}", flush=True)
+    if init.get("bazaar_family"):
+        # The prompt would carry the family as a hint (#705). Withheld at the
+        # source above; this stops any other path that grows one.
+        raise ValueError("the agent's init carries bazaar_family; the eval never sends it (#705)")
     gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
     # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.

@@ -214,7 +214,10 @@ def _assert_wrapper(init, modality, source, read, mode="agentic"):
     assert init["analysis_type"] == "dotnet"
     assert init.get("dotnet_mode", "single_shot") == mode
     assert "Blackjack" in source
-    assert read == {"kind": kind, "wrapper_routed_by": "dotnet_routed", "dotnet_mode": mode}
+    # v661_report carries bazaar_family: the eval withholds it and says so (#705).
+    assert "bazaar_family" not in init
+    assert read == {"kind": kind, "wrapper_routed_by": "dotnet_routed", "dotnet_mode": mode,
+                    "bazaar_family_withheld": True}
 
 
 def test_a_payload_not_in_its_project_is_never_chosen(corpus):
