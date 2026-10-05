@@ -769,9 +769,10 @@ ID" claim is wrong, is in [FAMILY_ATTRIBUTION.md](FAMILY_ATTRIBUTION.md).
   verbatim (*"Use this as your starting hypothesis"*) whenever the init carries
   `bazaar_family`. Production's .NET, PowerShell and Go paths pass it (`**llm_context` in
   `stages/single_shot_init.py`); the native PE and unpacked-payload paths do not. Since
-  #646/#667 the eval's .NET path mirrors production, so it passes it too. Checked
-  2026-10-05: no corpus report carries `bazaar_family`, so no cell has received it, but
-  promotion does not yet refuse a sample whose init would (#705).
+  #646/#667 the eval's .NET path mirrored production and passed it too; no corpus report
+  carried one, so no cell received it (checked 2026-10-05). Since #705 the eval
+  **withholds** it and records `bazaar_family_withheld` on the cell; promotion and
+  `run_arm` refuse any init that still carries it. Production still passes it.
 - If family ID is ever wanted as a product feature, the route is a supervised byte-level
   classifier over a closed family set, not this stage.
 - Unpacking was the higher-leverage fix this ADR pointed to, and it has landed: CAPE's

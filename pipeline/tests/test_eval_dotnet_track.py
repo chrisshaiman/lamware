@@ -17,6 +17,7 @@ the corpus manifests being separate files, not by this code — which only has t
 build the right payload for whatever it is handed.
 """
 import json
+import sys
 
 import pytest
 from lamware_eval.runner import NoAnalysisData, init_payload_for
@@ -107,11 +108,42 @@ def test_a_failed_dotnet_analysis_falls_back_rather_than_shipping_nothing():
     assert init == entry
 
 
-def test_the_bazaar_family_reaches_the_payload():
-    """Production passes its llm_context through; the eval must not drop it, or
-    the two harnesses show the agent different things."""
-    init, _, _, _read = init_payload_for(DOTNET_REPORT)
-    assert init["bazaar_family"] == "warzonerat"
+def test_the_bazaar_family_is_withheld_and_recorded():
+    """Production passes the MalwareBazaar family to the .NET agent as a "starting
+    hypothesis". The eval withholds it (#705): a cell given the label measures recall
+    of the label (ADR-019). The record says it was withheld, so the cell is honest
+    about differing from production on exactly this."""
+    init, _, _, read = init_payload_for(DOTNET_REPORT)
+    assert "bazaar_family" not in init
+    assert read["bazaar_family_withheld"] is True
+
+
+def test_no_record_claims_a_withholding_that_did_not_happen():
+    report = {k: v for k, v in DOTNET_REPORT.items() if k != "bazaar_family"}
+    _init, _, _, read = init_payload_for(report)
+    assert "bazaar_family_withheld" not in read
+
+
+def test_the_family_never_reaches_the_container(tmp_path):
+    """Behavioural: what run_interpret actually writes to the interpret container for
+    the eval's .NET init carries no bazaar_family, so `_bazaar_context` has nothing
+    to put in the prompt. A stand-in container saves the init line it receives."""
+    from stages.interpret import run_interpret
+    seen = tmp_path / "init.json"
+    container = tmp_path / "fake-interpret"
+    container.write_text(
+        "#!" + sys.executable + "\n"
+        "import sys, json\n"
+        f"open({str(seen)!r}, 'w').write(sys.stdin.readline())\n"
+        "print(json.dumps({'type': 'final', 'analysis': {}, 'model_used': 'x', "
+        "'tool_calls_used': 0}), flush=True)\n")
+    container.chmod(0o755)
+    init, _, _, _ = init_payload_for(DOTNET_REPORT)
+    run_interpret(init, tmp_path, str(container), True, 60, {}, "/nonexistent-ghidra")
+    sent = json.loads(seen.read_text())
+    assert sent["type"] == "init"
+    assert "bazaar_family" not in sent and "bazaar_family" not in sent["ghidra_data"]
+    assert "warzonerat" not in seen.read_text().lower()
 
 
 def test_cape_signature_names_reach_the_extraction_context_path():
@@ -184,3 +216,48 @@ def test_a_local_arm_selects_the_local_backend_on_both_interpret_paths():
     assert "re_backend" in assigned
     assert "single_shot_backend" in assigned, (
         "a local arm still reaches the cloud on the single-shot path")
+
+
+def test_promotion_refuses_an_init_that_carries_the_family(tmp_path, monkeypatch):
+    """The backstop: if any path to the agent stops withholding the label, the
+    sample is refused at promotion, not measured on recall of it (#705)."""
+    from lamware_eval import promote
+    real = promote.init_payload_for
+
+    def leaky(report, *a, **k):
+        init, modality, src, read = real(report, *a, **k)
+        return {**init, "bazaar_family": report["bazaar_family"]}, modality, src, read
+
+    monkeypatch.setattr(promote, "init_payload_for", leaky)
+    _leak, refusals = promote.leak_check(DOTNET_REPORT, "warzonerat", tmp_path / "warzonerat_x")
+    assert any("bazaar_family" in r for r in refusals), refusals
+
+
+def test_promotion_accepts_the_withheld_init(tmp_path):
+    from lamware_eval.promote import leak_check
+    _leak, refusals = leak_check(DOTNET_REPORT, "warzonerat", tmp_path / "warzonerat_x")
+    assert not any("bazaar_family" in r for r in refusals), refusals
+
+
+def test_run_arm_refuses_an_init_that_carries_the_family(tmp_path, monkeypatch):
+    """The run-time backstop, for a corpus entry copied in by hand rather than
+    promoted: run_arm stops before the container if the init carries the label."""
+    from lamware_eval import runner
+    from lamware_eval.arms import Arm
+    from lamware_eval.corpus import CorpusSample
+    (tmp_path / "report.json").write_text(json.dumps(DOTNET_REPORT))
+    real = runner.init_payload_for
+
+    def leaky(report, *a, **k):
+        init, modality, src, read = real(report, *a, **k)
+        return {**init, "bazaar_family": "warzonerat"}, modality, src, read
+
+    started = []
+    monkeypatch.setattr(runner, "init_payload_for", leaky)
+    monkeypatch.setattr(runner, "make_ghidra_verifier", lambda _cmd: None)
+    monkeypatch.setattr(runner, "run_interpret", lambda *a, **k: started.append(a) or {})
+    sample = CorpusSample(sha256="a" * 64, mb_family="warzonerat", corpus_dir=str(tmp_path))
+    arm = Arm(name="qwen@10", model="m", re_backend="local", max_tool_calls=10)
+    with pytest.raises(ValueError, match="bazaar_family"):
+        runner.run_arm(sample, arm, {}, "/x", "/y")
+    assert started == []

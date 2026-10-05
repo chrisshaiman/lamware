@@ -430,6 +430,10 @@ def leak_check(report: dict, family: str, dest: Path) -> tuple[bool | None, list
         return leak, refusals
     if str(dest) in json.dumps(without_host_paths(init)):
         refusals.append("the corpus path (named after the family) reaches the agent's init payload")
+    if init.get("bazaar_family"):
+        # The eval withholds it (#705), so this only fires if a path to the
+        # agent stops doing so; the prompt would then carry the family as a hint.
+        refusals.append("the agent's init payload carries bazaar_family (#705)")
     return leak, refusals
 
 
