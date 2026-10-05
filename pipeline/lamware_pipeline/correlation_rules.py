@@ -9,12 +9,31 @@ the gathered inputs before returning so raw payload bytes are never persisted.
 
 Each rule is a pure function (report: dict) -> list[dict]; findings preserve the
 historical key shape (type, severity, title, detail, sources, mitre, ...).
+
+Every read of the cape and volatility sections is shape-checked (#686). Both
+describe the guest — Volatility plugin rows are whatever the sample made its
+processes look like — and the rules used to read them with unguarded
+``.get(...)`` chains, so one wrong-typed field raised out of cross_correlate.
+Nothing in run-pipeline catches that call, so the raise ended the run before
+report.json was written: the sandbox and memory work already done was lost,
+not just the correlation. Now:
+
+  - a malformed row or field is skipped through plugin_rows.Row, the same
+    reader stages/volatility.py uses (#685), and named in one
+    ``correlation_warnings`` entry;
+  - a rule or enrichment step that still raises costs only itself, and is
+    named in ``correlation_warnings`` (#411: "could not look" is reported, never
+    folded into "looked and found nothing").
+
+A well-formed report produces the same findings and warnings as before.
 """
 import ipaddress
 import json
 import os
 import re
 from urllib.parse import urlsplit
+
+from .plugin_rows import Row, rows, type_name
 
 _CAPE_STORAGE_ROOT = "/opt/CAPEv2/storage/analyses"
 _PIPELINE_REPORTS_ROOT = "/opt/pipeline/reports"
@@ -41,7 +60,9 @@ def _within_allowed_root(path: str) -> bool:
     constant; a future config-driven version could source these from PipelineConfig."""
     try:
         real = os.path.realpath(path)
-    except (ValueError, OSError):
+    except (ValueError, OSError, TypeError):
+        # TypeError: a path that is not a string. Callers read paths through
+        # Row.text, so this is the last line, not the first.
         return False
     for root in (_CAPE_STORAGE_ROOT, _PIPELINE_REPORTS_ROOT):
         try:
@@ -50,6 +71,61 @@ def _within_allowed_root(path: str) -> bool:
         except (ValueError, OSError):
             continue
     return False
+
+
+# -------------------------------------------------------------------------
+# Shape-checked access to the cape and volatility sections (#686)
+# -------------------------------------------------------------------------
+#
+# Each takes the list a malformed value is reported into. None means the
+# caller does not collect them (a rule or helper called on its own, as the
+# tests and older callers do); the read is still safe.
+
+def _section(report: dict, name: str, warnings: list[str] | None) -> dict:
+    """report[name] when it is an object, else {}.
+
+    Absent and null are "the stage did not run" and stay silent, exactly as
+    ``report.get(name, {})`` treated absent. Any other type is reported: the
+    old ``.get`` chain raised on it.
+    """
+    value = report.get(name)
+    if isinstance(value, dict):
+        return value
+    if value is not None and warnings is not None:
+        warnings.append(f"{name}: expected object, got {type_name(value)} — not read")
+    return {}
+
+
+def _plugin_rows(report: dict, name: str, warnings: list[str] | None) -> list[Row]:
+    """The object rows of one Volatility plugin's output, for a rule.
+
+    A plugin output that is not a list — failed (``{"error": ...}``), absent,
+    or some other shape — gives no rows and no warning here, because
+    _plugin_state already reports exactly that case in correlation_warnings,
+    per rule that needed the plugin.
+
+    test_correlation_coverage finds the plugins the rules read through the
+    calls to this function, so every rule must read its plugins through it.
+    """
+    plugins = _section(report, "volatility", warnings).get("plugins")
+    if not isinstance(plugins, dict):
+        return []
+    output = plugins.get(name)
+    if not isinstance(output, list):
+        return []
+    return rows(output, name, [] if warnings is None else warnings)
+
+
+def _cape_list(report: dict, key: str, warnings: list[str] | None) -> list[Row]:
+    """The object rows of a list in the cape section (e.g. injection_buffers)."""
+    sink = [] if warnings is None else warnings
+    value = _section(report, "cape", warnings).get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        sink.append(f"cape.{key}: expected array, got {type_name(value)} — not read")
+        return []
+    return rows(value, f"cape.{key}", sink)
 
 
 #: files.json categories that are CAPE's own dump artifacts rather than files
@@ -123,15 +199,17 @@ def _gather_dropped_files(report: dict) -> tuple[list[str], str | None]:
     return names[:_MAX_DROPPED_FILES], None
 
 
-def _gather_buffer_samples(report: dict) -> dict:
+def _gather_buffer_samples(report: dict, warnings: list[str] | None = None) -> dict:
     """Truncated, hex-encoded head bytes of each injection buffer, keyed
     'target_pid:injection_address'. Path-contained + bounded read."""
     samples: dict[str, str] = {}
-    for buf in report.get("cape", {}).get("injection_buffers", []):
-        buf_path = buf.get("path", "")
+    for buf in _cape_list(report, "injection_buffers", warnings):
+        buf_path = buf.text("path", "")
         if not buf_path or not _within_allowed_root(buf_path):
             continue
-        key = f"{buf.get('target_pid', 0)}:{buf.get('injection_address', '')}"
+        # Defaults as .get gave them, null included: these keys must equal the
+        # ones _gather_vad_samples and rule_shellcode_self_modified build.
+        key = f"{buf.integer('target_pid', 0)}:{buf.text('injection_address', '')}"
         try:
             with open(buf_path, "rb") as f:
                 samples[key] = f.read(_BUFFER_SAMPLE_BYTES).hex()
@@ -172,7 +250,8 @@ def _is_dump_filename(name: str) -> bool:
     return bool(name) and name.strip().lower() not in _VAD_NON_DUMP
 
 
-def _gather_vad_samples(report: dict) -> tuple[dict, str | None, int]:
+def _gather_vad_samples(report: dict,
+                        warnings: list[str] | None = None) -> tuple[dict, str | None, int]:
     """Memory bytes at each injection address, from the VAD dumps vadinfo wrote.
 
     Keyed 'target_pid:injection_address' to match `buffer_samples`, so the rule
@@ -190,19 +269,21 @@ def _gather_vad_samples(report: dict) -> tuple[dict, str | None, int]:
     vol = report.get("volatility")
     if not isinstance(vol, dict):
         return samples, None, 0
-    vadinfo = (vol.get("plugins") or {}).get("vadinfo")
+    plugins = vol.get("plugins")
+    vadinfo = plugins.get("vadinfo") if isinstance(plugins, dict) else None
     if not isinstance(vadinfo, list):
         return samples, "vadinfo did not run", 0
-    dump_dir = vol.get("vad_dump_dir")
+    dump_dir = Row(vol, "volatility", [] if warnings is None else warnings).text(
+        "vad_dump_dir", None)
     if not dump_dir:
         return samples, "vadinfo ran but dumped no regions", 0
     if not _within_allowed_root(dump_dir):
         return samples, "vad dump directory outside the allowed read root", 0
 
     unresolved = 0
-    for buf in report.get("cape", {}).get("injection_buffers", []):
-        pid = buf.get("target_pid")
-        addr_s = buf.get("injection_address", "")
+    for buf in _cape_list(report, "injection_buffers", warnings):
+        pid = buf.integer("target_pid", None)
+        addr_s = buf.text("injection_address", "")
         try:
             addr = int(str(addr_s), 16)
         except (ValueError, TypeError):
@@ -245,17 +326,52 @@ def _gather_vad_samples(report: dict) -> tuple[dict, str | None, int]:
     return samples, reason, unresolved
 
 
-def enrich_correlation_inputs(report: dict) -> dict:
+def _guarded(step: str, call, fallback, failures: list[str] | None):
+    """call(), or `fallback` with the failure named in `failures`.
+
+    One step that raises costs only what that step gathers (#686). Without a
+    `failures` list to report into, the exception propagates: swallowing it
+    with nobody to tell is the silent degradation #411 exists to prevent.
+    """
+    if failures is None:
+        return call()
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001 — any raise here must cost one step, not the run
+        # The type only: an exception message can carry guest-chosen text.
+        failures.append(
+            f"Correlation input '{step}' could not be gathered "
+            f"({type(exc).__name__}) — the rules that read it ran without it, so "
+            f"an absence of their findings does not cover it"
+        )
+        return fallback
+
+
+def enrich_correlation_inputs(report: dict, warnings: list[str] | None = None,
+                              failures: list[str] | None = None) -> dict:
     """Populate report['_correlation_inputs'] from the filesystem. Idempotent:
-    overwrites wholesale so replay re-runs are safe. Returns the (mutated) report."""
-    dropped_files, dropped_unavailable = _gather_dropped_files(report)
-    vad_samples, vad_unavailable, vad_unresolved = _gather_vad_samples(report)
+    overwrites wholesale so replay re-runs are safe. Returns the (mutated) report.
+
+    `warnings` collects malformed values that were skipped, `failures` the
+    steps that raised anyway (see _guarded); cross_correlate passes both."""
+    dropped_files, dropped_unavailable = _guarded(
+        "dropped_files", lambda: _gather_dropped_files(report), ([], None), failures)
+    vad_samples, vad_unavailable, vad_unresolved = _guarded(
+        "vad_samples", lambda: _gather_vad_samples(report, warnings), ({}, None, 0), failures)
 
     # Computed once here, not per-rule: the image scan reads the whole dump, and
     # doing it twice would read ~8.6GB twice for one boolean.
-    c2_indicators = _cape_c2_string_indicators(report.get("cape", {}))
-    c2_vad_hits, c2_vad_reason = _gather_vad_string_hits(report, c2_indicators)
-    c2_image_hits, c2_image_reason = _gather_memory_image_hits(report, c2_indicators)
+    c2_indicators = _guarded(
+        "c2_indicators", lambda: _cape_c2_string_indicators(report.get("cape")), set(),
+        failures)
+    c2_vad_hits, c2_vad_reason = _guarded(
+        "c2_vad_hits", lambda: _gather_vad_string_hits(report, c2_indicators, warnings),
+        ({}, None), failures)
+    c2_image_hits, c2_image_reason = _guarded(
+        "c2_image_hits", lambda: _gather_memory_image_hits(report, c2_indicators),
+        (set(), None), failures)
+    buffer_samples = _guarded(
+        "buffer_samples", lambda: _gather_buffer_samples(report, warnings), {}, failures)
     # Only a gap when NEITHER source could be searched. Either one alone is a
     # real answer, so warning then would be noise on an ordinary run (#453).
     c2_unavailable = None
@@ -264,7 +380,7 @@ def enrich_correlation_inputs(report: dict) -> dict:
     report["_correlation_inputs"] = {
         "dropped_files": dropped_files,
         "dropped_files_unavailable": dropped_unavailable,
-        "buffer_samples": _gather_buffer_samples(report),
+        "buffer_samples": buffer_samples,
         "c2_vad_hits": {k: list(v) for k, v in c2_vad_hits.items()},
         "c2_image_hits": sorted(c2_image_hits),
         "c2_scan_unavailable": c2_unavailable,
@@ -302,12 +418,12 @@ def _basename(path: str) -> str:
     return path.replace("/", "\\").rsplit("\\", 1)[-1]
 
 
-def rule_dropped_file_loaded(report: dict) -> list[dict]:
+def rule_dropped_file_loaded(report: dict, warnings: list[str] | None = None) -> list[dict]:
     """Dropped file (Cape) confirmed loaded into a process (Volatility dlllist)."""
     findings = []
     dropped_files = report.get("_correlation_inputs", {}).get("dropped_files", [])
-    dlllist = report.get("volatility", {}).get("plugins", {}).get("dlllist", [])
-    if not (isinstance(dlllist, list) and dropped_files):
+    dlllist = _plugin_rows(report, "dlllist", warnings)
+    if not (dlllist and dropped_files):
         return findings
 
     # Full paths only, on both sides. The rule used to reduce the dropped file
@@ -318,9 +434,9 @@ def rule_dropped_file_loaded(report: dict) -> list[dict]:
     # loaded one, so the rule misfired hardest on the samples it exists for.
     # dlllist entries without a Path cannot establish identity and are skipped:
     # matching a dropped file to a bare module NAME is the basename join again.
-    loaded: dict[str, list[dict]] = {}
+    loaded: dict[str, list[Row]] = {}
     for entry in dlllist:
-        dll_path = entry.get("Path", "")
+        dll_path = entry.text("Path", "")
         if not dll_path:
             continue
         loaded.setdefault(_normalise_win_path(dll_path), []).append(entry)
@@ -331,7 +447,8 @@ def rule_dropped_file_loaded(report: dict) -> list[dict]:
             continue
         pid_loaded_by = []
         for entry in loaded[key]:
-            pid_loaded_by.append(f"{entry.get('Process', '?')} (pid {entry.get('PID', '?')})")
+            pid_loaded_by.append(
+                f"{entry.text('Process', '?')} (pid {entry.integer('PID', '?')})")
         findings.append({
             "type": "dropped_file_loaded",
             "severity": "high",
@@ -343,7 +460,7 @@ def rule_dropped_file_loaded(report: dict) -> list[dict]:
     return findings
 
 
-def rule_shellcode_self_modified(report: dict) -> list[dict]:
+def rule_shellcode_self_modified(report: dict, warnings: list[str] | None = None) -> list[dict]:
     """Injected bytes that differ in memory from what Cape captured at write time.
 
     Joins on VAD CONTAINMENT via `windows.vadinfo`, not on equality with
@@ -370,9 +487,9 @@ def rule_shellcode_self_modified(report: dict) -> list[dict]:
     if not (cape_samples and vad_samples):
         return findings
 
-    for buf in report.get("cape", {}).get("injection_buffers", []):
-        pid = buf.get("target_pid")
-        addr = buf.get("injection_address", "")
+    for buf in _cape_list(report, "injection_buffers", warnings):
+        pid = buf.integer("target_pid", None)
+        addr = buf.text("injection_address", "")
         key = f"{pid}:{addr}"
         cape_hex, mem_hex = cape_samples.get(key), vad_samples.get(key)
         if not (cape_hex and mem_hex):
@@ -475,14 +592,13 @@ def _normalise_cmdline(value: str) -> str:
     return " ".join(_split_cmdline(value)).strip().lower()
 
 
-def rule_cmdline_spoofing(report: dict) -> list[dict]:
+def rule_cmdline_spoofing(report: dict, warnings: list[str] | None = None) -> list[dict]:
     """Process cmdline in memory (Volatility PEB) differs from the launch cmdline
     Cape logged → command-line spoofing."""
     findings = []
-    cape = report.get("cape", {})
-    cmdline = report.get("volatility", {}).get("plugins", {}).get("cmdline", [])
-    if not isinstance(cmdline, list):
-        return findings
+    sink = [] if warnings is None else warnings
+    cape = _section(report, "cape", warnings)
+    cmdline = _plugin_rows(report, "cmdline", warnings)
 
     # PIDs are keyed as STRINGS on both sides. Volatility's json renderer gives
     # ints, and stages/cape.py builds process_cmdlines from int process_id — but
@@ -495,13 +611,24 @@ def rule_cmdline_spoofing(report: dict) -> list[dict]:
     # report is what then feeds db_ingest and the PDF.
     vol_cmdlines = {}
     for entry in cmdline:
-        pid = entry.get("PID", 0)
-        args = entry.get("Args", "")
+        pid = entry.integer("PID", 0)
+        args = entry.text("Args", "")
         if pid and args:
             vol_cmdlines[str(pid)] = args
 
-    cape_cmdlines = cape.get("process_cmdlines", {})
-    for pid, cape_cmd in cape_cmdlines.items():
+    cape_cmdlines = cape.get("process_cmdlines")
+    if cape_cmdlines is None:
+        cape_cmdlines = {}
+    elif not isinstance(cape_cmdlines, dict):
+        sink.append(f"cape.process_cmdlines: expected object, got "
+                    f"{type_name(cape_cmdlines)} — not read")
+        cape_cmdlines = {}
+    for i, (pid, cape_cmd) in enumerate(cape_cmdlines.items()):
+        if cape_cmd is not None and not isinstance(cape_cmd, str):
+            # Indexed, not keyed: the path must not carry a value Cape wrote.
+            sink.append(f"cape.process_cmdlines[{i}]: expected string, got "
+                        f"{type_name(cape_cmd)} — not read")
+            continue
         vol_cmd = vol_cmdlines.get(str(pid), "")
         if not (vol_cmd and cape_cmd):
             continue
@@ -603,7 +730,7 @@ def _looks_like_hostname(value: str) -> bool:
     return bool(_TLD_RE.match(labels[-1]))
 
 
-def _cape_c2_string_indicators(cape: dict) -> set[str]:
+def _cape_c2_string_indicators(cape: dict | None) -> set[str]:
     """C2 hosts worth hunting for in process memory.
 
     Deliberately narrower than the DNS/host lists. Every query resolves to the
@@ -636,7 +763,12 @@ def _cape_c2_string_indicators(cape: dict) -> set[str]:
         # a path may not sit contiguously in memory, and the same host appears
         # across every URL a family carries.
         if "://" in v:
-            host = urlsplit(v).hostname or ""
+            try:
+                host = urlsplit(v).hostname or ""
+            except ValueError:
+                # "http://[::1" — an unbalanced IPv6 bracket. The config value
+                # is the sample's; one that is not a URL names no host to hunt.
+                return
             if host:
                 v = host
         v = v.strip("/")
@@ -683,29 +815,35 @@ def _cape_c2_string_indicators(cape: dict) -> set[str]:
             for item in node:
                 _walk(item)
 
-    _walk(cape.get("extracted_configs", []))
+    if isinstance(cape, dict):
+        _walk(cape.get("extracted_configs", []))
     return out
 
 
-def _vad_dump_files(report: dict) -> list[tuple]:
-    """(pid, path) for every VAD region vadinfo actually dumped."""
+def _vad_dump_files(report: dict, warnings: list[str] | None = None) -> list[tuple]:
+    """(pid, path) for every VAD region vadinfo actually dumped.
+
+    The PID is read as an integer or None: it becomes a set member and a sort
+    key in _gather_vad_string_hits, where an unhashable one raised and a mix of
+    int and str failed the sort.
+    """
+    sink = [] if warnings is None else warnings
     vol = report.get("volatility")
     if not isinstance(vol, dict):
         return []
-    vadinfo = (vol.get("plugins") or {}).get("vadinfo")
-    dump_dir = vol.get("vad_dump_dir")
+    plugins = vol.get("plugins")
+    vadinfo = plugins.get("vadinfo") if isinstance(plugins, dict) else None
+    dump_dir = Row(vol, "volatility", sink).text("vad_dump_dir", None)
     if not isinstance(vadinfo, list) or not dump_dir or not _within_allowed_root(dump_dir):
         return []
     out = []
-    for vad in vadinfo:
-        if not isinstance(vad, dict):
-            continue
-        name = vad.get("File output")
+    for vad in rows(vadinfo, "vadinfo", sink):
+        name = vad.text("File output", None)
         if not isinstance(name, str) or not _is_dump_filename(name):
             continue
         path = os.path.join(dump_dir, os.path.basename(name))
         if _within_allowed_root(path):
-            out.append((vad.get("PID"), path))
+            out.append((vad.integer("PID", None), path))
     return out
 
 
@@ -796,7 +934,8 @@ def _gather_memory_image_hits(report: dict, needles: set) -> tuple[set, str | No
     return found, None
 
 
-def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | None]:
+def _gather_vad_string_hits(report: dict, needles: set,
+                            warnings: list[str] | None = None) -> tuple[dict, str | None]:
     """Which indicators appear verbatim in dumped process memory, and in whose.
 
     Searches both ASCII and UTF-16LE: Windows APIs carry hostnames as wide
@@ -807,7 +946,7 @@ def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | Non
     """
     if not needles:
         return {}, None
-    files = _vad_dump_files(report)
+    files = _vad_dump_files(report, warnings)
     if not files:
         return {}, "no dumped VAD regions to search"
 
@@ -835,7 +974,7 @@ def _gather_vad_string_hits(report: dict, needles: set) -> tuple[dict, str | Non
     return {k: sorted(v, key=lambda x: (x is None, x)) for k, v in hits.items()}, reason
 
 
-def rule_c2_live_in_memory(report: dict) -> list[dict]:
+def rule_c2_live_in_memory(report: dict, warnings: list[str] | None = None) -> list[dict]:
     """A Cape-extracted C2 host that is also present, verbatim, in process memory.
 
     This used to join Cape's C2 IPs against `windows.netscan` foreign addresses.
@@ -866,6 +1005,10 @@ def rule_c2_live_in_memory(report: dict) -> list[dict]:
     dumps for Cape's injection target PIDs — so a sample with C2 but no
     injection has nothing to search. That is reported, not silently treated as
     a clean result.
+
+    `warnings` is unused: this rule reads only _correlation_inputs, which
+    enrichment built from shape-checked reads. It is accepted so every rule in
+    _RULES has one signature.
     """
     findings = []
     inputs = report.get("_correlation_inputs", {})
@@ -899,7 +1042,7 @@ def rule_c2_live_in_memory(report: dict) -> list[dict]:
 
 # --- New rule: injection corroborated in memory ---
 
-def rule_injection_corroborated(report: dict) -> list[dict]:
+def rule_injection_corroborated(report: dict, warnings: list[str] | None = None) -> list[dict]:
     """Cape flagged injection into a PID AND Volatility malfind found an anomalous
     executable region in that same PID → injection confirmed in memory.
 
@@ -909,22 +1052,21 @@ def rule_injection_corroborated(report: dict) -> list[dict]:
     scoring it high would double-count. medium is score-neutral.
     """
     findings = []
-    cape = report.get("cape", {})
-    malfind = report.get("volatility", {}).get("plugins", {}).get("malfind", [])
-    injection_bufs = cape.get("injection_buffers", [])
-    if not (isinstance(malfind, list) and injection_bufs):
+    malfind = _plugin_rows(report, "malfind", warnings)
+    injection_bufs = _cape_list(report, "injection_buffers", warnings)
+    if not (malfind and injection_bufs):
         return findings
 
     malfind_pids = {}
     for region in malfind:
-        pid = region.get("PID")
+        pid = region.integer("PID", None)
         if pid is not None:
             malfind_pids[pid] = malfind_pids.get(pid, 0) + 1
 
     seen_target_pids: set = set()
     target_pids = []
     for buf in injection_bufs:
-        pid = buf.get("target_pid")
+        pid = buf.integer("target_pid", None)
         if pid is not None and pid not in seen_target_pids:
             seen_target_pids.add(pid)
             target_pids.append(pid)
@@ -958,9 +1100,31 @@ _RULES = [
 ]
 
 
-def evaluate_rules(report: dict) -> list[dict]:
-    """Pure: concatenate findings from every registered rule, in registry order."""
-    return [finding for rule in _RULES for finding in rule(report)]
+def evaluate_rules(report: dict, warnings: list[str] | None = None,
+                   failures: list[str] | None = None) -> list[dict]:
+    """Pure: concatenate findings from every registered rule, in registry order.
+
+    With a `failures` list, a rule that raises costs only its own findings and
+    is named there (#686); without one it propagates, as it always did, so a
+    direct caller is never handed a silently shortened list. `warnings`
+    collects the malformed values the rules skipped.
+    """
+    findings: list[dict] = []
+    for rule in _RULES:
+        if failures is None:
+            findings.extend(rule(report, warnings))
+            continue
+        try:
+            found = rule(report, warnings)
+        except Exception as exc:  # noqa: BLE001 — one rule must not cost the others
+            # The type only: an exception message can carry guest-chosen text.
+            failures.append(
+                f"Correlation rule {rule.__name__} failed ({type(exc).__name__}) — "
+                f"its findings are missing, so their absence is not a clean result"
+            )
+            continue
+        findings.extend(found)
+    return findings
 
 
 # -------------------------------------------------------------------------
@@ -1034,7 +1198,8 @@ def _cape_unavailable_reason(report: dict) -> str | None:
     if not isinstance(cape, dict):
         return None
     status = cape.get("status")
-    if status in _CAPE_FAILED_STATUSES:
+    # isinstance first: `in` on a set hashes the value, and a list raised.
+    if isinstance(status, str) and status in _CAPE_FAILED_STATUSES:
         detail = cape.get("error") or status
         return str(detail)[:200]
     return None
@@ -1127,7 +1292,7 @@ def _volatility_warnings(report: dict) -> list[str]:
     # ordinary runs is how a channel gets ignored (#453).
     #
     # Gated on there being something to check instead.
-    if report.get("cape", {}).get("injection_buffers"):
+    if _section(report, "cape", None).get("injection_buffers"):
         inputs = report.get("_correlation_inputs", {})
         reason = inputs.get("vad_samples_unavailable")
         unresolved = inputs.get("vad_samples_unresolved") or 0
@@ -1159,7 +1324,7 @@ def _volatility_warnings(report: dict) -> list[str]:
     # nothing to hunt for, having nothing to hunt in is not a gap. When there IS
     # an indicator and no dumped memory to search it in, silence would read as
     # "the C2 host was not in memory" when the truth is nobody looked (#460).
-    if _cape_c2_string_indicators(report.get("cape", {})):
+    if _cape_c2_string_indicators(report.get("cape")):
         reason = report.get("_correlation_inputs", {}).get("c2_scan_unavailable")
         if reason:
             warnings.append(
@@ -1169,19 +1334,62 @@ def _volatility_warnings(report: dict) -> list[str]:
     return warnings
 
 
+#: How many malformed-value paths one warning names before summarising. The
+#: interpret prompt shows six warnings at 220 characters each, and the rule-level
+#: warnings above must not be crowded out by a list of paths.
+_MAX_MALFORMED_NAMED = 3
+
+
+def _malformed_warning(malformed: list[str]) -> list[str]:
+    """One correlation warning for every malformed value the readers skipped.
+
+    The same value is often read by several steps (an injection buffer is read
+    by four), so the list is deduplicated first. The paths are built from our
+    key names and indices only, never from report values.
+    """
+    distinct = list(dict.fromkeys(malformed))
+    if not distinct:
+        return []
+    named = "; ".join(distinct[:_MAX_MALFORMED_NAMED])
+    more = len(distinct) - _MAX_MALFORMED_NAMED
+    if more > 0:
+        named += f"; and {more} more"
+    return [
+        f"Correlation input malformed: {len(distinct)} value(s) not read ({named}) — "
+        f"those rows were not correlated, so an absence of findings does not cover them"
+    ]
+
+
 def cross_correlate(report: dict) -> list[dict]:
     """Public entrypoint. Enrich (filesystem) -> evaluate pure rules -> strip inputs.
 
     Also sets ``report["correlation_warnings"]`` so an empty finding list can be
     read correctly: no findings WITH warnings means the evidence was missing, not
     that the sample was clean.
+
+    Never raises on the shape of the report (#686). run-pipeline calls this
+    with nothing around it, before report.json is first written, so a raise
+    here used to end the run and lose the sandbox and memory analysis with it.
+    A malformed value costs its row, and a step or rule that raises anyway
+    costs only itself; both are named in correlation_warnings.
     """
-    enrich_correlation_inputs(report)
-    report["correlation_warnings"] = correlation_warnings(report)
+    malformed: list[str] = []
+    failures: list[str] = []
     try:
-        return evaluate_rules(report)
+        enrich_correlation_inputs(report, malformed, failures)
+        try:
+            coverage = correlation_warnings(report)
+        except Exception as exc:  # noqa: BLE001 — the rules can still run without it
+            coverage = [
+                f"Correlation coverage check failed ({type(exc).__name__}) — which "
+                f"rules lacked their input is unknown, so an absence of findings is "
+                f"not a clean result"
+            ]
+        findings = evaluate_rules(report, malformed, failures)
     finally:
         report.pop("_correlation_inputs", None)
+    report["correlation_warnings"] = coverage + failures + _malformed_warning(malformed)
+    return findings
 
 
 # -------------------------------------------------------------------------
