@@ -29,11 +29,11 @@
   {
    "type": "cmdline_spoofing",
    "severity": "critical",
-   "title": "Command line spoofing detected in PID 1448",
+   "title": "Command line spoofing detected in PID 5128",
    "detail": "Process command line changed between execution and memory dump.",
-   "before": "C:\\Windows\\System32\\proc1448.exe -secured -Embedding",
-   "after": "C:\\Windows\\System32\\proc1448.exe",
-   "pid": "1448",
+   "before": "\"C:\\Windows\\System32\\proc5128.exe\" -run",
+   "after": "C:\\Windows\\System32\\proc5128.exe  -run -inject",
+   "pid": "5128",
    "sources": [
     "Cape",
     "Volatility"
@@ -67,5 +67,5 @@
   }
  ],
  "correlation_warnings": [],
- "_produced_by": "origin/main ac1767f pipeline/lamware_pipeline/correlation_rules.py"
+ "_produced_by": "origin/main 9a9d0b3 pipeline/lamware_pipeline/correlation_rules.py, less its PID 1448 cmdline_spoofing finding (-secured -Embedding), the false positive #696 removes"
 }

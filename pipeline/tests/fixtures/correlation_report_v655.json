@@ -466,7 +466,7 @@
     {
      "PID": 5128,
      "Process": "proc5128.exe",
-     "Args": "C:\\Windows\\System32\\proc5128.exe  -run",
+     "Args": "C:\\Windows\\System32\\proc5128.exe  -run -inject",
      "__children": []
     },
     {

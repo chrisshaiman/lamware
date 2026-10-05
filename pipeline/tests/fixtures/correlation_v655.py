@@ -9,12 +9,22 @@ injection addresses, which Cape PIDs have a Volatility cmdline row and which of
 those pairs differ), and every string a sample or guest could have chosen is
 synthetic. The C2 config is added: the real run decoded none.
 
+The command-line spoof is added too (#696). The real run's only differing pair,
+PID 1448 (`-secured -Embedding` at launch, bare in the PEB), is WMI's
+benign-flag shape and no longer produces a finding, so with it alone the golden
+would not reach rule_cmdline_spoofing. PID 5128's Volatility Args carry an extra
+`-inject` that Cape's launch command line does not: SPOOFED_PID. PID 1448 stays
+as it was on the host, so the golden also pins that it is silent.
+
 cross_correlate also reads files — Cape's files.json, the injection buffers,
 the VAD dumps and the memory image — so `materialise` writes synthetic ones
 under a temp root and points the report at them. With them every rule fires on
 the fixture, so the golden covers all five. The golden
 (`correlation_report_v655.golden.json`) was produced by origin/main's
-correlation_rules.py (ac1767f) through this same function, before #686.
+correlation_rules.py (ac1767f) through this same function, before #686. For
+#696 it was regenerated the same way by origin/main 9a9d0b3 on the fixture with
+the added spoof, and the one finding #696 exists to remove (PID 1448's
+cmdline_spoofing) was then deleted by hand; `_produced_by` says so.
 
 A plain module (loaded by path, like dotnet_formbook_shape.py) rather than a
 conftest fixture, so the golden generator and the Hypothesis test (which cannot
@@ -32,6 +42,10 @@ GOLDEN = json.loads((FIXTURES / "correlation_report_v655.golden.json").read_text
     if (FIXTURES / "correlation_report_v655.golden.json").exists() else None
 
 C2_HOST = "c2-host.example.com"
+#: The PID whose command line differs for a reason that is not a benign flag.
+SPOOFED_PID = "5128"
+#: The real host pair that differs only by benign flags (#696): must stay silent.
+BENIGN_FLAGS_PID = "1448"
 _CAPE_BYTES = b"\x90" * 64
 _CHANGED_BYTES = b"\xcc" * 64
 

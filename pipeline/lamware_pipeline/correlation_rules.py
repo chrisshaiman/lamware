@@ -524,30 +524,42 @@ def rule_shellcode_self_modified(report: dict, warnings: list[str] | None = None
     return findings
 
 
+#: Flags Windows adds to a process's command line between launch and the PEB
+#: read (COM activation, Chrome's prefetch hint). An entry ending in ':' is a
+#: flag that carries a value (`/prefetch:5`, `-servername:Foo`) and matches as
+#: a token prefix; the rest match a whole token.
 _BENIGN_CMDLINE_FLAGS = ["-embedding", "-secured", "/prefetch:", "-servername:"]
 
 
-def _is_benign_cmdline_difference(before: str, after: str) -> bool:
-    """True if the only cmdline difference is a known benign flag (e.g. COM -Embedding).
+def _is_benign_cmdline_flag(token: str) -> bool:
+    """True if one (lower-cased) argv token is a flag from _BENIGN_CMDLINE_FLAGS."""
+    return any(token.startswith(flag) if flag.endswith(":") else token == flag
+               for flag in _BENIGN_CMDLINE_FLAGS)
 
-    Gated on the flag actually appearing. Without that gate the second branch
-    re-split both sides on whitespace and compared the results, which made the
-    helper a general whitespace-insensitive comparator: a changed argument whose
-    only difference was a space INSIDE quotes came back "benign" no matter which
-    flag was being considered, and the rule stayed silent on a real change.
+
+def _is_benign_cmdline_difference(before: str, after: str) -> bool:
+    """True if the only cmdline difference is known benign flags (e.g. COM -Embedding).
+
+    Every benign flag is removed from both sides at once, then the remaining
+    argument vectors are compared. Removing them one flag at a time (#696)
+    meant two benign flags together never compared equal: WMI's provider host,
+    launched as `wmiprvse.exe -secured -Embedding`, read as CRITICAL spoofing
+    on 4 of 18 host reports.
+
+    Gated on a flag actually being removed. Without that gate the helper is a
+    general comparator: an older version re-split both sides on whitespace and
+    compared the results, so a changed argument whose only difference was a
+    space INSIDE quotes came back "benign" and the rule stayed silent on a real
+    change. The comparison is over _split_cmdline tokens, which keep a quoted
+    argument whole, so that difference still shows.
     """
-    b = _normalise_cmdline(before)
-    a = _normalise_cmdline(after)
-    for flag in _BENIGN_CMDLINE_FLAGS:
-        if flag not in b and flag not in a:
-            continue
-        if b.replace(flag, "").strip() == a.replace(flag, "").strip():
-            return True
-        b_no_flag = " ".join(p for p in b.split() if flag not in p)
-        a_no_flag = " ".join(p for p in a.split() if flag not in p)
-        if b_no_flag == a_no_flag:
-            return True
-    return False
+    b = [t.lower() for t in _split_cmdline(before)]
+    a = [t.lower() for t in _split_cmdline(after)]
+    b_kept = [t for t in b if not _is_benign_cmdline_flag(t)]
+    a_kept = [t for t in a if not _is_benign_cmdline_flag(t)]
+    if len(b_kept) == len(b) and len(a_kept) == len(a):
+        return False
+    return b_kept == a_kept
 
 
 #: A path component Windows shortened to 8.3 form: PROGRA~1, DOCUME~1. The two

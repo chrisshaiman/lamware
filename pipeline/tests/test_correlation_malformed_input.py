@@ -68,10 +68,12 @@ OTHER_DLL = next(i for i, r in enumerate(PLUGINS["dlllist"])
 MALFIND_1364 = next(i for i, r in enumerate(PLUGINS["malfind"]) if r["PID"] == 1364)
 DUMPED_VAD = next(i for i, r in enumerate(PLUGINS["vadinfo"]) if fx._dump_name(r["File output"]))
 # A Cape command line whose PID also has one in Volatility, other than the
-# spoofed 1448: only a pair with both sides present reached the code that raised.
+# spoofed one and the benign-flag one: only a pair with both sides present
+# reached the code that raised.
 _VOL_ARGS = {str(r["PID"]) for r in PLUGINS["cmdline"] if isinstance(r.get("Args"), str)}
 CMD_INDEX, CMD_PID = next((i, pid) for i, pid in enumerate(fx.REPORT["cape"]["process_cmdlines"])
-                          if pid in _VOL_ARGS and pid != "1448")
+                          if pid in _VOL_ARGS
+                          and pid not in (fx.SPOOFED_PID, fx.BENIGN_FLAGS_PID))
 CMDLINE_ROW = next(i for i, r in enumerate(PLUGINS["cmdline"]) if str(r["PID"]) == CMD_PID)
 
 
@@ -104,6 +106,15 @@ def test_the_golden_reaches_every_rule():
     """Guard on the guard: a golden in which a rule never fired would pass
     whatever that rule now does with its rows."""
     assert {f["type"] for f in fx.GOLDEN["findings"]} == ALL_TYPES
+
+
+def test_the_golden_spoof_is_the_synthetic_one_not_the_benign_flags():
+    """#696: the host's `-secured -Embedding` pair is in the fixture and must not
+    be in the golden; the spoof that keeps the rule covered is the added one."""
+    spoofs = {f["pid"] for f in fx.GOLDEN["findings"] if f["type"] == "cmdline_spoofing"}
+    assert spoofs == {fx.SPOOFED_PID}
+    cape = fx.REPORT["cape"]["process_cmdlines"][fx.BENIGN_FLAGS_PID].lower()
+    assert "-secured" in cape and "-embedding" in cape, "the benign pair left the fixture"
     assert fx.GOLDEN["_produced_by"].startswith("origin/main")
 
 
@@ -398,12 +409,12 @@ HOT_PATHS = (
     [(V, P, "dlllist", i, k) for i, r in enumerate(PLUGINS["dlllist"])
      if r.get("Path") == LOADED_PATH for k in READ_FIELDS["dlllist"]]
     + [(V, P, "cmdline", i, k) for i, r in enumerate(PLUGINS["cmdline"])
-       if r["PID"] == 1448 for k in READ_FIELDS["cmdline"]]
+       if str(r["PID"]) in (fx.SPOOFED_PID, fx.BENIGN_FLAGS_PID) for k in READ_FIELDS["cmdline"]]
     + [(V, P, "malfind", i, "PID") for i, r in enumerate(PLUGINS["malfind"]) if r["PID"] == 1364]
     + [(V, P, "vadinfo", i, k) for i, r in enumerate(PLUGINS["vadinfo"])
        if fx._dump_name(r["File output"]) for k in READ_FIELDS["vadinfo"]]
     + [(C, "injection_buffers", i, k) for i in range(2) for k in BUFFER_FIELDS]
-    + [(C, "process_cmdlines", "1448")]
+    + [(C, "process_cmdlines", fx.SPOOFED_PID), (C, "process_cmdlines", fx.BENIGN_FLAGS_PID)]
 )
 
 _awkward = st.sampled_from([
