@@ -81,16 +81,6 @@ def malfind(rows, warnings=None, **overrides) -> tuple[list[dict], set]:
         return filter_malfind_json(rows, warnings=warnings, **kw)
 
 
-def comparable(found: dict) -> dict:
-    """unique_processes is list(set(...)): its order follows str hash
-    randomisation and differs between interpreter runs (it did before this
-    change too), so it is compared sorted."""
-    found = copy.deepcopy(found)
-    for m in found.get("mutexes", []):
-        m["unique_processes"] = sorted(m["unique_processes"], key=str)
-    return found
-
-
 # ---------------------------------------------------------------------------
 # A well-formed output: exactly what it produced before
 # ---------------------------------------------------------------------------
@@ -99,7 +89,10 @@ def test_a_well_formed_output_produces_the_insights_it_did_before():
     """The "no data dropped" half: every insight, field for field, as origin/main
     produced from the same rows."""
     warnings: list[str] = []
-    assert comparable(insights(PLUGINS, warnings)) == GOLDEN["insights"]
+    # Compared as stored: unique_processes was list(set(...)) and was compared
+    # sorted here; it is sorted at the source now (#689), so the order is part
+    # of what must not change.
+    assert insights(PLUGINS, warnings) == GOLDEN["insights"]
     assert warnings == []
 
 
@@ -325,7 +318,7 @@ def test_run_volatility_keeps_its_plugins_when_a_row_is_malformed(tmp_path):
 def test_run_volatility_on_a_well_formed_output_records_no_parse_warnings(tmp_path):
     result = _run_stage(PLUGINS, tmp_path)
     assert "parse_warnings" not in result
-    assert comparable(result["insights"]) == GOLDEN["insights"]
+    assert result["insights"] == GOLDEN["insights"]
 
 
 def test_parse_warnings_are_bounded(tmp_path):
