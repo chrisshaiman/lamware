@@ -30,24 +30,12 @@
   when: not cape_service_file.stat.exists
   changed_when: true
 
-- name: Check if patched QEMU build exists
-  ansible.builtin.stat:
-    path: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
-  register: cape_qemu_build
-
-- name: Restore patched QEMU binary (cape2.sh apt-get may overwrite it)
-  ansible.builtin.copy:
-    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
-    dest: /usr/bin/qemu-system-x86_64
-    mode: "0755"
-    remote_src: true
-  when: cape_qemu_build.stat.exists
-
-- name: Restart libvirtd after QEMU binary restore
-  ansible.builtin.systemd:
-    name: libvirtd
-    state: restarted
-  when: cape_qemu_build.stat.exists
+# cape2.sh's apt-get can put stock QEMU back at the distro path, which the
+# `office` guest (domain AND snapshot) still boots. Restore it from the
+# root-owned preserved copy (#308, qemu-patched role) -- never from /tmp, which
+# any local user can write (#694). See restore-qemu.yml.
+- name: Restore the patched QEMU at the distro path
+  ansible.builtin.include_tasks: restore-qemu.yml
 
 - name: Remove broken apt repos re-added by cape2.sh
   ansible.builtin.shell: |
