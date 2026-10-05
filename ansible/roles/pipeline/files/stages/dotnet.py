@@ -19,6 +19,7 @@ import os
 import shutil
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 from stages import peek
@@ -27,7 +28,20 @@ from stages.peek import iter_chunks, open_regular, read_head, regular_size
 log = logging.getLogger("pipeline")
 
 CAPE_ANALYSES = Path("/opt/CAPEv2/storage/analyses")
-CARVE_DIR = Path("/tmp")
+
+# Where a carve's private directory is made when the caller names no report
+# directory. None is the system temp dir. Stage 4 always passes the report dir;
+# this is the fallback, and the tests' override. Before #537 every carve went to
+# the fixed path /tmp/carved_dotnet_<name[:16]>.exe, opened with a plain
+# open("wb"): a symlink planted there was followed, so whoever could write /tmp
+# chose where the pipeline user wrote the sample's bytes.
+CARVE_DIR: Path | None = None
+
+# Each carve gets its own directory from mkdtemp: a random name created with
+# O_EXCL semantics, mode 0700. The prefix marks the directories _remove_carve
+# may delete, so it can never be pointed at anything else.
+_CARVE_PREFIX = ".dotnet-carve-"
+_CARVE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 DOTNET_YARA_INDICATORS = [
     "isnet", "net_exe", "netexecutable", "msil", "dotnet", "csharp",
@@ -174,12 +188,63 @@ def _embedded_clr_offset(fh, size: int, cap: int | None = None,
     return None, None
 
 
-def _find_embedded_dotnet(file_path: Path) -> Path | None:
+def _write_carve(fh, pos: int, name: str, parent: Path | None) -> Path:
+    """Copy ``fh`` from ``pos`` to EOF into a new private directory under ``parent``.
+
+    The directory comes from mkdtemp (unpredictable, created exclusively, 0700)
+    and the file inside is opened O_CREAT|O_EXCL|O_NOFOLLOW at 0600: an existing
+    file or symlink at the path is an error, never a target (#537). On any
+    failure, only what this call created is removed, and the error propagates.
+    """
+    carve_dir = Path(tempfile.mkdtemp(prefix=_CARVE_PREFIX, dir=parent))
+    carved_path = carve_dir / f"carved_dotnet_{name[:16]}.exe"
+    try:
+        fd = os.open(carved_path, _CARVE_FLAGS, 0o600)
+    except BaseException:
+        # Not ours: whatever is at carved_path was there first. Leave it, and
+        # leave a directory that is not empty.
+        try:
+            carve_dir.rmdir()
+        except OSError:
+            pass
+        raise
+    try:
+        with os.fdopen(fd, "wb") as out:
+            fh.seek(pos)
+            shutil.copyfileobj(fh, out, peek.CHUNK)
+    except BaseException:
+        _remove_carve(carved_path)
+        raise
+    return carved_path
+
+
+def _remove_carve(carved_path: Path) -> bool:
+    """Delete a carve and the private directory _write_carve made for it.
+
+    Returns True when neither is left. A path whose parent is not a carve
+    directory is refused (False), so a wrong path can never remove anything else.
+    """
+    carve_dir = carved_path.parent
+    if not carve_dir.name.startswith(_CARVE_PREFIX):
+        log.warning(f"  not removing {carved_path}: not in a {_CARVE_PREFIX}* directory")
+        return False
+    # rmtree does not follow symlinks inside the tree; the directory is 0700
+    # and ours, so nothing else should be in it, but nothing in it survives.
+    shutil.rmtree(carve_dir, ignore_errors=True)
+    if os.path.lexists(carve_dir):
+        log.warning(f"  could not remove the .NET carve directory {carve_dir}")
+        return False
+    return True
+
+
+def _find_embedded_dotnet(file_path: Path, carve_parent: Path | None = None) -> Path | None:
     """Search a binary blob for an embedded .NET PE and carve it out.
 
-    Returns path to carved PE in /tmp, or None if not found. The carve is the
-    blob from the MZ to EOF, as before #677, copied in chunks rather than held
-    in memory.
+    Returns the path of the carve — in a new private directory under
+    ``carve_parent`` (else CARVE_DIR, else the system temp dir) — or None if
+    there is none. The carve is the blob from the MZ to EOF, as before #677,
+    copied in chunks rather than held in memory. The caller owns the carve and
+    removes it with _remove_carve (remove_carves) once it has been analysed.
     """
     fh = open_regular(file_path)
     if fh is None:
@@ -193,11 +258,8 @@ def _find_embedded_dotnet(file_path: Path) -> Path | None:
                     log.warning(f"  embedded .NET scan of {file_path.name}: {stopped}; "
                                 f"the rest of the file was not searched")
                 return None
-            carved_path = CARVE_DIR / f"carved_dotnet_{file_path.name[:16]}.exe"
-            fh.seek(pos)
-            with open(carved_path, "wb") as out:
-                shutil.copyfileobj(fh, out, peek.CHUNK)
-            return carved_path
+            parent = carve_parent if carve_parent is not None else CARVE_DIR
+            return _write_carve(fh, pos, file_path.name, parent)
     except OSError as e:
         log.warning(f"  embedded .NET scan of {file_path.name} failed: {e}")
         return None
@@ -233,7 +295,10 @@ def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None,
     CLR headers, then scans larger blobs for embedded .NET PEs.
 
     Returns a list of dicts with path and metadata for each .NET binary
-    found, capped at MAX_DOTNET_EXTRACTIONS.
+    found, capped at MAX_DOTNET_EXTRACTIONS. A carved entry (``carved_from``
+    set) is a file this call wrote, in a private directory under ``report_dir``
+    when given; the caller must hand the list to remove_carves (as
+    analyse_dotnet_extractions does) once it is done with them.
     """
     results = []
 
@@ -271,31 +336,71 @@ def find_dotnet_extractions(cape_data: dict, cape_task_id: int | str | None,
                     return results
 
     # Pass 2: scan large blobs for embedded .NET PEs (dropper payloads)
-    if not results:
-        for subdir_name, entries in listed:
-            # Only check files > 50KB (plausible .NET payload size)
-            large_files = sorted(
-                [(e, s) for e, s in entries if s > 51200],
-                key=lambda es: es[1],
-                reverse=True,
-            )
-            for entry, _ in large_files[:10]:  # cap scan to 10 largest
-                carved = _find_embedded_dotnet(entry)
-                if carved:
-                    carved_size = regular_size(carved)
-                    if carved_size is None:
-                        continue
-                    results.append({
-                        "path": str(carved),
-                        "source_dir": subdir_name,
-                        "sha256": entry.name,
-                        "size": carved_size,
-                        "carved_from": str(entry),
-                    })
-                    if len(results) >= MAX_DOTNET_EXTRACTIONS:
-                        return results
+    # Every carve in results is a file on disk; an exception out of this loop
+    # would leave them there with nobody holding the list, so remove them first.
+    try:
+        if not results:
+            for subdir_name, entries in listed:
+                # Only check files > 50KB (plausible .NET payload size)
+                large_files = sorted(
+                    [(e, s) for e, s in entries if s > 51200],
+                    key=lambda es: es[1],
+                    reverse=True,
+                )
+                for entry, _ in large_files[:10]:  # cap scan to 10 largest
+                    carved = _find_embedded_dotnet(entry, report_dir)
+                    if carved:
+                        carved_size = regular_size(carved)
+                        if carved_size is None:
+                            _remove_carve(carved)
+                            continue
+                        results.append({
+                            "path": str(carved),
+                            "source_dir": subdir_name,
+                            "sha256": entry.name,
+                            "size": carved_size,
+                            "carved_from": str(entry),
+                            "carved_to": str(carved.parent),
+                        })
+                        if len(results) >= MAX_DOTNET_EXTRACTIONS:
+                            return results
+    except BaseException:
+        remove_carves(results)
+        raise
 
     return results
+
+
+def remove_carves(extractions: list[dict]) -> None:
+    """Delete every carve in ``extractions``; record ``carve_removed`` on each.
+
+    Entries that are not carves (pass 1 found the file as CAPE or Volatility
+    wrote it) are left alone: those files are not the pipeline's to delete.
+    """
+    for ex in extractions:
+        if ex.get("carved_from"):
+            ex["carve_removed"] = _remove_carve(Path(ex["path"]))
+
+
+def analyse_dotnet_extractions(extractions: list[dict], output_dir: Path,
+                               dotnet_cmd: str) -> dict:
+    """Run ILSpy on the largest extraction, then delete every carve.
+
+    The carves are removed in a ``finally``: an analysis that fails, times out
+    or raises still leaves no sample bytes behind. The dotnet-analysis wrapper
+    copies its input into its own mktemp directory and mounts that, so once
+    run_dotnet_analysis returns nothing reads the carve again. The result's
+    ``extraction_source`` records where the carve was written and whether it
+    was removed.
+    """
+    best = max(extractions, key=lambda x: x["size"])
+    log.info(f"  Analyzing: {best['source_dir']}/{best['sha256'][:16]}... ({best['size']} bytes)")
+    try:
+        result = run_dotnet_analysis(Path(best["path"]), output_dir, dotnet_cmd=dotnet_cmd)
+    finally:
+        remove_carves(extractions)
+    result["extraction_source"] = best
+    return result
 
 
 def run_dotnet_analysis(binary_path: Path, output_dir: Path,

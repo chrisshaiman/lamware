@@ -57,3 +57,40 @@ def test_update_state_creates_when_missing(tmp_path, monkeypatch):
 
     assert feeder._update_state({"consecutive_failures": 0}) is True
     assert json.loads(state.read_text())["consecutive_failures"] == 0
+
+
+def test_a_planted_symlink_at_the_old_tmp_name_is_not_followed(tmp_path, monkeypatch):
+    """#537: /opt/auto-feeder is group lamware 2770 and not sticky, and the temp
+    file was the fixed name state.json.tmp, opened with open("w") and then
+    chmod'ed by path. Any lamware member could plant that name as a symlink and
+    have the API write the state JSON to, and chmod, a file of its choosing."""
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"consecutive_failures": 3}))
+    os.chmod(state, 0o664)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"not the api's to write\n")
+    os.chmod(victim, 0o600)
+    link = tmp_path / "state.json.tmp"
+    link.symlink_to(victim)
+    monkeypatch.setattr(feeder.settings, "auto_feeder_state", str(state))
+
+    assert feeder._update_state({"consecutive_failures": 0}) is True
+
+    assert victim.read_bytes() == b"not the api's to write\n"
+    assert stat_mod.S_IMODE(os.stat(victim).st_mode) == 0o600, "chmod followed the link"
+    assert json.loads(state.read_text())["consecutive_failures"] == 0
+    assert stat_mod.S_IMODE(os.stat(state).st_mode) == 0o664
+    assert not state.is_symlink()
+    leftovers = sorted(p.name for p in tmp_path.iterdir()
+                       if p.name not in {"state.json", "victim", "state.json.tmp"})
+    assert leftovers == [], f"temp files left behind: {leftovers}"
+
+
+def test_a_failed_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    state = tmp_path / "state.json"
+    monkeypatch.setattr(feeder.settings, "auto_feeder_state", str(state))
+    # default=str rescues most objects; a circular reference cannot be dumped.
+    loop: dict = {}
+    loop["self"] = loop
+    assert feeder._update_state({"loop": loop}) is False
+    assert list(tmp_path.iterdir()) == []

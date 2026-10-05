@@ -11,6 +11,7 @@
 # files, the pipeline (pipeline user) processes them. No sudo, no privilege
 # escalation.
 
+import os
 import uuid
 from pathlib import Path
 
@@ -29,6 +30,31 @@ MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 # Spool directory for uploaded samples. Owned by lamware-api:lamware.
 # Pipeline user reads via lamware group membership.
 SPOOL_DIR = Path("/opt/pipeline/spool")
+
+
+# The spool is group ``lamware`` 2770 and not sticky: every lamware member can
+# create, rename and unlink names in it. Never follow or reuse an existing name,
+# and set the mode on the descriptor rather than the path — write_bytes() then
+# chmod() followed a symlink swapped in between, or planted first (#537).
+_SPOOL_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _write_spool_file(path: Path, content: bytes) -> None:
+    """Create ``path`` exclusively at mode 0640 and write ``content`` to it."""
+    fd = os.open(path, _SPOOL_FLAGS, 0o640)
+    try:
+        os.fchmod(fd, 0o640)  # exact, whatever the process umask
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            f.write(content)
+    except BaseException:
+        if fd != -1:
+            os.close(fd)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
 
 
 @router.post("/submit")
@@ -67,8 +93,7 @@ async def submit_sample(
 
     try:
         SPOOL_DIR.mkdir(parents=True, exist_ok=True)
-        tmp_path.write_bytes(content)
-        tmp_path.chmod(0o640)
+        _write_spool_file(tmp_path, content)
     except OSError as exc:
         raise HTTPException(
             status_code=500, detail=f"Failed to save upload: {exc}"

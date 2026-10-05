@@ -57,32 +57,70 @@
     group: "{{ api_user }}"
     mode: "0750"
 
-- name: Create local api tarball (excludes .venv, __pycache__, tests)
-  ansible.builtin.command:
-    cmd: >
-      tar czf /tmp/api-src.tar.gz
-      --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache
-      --exclude=tests --exclude=.env
-      -C {{ playbook_dir }}/.. api
-  delegate_to: localhost
-  become: false
-  changed_when: true
+# The archive never lives at a fixed path in a shared /tmp (#537): it was
+# /tmp/api-src.tar.gz on both ends. On the host, `copy` keeps the ownership of
+# whatever already sits at dest (atomic_move chowns the new file to the old
+# one's uid), so a local user who pre-created that name owned the uploaded
+# archive and could rewrite it before root unpacked it into the API's install
+# dir. On the controller, `tar czf` followed a symlink there. Each end now gets
+# its own mkdtemp directory (0700), removed in `always`.
+- name: Stage the api source through private temp directories
+  block:
+    - name: Create a private local directory for the api tarball
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-api-
+      delegate_to: localhost
+      become: false
+      register: api_src_local_tmp
 
-- name: Upload api tarball
-  ansible.builtin.copy:
-    src: /tmp/api-src.tar.gz
-    dest: /tmp/api-src.tar.gz
-    mode: "0644"
+    - name: Create local api tarball (excludes .venv, __pycache__, tests)
+      ansible.builtin.command:
+        cmd: >
+          tar czf {{ api_src_local_tmp.path }}/api-src.tar.gz
+          --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache
+          --exclude=tests --exclude=.env
+          -C {{ playbook_dir }}/.. api
+      delegate_to: localhost
+      become: false
+      changed_when: true
 
-- name: Extract api source on server
-  ansible.builtin.unarchive:
-    src: /tmp/api-src.tar.gz
-    dest: "{{ api_install_dir }}/"
-    remote_src: true
-    extra_opts: ["--strip-components=1"]
-    owner: "{{ api_user }}"
-    group: "{{ api_user }}"
-  notify: Restart lamware-api
+    - name: Create a private directory on the server for the api tarball
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-api-
+      register: api_src_remote_tmp
+
+    - name: Upload api tarball
+      ansible.builtin.copy:
+        src: "{{ api_src_local_tmp.path }}/api-src.tar.gz"
+        dest: "{{ api_src_remote_tmp.path }}/api-src.tar.gz"
+        mode: "0600"
+
+    - name: Extract api source on server
+      ansible.builtin.unarchive:
+        src: "{{ api_src_remote_tmp.path }}/api-src.tar.gz"
+        dest: "{{ api_install_dir }}/"
+        remote_src: true
+        extra_opts: ["--strip-components=1"]
+        owner: "{{ api_user }}"
+        group: "{{ api_user }}"
+      notify: Restart lamware-api
+
+  always:
+    - name: Remove the server's api tarball directory
+      ansible.builtin.file:
+        path: "{{ api_src_remote_tmp.path }}"
+        state: absent
+      when: api_src_remote_tmp.path is defined
+
+    - name: Remove the local api tarball directory
+      ansible.builtin.file:
+        path: "{{ api_src_local_tmp.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      when: api_src_local_tmp.path is defined
 
 - name: Remove broken venv if pip is missing
   ansible.builtin.file:
