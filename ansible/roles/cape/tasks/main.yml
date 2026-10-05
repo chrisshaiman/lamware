@@ -295,6 +295,53 @@
   # If this task is skipped unexpectedly, the next Ansible run will surface it
   # as a changed=0 on a task that should always change on first provision.
 
+# cape2.sh's unit runs `manage.py runserver_plus`, django-extensions' development
+# server, which ALWAYS wraps the app in Werkzeug's interactive debugger: in the
+# installed version the DebuggedApplication wrap does not depend on Django's
+# DEBUG, and the journal prints "Debugger is active!" and its PIN on every start.
+# An in-browser Python console is not something to serve from a malware host.
+#
+# A drop-in replaces ExecStart rather than editing the packaged unit, so a
+# cape2.sh reinstall cannot silently bring runserver_plus back. Plain `runserver`
+# is daphne's ASGI server here (daphne leads INSTALLED_APPS), which keeps the
+# websocket routes and has no debugger. --insecure serves /static/ with DEBUG off;
+# --noreload because nothing edits the code under a running service.
+# The bind address stays the WireGuard IP (the lineinfile above remains as the
+# fallback if this drop-in is ever removed).
+- name: Create the cape-web drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/cape-web.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Run cape-web without the Werkzeug debugger
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cape-web.service.d/10-lamware-no-debugger.conf
+    content: |
+      # Managed by Ansible (roles/cape). Replaces cape2.sh's runserver_plus ExecStart.
+      [Service]
+      ExecStart=
+      ExecStart=/etc/poetry/bin/poetry run python manage.py runserver {{ cape_web_bind }} --insecure --noreload
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    cape_web_bind: "{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}"
+
+# Django error pages with DEBUG on print settings and stack frames. local_settings.py
+# is imported at the END of settings.py, so this overrides DEBUG for the running
+# app. It deliberately does NOT reach settings.py's own
+# `CSP_UPGRADE_INSECURE_REQUESTS = not DEBUG`, computed before the import: the UI
+# is plain HTTP over WireGuard, and upgrading its asset requests to HTTPS would
+# break it. settings.py (upstream CAPE) is left untouched.
+- name: Turn Django DEBUG off for the CAPE web UI
+  ansible.builtin.lineinfile:
+    path: "{{ cape_install_dir }}/web/web/local_settings.py"
+    regexp: '^DEBUG\s*='
+    line: "DEBUG = False"
+
 # API key authentication — prevents unauthenticated sample submission
 - name: Set Cape API key
   community.general.ini_file:
