@@ -6,6 +6,7 @@
 #
 #   virbr-det → eth0  DROP  (no VM internet egress)
 #   virbr-det → wg0   DROP  (no VM access to management VPN)
+#   virbr-det → host  REJECT unless allowlisted (ADR-020 amendment, guest_input.yml)
 #
 # libvirt isolated networks (no <forward> element) block external routing
 # by default. Explicit iptables rules are belt-and-suspenders — they survive
@@ -232,201 +233,18 @@
     reload: true
 
 # -------------------------------------------------------------------------
-# iptables INPUT rules — allow guest VMs to reach host services on virbr-det
+# Guest traffic to the host -- default-deny (ADR-020, amended 2026-10-05)
 # -------------------------------------------------------------------------
-# Guests on the detonation bridge (virbr-det) need to reach:
-#   - INetSim: DNS (53), HTTP (80), HTTPS (443), SMTP (25), FTP (21)
-#   - Cape resultserver: port {{ cape_resultserver_port }}
-#
-# Without these ACCEPT rules, iptables may drop inbound packets on the
-# INPUT chain if the hardening role or a future policy tightens the default.
-# Using -C (check) before inserting ensures idempotency.
-#
-# DNS gets both UDP and TCP rules: UDP for standard queries, TCP for large
-# responses and zone transfers (INetSim handles both).
+# The FORWARD rules above decide what a guest can reach THROUGH the host. What a
+# guest can reach ON the host is decided in INPUT, by one chain that ends in a
+# REJECT. The per-port INPUT ACCEPTs that used to live here (INetSim, the
+# resultserver) are inside that chain now, scoped to the gateway address, and
+# guest_input.yml removes the old copies from INPUT. import, not include: a
+# static import inherits the role's `networking` tag, so `make deploy
+# TAGS=networking` runs these tasks rather than skipping them silently.
 
-- name: "Check INPUT rule — virbr-det DNS UDP (53)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p udp --dport 53 -j ACCEPT
-  register: networking_inp_dns_udp
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det DNS UDP (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: udp
-    destination_port: "53"
-    jump: ACCEPT
-    action: insert
-    rule_num: 1
-    comment: "INetSim: guest DNS (UDP)"
-  when: networking_inp_dns_udp.rc != 0
-
-- name: "Check INPUT rule — virbr-det DNS TCP (53)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 53 -j ACCEPT
-  register: networking_inp_dns_tcp
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det DNS TCP (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "53"
-    jump: ACCEPT
-    action: insert
-    rule_num: 2
-    comment: "INetSim: guest DNS (TCP)"
-  when: networking_inp_dns_tcp.rc != 0
-
-# The two rules above match --dport 53, which the PREROUTING redirect has
-# already rewritten to {{ inetsim_dns_port }} by the time a guest packet
-# reaches INPUT. They are kept because they are what applies if the redirect is
-# ever removed, but on their own they no longer cover guest DNS.
-#
-# The comment at the top of this section is explicit that these ACCEPT rules
-# exist for the day "the hardening role or a future policy tightens the
-# default". That is exactly the day a redirect with no matching rule stops
-# resolving — silently, since a dropped query is indistinguishable from the
-# empty answers this whole change exists to fix (#456). INPUT is ACCEPT today,
-# so these are inert now and load-bearing later.
-
-- name: "Check INPUT rule — virbr-det DNS UDP (INetSim alternate port)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p udp --dport {{ inetsim_dns_port }} -j ACCEPT
-  register: networking_inp_dns_udp_alt
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det DNS UDP (INetSim alternate port)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: udp
-    destination_port: "{{ inetsim_dns_port }}"
-    jump: ACCEPT
-    action: insert
-    rule_num: 1
-    comment: "INetSim: guest DNS (UDP, post-redirect)"
-  when: networking_inp_dns_udp_alt.rc != 0
-
-- name: "Check INPUT rule — virbr-det DNS TCP (INetSim alternate port)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport {{ inetsim_dns_port }} -j ACCEPT
-  register: networking_inp_dns_tcp_alt
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det DNS TCP (INetSim alternate port)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "{{ inetsim_dns_port }}"
-    jump: ACCEPT
-    action: insert
-    rule_num: 2
-    comment: "INetSim: guest DNS (TCP, post-redirect)"
-  when: networking_inp_dns_tcp_alt.rc != 0
-
-- name: "Check INPUT rule — virbr-det HTTP (80)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 80 -j ACCEPT
-  register: networking_inp_http
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det HTTP (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "80"
-    jump: ACCEPT
-    action: insert
-    rule_num: 3
-    comment: "INetSim: guest HTTP"
-  when: networking_inp_http.rc != 0
-
-- name: "Check INPUT rule — virbr-det HTTPS (443)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 443 -j ACCEPT
-  register: networking_inp_https
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det HTTPS (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "443"
-    jump: ACCEPT
-    action: insert
-    rule_num: 4
-    comment: "INetSim: guest HTTPS"
-  when: networking_inp_https.rc != 0
-
-- name: "Check INPUT rule — virbr-det SMTP (25)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 25 -j ACCEPT
-  register: networking_inp_smtp
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det SMTP (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "25"
-    jump: ACCEPT
-    action: insert
-    rule_num: 5
-    comment: "INetSim: guest SMTP"
-  when: networking_inp_smtp.rc != 0
-
-- name: "Check INPUT rule — virbr-det FTP (21)"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport 21 -j ACCEPT
-  register: networking_inp_ftp
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det FTP (INetSim)"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "21"
-    jump: ACCEPT
-    action: insert
-    rule_num: 6
-    comment: "INetSim: guest FTP"
-  when: networking_inp_ftp.rc != 0
-
-- name: "Check INPUT rule — virbr-det Cape resultserver ({{ cape_resultserver_port }})"
-  ansible.builtin.command: >
-    iptables -C INPUT -i {{ detonation_bridge }} -p tcp --dport {{ cape_resultserver_port }} -j ACCEPT
-  register: networking_inp_resultserver
-  changed_when: false
-  failed_when: false
-
-- name: "Insert INPUT rule — virbr-det Cape resultserver"
-  ansible.builtin.iptables:
-    chain: INPUT
-    in_interface: "{{ detonation_bridge }}"
-    protocol: tcp
-    destination_port: "{{ cape_resultserver_port }}"
-    jump: ACCEPT
-    action: insert
-    rule_num: 7
-    comment: "Cape: guest resultserver"
-  when: networking_inp_resultserver.rc != 0
+- name: Guest traffic to the host is default-deny (ADR-020, amended 2026-10-05)
+  ansible.builtin.import_tasks: guest_input.yml
 
 # -------------------------------------------------------------------------
 # Persist every raw rule above across reboots.

@@ -126,7 +126,7 @@ this is the primary reason bare metal is required.
 |---|---|
 | `hardening` | Wraps konstruktoid/ansible-role-hardening (CIS-aligned baseline) |
 | `kvm` | Install KVM, QEMU, libvirt; configure hugepages |
-| `networking` | Detonation bridge (`virbr-det`), iptables air-gap rules |
+| `networking` | Detonation bridge (`virbr-det`), iptables air-gap rules, guest → host default-deny ([ADR-020, amended 2026-10-05](docs/DECISIONS.md#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw)) |
 | `inetsim` | Network simulation for guest VM traffic (DNS, HTTP, HTTPS, SMTP, FTP) |
 | `wireguard` | WireGuard server config — admin access only (operator laptop → host) |
 | `cape` | Run `kvm-qemu.sh` with DSDT vars, run `cape2.sh`, configure Cape services |

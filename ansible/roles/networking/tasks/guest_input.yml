@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# roles/networking/tasks/guest_input.yml -- ADR-020 (amended 2026-10-05)
+#
+# Guest traffic to the HOST is default-deny. The air-gap rules above are FORWARD
+# rules: they govern what the host routes off virbr-det. A guest packet to one of
+# the host's own addresses is not routed, it is delivered locally through INPUT,
+# and INPUT's policy is ACCEPT (ADR-020 gave up ufw's default-deny inbound). So
+# guests could open any host listener. Measured 2026-10-05: 45,481 guest SYNs to
+# a gateway port on no allowlist, every one answered by a host RST -- i.e. every
+# one had passed INPUT.
+#
+# One chain decides every packet arriving on the bridge for the host, and ends in
+# a terminal REJECT (not DROP: a closed port must look and time exactly as it did,
+# and the kernel's own answer to a closed port is a RST / port-unreachable).
+#
+# The chain is rebuilt from the rendered file on EVERY run, atomically, so its
+# order on the host is always the order in the template. Its jump is put back at
+# INPUT position 1 on every run (fail2ban re-inserts its own jumps at the top when
+# it restarts; that is harmless, see the ADR-020 amendment, but the role restores the order).
+#
+# Included from main.yml, and on its own by tests/test_guest_input_default_deny.py,
+# which runs these exact tasks inside a network namespace and probes the result.
+# =============================================================================
+
+- name: Render the guest INPUT chain, both families
+  ansible.builtin.template:
+    src: "guest-input.rules.{{ item.suffix }}.j2"
+    dest: "{{ networking_guest_input_dir }}/lamware-guest-in.{{ item.suffix }}"
+    mode: "0644"
+    # A ruleset the kernel would refuse never lands, so the apply step below
+    # cannot fail half-way on a syntax error.
+    validate: "{{ item.family }}-restore --test --noflush %s"
+  loop:
+    - { family: iptables, suffix: v4 }
+    - { family: ip6tables, suffix: v6 }
+  loop_control:
+    label: "{{ item.family }}"
+
+- name: Load the guest chain and put its jump at INPUT position 1, both families
+  ansible.builtin.script:
+    cmd: >-
+      apply-guest-input.sh {{ item.family }}
+      {{ networking_guest_input_dir }}/lamware-guest-in.{{ item.suffix }}
+      {{ detonation_bridge }} {{ networking_guest_input_chain }}
+  register: networking_guest_input_apply
+  changed_when: "'unchanged' not in networking_guest_input_apply.stdout"
+  loop:
+    - { family: iptables, suffix: v4 }
+    - { family: ip6tables, suffix: v6 }
+  loop_control:
+    label: "{{ item.family }}"
+
+# The per-port INPUT ACCEPTs this role used to insert. Their allows now live in
+# the chain, which terminates every guest packet, so these could never match
+# again -- they are removed so that `iptables -S INPUT` shows the one rule that
+# decides guest traffic rather than nine that look as though they do. Each spec
+# is the one the old insert task used, comment included, because `iptables -D`
+# only deletes an exact match. IPv4 only: there were never v6 copies.
+- name: Retire the per-port guest INPUT ACCEPTs (moved into the chain)
+  ansible.builtin.iptables:
+    chain: INPUT
+    in_interface: "{{ detonation_bridge }}"
+    protocol: "{{ item.proto }}"
+    destination_port: "{{ item.port | string }}"
+    jump: ACCEPT
+    comment: "{{ item.comment }}"
+    state: absent
+  loop:
+    - { proto: udp, port: 53, comment: "INetSim: guest DNS (UDP)" }
+    - { proto: tcp, port: 53, comment: "INetSim: guest DNS (TCP)" }
+    - { proto: udp, port: "{{ inetsim_dns_port }}", comment: "INetSim: guest DNS (UDP, post-redirect)" }
+    - { proto: tcp, port: "{{ inetsim_dns_port }}", comment: "INetSim: guest DNS (TCP, post-redirect)" }
+    - { proto: tcp, port: 80, comment: "INetSim: guest HTTP" }
+    - { proto: tcp, port: 443, comment: "INetSim: guest HTTPS" }
+    - { proto: tcp, port: 25, comment: "INetSim: guest SMTP" }
+    - { proto: tcp, port: 21, comment: "INetSim: guest FTP" }
+    - { proto: tcp, port: "{{ cape_resultserver_port }}", comment: "Cape: guest resultserver" }
+  loop_control:
+    label: "{{ item.proto }}/{{ item.port }}"
+
+- name: Read INPUT back, both families
+  ansible.builtin.command: "{{ item }} -w -S INPUT"
+  register: networking_guest_input_readback
+  changed_when: false
+  loop:
+    - iptables
+    - ip6tables
+
+# Read back, not inferred from the tasks above having run: the property is what
+# the kernel holds. A wrong jump spec or a script bug fails the deploy here
+# instead of passing it with guests still reaching the host.
+- name: The guest chain's jump is INPUT rule 1, exactly once, both families
+  ansible.builtin.assert:
+    that:
+      - _rules | length > 0
+      - _rules[0] == _jump
+      - _rules | select('equalto', _jump) | list | length == 1
+    fail_msg: >-
+      {{ item.item }} INPUT does not start with '{{ _jump }}' (exactly once).
+      Guest traffic to the host is not default-deny. First rules:
+      {{ _rules[:3] }}
+    quiet: true
+  vars:
+    _jump: "-A INPUT -i {{ detonation_bridge }} -j {{ networking_guest_input_chain }}"
+    _rules: "{{ item.stdout_lines | select('match', '^-A INPUT ') | list }}"
+  loop: "{{ networking_guest_input_readback.results }}"
+  loop_control:
+    label: "{{ item.item }}"
