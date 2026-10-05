@@ -575,7 +575,11 @@ def _apply(report, path, delete, value) -> None:
         node.pop(path[-1], None)
     elif isinstance(node, dict) or (isinstance(node, list) and isinstance(path[-1], int)
                                     and path[-1] < len(node)):
-        node[path[-1]] = value
+        # A copy: Hypothesis may hand two mutations the same object, and a later
+        # mutation writing INTO an earlier one's value then makes the report
+        # contain itself — a cycle no JSON report.json can hold, which db_ingest
+        # meets as RecursionError (found 2026-10-04 at answers[0].type).
+        node[path[-1]] = copy.deepcopy(value)
 
 
 @settings(max_examples=600, deadline=None, suppress_health_check=[HealthCheck.too_slow])
