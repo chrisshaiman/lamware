@@ -272,12 +272,25 @@ def corpus_project_for(af: dict, corpus_dir: str | Path) -> Path:
     one without has it in the report directory's own `project/`, which is the
     only layout an old corpus entry has.
 
+    The run subdirectory is matched by its trailing path components, shortest
+    first, not by its last name alone: an injection address recorded as "N/A"
+    made the shellcode loader write `shellcode_0_N/A/`, two components, and
+    `.name` ("A") then named a directory no corpus has (latrodectus and salat,
+    found deploying #697). Every candidate is under `corpus_dir`.
+
     Never falls back to the host path the report recorded; see
     CorpusProjectMissing.
     """
     base = Path(corpus_dir)
     host_out = af.get("host_output_dir")
     project = (base / Path(host_out).name if host_out else base) / "project"
+    if host_out and not project.is_dir():
+        parts = [p for p in Path(host_out).parts if p not in ("", "/", "..", ".")]
+        for k in range(2, min(len(parts), 4) + 1):
+            candidate = base.joinpath(*parts[-k:]) / "project"
+            if candidate.is_dir():
+                project = candidate
+                break
     if not project.is_dir():
         raise CorpusProjectMissing(
             f"corpus {base} has no copy of the project for "

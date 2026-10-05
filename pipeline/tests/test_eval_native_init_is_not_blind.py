@@ -172,6 +172,33 @@ def test_the_legacy_corpus_layout_keeps_its_working_project(tmp_path):
     assert init["project_dir"] == str(tmp_path / "project")
 
 
+def test_an_n_a_injection_address_subdir_finds_its_corpus_project(tmp_path):
+    """latrodectus_d22c9656 and salat_d26bc055 on the host: the loader wrote
+    `shellcode_0_N/A/` (address "N/A"), the top-level project_dir points at the
+    run directory, and the corpus copy is `shellcode_0_N/A/project`. Matching on
+    the last component alone looked for `A/project` and failed the cell."""
+    report = native_report()
+    canon = report["ghidra"]["analyzed_files"][1]
+    canon["host_output_dir"] = f"{RUN}/shellcode_0_N/A"
+    canon["project_dir"] = f"{RUN}/shellcode_0_N/A/project"
+    report["ghidra"]["project_dir"] = canon["project_dir"]
+    (tmp_path / "shellcode_0_N" / "A" / "project").mkdir(parents=True)
+    (tmp_path / "pe_aaaaaaaaaaaa" / "project").mkdir(parents=True)
+    init, _, _, read = init_payload_for(report, corpus_dir=tmp_path)
+    assert read["chosen_because"] == "canonical"
+    assert init["project_dir"] == str(tmp_path / "shellcode_0_N" / "A" / "project")
+
+
+def test_a_missing_multi_part_project_still_refuses(tmp_path):
+    """The wider match must not turn a genuinely absent copy into a pass."""
+    report = native_report()
+    canon = report["ghidra"]["analyzed_files"][1]
+    canon["host_output_dir"] = f"{RUN}/shellcode_0_N/A"
+    report["ghidra"]["project_dir"] = f"{RUN}/shellcode_0_N/A/project"
+    with pytest.raises(runner.CorpusProjectMissing):
+        init_payload_for(report, corpus_dir=tmp_path)
+
+
 def test_run_arm_sends_the_entry_and_rebuild_replays_it(corpus, tmp_path, monkeypatch):
     (corpus / "report.json").write_text(json.dumps(native_report()))
     seen = {}
