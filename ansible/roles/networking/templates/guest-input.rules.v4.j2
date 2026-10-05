@@ -1,0 +1,27 @@
+# {{ ansible_managed | default('Managed by Ansible') }}
+# roles/networking -- ADR-020 amendment: guest traffic to the host is default-deny.
+#
+# Loaded with `iptables-restore --noflush`. In that mode the `:{{ networking_guest_input_chain }}`
+# line creates the chain or empties it, and the -A lines refill it, in one
+# transaction: the chain is never seen half-built and its order on the host is
+# the order below. Not loaded at boot -- rules.v4 is, via netfilter-persistent.
+#
+# Every allow except DHCP is scoped to the gateway address. A port-only match
+# would accept a guest's packet to the same port on ANY host address, which is
+# the hole this chain exists to close.
+*filter
+:{{ networking_guest_input_chain }} - [0:0]
+-A {{ networking_guest_input_chain }} -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "ADR-020: replies to host-initiated flows (CAPE -> guest agent)" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p udp -m udp --dport 67 -m comment --comment "ADR-020: guest DHCP (libvirt dnsmasq)" -j ACCEPT
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p udp -m udp --dport 53 -m comment --comment "ADR-020: guest DNS (UDP)" -j ACCEPT
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p tcp -m tcp --dport 53 -m comment --comment "ADR-020: guest DNS (TCP)" -j ACCEPT
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p udp -m udp --dport {{ inetsim_dns_port }} -m comment --comment "ADR-020: INetSim DNS (UDP, post-redirect)" -j ACCEPT
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p tcp -m tcp --dport {{ inetsim_dns_port }} -m comment --comment "ADR-020: INetSim DNS (TCP, post-redirect)" -j ACCEPT
+{% for port in networking_inetsim_tcp_ports %}
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p tcp -m tcp --dport {{ port }} -m comment --comment "ADR-020: INetSim tcp/{{ port }}" -j ACCEPT
+{% endfor %}
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p tcp -m tcp --dport {{ cape_resultserver_port }} -m comment --comment "ADR-020: CAPE resultserver" -j ACCEPT
+-A {{ networking_guest_input_chain }} -d {{ detonation_gateway }}/32 -p icmp -m icmp --icmp-type 8 -m comment --comment "ADR-020: guest ping to the gateway" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p tcp -m comment --comment "ADR-020: refuse like a closed port (RST)" -j REJECT --reject-with tcp-reset
+-A {{ networking_guest_input_chain }} -m comment --comment "ADR-020: refuse like a closed port (ICMP)" -j REJECT --reject-with icmp-port-unreachable
+COMMIT

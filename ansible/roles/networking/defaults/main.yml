@@ -1,0 +1,25 @@
+---
+# roles/networking/defaults/main.yml
+
+# ADR-020, amended 2026-10-05: every packet a guest sends to the host is
+# decided by this chain.
+# It is jumped to from INPUT position 1 for `-i {{ detonation_bridge }}` and ends
+# in a terminal REJECT. The name is what an operator greps for in `iptables -S`.
+networking_guest_input_chain: LAMWARE-GUEST-IN
+
+# Where the rendered chain files land before `iptables-restore --noflush` loads
+# them. Nothing loads these at boot -- `netfilter-persistent save` writes the
+# live result into rules.v4/rules.v6, which is what boot restores. They are kept
+# so the operator can diff what the role meant against what the host has.
+networking_guest_input_dir: /etc/iptables
+
+# INetSim's TCP services, as bound in roles/inetsim/templates/inetsim.conf.j2
+# (http_bind_port, https_bind_port, smtp_bind_port, ftp_bind_port). Those are
+# literals there, so they are literals here; tests/test_guest_input_default_deny.py
+# parses both files and fails if they drift apart. DNS is not in this list: it
+# binds inetsim_dns_port, which comes from vars/main.yml like everywhere else.
+networking_inetsim_tcp_ports:
+  - 80
+  - 443
+  - 25
+  - 21

@@ -177,7 +177,7 @@
     - role: kvm
       tags: [kvm]
 
-    # 3. Networking — detonation bridge + iptables air-gap + INetSim INPUT rules
+    # 3. Networking — detonation bridge + iptables air-gap + guest INPUT chain (ADR-020 amendment)
     #    Requires libvirt (virsh) from KVM role.
     - role: networking
       tags: [networking]

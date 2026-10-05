@@ -1,0 +1,18 @@
+# {{ ansible_managed | default('Managed by Ansible') }}
+# roles/networking -- ADR-020 amendment, the IPv6 half (#343: both families).
+#
+# IPv6 is disabled host-wide today. This chain exists so that turning it on does
+# not open the guest path. It carries no service allows: no guest-facing service
+# binds an IPv6 address (INetSim and the resultserver bind detonation_gateway),
+# so a v6 allow would only ever reach something that is not meant for guests.
+# Neighbour discovery is accepted because conntrack does not track it, and
+# without it even host-initiated v6 flows to a guest could not complete.
+*filter
+:{{ networking_guest_input_chain }} - [0:0]
+-A {{ networking_guest_input_chain }} -m conntrack --ctstate RELATED,ESTABLISHED -m comment --comment "ADR-020: replies to host-initiated flows" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p ipv6-icmp -m icmp6 --icmpv6-type 135 -m comment --comment "ADR-020: neighbour solicitation" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p ipv6-icmp -m icmp6 --icmpv6-type 136 -m comment --comment "ADR-020: neighbour advertisement" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p ipv6-icmp -m icmp6 --icmpv6-type 128 -m comment --comment "ADR-020: guest ping" -j ACCEPT
+-A {{ networking_guest_input_chain }} -p tcp -m comment --comment "ADR-020: refuse like a closed port (RST)" -j REJECT --reject-with tcp-reset
+-A {{ networking_guest_input_chain }} -m comment --comment "ADR-020: refuse like a closed port (ICMP)" -j REJECT --reject-with icmp6-port-unreachable
+COMMIT
