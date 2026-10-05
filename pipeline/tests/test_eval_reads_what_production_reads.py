@@ -98,7 +98,7 @@ def never(*_a):
     raise AssertionError("the verifier must not run for this report")
 
 
-# --- native: unchanged ---------------------------------------------------------
+# --- native: production's entry, never routed ---------------------------------
 
 NATIVE = {"ghidra": {"triggered": True, "project_dir": "/c/amadey/project",
                      "program_name": "abc",
@@ -108,24 +108,33 @@ NATIVE = {"ghidra": {"triggered": True, "project_dir": "/c/amadey/project",
                                          "project_dir": "/opt/pipeline/reports/x/project"}]}}
 
 
-def test_a_native_report_is_handed_exactly_what_it_was_before(tmp_path):
-    """The native path has the #420 stage-2 result behind it. Same object, and
-    the verifier never runs — even with a corpus dir and a family-labelled
-    payload present, because no routed flag is set. The source is the agent's
-    view of the same dict (#669 removed the host paths, nothing else)."""
+def test_a_native_report_is_handed_its_canonical_file_without_verifying(tmp_path):
+    """The verifier never runs — even with a corpus dir and a family-labelled
+    payload present, because no routed flag is set. The agent is handed the
+    canonical file's entry, as Stage 4.5 hands it (#697: it was handed the
+    wrapper, which renders as an empty card). The source is the agent's view
+    of that entry (#669 removed the host paths, nothing else)."""
+    (tmp_path / "project").mkdir()
+    entry = NATIVE["ghidra"]["analyzed_files"][0]
     init, modality, source, read = init_payload_for(NATIVE, verify=never, corpus_dir=tmp_path)
-    assert init is NATIVE["ghidra"]
+    assert {k: v for k, v in init.items() if k != "project_dir"} == \
+        {k: v for k, v in entry.items() if k != "project_dir"}
+    assert init["project_dir"] == str(tmp_path / "project")
     assert modality == "native_pe"
-    assert source == json.dumps(without_host_paths(NATIVE["ghidra"]))
-    assert read == {"kind": "native_pe", "wrapper_routed_by": None}
+    assert source == json.dumps(without_host_paths(entry))
+    assert read == {"kind": "native_pe", "program_name": "abc", "source": "cape_payload",
+                    "functions_count": 75, "cape_type": "Amadey Payload",
+                    "chosen_because": "canonical", "wrapper_routed_by": None}
 
 
-def test_run_arm_passes_a_native_report_through_unchanged(tmp_path, monkeypatch):
+def test_run_arm_passes_a_native_report_s_entry(tmp_path, monkeypatch):
     """The same property one level up: what run_interpret receives."""
+    (tmp_path / "c" / "project").mkdir(parents=True)
     seen = _run_arm(tmp_path, monkeypatch, NATIVE, verify=never)
-    assert seen["init"] == NATIVE["ghidra"]
+    assert seen["init"]["program_name"] == "abc"
+    assert "analyzed_files" not in seen["init"]
     assert seen["cell"]["modality"] == "native_pe"
-    assert seen["cell"]["input"] == "native_pe"
+    assert seen["cell"]["input"] == "native_pe:abc (Amadey Payload, canonical)"
 
 
 # --- .NET with a confirmed family-labelled payload -> unpacked_payload ------------
@@ -258,15 +267,18 @@ def test_an_old_format_routed_payload_resolves_to_the_single_project(tmp_path):
     assert read["cape_type"] is None and read["source"] == "dropped_pe"
 
 
-def test_an_old_format_native_entry_is_unchanged(tmp_path):
-    """amadey's shape: top-level project in the corpus, per-file path in a run dir."""
+def test_an_old_format_native_entry_reads_its_corpus_project(tmp_path):
+    """amadey's shape: top-level project in the corpus, per-file path in a run
+    dir. The agent gets the file entry, pointed at the corpus copy."""
+    (tmp_path / "project").mkdir()
     old = {"ghidra": {"triggered": True, "project_dir": str(tmp_path / "project"),
                       "program_name": "p", "analyzed_files": [
                           {"analysis_success": True, "program_name": "p",
                            "project_dir": "/opt/pipeline/reports/eval-amadey/project"}]}}
     init, modality, source, _ = init_payload_for(old, verify=never, corpus_dir=tmp_path)
-    assert init is old["ghidra"] and modality == "native_pe"
-    assert source == json.dumps(without_host_paths(old["ghidra"]))
+    assert modality == "native_pe" and init["program_name"] == "p"
+    assert init["project_dir"] == str(tmp_path / "project")
+    assert source == json.dumps(without_host_paths(old["ghidra"]["analyzed_files"][0]))
 
 
 # --- #669: the family name in a corpus path must not ground a claim ---------------
@@ -298,7 +310,7 @@ def test_a_family_named_only_in_a_path_does_not_ground_a_claim():
     cell = compose_cell("a", sample, analysis, source, None, 0.0, 0.0, {}, None)
     assert cell["total"] == 1
     assert cell["grounded"] == 0 and cell["grounded_ratio"] == 0.0
-    assert init["project_dir"].endswith("zloader_1a2b3c4d/project"), (
+    assert init["project_dir"] == report["ghidra"]["analyzed_files"][0]["project_dir"], (
         "the agent's init must keep project_dir: the host brokers tool calls with it")
 
 
@@ -411,9 +423,11 @@ def test_the_dispatch_uses_productions_own_functions():
     from_ghidra = {a.name for n in ast.walk(tree)
                    if isinstance(n, ast.ImportFrom) and n.module == "stages.ghidra"
                    for a in n.names}
-    assert {"select_payload_target", "ROUTED_FLAGS", "make_ghidra_verifier"} <= from_ghidra
+    imported = {"select_payload_target", "select_native_target", "native_input_record",
+                "make_ghidra_verifier"}
+    assert imported | {"ROUTED_FLAGS"} <= from_ghidra
     defined = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     assigned = {t.id for n in ast.walk(tree) if isinstance(n, ast.Assign)
                 for t in n.targets if isinstance(t, ast.Name)}
-    assert not {"select_payload_target", "make_ghidra_verifier"} & defined
+    assert not imported & defined
     assert "ROUTED_FLAGS" not in assigned

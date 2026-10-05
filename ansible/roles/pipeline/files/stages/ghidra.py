@@ -156,11 +156,13 @@ def select_native_target(ghidra_data: dict) -> tuple[dict | None, str | None]:
 
     The canonical program: the one run_ghidra ranked and verified, whose pair
     is ``ghidra_data["project_dir"]``/``["program_name"]``. Stage 4.5 used to
-    hand the agent ``successful[0]``, the first success by LIST POSITION. The
-    eval has always passed ``report["ghidra"]`` itself, whose top-level pair is
-    the canonical program, so production and the eval read different programs
-    (#667's survey); and #651's routed path (``select_payload_target``) already
-    refuses list position. Since #649 put the submitted sample first in the
+    hand the agent ``successful[0]``, the first success by LIST POSITION, while
+    the eval passed ``report["ghidra"]`` itself, whose top-level pair is the
+    canonical program (#667's survey); and #651's routed path
+    (``select_payload_target``) already refuses list position. The wrapper
+    named the canonical PAIR but carried none of its content, so the eval's
+    agent started blind; since #697 the eval imports this function and sends
+    the entry it returns. Since #649 put the submitted sample first in the
     list, position would also have quietly decided which program the agent
     reads, a choice the owner made explicitly instead: canonical.
 

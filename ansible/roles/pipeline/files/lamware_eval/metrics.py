@@ -40,12 +40,16 @@ def input_label(read: dict | None) -> str | None:
     The modality alone does not say enough for an unpacked payload: formbook
     carries seven loaded programs, and which one the agent read is the
     difference between a Formbook analysis and a generic-loader one (v651).
+    A native cell names its program too since #697, so a first-success
+    fallback is visible next to the canonical cells it is pooled with. A
+    native record without a program predates #697 and is just `native_pe`.
     """
     if not read:
         return None
-    if read.get("kind") != "unpacked_payload":
-        return read.get("kind")
-    return (f"unpacked_payload:{str(read.get('program_name'))[:12]} "
+    kind = read.get("kind")
+    if kind not in ("unpacked_payload", "native_pe") or not read.get("program_name"):
+        return kind
+    return (f"{kind}:{str(read.get('program_name'))[:12]} "
             f"({read.get('cape_type') or 'unlabelled'}, {read.get('chosen_because')})")
 
 
