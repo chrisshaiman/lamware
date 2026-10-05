@@ -11,6 +11,13 @@
 # are recreated. The qemu-patched role reports that mismatch on every run rather than
 # letting the repoint look complete.
 cape_qemu_binary: /usr/local/bin/qemu-system-x86_64
+# The distro path the `office` guest still boots (domain and snapshot, observed
+# 2026-10-04). restore-qemu.yml puts cape_qemu_binary back here if apt replaced it.
+cape_qemu_distro_path: /usr/bin/qemu-system-x86_64
+# Who must own the preserved copy, and owns the restored one. Tests run the tasks
+# unprivileged and set it to the test user; on a host it is always root.
+cape_qemu_owner: root
+cape_qemu_restart_libvirtd: true
 cape_guest_image_dir: /var/lib/libvirt/images
 cape_resultserver_port: 2042
 

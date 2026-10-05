@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# roles/cape/tasks/restore-qemu.yml
+# Put the DSDT-patched emulator back at the distro path if something replaced it.
+#
+# This used to copy /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64 over
+# /usr/bin/qemu-system-x86_64 whenever that path existed, on every cape deploy,
+# then restart libvirtd (#694). /tmp is world-writable, so any local user --
+# cape, inetsim and www-data all run code fed by samples -- could create that
+# path and have root install it as the hypervisor. The build dir itself is
+# gone (tmpfs, cleared at reboot), so the task no longer did its real job.
+#
+# The source is now the copy the qemu-patched role preserved outside dpkg's
+# reach (cape_qemu_binary, #308/#327): written by root, and only from a
+# binary dpkg confirmed is not the stock package. It is refused unless it is
+# still a root-owned regular file nobody else can write. It is copied only
+# when the two files differ, so libvirtd restarts only when something changed.
+# =============================================================================
+
+- name: Read the preserved patched emulator
+  ansible.builtin.stat:
+    path: "{{ cape_qemu_binary }}"
+    checksum_algorithm: sha256
+    follow: false
+  register: cape_qemu_preserved
+
+- name: Read the distro-path emulator
+  ansible.builtin.stat:
+    path: "{{ cape_qemu_distro_path }}"
+    checksum_algorithm: sha256
+    follow: false
+  register: cape_qemu_distro
+
+- name: Refuse a preserved emulator that is not root's alone
+  ansible.builtin.assert:
+    that:
+      - cape_qemu_preserved.stat.isreg
+      - not cape_qemu_preserved.stat.islnk
+      - cape_qemu_preserved.stat.pw_name == cape_qemu_owner
+      - not cape_qemu_preserved.stat.wgrp
+      - not cape_qemu_preserved.stat.woth
+    fail_msg: >-
+      {{ cape_qemu_binary }} is not a regular file owned by {{ cape_qemu_owner }} that only it can
+      write, so it will not be installed as the hypervisor. Rebuild it with the
+      qemu-patched role.
+  when: cape_qemu_preserved.stat.exists
+
+- name: Copy the preserved emulator over a changed distro path
+  ansible.builtin.copy:
+    src: "{{ cape_qemu_binary }}"
+    dest: "{{ cape_qemu_distro_path }}"
+    remote_src: true
+    owner: "{{ cape_qemu_owner }}"
+    group: "{{ cape_qemu_owner }}"
+    mode: "0755"
+  register: cape_qemu_restored
+  when:
+    - cape_qemu_preserved.stat.exists
+    - not cape_qemu_distro.stat.exists
+      or cape_qemu_distro.stat.checksum != cape_qemu_preserved.stat.checksum
+
+- name: Restart libvirtd after restoring the emulator
+  ansible.builtin.systemd:
+    name: libvirtd
+    state: restarted
+  when:
+    - cape_qemu_restored is changed
+    - cape_qemu_restart_libvirtd | bool
