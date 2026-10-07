@@ -36,7 +36,13 @@ def build_pg_dsn(driver: str = "postgresql") -> str:
     return f"{driver}://{user}:{password}@{settings.db_host}:{settings.db_port}/{name}"
 
 
-DATABASE_URL = build_pg_dsn()
+# The driver is named, not left to SQLAlchemy's default: SQLAlchemy 2.1 changed
+# the default for a bare `postgresql://` from psycopg2 to psycopg (3), which is
+# not installed. Unpinned, the next fresh install of the API's environment
+# would have resolved 2.1 and lost the database (CI did, 2026-10-07). The bare
+# form stays the default of build_pg_dsn() because asyncpg (the WebSocket
+# listener, routers/ws.py) accepts only `postgresql://`.
+DATABASE_URL = build_pg_dsn("postgresql+psycopg2")
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
