@@ -1,0 +1,159 @@
+---
+# =============================================================================
+# roles/cape/tasks/capture-privileges.yml
+# The cape user captured traffic through sudo, and could become root with it.
+#
+# cape2.sh installs two sudoers rules for the cape user:
+#   /etc/sudoers.d/tcpdump   cape ALL=NOPASSWD: /usr/bin/tcpdump        (any arguments)
+#   /etc/sudoers.d/ip_netns  cape ALL=NOPASSWD: /usr/sbin/ip netns exec * /usr/bin/sudo -u cape *
+# tcpdump with arbitrary arguments as root is a known path to a root shell, and a
+# sudoers `*` also matches spaces, so the first wildcard of the second rule can
+# carry any command. cape runs the guest-facing resultserver, so either turns a
+# resultserver bug into root on the host.
+#
+# What CAPE needs instead (read from the installed code, 2026-10-06):
+#   - modules/auxiliary/sniffer.py uses sudo only if `sudo --list tcpdump` works;
+#     otherwise it runs tcpdump directly. File capabilities plus a group that alone
+#     may execute tcpdump give it capture without root.
+#   - the ip netns rule is used only by modules/auxiliary/Mitmdump.py, which is not
+#     configured here. Enabling it would need the rule back, so that is asserted.
+# The cape user remains in the libvirt group, which CAPE's KVM machinery needs and
+# which is itself root-equivalent; narrowing that is a separate change (kvm role).
+# =============================================================================
+
+- name: Refuse to drop the netns rule while Mitmdump is configured
+  # The [Mitmdump] section ships with `enabled = no`; only an enabled one needs the rule.
+  ansible.builtin.command: >-
+    awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*\[/{s=tolower($0); gsub(/[[:space:]]/,"",s)}
+    s=="[mitmdump]" && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*(yes|true|on|1)[[:space:]]*$/{f=1}
+    END{exit f?0:1}' {{ cape_install_dir }}/conf/auxiliary.conf
+  register: cape_mitmdump_configured
+  check_mode: false   # read-only; its result is needed in --check too
+  changed_when: false
+  failed_when: cape_mitmdump_configured.rc == 0
+
+- name: Install setcap
+  ansible.builtin.apt:
+    name: libcap2-bin
+    state: present
+
+- name: Create the pcap group
+  ansible.builtin.group:
+    name: pcap
+    system: true
+
+- name: Put the cape user in the pcap group
+  ansible.builtin.user:
+    name: "{{ cape_user }}"
+    groups: pcap
+    append: true
+  notify: Restart Cape services
+  # In --check the group above is not really created, so this cannot find it.
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Owner and mode survive a package upgrade only through dpkg-statoverride.
+- name: Read the tcpdump statoverride
+  ansible.builtin.command: dpkg-statoverride --list /usr/bin/tcpdump
+  register: cape_tcpdump_override
+  check_mode: false   # read-only; its result is needed in --check too
+  changed_when: false
+  failed_when: false
+
+# `--list` prints the mode WITHOUT a leading zero ("root pcap 750 /usr/bin/tcpdump"),
+# so it is compared as a number. `--add` refuses when any override exists, so a
+# different one is removed first; the matching one is left alone.
+- name: Remove a tcpdump statoverride that is not root:pcap 0750
+  ansible.builtin.command: dpkg-statoverride --remove /usr/bin/tcpdump
+  when:
+    - cape_tcpdump_override.stdout | length > 0
+    - not (cape_tcpdump_override.stdout.split()[:2] == ['root', 'pcap']
+           and (cape_tcpdump_override.stdout.split()[2] | int(base=8)) == 488)
+  changed_when: true
+
+- name: Make tcpdump executable by root and the pcap group only
+  ansible.builtin.command: dpkg-statoverride --update --add root pcap 0750 /usr/bin/tcpdump
+  when: not (cape_tcpdump_override.stdout.split()[:2] == ['root', 'pcap']
+             and (cape_tcpdump_override.stdout.split()[2] | default('0') | int(base=8)) == 488)
+  changed_when: true
+
+- name: Install the capability re-apply script
+  ansible.builtin.copy:
+    src: lamware-tcpdump-caps
+    dest: /usr/local/sbin/lamware-tcpdump-caps
+    owner: root
+    group: root
+    mode: "0755"
+
+# A tcpdump upgrade strips the file capabilities; without them the sniffer
+# finds no sudo and no capture rights and every pcap is silently empty.
+- name: Re-apply the capabilities after every dpkg run
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/80-lamware-tcpdump-caps
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Ansible (roles/cape, capture-privileges.yml).
+      DPkg::Post-Invoke { "/usr/local/sbin/lamware-tcpdump-caps || true"; };
+
+- name: Read tcpdump's capabilities
+  ansible.builtin.command: getcap /usr/bin/tcpdump
+  register: cape_tcpdump_caps
+  check_mode: false   # read-only; its result is needed in --check too
+  changed_when: false
+
+- name: Grant tcpdump capture capabilities
+  ansible.builtin.command: /usr/local/sbin/lamware-tcpdump-caps
+  when: "'cap_net_admin,cap_net_raw=eip' not in cape_tcpdump_caps.stdout"
+  changed_when: true
+
+# Prove capture works WITHOUT sudo before taking sudo away. timeout's 124 means
+# tcpdump opened the interface and was still capturing; a permission failure
+# exits 1 at once.
+- name: Check the cape user can capture without sudo
+  ansible.builtin.command: >-
+    sudo -u {{ cape_user }} timeout 3 /usr/bin/tcpdump -i virbr-det -n -c 1 -q
+  register: cape_capture_probe
+  changed_when: false
+  failed_when: cape_capture_probe.rc not in [0, 124]
+  when: not ansible_check_mode
+
+- name: Remove the sudo rules that made cape root-equivalent
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ item }}"
+    state: absent
+  loop:
+    - tcpdump
+    - ip_netns
+
+# cape2.sh writes /etc/sudoers.d/cape as 0600. sudo accepts that, but `visudo -c`
+# reports it as an error, which would make the validation below fail on a file
+# this change does not touch. 0440 is the standard mode; owner and group stay
+# root, so who can read it does not change.
+- name: Give CAPE's remaining sudoers file the standard mode
+  ansible.builtin.file:
+    path: /etc/sudoers.d/cape
+    mode: "0440"
+    owner: root
+    group: root
+
+# These three read the state AFTER the changes above, so they only mean
+# something on a real run; in --check nothing above was applied.
+- name: Validate sudoers after the removal
+  ansible.builtin.command: visudo -c
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read what cape may still run through sudo
+  ansible.builtin.command: sudo -l -U {{ cape_user }}
+  register: cape_sudo_list
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Refuse if a capture or netns rule is still granted
+  ansible.builtin.assert:
+    that:
+      - "'tcpdump' not in cape_sudo_list.stdout"
+      - "'netns' not in cape_sudo_list.stdout"
+    fail_msg: "{{ cape_user }} can still run tcpdump or ip netns through sudo:\n{{ cape_sudo_list.stdout }}"
+  when: not ansible_check_mode
