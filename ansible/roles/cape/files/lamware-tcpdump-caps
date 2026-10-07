@@ -1,0 +1,14 @@
+#!/bin/sh
+# Re-apply the capture capabilities CAPE's sniffer relies on (roles/cape,
+# capture-privileges.yml). A tcpdump package upgrade replaces the binary and with
+# it the file capabilities; dpkg-statoverride keeps owner and mode but not caps.
+# Run by an apt DPkg::Post-Invoke hook, so it must be quiet and never fail apt.
+set -u
+bin=${LAMWARE_TCPDUMP:-/usr/bin/tcpdump}   # overridable for tests only
+want="cap_net_admin,cap_net_raw=eip"
+[ -x "$bin" ] || exit 0
+case "$(getcap "$bin" 2>/dev/null)" in
+    *"$want"*) exit 0 ;;
+esac
+setcap "cap_net_raw,cap_net_admin=eip" "$bin" 2>/dev/null || logger -t lamware-tcpdump-caps "setcap on $bin failed; CAPE network capture will fail"
+exit 0
