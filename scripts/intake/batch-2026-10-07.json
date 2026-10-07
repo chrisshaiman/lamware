@@ -1,0 +1,82 @@
+[
+ {
+  "sha256": "ffce7a3896c7e9e8172737d45c1eaed7f62b0a09b65ce22c5eeff9f25b7ace9d",
+  "signature": "Stealc",
+  "file_name": "file",
+  "file_size": 2256896,
+  "first_seen": "2026-10-07 01:39:14",
+  "imphash": "4cea7ae85c87ddc7295d39ff9cda31d1"
+ },
+ {
+  "sha256": "870d8065347e60122d782496b9ba1880ea7826ad86febcc3b19e056f1da894c3",
+  "signature": "Stealc",
+  "file_name": "file",
+  "file_size": 634880,
+  "first_seen": "2026-09-30 18:52:13",
+  "imphash": "a1fa2d08960884e06f2dc59bd5f7a43c"
+ },
+ {
+  "sha256": "fa3e9bf80185c5524b3669d856f619ff94538fb71b3c56a636cc0d819e3e81a1",
+  "signature": "Vidar",
+  "file_name": "fa3e9bf80185c5524b3669d856f619ff94538fb71b3c56a636cc0d819e3e81a1.bin",
+  "file_size": 6328320,
+  "first_seen": "2026-10-06 03:10:03",
+  "imphash": "d42595b695fc008ef2c56aabd8efd68e"
+ },
+ {
+  "sha256": "960b0b1d55bbea03966505540d6ddff28a3400206621c73bd9e0627f47cf8349",
+  "signature": "Vidar",
+  "file_name": "S\u0435t_U\u0440 [U\u0420D].exe",
+  "file_size": 9037176,
+  "first_seen": "2026-10-06 01:31:15",
+  "imphash": "c2d457ad8ac36fc9f18d45bffcd450c2"
+ },
+ {
+  "sha256": "0693e042dd629efb54a385e8fee6cd00c7a54543d31bceb3f790365a72e55448",
+  "signature": "RemcosRAT",
+  "file_name": "SCN_20260928_161058.exe",
+  "file_size": 171160,
+  "first_seen": "2026-10-06 06:46:22",
+  "imphash": "6e7f9a29f2c85394521a08b9f31f6275"
+ },
+ {
+  "sha256": "034174f5266a4276cf29cfdb23fc3fa52699438ff60c8055b7df12c88341a49b",
+  "signature": "RemcosRAT",
+  "file_name": "remcos.exe",
+  "file_size": 525312,
+  "first_seen": "2026-10-05 16:08:50",
+  "imphash": "cd443d07fb22cc071cc33eee6cd16e2e"
+ },
+ {
+  "sha256": "3dbbd0d946ccb43a77198e3b863c8b3150f6f328ac7c7e196cc75cd2519755e3",
+  "signature": "Phorpiex",
+  "file_name": "file",
+  "file_size": 9728,
+  "first_seen": "2026-10-06 15:30:39",
+  "imphash": "01b5d5afc66d059a23feb22d7bdd1c91"
+ },
+ {
+  "sha256": "13464460a6a916cfcfeba3f29c7d16708bf4ec638af94b0a3b165c5ccb994eb6",
+  "signature": "Phorpiex",
+  "file_name": "file",
+  "file_size": 18432,
+  "first_seen": "2026-10-06 12:16:17",
+  "imphash": "edd9caae8565fbe43a73e0ad530f325e"
+ },
+ {
+  "sha256": "efaac0749d981772f92b3a98099a1e08c3f0d310eade130615fd72caa3e4d0df",
+  "signature": "LummaStealer",
+  "file_name": "592483_vcruntime140_29469833d0.exe",
+  "file_size": 15030272,
+  "first_seen": "2026-09-25 21:47:17",
+  "imphash": "1aae8bf580c846f39c71c05898e57e88"
+ },
+ {
+  "sha256": "dcb2cfd87af6581fe54e37daf742a7828834cf4ca90b37c73dee4f2171dff97a",
+  "signature": "Socks5Systemz",
+  "file_name": "1801923906b6afe1dd3f32480f4e29f8.exe",
+  "file_size": 7232201,
+  "first_seen": "2026-10-01 17:35:08",
+  "imphash": "884310b1928934402ea6fec1dbd3cf5e"
+ }
+]

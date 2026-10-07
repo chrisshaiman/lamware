@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate
+.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate intake
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -607,6 +607,9 @@ eval:
 # THIS DETONATES LIVE MALWARE. Deliberately operator-typed and foreground: it
 # starts a one-shot unit and enables nothing, so nothing here can arm a
 # recurring or unattended detonation.
+intake:
+	@MANIFEST="$(MANIFEST)" SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/intake.sh
+
 detonate:
 	@SAMPLE="$(SAMPLE)" RUNS="$(RUNS)" MACHINE="$(MACHINE)" PACKAGE="$(PACKAGE)" \
 		SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/detonate.sh
