@@ -346,6 +346,11 @@ def estimate_cost(report_path: Path) -> float:
         output_tokens = usage.get("output_tokens", 0)
         # Rough estimate: Sonnet pricing (~$3/M input, ~$15/M output)
         cost = (input_tokens * 3 / 1_000_000) + (output_tokens * 15 / 1_000_000)
+        # Prompt-cache tokens are reported OUTSIDE input_tokens (#718): writes at
+        # 1.25x the input rate, reads at 0.1x (Anthropic's standard multipliers).
+        # Without them a cached cloud run under-counts against DAILY_BUDGET.
+        cost += (usage.get("cache_creation_input_tokens", 0) or 0) * 3.75 / 1_000_000
+        cost += (usage.get("cache_read_input_tokens", 0) or 0) * 0.30 / 1_000_000
         # Add summary cost estimate (Haiku ~$0.25/M input, $1.25/M output)
         summary = report.get("executive_summary", {})
         s_usage = summary.get("usage", {})

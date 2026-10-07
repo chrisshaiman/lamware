@@ -17,6 +17,7 @@ httpx to /chat/completions and parses a dict (`usage.completion_tokens`). A read
 only knows the first records 2b as zero tokens — which is the exact failure this issue
 is about, reproduced one layer down and just as invisible.
 """
+import ast
 import json
 import sys
 from pathlib import Path
@@ -28,6 +29,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ansible" / "roles" / "pipeline" / "files"))
 
 from stages.interpret import TurnTrail  # noqa: E402
+
+# Every container usage dict carries both prompt-cache counts (#718); these
+# responses report none, so both read as 0.
+NO_CACHE = {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
 
 CONTAINER = (ROOT / "ansible" / "roles" / "interpret" / "files"
              / "interpret-ghidra.py")
@@ -87,8 +92,18 @@ def _log_request_result():
     in CI, so the function is exec'd from source with a captured `emit`.
     """
     src = CONTAINER.read_text(encoding="utf-8")
-    body = src.split("def log_request_result(", 1)[1]
-    body = "def log_request_result(" + body.split("\n\ndef ", 1)[0]
+    # The logger delegates to the container's own usage extractors (#718), so they
+    # are exec'd with it — the trail must read usage the way the totals do.
+    wanted = {"_EMPTY_USAGE", "USAGE_KEYS", "empty_usage", "usage_from_response",
+              "openai_usage",
+              "log_request_result"}
+    parts = []
+    for node in ast.parse(src).body:
+        names = ({t.id for t in node.targets if isinstance(t, ast.Name)}
+                 if isinstance(node, ast.Assign) else {getattr(node, "name", None)})
+        if names & wanted:
+            parts.append(ast.get_source_segment(src, node))
+    body = "\n\n".join(parts)
     captured: list[dict] = []
     ns = {"Any": object, "emit": captured.append, "sys": sys,
           "print": lambda *a, **k: None}
@@ -103,7 +118,8 @@ def test_anthropic_response_usage_is_read():
         usage=SimpleNamespace(input_tokens=5354, output_tokens=2362),
         stop_reason="end_turn")
     fn("synth_2a", resp, 794.9)
-    assert captured[0]["usage"] == {"input_tokens": 5354, "output_tokens": 2362}
+    assert captured[0]["usage"] == {"input_tokens": 5354, "output_tokens": 2362,
+                                  **NO_CACHE}
     assert captured[0]["wire"] == "anthropic"
 
 
@@ -117,7 +133,8 @@ def test_openai_body_usage_is_read():
     body = {"usage": {"prompt_tokens": 1448, "completion_tokens": 584},
             "choices": [{"message": {}}]}
     fn("synth_2b", body, 63.8, wire="openai")
-    assert captured[0]["usage"] == {"input_tokens": 1448, "output_tokens": 584}, (
+    assert captured[0]["usage"] == {"input_tokens": 1448, "output_tokens": 584,
+                                  **NO_CACHE}, (
         "the OpenAI leg names its counts completion_tokens/prompt_tokens; reading "
         "only output_tokens/input_tokens records 2b as free")
     assert captured[0]["wire"] == "openai"

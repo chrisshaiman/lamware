@@ -39,16 +39,28 @@ from lamware_eval.variants import (
 # Guarded by test_eval_timeout_ordering.
 _EVAL_TIMEOUT = 12600
 
-# $/1M tokens (input, output). Local arms cost $0. Extend as models are added.
+# $/1M tokens. Local arms cost $0. Extend as models are added.
 # Hand-maintained rates drift silently (see the opus-4-6 3x overcount fixed in
 # db_ingest, PR #182). LiteLLM's spend log is authoritative; treat these as an
 # estimate for the scorecard only.
 # NOTE: sonnet-5 is at INTRODUCTORY pricing through 2026-08-31, then $3/$15.
-_RATES = {
+#
+# An entry is (input, output) or (input, output, cache_write, cache_read). The
+# short form prices prompt-cache tokens at _CACHE_WRITE_MULT / _CACHE_READ_MULT
+# times the input rate; give the long form when a model's published cache rates
+# are not those multiples.
+_RATES: dict[str, tuple[float, ...]] = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
 }
+
+# Anthropic's standard prompt-cache multipliers on the base input rate: a cache
+# WRITE (5-minute ephemeral, what `cache_control: ephemeral` requests) costs 1.25x,
+# a cache READ 0.1x. Both are reported separately from input_tokens (#718), so a
+# cost that reads only input/output misses them entirely.
+_CACHE_WRITE_MULT = 1.25
+_CACHE_READ_MULT = 0.1
 
 
 # The llama.cpp server's own view of its sampler. Recorded per cell so a result
@@ -156,10 +168,27 @@ def archive_previous_cell(out: Path) -> Path | None:
     return dest
 
 
+def _model_rates(model: str) -> tuple[float, float, float, float]:
+    """(input, output, cache_write, cache_read) $/Mtok for a model; zeros if unknown."""
+    rates = _RATES.get(model, (0.0, 0.0))
+    ci, co = rates[0], rates[1]
+    if len(rates) >= 4:
+        return ci, co, rates[2], rates[3]
+    return ci, co, ci * _CACHE_WRITE_MULT, ci * _CACHE_READ_MULT
+
+
 def _rough_cost(model: str, usage: dict) -> float:
-    ci, co = _RATES.get(model, (0.0, 0.0))
-    return round(usage.get("input_tokens", 0) / 1e6 * ci
-                 + usage.get("output_tokens", 0) / 1e6 * co, 4)
+    """Estimated $ for one cell's usage, prompt-cache writes and reads included.
+
+    input_tokens excludes cached tokens on the Anthropic wire (#718), so the four
+    classes are disjoint and simply summed. A usage dict from before #718 has no
+    cache keys and prices exactly as it did.
+    """
+    ci, co, cw, cr = _model_rates(model)
+    return round((usage.get("input_tokens") or 0) / 1e6 * ci
+                 + (usage.get("output_tokens") or 0) / 1e6 * co
+                 + (usage.get("cache_creation_input_tokens") or 0) / 1e6 * cw
+                 + (usage.get("cache_read_input_tokens") or 0) / 1e6 * cr, 4)
 
 
 def tool_output_text(out_dir: Path) -> str:

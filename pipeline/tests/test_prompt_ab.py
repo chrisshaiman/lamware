@@ -124,6 +124,16 @@ def test_an_empty_response_is_visible_despite_a_healthy_stop_reason(ns):
     assert d["out_tok"] == 1979, "tokens can be nonzero while text is empty — the trap"
 
 
+def test_describe_records_prompt_cache_tokens_separately(ns):
+    """Anthropic reports cache writes/reads outside input_tokens (#718); a cloud
+    arm that dropped them would look cheaper than it was."""
+    resp = _Resp([_Block("text", text="ok")], in_tok=40)
+    resp.usage.cache_creation_input_tokens = 3_000
+    resp.usage.cache_read_input_tokens = 9_000
+    d = ns["describe"](resp)
+    assert (d["in_tok"], d["cache_write_tok"], d["cache_read_tok"]) == (40, 3_000, 9_000)
+
+
 def test_describe_reports_a_real_answer(ns):
     d = ns["describe"](_Resp([_Block("text", text="This is a loader." * 10)]))
     assert d["text_chars"] > 0

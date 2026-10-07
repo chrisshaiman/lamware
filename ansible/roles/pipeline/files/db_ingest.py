@@ -153,6 +153,15 @@ _LLM_PRICING = {
 _LOCAL_MODEL_PREFIX = "local-"
 _ZERO_PRICING = {"input": 0.00, "output": 0.00}
 
+# Anthropic's standard prompt-cache multipliers on the base input rate: a cache
+# WRITE (5-minute ephemeral, what interpret's `cache_control: ephemeral` requests)
+# costs 1.25x, a cache READ 0.1x. A _LLM_PRICING entry may override either with an
+# explicit "cache_write" / "cache_read" rate when a model's published rates differ.
+# Both counts arrive SEPARATELY from input_tokens (#718) — they are not a share of
+# it — so a cost that reads only input/output never bills them at all.
+_CACHE_WRITE_MULT = 1.25
+_CACHE_READ_MULT = 0.1
+
 
 # -------------------------------------------------------------------------
 # Shape-checked reads from the report (#171)
@@ -545,6 +554,30 @@ def _price_for_model(model: str) -> dict:
     return _LLM_PRICING["default"]
 
 
+def _usage_cost(usage: _Node, model: str | None) -> tuple[bool, float]:
+    """(had tokens, $) for one usage block, prompt-cache writes and reads included.
+
+    The four token classes are disjoint on the Anthropic wire (#718): input_tokens
+    excludes both cache counts, so they are summed, never subtracted. A usage block
+    from before #718 has no cache keys and prices exactly as it did.
+    """
+    input_tokens = usage.number("input_tokens", 0) or 0
+    output_tokens = usage.number("output_tokens", 0) or 0
+    cache_write = usage.number("cache_creation_input_tokens", 0) or 0
+    cache_read = usage.number("cache_read_input_tokens", 0) or 0
+    if not (input_tokens or output_tokens or cache_write or cache_read):
+        return False, 0.0
+    # Resolved only once there is something to bill, so an empty block cannot
+    # trigger the unknown-model warning.
+    pricing = _price_for_model(model)
+    write_rate = pricing.get("cache_write", pricing["input"] * _CACHE_WRITE_MULT)
+    read_rate = pricing.get("cache_read", pricing["input"] * _CACHE_READ_MULT)
+    return True, (input_tokens * pricing["input"]
+                  + output_tokens * pricing["output"]
+                  + cache_write * write_rate
+                  + cache_read * read_rate) / 1_000_000
+
+
 def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
     """Calculate total LLM API cost from token usage across all stages.
 
@@ -582,30 +615,20 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
             if model_key in section:
                 model = section.text(model_key, None)
                 break
-        pricing = _price_for_model(model)
-
-        input_tokens = usage.number("input_tokens", 0) or 0
-        output_tokens = usage.number("output_tokens", 0) or 0
-
-        if input_tokens or output_tokens:
+        had_tokens, cost = _usage_cost(usage, model)
+        if had_tokens:
             has_usage = True
-            cost = (input_tokens * pricing["input"] / 1_000_000) + \
-                   (output_tokens * pricing["output"] / 1_000_000)
             total_cost += cost
 
     # Plain English summary usage (stored separately at report root)
     pe_usage = root.obj("plain_english_usage")
     if pe_usage:
-        input_tokens = pe_usage.number("input_tokens", 0) or 0
-        output_tokens = pe_usage.number("output_tokens", 0) or 0
-        if input_tokens or output_tokens:
+        # Price by the actual plain-English model (may be local = $0), falling
+        # back to Haiku for older reports that didn't record the model.
+        pe_model = root.text("plain_english_model", None) or "claude-haiku-4-5"
+        had_tokens, cost = _usage_cost(pe_usage, pe_model)
+        if had_tokens:
             has_usage = True
-            # Price by the actual plain-English model (may be local = $0), falling
-            # back to Haiku for older reports that didn't record the model.
-            pe_model = root.text("plain_english_model", None) or "claude-haiku-4-5"
-            pricing = _price_for_model(pe_model)
-            cost = (input_tokens * pricing["input"] / 1_000_000) + \
-                   (output_tokens * pricing["output"] / 1_000_000)
             total_cost += cost
 
     return total_cost if has_usage else 0.50

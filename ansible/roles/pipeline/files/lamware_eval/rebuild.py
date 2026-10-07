@@ -27,7 +27,7 @@ from lamware_eval.metrics import (
 )
 from lamware_eval.provenance import gather as gather_provenance
 from lamware_eval.runner import (
-    _RATES,
+    _rough_cost,
     arm_name_from_cell_dir,
     evidence_for,
     held_out_techniques,
@@ -75,12 +75,6 @@ def _tool_call_metrics(arm_dir: Path) -> dict:
             "tool_transport_errors": transport,
             "tool_transport_error_rate": transport_rate,
             "tool_layer_broken": transport_rate >= TOOL_LAYER_BROKEN_THRESHOLD}
-
-
-def _cost(model: str, usage: dict) -> float:
-    ci, co = _RATES.get(model, (0.0, 0.0))
-    return round(usage.get("input_tokens", 0) / 1e6 * ci
-                 + usage.get("output_tokens", 0) / 1e6 * co, 4)
 
 
 def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
@@ -135,7 +129,10 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 cells.append(compose_cell(
                     base_dir, sample, analysis, source, claude_family,
                     res.get("duration_seconds") or 0.0,
-                    0.0 if local else _cost(model, usage),
+                    # The sweep's own pricer, not a copy: the copy that lived here
+                    # priced input/output only and would have disagreed with the
+                    # live cell once cache tokens were counted (#718).
+                    0.0 if local else _rough_cost(model, usage),
                     # Shared with the live path so a re-score cannot disagree
                     # with the sweep that produced the cell (#380). The tool
                     # figures were hardcoded to 0.0 here, which meant a re-score
