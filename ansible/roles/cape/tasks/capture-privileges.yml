@@ -59,9 +59,21 @@
   changed_when: false
   failed_when: false
 
+# `--list` prints the mode WITHOUT a leading zero ("root pcap 750 /usr/bin/tcpdump"),
+# so it is compared as a number. `--add` refuses when any override exists, so a
+# different one is removed first; the matching one is left alone.
+- name: Remove a tcpdump statoverride that is not root:pcap 0750
+  ansible.builtin.command: dpkg-statoverride --remove /usr/bin/tcpdump
+  when:
+    - cape_tcpdump_override.stdout | length > 0
+    - not (cape_tcpdump_override.stdout.split()[:2] == ['root', 'pcap']
+           and (cape_tcpdump_override.stdout.split()[2] | int(base=8)) == 488)
+  changed_when: true
+
 - name: Make tcpdump executable by root and the pcap group only
   ansible.builtin.command: dpkg-statoverride --update --add root pcap 0750 /usr/bin/tcpdump
-  when: cape_tcpdump_override.stdout.split() != ['root', 'pcap', '0750', '/usr/bin/tcpdump']
+  when: not (cape_tcpdump_override.stdout.split()[:2] == ['root', 'pcap']
+             and (cape_tcpdump_override.stdout.split()[2] | default('0') | int(base=8)) == 488)
   changed_when: true
 
 - name: Install the capability re-apply script

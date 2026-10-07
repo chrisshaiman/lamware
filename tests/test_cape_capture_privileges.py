@@ -137,3 +137,35 @@ def test_sudoers_is_validated_after_every_sudoers_change():
     v = n.index("Validate sudoers after the removal")
     assert n.index("Remove the sudo rules that made cape root-equivalent") < v
     assert n.index("Give CAPE's remaining sudoers file the standard mode") < v
+
+
+def _when(task_name: str, stdout: str) -> bool:
+    """Evaluate a task's real `when:` with Ansible's Jinja semantics for these filters."""
+    import jinja2
+    task = next(t for t in TASKS if t.get("name") == task_name)
+    conds = task["when"] if isinstance(task["when"], list) else [task["when"]]
+    env = jinja2.Environment()
+    env.filters["int"] = lambda v, default=0, base=10: int(str(v), base) if str(v).strip() else default
+    env.filters["default"] = lambda v, d="": v if v not in (None, "") else d
+    ctx = {"cape_tcpdump_override": {"stdout": stdout}}
+    return all(env.compile_expression(c)(**ctx) for c in conds)
+
+
+ADD = "Make tcpdump executable by root and the pcap group only"
+REMOVE = "Remove a tcpdump statoverride that is not root:pcap 0750"
+
+
+def test_the_statoverride_is_idempotent_with_dpkgs_real_output():
+    """dpkg-statoverride --list prints `750`, not `0750`; the second deploy of #711
+    re-added it and dpkg aborted ('an override ... already exists')."""
+    ok = "root pcap 750 /usr/bin/tcpdump"
+    assert not _when(ADD, ok) and not _when(REMOVE, ok)
+
+
+def test_no_override_adds_without_removing():
+    assert _when(ADD, "") and not _when(REMOVE, "")
+
+
+def test_a_different_override_is_removed_then_replaced():
+    other = "root root 755 /usr/bin/tcpdump"
+    assert _when(REMOVE, other) and _when(ADD, other)
