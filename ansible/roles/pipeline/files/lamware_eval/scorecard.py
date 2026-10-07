@@ -60,6 +60,10 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
     # string label (#709). Before #709 every one of them was in total_fabricated,
     # so a scorecard comparison across that change must read the two together.
     #
+    # total_placeholders counts claims holding a template slot (`<path>`); the slot
+    # is not checked, the rest of the claim is. Before 2026-10-07 the slot alone
+    # made such a claim fabricated, so read it beside total_fabricated across that change.
+    #
     # total_techniques is here because grounding scores code_level_ioc ONLY.
     # attack_techniques are unscored, which makes them the cheapest thing for an
     # evidence-fed arm to inflate; the pilot's +corr arm doubled them, 3 to 6,
@@ -70,7 +74,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
             "n_with_claims", "total_claims", "mean_grounded_ratio",
             "total_grounded_novel", "total_grounded_recited",
             "total_fabricated", "total_bare_symbols", "total_unscoreable",
-            "total_grounded_via_label",
+            "total_grounded_via_label", "total_placeholders",
             "total_evidence_bytes", "total_correlations_shown",
             "total_techniques", "total_techniques_hit",
             "mean_technique_precision", "mean_technique_recall",
@@ -88,7 +92,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
     cell_cols = ["arm", "seed", "sample", "family_guess", "mb_family", "claude_family",
                  "grounded", "grounded_novel", "grounded_recited",
                  "total", "fabricated", "bare_symbols", "unscoreable",
-                 "grounded_via_label",
+                 "grounded_via_label", "placeholders",
                  "modality", "input", "evidence_bytes", "evidence_keys", "correlations_shown",
                  "techniques", "techniques_hit", "technique_precision",
                  "technique_recall", "cape_techniques",

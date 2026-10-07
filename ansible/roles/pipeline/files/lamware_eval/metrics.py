@@ -181,6 +181,7 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # Grounded only through a Ghidra string label (#709). Counted so a
         # before/after re-score shows how much of a cell's grounding moved.
         "grounded_via_label": len(g.get("grounded_via_label") or []),
+        "placeholders": len(g.get("placeholder_claims") or []),
         # NOT scored by grounding_scorecard, which reads code_level_ioc only.
         # Counted so an unscored field cannot quietly double while the scored
         # one holds still — which is what the pilot's +corr arm did, 3 -> 6.
@@ -297,6 +298,7 @@ def aggregate(cells: list[dict]) -> dict:
             "total_unscoreable": sum(c.get("unscoreable") or 0 for c in valid),
             "total_grounded_via_label": sum(c.get("grounded_via_label") or 0
                                             for c in valid),
+            "total_placeholders": sum(c.get("placeholders") or 0 for c in valid),
             # Unscored by grounding, so shown rather than trusted.
             "total_techniques": sum(c.get("techniques") or 0 for c in valid),
             "total_evidence_bytes": sum(c.get("evidence_bytes") or 0 for c in valid),
