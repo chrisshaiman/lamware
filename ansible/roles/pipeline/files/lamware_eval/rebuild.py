@@ -32,9 +32,12 @@ from lamware_eval.runner import (
     evidence_for,
     held_out_techniques,
     init_payload_for,
+    replay_variant,
     tool_output_text,
 )
 from lamware_eval.scorecard import render_scorecard, write_scorecard
+from lamware_eval.stats import render_variant_stats
+from lamware_eval.variants import split_variant_dir
 
 
 def _tool_call_metrics(arm_dir: Path) -> dict:
@@ -109,8 +112,16 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 # chose differently would ground the cell against a program it
                 # never read. A cell with no record predates #646 and replays
                 # the dispatch that produced it.
-                read = res.get("input") or {}
-                _init, modality, source_head, read = init_payload_for(report, recorded=read)
+                recorded = res.get("input") or {}
+                init, modality, source_head, read = init_payload_for(report, recorded=recorded)
+                # An order-variant cell (#715) replays its recorded permutation;
+                # a cell from a run without variants passes through unchanged.
+                base_dir, k = split_variant_dir(arm_dir.name)
+                if k != (recorded.get("variant") or 0):
+                    raise ValueError(f"{arm_dir} holds a cell recorded as variant "
+                                     f"{recorded.get('variant')}")
+                _init, source_head, read = replay_variant(init, modality, source_head,
+                                                          read, recorded)
                 source = source_head + " " + tool_output_text(arm_dir)
                 # The sweep scored an evidence-fed arm against its evidence too.
                 # A re-score that did not would call those claims FABRICATED and
@@ -118,11 +129,11 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                 # already found in the tool figures here. Resolved by an exact
                 # reverse lookup, not by matching on "+corr" in the directory
                 # name.
-                arm_name = arm_name_from_cell_dir(arm_dir.name)
+                arm_name = arm_name_from_cell_dir(base_dir)
                 evidence = (evidence_for(resolve_arm(arm_name), report)
                             if arm_name else {})
                 cells.append(compose_cell(
-                    arm_dir.name, sample, analysis, source, claude_family,
+                    base_dir, sample, analysis, source, claude_family,
                     res.get("duration_seconds") or 0.0,
                     0.0 if local else _cost(model, usage),
                     # Shared with the live path so a re-score cannot disagree
@@ -140,7 +151,8 @@ def rebuild(corpus_path: str, label: str) -> tuple[str, list[dict]]:
                     cape_techniques=held_out_techniques(report),
                     modality=modality, input_read=read))
     provenance = gather_provenance(corpus_path, [c["sample"] for c in cells])
-    return render_scorecard(label, cells, aggregate(cells), provenance), cells
+    md = render_scorecard(label, cells, aggregate(cells), provenance)
+    return md + render_variant_stats(cells), cells
 
 
 def main() -> None:

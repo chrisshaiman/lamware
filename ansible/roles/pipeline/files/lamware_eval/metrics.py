@@ -43,14 +43,19 @@ def input_label(read: dict | None) -> str | None:
     A native cell names its program too since #697, so a first-success
     fallback is visible next to the canonical cells it is pooled with. A
     native record without a program predates #697 and is just `native_pe`.
+
+    An order-variant k > 0 (#715) ends in ` v<k>`, so the rows of one sample's
+    variants are told apart in the per-cell table.
     """
     if not read:
         return None
     kind = read.get("kind")
     if kind not in ("unpacked_payload", "native_pe") or not read.get("program_name"):
-        return kind
-    return (f"{kind}:{str(read.get('program_name'))[:12]} "
-            f"({read.get('cape_type') or 'unlabelled'}, {read.get('chosen_because')})")
+        label = kind
+    else:
+        label = (f"{kind}:{str(read.get('program_name'))[:12]} "
+                 f"({read.get('cape_type') or 'unlabelled'}, {read.get('chosen_because')})")
+    return f"{label} v{read['variant']}" if read.get("variant") else label
 
 
 def technique_hits(claimed: list[str], available: list[str]) -> list[str]:

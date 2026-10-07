@@ -22,15 +22,18 @@ ARMS=${ARMS:-}
 CORPUS=${CORPUS:-/opt/pipeline/eval/corpus.json}
 LABEL=${LABEL:-eval}
 SAMPLES=${SAMPLES:-}
+VARIANTS=${VARIANTS:-0}
 UNIT=lamware-eval
 REMOTE_LOG=/opt/pipeline/eval-logs/${UNIT}.log
 
 if [ -z "$ARMS" ]; then
   cat >&2 <<'USAGE'
-usage: make eval ARMS=<csv> [CORPUS=...] [LABEL=...] [SAMPLES=<sha-prefix-or-family,...>]
+usage: make eval ARMS=<csv> [CORPUS=...] [LABEL=...] [SAMPLES=<sha-prefix-or-family,...>] [VARIANTS=K]
 
   e.g. make eval ARMS=qwen@10,qwen@10+corr LABEL=baseline
        make eval ARMS=qwen@10 SAMPLES=salat        # one sample, for a smoke check
+       make eval ARMS=qwen@10,qwen@10+corr VARIANTS=4 LABEL=paired
+                                                   # 5 orderings per sample, paired stats (#715)
 
 qwen@10 is the working arm. qwen@30 is a MEASUREMENT arm for the open depth
 question (arms.py:47: "do not promote this over qwen@10") -- these examples
@@ -50,10 +53,15 @@ if remote_unit_busy "$HOST" "$UNIT"; then
   exit 1
 fi
 
+case "$VARIANTS" in
+  ''|*[!0-9]*) echo "ERROR: VARIANTS must be a non-negative integer, got: $VARIANTS" >&2; exit 2 ;;
+esac
+
 SEL=""
 [ -n "$SAMPLES" ] && SEL="--samples $SAMPLES"
+[ "$VARIANTS" -gt 0 ] && SEL="$SEL --variants $VARIANTS"
 
-say "arms=$ARMS corpus=$CORPUS label=$LABEL ${SAMPLES:+samples=$SAMPLES}"
+say "arms=$ARMS corpus=$CORPUS label=$LABEL ${SAMPLES:+samples=$SAMPLES} variants=$VARIANTS"
 
 ssh "$HOST" "sudo test -r '$CORPUS'" || { echo "ERROR: corpus not readable on $HOST: $CORPUS" >&2; exit 1; }
 

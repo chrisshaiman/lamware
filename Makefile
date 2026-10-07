@@ -602,7 +602,7 @@ deploy: collections-check
 
 eval:
 	@ARMS="$(ARMS)" CORPUS="$(CORPUS)" LABEL="$(LABEL)" SAMPLES="$(SAMPLES)" \
-		SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/eval.sh
+		VARIANTS="$(VARIANTS)" SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/eval.sh
 
 # THIS DETONATES LIVE MALWARE. Deliberately operator-typed and foreground: it
 # starts a one-shot unit and enables nothing, so nothing here can arm a

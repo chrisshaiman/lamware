@@ -629,6 +629,8 @@
     - provenance.py         # #486 — corpus/deploy/guest-image stamp
     - scorecard.py
     - trail.py
+    - variants.py           # #715 — deterministic order-variants of the init
+    - stats.py              # #715 — per-sample distributions, paired comparison
     - runner.py
     - rebuild.py
     - motif.py

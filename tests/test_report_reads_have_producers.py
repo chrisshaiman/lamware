@@ -191,6 +191,13 @@ ALLOWED: dict[str, Allowed] = {
     "ghidra.analyzed_files[].analyzed_files": _never(
         "without_host_paths strips per-file paths from a whole section; an entry "
         "has no nested analyzed_files, so the read finds nothing to strip"),
+    # The eval's order-variants (#715) reorder the init's shown lists. Variants
+    # run only on native_pe / unpacked_payload inits, which are one entry; the
+    # whole-section init (a pre-#697 replay) carries none and gets no variant.
+    **{f"ghidra.{k}": _never(
+        "lamware_eval.variants.apply_variant reads it from the init; only a "
+        "per-program entry carries it, and only entries are ever reordered")
+       for k in ("imports", "strings_of_interest")},
 
     # --- routed analysers (flow.py loops over all seven) ---------------------
     **{f"{a}_analysis": _unobserved(_RARE_TYPE, _PIPE)
