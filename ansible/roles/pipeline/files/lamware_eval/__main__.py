@@ -1,6 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""CLI: python -m lamware_eval run --corpus <path> --arms <csv> --label <name>"""
+"""CLI: python -m lamware_eval run --corpus <path> --arms <csv> --label <name> [--variants K]"""
 import argparse
 import json
 import os
@@ -11,12 +11,21 @@ from lamware_eval.consensus import consensus, render_consensus
 from lamware_eval.corpus import filter_samples, load_corpus
 from lamware_eval.metrics import aggregate
 from lamware_eval.provenance import gather as gather_provenance
-from lamware_eval.runner import cell_out_dir, run_arm
+from lamware_eval.runner import (
+    VariantNotApplicable,
+    cell_dir_name,
+    cell_out_dir,
+    eligible_for_variants,
+    run_arm,
+)
 from lamware_eval.scorecard import render_scorecard, write_scorecard
+from lamware_eval.stats import render_variant_stats
+from lamware_eval.variants import VARIANT_MODALITIES, split_variant_dir
 
 
-def _failed_cell(arm_name: str, sample, err: str, seed: int | None = None) -> dict:
-    return {"arm": arm_name, "seed": seed, "sampling": None,
+def _failed_cell(arm_name: str, sample, err: str, seed: int | None = None,
+                 variant: int | None = None) -> dict:
+    cell = {"arm": arm_name, "seed": seed, "sampling": None,
             "sample": sample.sha256[:12], "family_guess": None,
             "mb_family": sample.mb_family, "claude_family": None, "grounded": 0,
             "total": 0, "fabricated": [], "grounded_ratio": 1.0, "completed": False,
@@ -26,6 +35,111 @@ def _failed_cell(arm_name: str, sample, err: str, seed: int | None = None) -> di
             "tool_calls_used": 0, "tool_call_error_rate": 0.0,
             "tool_call_errors": 0, "tool_layer_broken": False, "wall_seconds": 0.0,
             "cost_usd": 0.0, "error": err}
+    if variant is not None:
+        # So the statistics count it as this variant's (invalid) draw, not v0's.
+        cell["input_detail"] = {"variant": variant}
+    return cell
+
+
+def variants_blocked(v0_cell: dict) -> str | None:
+    """Why a (sample x arm)'s order-variants are not run, judged from its v0 cell.
+
+    From the modality v0 ACTUALLY read rather than a prediction: whether a
+    routed sample reads an unpacked payload or the C# depends on the Ghidra
+    verifier, which only the sweep runs.
+    """
+    modality = v0_cell.get("modality")
+    if modality in VARIANT_MODALITIES:
+        return None
+    if modality is None:
+        return f"v0 failed before reading its input ({str(v0_cell.get('error'))[:160]})"
+    return f"{modality}: no order-variants for .NET inputs in this change (v0 only)"
+
+
+def _prior_wall_seconds(samples, arms) -> list[float]:
+    """`duration_seconds` of every persisted cell of these samples x arms, any variant."""
+    names = {cell_dir_name(a.name) for a in arms}
+    out = []
+    for s in samples:
+        root = Path(s.corpus_dir) / "eval"
+        if not root.is_dir():
+            continue
+        for d in root.iterdir():
+            if split_variant_dir(d.name)[0] not in names or not (d / "result.json").is_file():
+                continue
+            try:
+                secs = json.loads((d / "result.json").read_text()).get("duration_seconds")
+            except (ValueError, OSError):
+                continue
+            if isinstance(secs, (int, float)) and secs > 0:
+                out.append(float(secs))
+    return out
+
+
+def cost_line(samples, arms, variants: int) -> str:
+    """What this sweep will run, said before it runs (#715).
+
+    cells = samples x arms x (K+1) for samples whose input order-variants apply
+    to, x 1 for the rest; a range when that depends on the Ghidra verifier. The
+    time estimate is the mean `duration_seconds` of cells already on disk.
+    """
+    lo = hi = 0
+    for s in samples:
+        try:
+            report = json.loads((Path(s.corpus_dir) / "report.json").read_text())
+            ok = eligible_for_variants(report)
+        except (ValueError, OSError):
+            ok = None  # the sweep will fail this sample's cells; count it both ways
+        lo += len(arms) * (1 + (variants if ok else 0))
+        hi += len(arms) * (1 + (variants if ok is not False else 0))
+    cells = str(lo) if lo == hi else f"{lo}..{hi}"
+    line = (f"[eval] {len(samples)} sample(s) x {len(arms)} arm(s) x (1 + {variants} "
+            f"order-variant(s) where the input is {'/'.join(VARIANT_MODALITIES)}) "
+            f"= {cells} cells")
+    prior = _prior_wall_seconds(samples, arms)
+    if prior:
+        mean = sum(prior) / len(prior)
+        line += (f"; ~{lo * mean / 3600:.1f}"
+                 + ("" if lo == hi else f"..{hi * mean / 3600:.1f}")
+                 + f" h at the {mean:.0f}s mean of {len(prior)} prior cell(s)")
+    return line
+
+
+def sweep_variants(samples, arms, base_cfg: dict, interpret_cmd: str, ghidra_cmd: str,
+                   variants: int, run=None) -> list[dict]:
+    """Every sample x variant x arm, variant-major within a sample.
+
+    Arms are interleaved inside each variant so an interrupted sweep leaves
+    complete PAIRS (same sample, same k, every arm) rather than one arm's
+    variants with nothing to pair them with. v0 of every arm runs first; an
+    arm whose v0 read a .NET input, or failed before reading anything, runs no
+    variants, and the reason is printed rather than becoming K failed cells.
+    `run` is `run_arm`, injectable for tests.
+    """
+    run = run or run_arm
+    cells: list[dict] = []
+    for s in samples:
+        blocked: dict[str, str] = {}
+        for k in range(variants + 1):
+            for a in arms:
+                if a.name in blocked:
+                    continue
+                try:  # one bad cell never kills the run
+                    cell = run(s, a, base_cfg, interpret_cmd, ghidra_cmd, variant=k)
+                except VariantNotApplicable as e:
+                    blocked[a.name] = str(e)
+                    print(f"    [eval] {s.sha256[:12]} {a.name}: variants not run: {e}",
+                          flush=True)
+                    continue
+                except Exception as e:
+                    cell = _failed_cell(a.name, s, f"{type(e).__name__}: {e}", a.seed,
+                                        variant=k)
+                cells.append(cell)
+                if k == 0 and (why := variants_blocked(cell)):
+                    blocked[a.name] = why
+                    print(f"    [eval] {s.sha256[:12]} {a.name}: variants not run: {why}",
+                          flush=True)
+    return cells
 
 
 def _base_arm(name: str) -> str:
@@ -132,6 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "today — seeds are inert (#292) and depth arms share a "
                          "deterministic prefix — so any value >=2 is currently "
                          "rejected with an explanation. See #310.")
+    # OFF by default: 0 runs and records exactly what a run did before #715.
+    ap.add_argument("--variants", type=int, default=0,
+                    help="K >= 1 also runs K deterministic reorderings of each "
+                         "native/unpacked-payload sample's shown imports and strings "
+                         "(cells in eval/<arm>__v<k>/) and adds distribution and "
+                         "paired-comparison sections. .NET inputs run v0 only.")
     return ap
 
 
@@ -142,6 +262,8 @@ def main() -> None:
         ap.error("--consensus-k must be >= 2; k=1 keeps every claim and asserts nothing")
     if args.consensus_k < 0:
         ap.error("--consensus-k cannot be negative; use 0 to disable")
+    if args.variants < 0:
+        ap.error("--variants cannot be negative; use 0 to disable")
 
     # Resolved before the config and corpus are even read, so an unusable consensus
     # request costs a syntax error rather than a sweep.
@@ -153,16 +275,23 @@ def main() -> None:
 
     base_cfg = json.loads(Path(args.config).read_text())["interpret"]
     samples = filter_samples(load_corpus(args.corpus), args.samples)
-    print(f"[eval] {len(samples)} sample(s) x {len(arms)} arm(s) = {len(samples) * len(arms)} cells")
-    cells = []
-    for s in samples:
-        for a in arms:
-            try:  # one bad (sample x arm) never kills the run
-                cells.append(run_arm(s, a, base_cfg, args.interpret_cmd, args.ghidra_cmd))
-            except Exception as e:
-                cells.append(_failed_cell(a.name, s, f"{type(e).__name__}: {e}", a.seed))
+    if args.variants:
+        print(cost_line(samples, arms, args.variants))
+        cells = sweep_variants(samples, arms, base_cfg, args.interpret_cmd,
+                               args.ghidra_cmd, args.variants)
+    else:
+        print(f"[eval] {len(samples)} sample(s) x {len(arms)} arm(s) = {len(samples) * len(arms)} cells")
+        cells = []
+        for s in samples:
+            for a in arms:
+                try:  # one bad (sample x arm) never kills the run
+                    cells.append(run_arm(s, a, base_cfg, args.interpret_cmd, args.ghidra_cmd))
+                except Exception as e:
+                    cells.append(_failed_cell(a.name, s, f"{type(e).__name__}: {e}", a.seed))
     provenance = gather_provenance(args.corpus, [c["sample"] for c in cells])
     md = render_scorecard(args.label, cells, aggregate(cells), provenance)
+    # "" without variants: --variants 0 renders the scorecard it always did.
+    md += render_variant_stats(cells)
     # Explicit request only. This used to trigger on `any(a.seed is not None)`, so a
     # seeded arm silently added a section nobody asked for — and that section was the
     # one reporting 100% agreement over identical runs (#292).

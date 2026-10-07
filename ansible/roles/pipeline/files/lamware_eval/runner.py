@@ -23,6 +23,15 @@ from stages.interpret import agent_payload, run_interpret
 from lamware_eval.arms import Arm
 from lamware_eval.corpus import CorpusSample
 from lamware_eval.metrics import cell_error, compose_cell, ghidra_warnings_for, input_label
+from lamware_eval.variants import (
+    VARIANT_MODALITIES,
+    apply_variant,
+    caps_from_config,
+    recorded_variant,
+    variant_dir_suffix,
+    variant_record,
+    variant_seed,
+)
 
 # Harness backstop. MUST stay ABOVE the interpret container's own --timeout
 # (10800s) so the container is the thing that reaps a stuck run and we get a
@@ -76,14 +85,18 @@ def _server_sampling() -> dict:
             for k, v in params.items() if k in _SAMPLING_KEYS}
 
 
-def cell_out_dir(sample: CorpusSample, arm: Arm) -> Path:
-    """Where one (sample x arm) cell's artifacts live.
+def cell_out_dir(sample: CorpusSample, arm: Arm, variant: int = 0) -> Path:
+    """Where one (sample x arm [x order-variant]) cell's artifacts live.
 
     Shared with the consensus reader rather than re-derived there: a second copy
     of this path expression would silently stop finding results the moment either
     copy changed, and the symptom would be "no consensus data", not an error.
+
+    Variant 0 keeps the directory every existing reader knows; variant k > 0 is
+    `<arm>__v<k>` beside it (#715), which `rebuild` splits back apart.
     """
-    return Path(sample.corpus_dir) / "eval" / cell_dir_name(arm.name)
+    return (Path(sample.corpus_dir) / "eval"
+            / (cell_dir_name(arm.name) + variant_dir_suffix(variant)))
 
 
 def cell_dir_name(arm_name: str) -> str:
@@ -594,8 +607,81 @@ def init_payload_for(report: dict, verify=None, corpus_dir: str | Path | None = 
     return init, "unpacked_payload", agent_visible_text(target), read
 
 
+class VariantNotApplicable(RuntimeError):
+    """Order-variants are not defined for this cell's modality (#715).
+
+    The .NET modalities are not rendered by `build_initial_message`, so there
+    is no shown import/string list to reorder. The sweep runs their v0 only and
+    says so; it is not a failed cell.
+    """
+
+
+def eligible_for_variants(report: dict) -> bool | None:
+    """Will this sample's input be one order-variants apply to?
+
+    True / False, or None when it depends on the Ghidra verifier, which is not
+    run for a prediction. Mirrors `init_payload_for`'s dispatch with
+    production's selectors, cheaply: no verifier and no .NET map is built. Used
+    for the cost line only; the sweep itself decides from the modality v0
+    actually read.
+    """
+    gr = report.get("ghidra") or {}
+    routed = any(gr.get(k) for k in ROUTED_FLAGS)
+    if routed and select_payload_target(gr, verify=None)[0] is not None:
+        return True
+    if (report.get("dotnet_analysis") or {}).get("analysis_success"):
+        # A labelled payload the verifier opens would win over the C#.
+        return (None if routed and select_payload_target(
+            gr, verify=lambda *_: True)[0] is not None else False)
+    return select_native_target(gr)[0] is not None
+
+
+def _variant_of(init: dict, modality: str, source_head: str, k: int,
+                seed: str | None, caps: dict) -> tuple[dict, str, dict]:
+    """(init, grounding source, record fields) for variant k of a built input.
+
+    The grounding source of a reordered input is the reordered input as the
+    agent received it (`agent_visible_text`): the same content, so the same
+    claims ground, plus the tool output appended by the caller as before.
+    """
+    if k and modality not in VARIANT_MODALITIES:
+        raise VariantNotApplicable(
+            f"{modality}: order-variants are defined for {', '.join(VARIANT_MODALITIES)} "
+            f"only; .NET inputs run v0 only in this change")
+    init, moved = apply_variant(init, seed, caps)
+    if k:
+        source_head = agent_visible_text(init)
+    return init, source_head, variant_record(k, seed, moved if k else None, caps,
+                                             source_head)
+
+
+def replay_variant(init: dict, modality: str, source_head: str, read: dict,
+                   recorded: dict | None) -> tuple[dict, str, dict]:
+    """Re-apply a recorded cell's order-variant for the offline re-scorer.
+
+    From the RECORD (seed and caps), not re-derived from today's config, so a
+    cap changed since the sweep cannot move the replay. The rebuilt input must
+    hash to what the sweep recorded; if the corpus report changed underneath,
+    grounding against the new text would score a cell against an input it was
+    never sent, so that raises instead.
+    """
+    rv = recorded_variant(recorded)
+    if not rv:
+        return init, source_head, read
+    k = rv["variant"]
+    init, source_head, rec = _variant_of(init, modality, source_head, k,
+                                         rv.get("variant_seed"), rv.get("variant_caps") or {})
+    if rec["input_sha"] != rv.get("input_sha"):
+        raise ValueError(f"variant {k} replays to input {rec['input_sha']}, but the "
+                         f"cell recorded {rv.get('input_sha')}: the corpus report changed")
+    return init, source_head, {**read, **rec}
+
+
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
-            interpret_cmd: str, ghidra_cmd: str) -> dict:
+            interpret_cmd: str, ghidra_cmd: str, variant: int | None = None) -> dict:
+    """One cell. `variant=None` is a run without order-variants, exactly as before
+    #715; an int k records the variant (k=0 is the unperturbed input) and k > 0
+    reorders the shown imports/strings (see lamware_eval.variants)."""
     report = json.loads((Path(sample.corpus_dir) / "report.json").read_text())
     # Production's verifier, unmodified, pointed at the corpus copies of the
     # projects (see init_payload_for). It only runs for a routed sample; a
@@ -608,6 +694,14 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir,
         dotnet_mode=dotnet_mode, dotnet_limits=base_cfg.get("dotnet_tool_limits"),
         dotnet_tools_cfg=base_cfg)
+    if variant is not None:
+        # The caps the container will apply: it merges this config over its own
+        # DEFAULT_CONFIG, which caps_from_config falls back to.
+        init, source_head, rec = _variant_of(
+            init, modality, source_head, variant,
+            variant_seed(sample.sha256, variant) if variant else None,
+            caps_from_config(base_cfg))
+        read = {**read, **rec}
     print(f"    [eval] input: {input_label(read)}", flush=True)
     if init.get("bazaar_family"):
         # The prompt would carry the family as a hint (#705). Withheld at the
@@ -639,7 +733,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         # omission is invisible until an arm is BOTH local and single-shot.
         cfg["re_backend"] = "local"
         cfg["single_shot_backend"] = "local"
-    out = cell_out_dir(sample, arm)
+    out = cell_out_dir(sample, arm, variant or 0)
     # Start from an empty cell: see archive_previous_cell for why overwriting is not
     # enough. Stale per-tool-call artifacts would otherwise be scored as this run's
     # evidence.
