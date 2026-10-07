@@ -329,6 +329,97 @@ def _literal_in_source(literal: str, norm_source: str) -> bool:
     return norm in norm_source
 
 
+# Ghidra does not print a string where code uses it. It prints a LABEL built from the
+# string's text: `s_` (ASCII) or `u_` (UTF-16), the text with every character that is
+# not a letter or digit replaced by `_`, then `_` and the address. Past a fixed length
+# the text is cut, mid-word if need be.
+#
+# Measured 2026-10-06 across 88 eval cells (#709): 11 of 48 fabricated claims were a
+# string the model read through one of these, 7 against a whole label and 4 against a
+# truncated one:
+#
+#   source  local_14c8[0] = s_nbgtpasrg_exe_14001b610[8];
+#   claim   nbgtpasrg.exe                                   -> scored FABRICATED
+#
+#   source  fun_00dddaf5(u__C__Windows_System32_fodhelper_e_00e16c38,0x2000,...)
+#   claim   C:\Windows\System32\fodhelper.exe               -> scored FABRICATED
+#
+# The second label's body, `_C__Windows_System32_fodhelper_e`, is 32 characters cut
+# off inside `.exe`. Only a fixed-length cut stops mid-extension, and 32 is the body
+# length the census found most often among these labels; it is also, as recalled and
+# NOT checked against Ghidra source here (no network), the default of
+# `DataTypeDisplayOptions.MAX_LABEL_STRING_LENGTH`. If Ghidra's option is ever changed
+# on the host, prefix matching stops firing (it fails CLOSED, back to fabricated).
+#
+# THE RULE, which matches whole labels only:
+#   exact   labelify(literal) == the label's body, both stripped of edge `_`.
+#   prefix  the body is exactly _GHIDRA_LABEL_TRUNCATION long (so it may have been
+#           cut), and labelify(literal) STARTS WITH it.
+# Never a substring. `fodhelper.exe` is NOT grounded by the truncated label above: the
+# label never shows `.exe`, and allowing a literal to match inside a label would let
+# any short word ride on any long string. That claim stays fabricated, on purpose.
+_GHIDRA_LABEL_TRUNCATION = 32
+# Floor for an EXACT match, in characters of the stripped body. Below it a label like
+# `s_%d_%s_...` (body `d__s`) is format-string noise, not an artifact.
+_MIN_LABEL_BODY = 6
+# Floor for a PREFIX match, in letters and digits of the stripped body. A 32-character
+# body that is mostly punctuation (`s_______________________ab______...`) would
+# otherwise ground every literal starting with `ab`.
+_MIN_PREFIX_ALNUM = 16
+# Source tokens are split on anything outside [a-z0-9_] (normalised text is lowercase),
+# so a label is only ever matched WHOLE. `ptr_` is Ghidra's pointer-to-label prefix
+# and still names the same string.
+_LABEL_TOKEN = re.compile(r"[a-z0-9_]+")
+_LABEL_SHAPE = re.compile(r"\A(?:ptr_)?[su]_(.+)_[0-9a-f]{6,16}\Z")
+_NON_ALNUM = re.compile(r"[^a-z0-9]")
+
+
+def labelify(text: str) -> str:
+    """`text` spelled the way Ghidra spells it inside a string label, edge `_` stripped.
+
+    Normalised first, so a backslash doubled by `json.dumps` becomes ONE `_` exactly as
+    it is one character in the binary's string.
+    """
+    return _NON_ALNUM.sub("_", normalize(text)).strip("_")
+
+
+def string_label_bodies(norm_source: str) -> tuple[frozenset[str], tuple[str, ...]]:
+    """The bodies of every `s_`/`u_` string label in `norm_source`.
+
+    Returns (exact bodies, truncated bodies), stripped of edge `_`. A body counts as
+    truncated when it is exactly _GHIDRA_LABEL_TRUNCATION characters BEFORE stripping —
+    the label's own length, not the stripped one, is what Ghidra cut.
+    """
+    exact: set[str] = set()
+    truncated: set[str] = set()
+    for tok in _LABEL_TOKEN.findall(norm_source):
+        m = _LABEL_SHAPE.match(tok)
+        if not m:
+            continue
+        raw = m.group(1)
+        body = raw.strip("_")
+        if len(body) >= _MIN_LABEL_BODY:
+            exact.add(body)
+        if (len(raw) == _GHIDRA_LABEL_TRUNCATION
+                and len(_NON_ALNUM.sub("", body)) >= _MIN_PREFIX_ALNUM):
+            truncated.add(body)
+    return frozenset(exact), tuple(sorted(truncated))
+
+
+def _literal_via_label(literal: str,
+                       labels: tuple[frozenset[str], tuple[str, ...]]) -> "dict | None":
+    """How a string label attests `literal`, or None. Called only after plain matching
+    has failed, so a returned value means the label was the ONLY evidence."""
+    exact, truncated = labels
+    spelled = labelify(literal)
+    if spelled in exact:
+        return {"literal": literal, "label_body": spelled, "via": "exact"}
+    for body in truncated:
+        if spelled.startswith(body):
+            return {"literal": literal, "label_body": body, "via": "truncated_prefix"}
+    return None
+
+
 # Auto-generated Ghidra symbol names. A claim consisting of NOTHING BUT one of these
 # is contentless: it scores as grounded because appearing in the decompilation is what
 # makes it a symbol name in the first place.
@@ -462,7 +553,9 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
 
     Every claim lands in exactly one bucket:
 
-      grounded    — every literal it cites appears in the source
+      grounded    — every literal it cites appears in the source (directly, or as the
+                    text behind a Ghidra `s_`/`u_` string label; see
+                    `grounded_via_label`)
       partial     — some cited literals appear, others do not
       fabricated  — it cites literals and NONE of them appear
       unscoreable — no checkable literal could be extracted
@@ -490,6 +583,7 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     """
     iocs = analysis.get("code_level_ioc") or analysis.get("code_level_iocs") or []
     norm_source = normalize(source_text)
+    labels = string_label_bodies(norm_source)
 
     grounded = 0
     partial: list[str] = []
@@ -497,6 +591,7 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     unscoreable: list[str] = []
     bare_symbols: list[str] = []
     misattributed: list[str] = []
+    via_label: list[dict] = []
     truncated = 0
     details: list[dict] = []
 
@@ -531,12 +626,27 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
             details.append({"claim": value, "verdict": "unscoreable", "found": 0, "of": 0})
             continue
 
-        found = [t for t in literals if _literal_in_source(t, norm_source)]
+        found = []
+        label_hits: list[dict] = []
+        for t in literals:
+            if _literal_in_source(t, norm_source):
+                found.append(t)
+                continue
+            # Ghidra string labels (#709). Only reached when plain matching failed, so
+            # every hit recorded here is a literal nothing else in the source attests.
+            hit = _literal_via_label(t, labels)
+            if hit is not None:
+                found.append(t)
+                label_hits.append(hit)
         detail = {"claim": value, "found": len(found), "of": len(literals),
                   "missing": [t for t in literals if t not in found][:5]}
+        if label_hits:
+            detail["via_label"] = label_hits
         if len(found) == len(literals):
             grounded += 1
             detail["verdict"] = "grounded"
+            if label_hits:
+                via_label.append({"claim": value, "literals": label_hits})
         else:
             # Every ungrounded-but-scoreable claim is flagged, whether it cited one
             # invented artifact among several or nothing real at all. `partial` records
@@ -568,5 +678,10 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         # into grounded_ratio — see the loop above.
         "bare_symbol_claims": bare_symbols,
         "misattributed": misattributed,
+        # Added by #709. Claims that are grounded ONLY because a literal matched a
+        # Ghidra `s_`/`u_` string label, each with `via` = exact | truncated_prefix.
+        # They ARE counted in `grounded` — that is the fix — and listed here so the
+        # shift against archived scorecards is visible rather than silent.
+        "grounded_via_label": via_label,
         "details": details,
     }
