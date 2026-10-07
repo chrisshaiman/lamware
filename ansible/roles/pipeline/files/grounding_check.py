@@ -166,6 +166,10 @@ def _extract_literals_detail(value: str, limit: int = _LITERAL_LIMIT) -> tuple[l
     seen: set[str] = set()
     # Refang FIRST, keeping case: `evil[.]com` matches no pattern, `evil.com` does.
     value = refang(value)
+    # Template slots (`<path_to_dropper>`) are removed before ANY pattern runs: a
+    # per-token skip is not enough, because the identifier rule would still pull
+    # `path_to_dropper` out of the slot on its own. See _TEMPLATE_SLOT.
+    value = _TEMPLATE_SLOT.sub(" ", value)
     # Taxonomy labels are dropped before extraction, not after, so they cannot reach
     # `seen` and mask a later identical token that IS evidence.
     type_labels = {m.lower() for m in _TYPE_LABEL.findall(value)}
@@ -295,6 +299,17 @@ def _hex_value_pattern(literal: str) -> "re.Pattern | None":
 # Deliberately narrow: only Ghidra symbol prefixes with a trailing run of X's, so it
 # cannot be used to launder a real fabrication into an unscoreable one.
 _PLACEHOLDER_SYMBOL = re.compile(r"\A(?:FUN|DAT|LAB|PTR|SUB|UNK)_[0-9a-fA-F]*X{2,}\Z")
+
+# A template slot: `<path>`, `<path_to_dropper>`. Models write these where an
+# artifact's value was not in the code they read, e.g.
+#     powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "<path>"
+# The slot says "a value goes here"; it is not a claim about the binary, so it is
+# not checked (owner's decision, 2026-10-07) and the concrete rest of the claim is
+# scored as before. A claim left with nothing concrete goes to `unscoreable`,
+# which stays in the denominator, exactly like _PLACEHOLDER_SYMBOL above.
+# Narrow: a bracketed name of lowercase words joined by `_`, `-` or spaces, so
+# `<HTML>`-style or mixed-case tokens are still extracted and checked.
+_TEMPLATE_SLOT = re.compile(r"<[a-z][a-z0-9]*(?:[_ -][a-z0-9]+){0,6}>")
 
 # A `type:` field names the KIND of evidence. It is not evidence.
 #
@@ -592,6 +607,7 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
     bare_symbols: list[str] = []
     misattributed: list[str] = []
     via_label: list[dict] = []
+    placeholder_claims: list[str] = []
     truncated = 0
     details: list[dict] = []
 
@@ -608,6 +624,10 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         # to the change that first makes it measurable.
         if _BARE_SYMBOL.match(value.strip().strip("`")):
             bare_symbols.append(value)
+        # Template slots are skipped by extraction (_TEMPLATE_SLOT); listed so the
+        # claims whose slot went unchecked are visible, like bare symbols.
+        if _TEMPLATE_SLOT.search(value):
+            placeholder_claims.append(value)
         wrong = constant_misattributions(value)
         if wrong:
             misattributed.extend(wrong)
@@ -683,5 +703,8 @@ def grounding_scorecard(analysis: dict, source_text: str) -> dict:
         # They ARE counted in `grounded` — that is the fix — and listed here so the
         # shift against archived scorecards is visible rather than silent.
         "grounded_via_label": via_label,
+        # Claims containing a template slot (`<path>`), which is not checked; the
+        # concrete rest of the claim is (owner's decision, 2026-10-07).
+        "placeholder_claims": placeholder_claims,
         "details": details,
     }
