@@ -40,10 +40,17 @@ if ssh "$HOST" "systemctl list-units --type=service --state=active,activating --
   echo "ERROR: an eval unit is running; the pipeline's interpret stage would contend for the model." >&2
   exit 1
 fi
-if ssh "$HOST" "test -e /opt/pipeline/control/PAUSE"; then
-  echo "ERROR: /opt/pipeline/control/PAUSE exists." >&2
-  exit 1
-fi
+# sudo: /opt/pipeline/control is 2770 lamware-api:lamware, so an unprivileged
+# `test -e` cannot see into it and reports the file ABSENT. That let the first
+# run pass this check and stop at the runner's (root) check instead.
+pause=$(ssh "$HOST" "sudo test -e /opt/pipeline/control/PAUSE && echo present || echo absent" | tail -1)
+case "$pause" in
+  absent) ;;
+  present)
+    echo "ERROR: /opt/pipeline/control/PAUSE exists (the web UI's feeder pause). Clear it from the UI, or ask." >&2
+    exit 1 ;;
+  *) echo "ERROR: could not determine the PAUSE state: '$pause'" >&2; exit 1 ;;
+esac
 
 say "batch=$NAME samples=$N -> $B"
 say "THIS DETONATES LIVE MALWARE on $HOST."
