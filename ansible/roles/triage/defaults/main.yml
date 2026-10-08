@@ -11,11 +11,25 @@ triage_container_memory: "4g"
 triage_container_cpus: "2"
 triage_container_timeout: "300"
 
-# YARA community rule repositories (cloned by Ansible)
+# YARA community rules, as source archives pinned to a commit and checksummed.
+# Fetched by the role as root and unpacked by `pipeline`, because `pipeline` has
+# no DNS or egress and the host has no git: the `git` clone this replaces had
+# failed on every triage deploy since the egress allowlist (rules last fetched
+# 2026-05-17). These are the commits the host was running then, so the rule set
+# is unchanged; moving a pin is a deliberate change with its own checksum.
+# yara-forensics is a git submodule of yara-rules, which GitHub archives omit;
+# run-triage rglobs every *.yar under /rules, so its rules were live and stay so.
+# `dest` is relative to triage_rules_dir; a submodule follows its parent.
 triage_yara_repos:
   - name: yara-rules
-    url: https://github.com/Yara-Rules/rules.git
-    version: master
+    url: https://github.com/Yara-Rules/rules/archive/0f93570194a80d2f2032869055808b0ddcdfb360.tar.gz
+    sha256: dd9836eb3df65a2fcdb281f74b59e76f2402e99bf3ab6cb81dbaad2eccad484b
+    dest: yara-rules
+  - name: yara-forensics
+    url: https://github.com/Xumeiquer/yara-forensics/archive/a3d03742e054b71298f800793a1faada30bf2601.tar.gz
+    sha256: d08f48feeb801dd97e51d304c7e9c6cd1155903d68c01ce1d2f75382b0270db6
+    dest: yara-rules/utils/yara-forensics
   - name: reversinglabs
-    url: https://github.com/reversinglabs/reversinglabs-yara-rules.git
-    version: develop
+    url: https://github.com/reversinglabs/reversinglabs-yara-rules/archive/e0a0be54aa1e11ccfd6854e4f19e9476f328fd84.tar.gz
+    sha256: 0fd2319ed56875772fe843e542520ca4c84e91c72857ed1ac3274a8685ebb4a3
+    dest: reversinglabs
