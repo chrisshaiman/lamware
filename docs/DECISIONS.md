@@ -28,6 +28,7 @@ these describe an AWS data plane that no longer exists.
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
+| [022](#adr-022-frontier-model-access-under-cvp-uses-workload-identity-federation-from-keycloak-no-static-anthropic-key-for-the-grant) | Frontier-model access under CVP uses Workload Identity Federation; no static key for the grant | Proposed — built, not deployed (#723) |
 
 ### Detonation environment
 
@@ -1051,3 +1052,79 @@ So the rule already held everywhere except the agentic .NET tools.
   a format parser; an exception needs a written reason in its allowlist.
 - New tools — for the pipeline agent or the analyst agent — follow the same rule: if a
   tool interprets sample bytes, it runs in a sandbox, brokered.
+
+---
+
+## ADR-022: Frontier-model access under CVP uses Workload Identity Federation from Keycloak; no static Anthropic key for the grant
+
+**Status:** Proposed (2026-10-08) — forwarder and role built and tested off-host;
+Keycloak client and Console resources not yet created; not deployed
+**Issue:** #723
+
+### Context
+
+The owner's org has Anthropic Cyber Verification Program (CVP) Defense Access, which is
+what makes `claude-mythos-5-1` callable for the `mythos@10` eval arm. The program's
+security requirements are mandatory (support.claude.com, article 17202708). Static or
+long-lived API keys are not permitted, and credentials must expire within 12 hours, with
+a cutoff of 2026-12-15. Programmatic workload access must use Workload Identity
+Federation (WIF). All traffic under the grant is retained and monitored (no zero data
+retention). The first version of the arm (#719) authenticated with a static workspace
+key from the vault, which the program forbids.
+
+### Decision
+
+- Keycloak (already on the host, realm `lamware`) is the OIDC issuer. The client
+  `anthropic-wif` is a confidential client with a service account and "Signed JWT"
+  (`private_key_jwt`) client authentication. Its key pair is generated on the host by
+  the `anthropic-wif` role.
+- Anthropic's federation issuer uses an **inline JWKS**, because Keycloak is not
+  reachable from the internet (#604). Its `issuer_url` is the canonical
+  `https://<domain>/auth/realms/lamware`, compared as a string. The federation rule
+  matches the exact audience, `azp = anthropic-wif`, and the service account's `sub`.
+- A localhost forwarder (`anthropic-wif.service`, port 4010, dedicated user) mints a
+  fresh Keycloak token for every exchange. It refuses any token whose `iss`, `aud`,
+  `azp`, `kid` or signature would fail at Anthropic. It exchanges at `/v1/oauth/token`,
+  keeps the access token in memory with the SDK's refresh schedule (advisory at 120 s,
+  mandatory at 30 s), and forwards only `POST /v1/messages[/count_tokens]` for
+  allowlisted models from allowlisted local uids.
+- LiteLLM's `eval-mythos` entry points at the forwarder with a placeholder key. A test
+  fails if any entry for a grant model names an `os.environ/` key.
+
+### Alternatives rejected
+
+- **The static key (#719 as first written).** The program forbids it.
+- **A public Keycloak and discovery-based JWKS.** This would reopen the public listener
+  that #604 removed, only so that Anthropic could fetch the public keys we can upload
+  instead.
+- **SDK-native federation inside LiteLLM.** LiteLLM reads `api_key` once at startup from
+  its env file. A token that expires within hours needs a refresher that LiteLLM does
+  not have, and the env file would hold a bearer credential at rest.
+
+### Consequences
+
+- **An exception to ADR-016.** The client private key is not a vault secret. It is
+  generated on the host, stays root-owned with mode 0400, and reaches the service only
+  through systemd `LoadCredential`, so it never passes through the controller. The
+  Console ids are account identifiers, not secrets, and live in the gitignored
+  `vars/main.yml`.
+- **Key rotation is manual.** Anthropic holds a copy of the realm's public key. When
+  Keycloak rotates that key, exchanges fail until the new JWKS is uploaded.
+  `anthropic-wif-kidcheck.timer` checks daily that a freshly minted token's `kid` and
+  signature match the uploaded JWKS and the live realm JWKS, and fails in the journal
+  when they do not. Keycloak 26 has no per-client signing key. The closest it offers is
+  a per-client access-token signature algorithm, so an ES256 key provider used only by
+  this client would isolate the key from the RS256 key the web login uses. Whether
+  Anthropic accepts ES256 is not verified. Until it is, the client depends on the realm
+  RS256 key.
+- **Open question, must be asked of Anthropic, not assumed:** is the grant org-wide? If
+  it is, the production analyst key (`ANTHROPIC_API_KEY` in `litellm.env`) is also a
+  static key under the grant and needs this same path.
+- **Rollback:** set `anthropic_wif_enabled: false` and run `make deploy
+  TAGS=anthropic-wif`, which stops the forwarder and the timer. `eval-mythos` then fails
+  to connect, and nothing falls back to a key. No data moves and nothing in Keycloak's
+  schema changes. The Keycloak client can be disabled in the admin console, and the
+  federation rule deleted in the Console.
+- Related: ADR-016 (secrets), ADR-021 (the interpret container reaches models only
+  through brokered paths; the forwarder sits behind LiteLLM on that path and adds no new
+  route).

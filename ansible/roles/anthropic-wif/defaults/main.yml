@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# anthropic-wif defaults: the localhost Workload Identity Federation forwarder
+# (ADR-022). Frontier-model calls under the CVP grant authenticate with a
+# short-lived token exchanged from a Keycloak JWT, never with a static key.
+# =============================================================================
+
+# Off by default. While off, the role still creates the user, the client key
+# pair and the files (the public key is needed for the Keycloak client before
+# anything else can be configured), but the forwarder and the daily kid check
+# are stopped and disabled. Turning it off again is the rollback.
+anthropic_wif_enabled: false
+
+anthropic_wif_user: anthropic-wif
+anthropic_wif_install_dir: /opt/anthropic-wif
+anthropic_wif_config_dir: /etc/anthropic-wif
+
+# Loopback only; the forwarder refuses any other address. LiteLLM points its
+# eval-mythos entry here (litellm_anthropic_wif_base in the litellm role must
+# carry the same port; tests/test_anthropic_wif_role.py checks they agree).
+anthropic_wif_listen_host: "127.0.0.1"
+anthropic_wif_listen_port: 4010
+
+# Local uids allowed to call the forwarder. It holds no key, but whoever can
+# reach it spends the CVP grant without LiteLLM's master key, so callers are
+# checked by the kernel's socket table, not by a header. 0 = LiteLLM, which
+# runs as a rootful podman container on the host network.
+anthropic_wif_allowed_peer_uids: [0]
+
+# Models the grant may be used for. Anything else is refused before a token
+# is minted.
+anthropic_wif_allowed_models: ["claude-mythos-5-1"]
+
+# --- Keycloak side (the anthropic-wif client is a console-gated keycloak change)
+anthropic_wif_keycloak_base: "http://127.0.0.1:{{ keycloak_port | default(8080) }}/auth/realms/{{ keycloak_realm | default('lamware') }}"
+anthropic_wif_keycloak_token_url: "{{ anthropic_wif_keycloak_base }}/protocol/openid-connect/token"
+anthropic_wif_keycloak_jwks_url: "{{ anthropic_wif_keycloak_base }}/protocol/openid-connect/certs"
+anthropic_wif_client_id: "anthropic-wif"
+# The `iss` Anthropic's federation issuer is registered with. Compared as a
+# string, so it must be exactly the canonical https form; the forwarder sends
+# matching X-Forwarded-* headers and refuses any token whose iss differs.
+anthropic_wif_expected_issuer: "https://{{ lamware_domain | default('lamware.example.com') }}/auth/realms/{{ keycloak_realm | default('lamware') }}"
+# Added to the token by an audience mapper on the Keycloak client; the
+# federation rule matches it exactly.
+anthropic_wif_audience: "https://api.anthropic.com"
+# The realm JWKS uploaded inline to Anthropic's federation issuer, as a
+# mapping ({"keys": [...]}). Public keys only. Empty disables nothing: an
+# enabled forwarder refuses to start without it.
+anthropic_wif_uploaded_jwks: {}
+
+# --- Anthropic side. Not secrets, but account identifiers: set them in the
+# gitignored ansible/vars/main.yml, never here. Empty -> an enabled deploy
+# fails its assert, and the service itself refuses to start.
+anthropic_wif_organization_id: ""
+anthropic_wif_workspace_id: ""
+anthropic_wif_service_account_id: ""
+anthropic_wif_federation_rule_id: ""
+anthropic_wif_token_url: "https://api.anthropic.com/v1/oauth/token"
+anthropic_wif_api_base: "https://api.anthropic.com"
+
+# The Python SDK's schedule: try to refresh 120 s before expiry (keep serving
+# the cached token if that fails), and fail at 30 s.
+anthropic_wif_advisory_refresh_seconds: 120
+anthropic_wif_mandatory_refresh_seconds: 30
+
+# Daily: does Keycloak still sign with the key Anthropic was given?
+anthropic_wif_kidcheck_oncalendar: "*-*-* 06:15:00"

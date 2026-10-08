@@ -162,3 +162,23 @@ cape_guests:
 # Put the HASH here (or better, in vars/secrets.yml). Never the plaintext.
 # =============================================================================
 console_recovery_password_hash: "CHANGEME"
+
+# =============================================================================
+# Anthropic Workload Identity Federation (ADR-022)
+#
+# The CVP Defense Access grant forbids static keys. The anthropic-wif forwarder
+# exchanges a Keycloak JWT for a short-lived token instead. These are account
+# identifiers from the Console's workload identity settings, not secrets, but
+# they identify the owner's org: they belong here, in the gitignored file, never
+# in a role default. Leave anthropic_wif_enabled false until every one is set
+# and the Keycloak client anthropic-wif exists.
+# =============================================================================
+anthropic_wif_enabled: false
+anthropic_wif_organization_id: ""
+anthropic_wif_workspace_id: ""
+anthropic_wif_service_account_id: ""
+anthropic_wif_federation_rule_id: ""
+# The realm JWKS exactly as uploaded inline to the federation issuer, as a
+# mapping {"keys": [...]}. Public keys only. Export it on the host with:
+#   curl -s http://127.0.0.1:8080/auth/realms/lamware/protocol/openid-connect/certs
+anthropic_wif_uploaded_jwks: {}

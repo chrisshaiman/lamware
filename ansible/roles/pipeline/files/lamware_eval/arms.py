@@ -97,6 +97,14 @@ _REGISTRY: dict[str, Arm] = {
     "qwen@75": Arm("qwen@75", _LOCAL_MODEL, "local", 75),
     "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
     "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
+    # Frontier arm under the owner's CVP Defense Access grant. Routes to the
+    # `eval-mythos` LiteLLM alias, which reaches Anthropic only through the
+    # anthropic-wif forwarder (ADR-022: federated short-lived tokens, no static
+    # key). "router", not None: only the router resolves an alias to its
+    # model_list entry; the passthrough would send "eval-mythos" verbatim on the
+    # production key. Needs #719's arm_config, which sets both backend keys to
+    # "router" instead of inheriting the deployed re_backend=local.
+    "mythos@10": Arm("mythos@10", "eval-mythos", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the

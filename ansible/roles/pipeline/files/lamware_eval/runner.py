@@ -53,6 +53,10 @@ _RATES: dict[str, tuple[float, ...]] = {
     "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
+    # Mythos 5.1, $/M: in, out, 5-minute cache write, cache read. The long form
+    # because the read rate is NOT the standard 0.1x: 0.1 x 10 would be 1.00, the
+    # list price is 0.25.
+    "eval-mythos": (10.0, 50.0, 12.5, 0.25),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache

@@ -231,6 +231,11 @@
     - role: keycloak
       tags: [keycloak]
 
+    # 10d. Anthropic WIF forwarder — short-lived tokens for the CVP grant (ADR-022).
+    #      After keycloak: it mints its JWTs there. Off unless anthropic_wif_enabled.
+    - role: anthropic-wif
+      tags: [anthropic-wif]
+
     # 11. PCAP analysis — containerized Zeek + Suricata for network traffic
     - role: pcap-analysis
       tags: [pcap-analysis]

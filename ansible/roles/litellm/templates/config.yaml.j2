@@ -41,6 +41,23 @@ model_list:
       model: "anthropic/claude-opus-5"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
+  # Frontier eval arm under the owner's CVP Defense Access grant (Mythos 5.1:
+  # the same model as Fable 5.1 without its cyber safeguards, so a safeguard
+  # intervention cannot masquerade as weaker analysis). Eval-only: no
+  # production setting may name the alias or its model.
+  #
+  # NO static key, by program rule: CVP Defense Access forbids static or
+  # long-lived API keys and requires Workload Identity Federation (ADR-022).
+  # The entry points at the anthropic-wif forwarder on loopback, which drops
+  # this placeholder and sends a short-lived federated token. With the
+  # forwarder off, calls fail to connect instead of falling back to any key.
+  # tests/test_mythos_is_eval_only.py fails if this ever names os.environ/.
+  - model_name: "eval-mythos"
+    litellm_params:
+      model: "anthropic/{{ litellm_eval_mythos_model }}"
+      api_base: "{{ litellm_anthropic_wif_base }}"
+      api_key: "sk-anthropic-wif-placeholder"
+
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
   # were removed 2026-09-27. No production stage called them — summary,
   # plain_english and visual all run on llama.cpp — but they kept a live route to

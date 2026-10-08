@@ -1,0 +1,230 @@
+---
+# =============================================================================
+# roles/anthropic-wif/tasks/main.yml
+# Localhost Workload Identity Federation forwarder for the CVP grant (ADR-022).
+#
+# Its own role, not a file in litellm or keycloak: it runs as its own user with
+# its own key and unit, is enabled independently of both, and its rollback
+# (anthropic_wif_enabled: false) must not need a console-gated keycloak deploy
+# or a LiteLLM restart.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install the forwarder's one non-stdlib dependency
+  ansible.builtin.apt:
+    name: python3-cryptography
+    state: present
+
+- name: Create the anthropic-wif group
+  ansible.builtin.group:
+    name: "{{ anthropic_wif_user }}"
+    system: true
+
+# A dedicated user, not root and not LiteLLM's (root) container. Egress: the
+# host's OUTPUT policy is ACCEPT and the only uid-scoped DROP is the pipeline
+# user's (pipeline role), so this uid reaches api.anthropic.com:443 and
+# Keycloak on loopback with no firewall change.
+- name: Create the anthropic-wif system user
+  ansible.builtin.user:
+    name: "{{ anthropic_wif_user }}"
+    group: "{{ anthropic_wif_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Create the install directory
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0750"
+
+# Generated ON the host and never read back to the controller: the key is not a
+# vault secret (ADR-022's exception to ADR-016) because it never leaves here.
+# umask 077 so the file is never world-readable, not even between creation and
+# the chmod below. `creates:` makes it a one-time generation; rotation is
+# deleting the file on purpose (ADR-022, Consequences).
+- name: Generate the Keycloak client key (once, on the host)
+  ansible.builtin.shell: |
+    set -eu
+    umask 077
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+      -out {{ anthropic_wif_config_dir }}/client-key.pem
+  args:
+    creates: "{{ anthropic_wif_config_dir }}/client-key.pem"
+  notify: Restart anthropic-wif
+
+- name: Lock the client key down (root:anthropic-wif 0400, read via LoadCredential)
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_config_dir }}/client-key.pem"
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0400"
+
+- name: Derive the client public key (imported into the Keycloak client)
+  ansible.builtin.shell: |
+    set -eu
+    openssl pkey -in {{ anthropic_wif_config_dir }}/client-key.pem -pubout \
+      -out {{ anthropic_wif_config_dir }}/client-key.pub.pem.tmp
+    if cmp -s {{ anthropic_wif_config_dir }}/client-key.pub.pem.tmp \
+        {{ anthropic_wif_config_dir }}/client-key.pub.pem; then
+      rm {{ anthropic_wif_config_dir }}/client-key.pub.pem.tmp
+      echo unchanged
+    else
+      mv {{ anthropic_wif_config_dir }}/client-key.pub.pem.tmp \
+        {{ anthropic_wif_config_dir }}/client-key.pub.pem
+      echo changed
+    fi
+  args:
+    executable: /bin/bash
+  register: anthropic_wif_pub
+  changed_when: "'changed' in anthropic_wif_pub.stdout"
+
+- name: Make the public key readable
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_config_dir }}/client-key.pub.pem"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy the forwarder
+  ansible.builtin.copy:
+    src: anthropic_wif.py
+    dest: "{{ anthropic_wif_install_dir }}/anthropic_wif.py"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart anthropic-wif
+
+- name: Deploy the forwarder config
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ anthropic_wif_config_dir }}/config.json"
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0640"
+  notify: Restart anthropic-wif
+
+- name: Deploy the JWKS that was uploaded inline to Anthropic (public keys)
+  ansible.builtin.copy:
+    content: "{{ anthropic_wif_uploaded_jwks | to_nice_json }}\n"
+    dest: "{{ anthropic_wif_config_dir }}/uploaded-jwks.json"
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0644"
+  notify: Restart anthropic-wif
+
+- name: Deploy the systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-kidcheck.service
+    - anthropic-wif-kidcheck.timer
+  notify:
+    - Reload systemd for anthropic-wif units
+    - Restart anthropic-wif
+
+- name: Show the public key to import into the Keycloak anthropic-wif client
+  ansible.builtin.command: cat {{ anthropic_wif_config_dir }}/client-key.pub.pem
+  register: anthropic_wif_pubkey
+  changed_when: false
+
+- name: Report the client public key (public; import under Keys in client anthropic-wif)
+  ansible.builtin.debug:
+    msg: "{{ anthropic_wif_pubkey.stdout_lines }}"
+
+# ---------------------------------------------------------------- disabled path
+# The rollback: stop the forwarder and the check. Files and the key stay so
+# re-enabling needs no Keycloak change.
+- name: Stop and disable the forwarder and the kid check (anthropic_wif_enabled is false)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-kidcheck.timer
+  when: not (anthropic_wif_enabled | bool)
+
+# ----------------------------------------------------------------- enabled path
+- name: Refuse to enable without the Console and Keycloak ids (ADR-022)
+  ansible.builtin.assert:
+    that:
+      - anthropic_wif_organization_id | length > 0
+      - anthropic_wif_workspace_id | length > 0
+      - anthropic_wif_service_account_id | length > 0
+      - anthropic_wif_federation_rule_id | length > 0
+      # ['keys'], not .keys: on a mapping, .keys is the dict method.
+      - (anthropic_wif_uploaded_jwks['keys'] | default([])) | length > 0
+      - anthropic_wif_expected_issuer is match('https://')
+    fail_msg: >-
+      anthropic_wif_enabled is true but the Anthropic organization, workspace,
+      service-account and federation-rule ids, or the uploaded JWKS, are empty.
+      Set them in ansible/vars/main.yml from the Console (ADR-022).
+  when: anthropic_wif_enabled | bool
+
+- name: Enable and start the forwarder and the daily kid check
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-kidcheck.timer
+  when: anthropic_wif_enabled | bool
+
+- name: Apply a pending restart now, so the probes below see this config
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the forwarder to listen
+  ansible.builtin.wait_for:
+    host: "{{ anthropic_wif_listen_host }}"
+    port: "{{ anthropic_wif_listen_port }}"
+    timeout: 30
+  when: anthropic_wif_enabled | bool
+
+# Behavioural probe that spends nothing: a model outside the allowlist must be
+# refused before any token is minted. A 403 that names the MODEL proves the
+# process is up, accepted root (the peer-uid check passed) and enforces the
+# allowlist. A peer-uid 403 names the uid instead and fails this check.
+- name: Probe the forwarder refuses a model outside the allowlist
+  ansible.builtin.uri:
+    url: "http://{{ anthropic_wif_listen_host }}:{{ anthropic_wif_listen_port }}/v1/messages"
+    method: POST
+    body_format: json
+    body: {model: "anthropic-wif-probe-not-allowed", max_tokens: 1, messages: []}
+    status_code: 403
+    return_content: true
+  register: anthropic_wif_probe
+  failed_when: >-
+    anthropic_wif_probe.status != 403
+    or 'allowed_models' not in anthropic_wif_probe.content
+  when: anthropic_wif_enabled | bool
+
+# Runs the real check once now: mints a Keycloak token for the client and
+# verifies its kid and signature against the uploaded JWKS. Fails the deploy if
+# the Keycloak client, the audience mapper or the JWKS are not right yet.
+- name: Run the kid check once (Keycloak client + uploaded JWKS must agree)
+  ansible.builtin.systemd:
+    name: anthropic-wif-kidcheck.service
+    state: started
+  when: anthropic_wif_enabled | bool
