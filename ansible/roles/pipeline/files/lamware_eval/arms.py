@@ -36,7 +36,14 @@ EVIDENCE_MODES: tuple[str, ...] = ("ghidra", "correlated")
 class Arm:
     name: str
     model: str
-    re_backend: str | None  # "local" routes via the LiteLLM router; None = cloud passthrough
+    # "local"  = local model via the LiteLLM router, local synthesis paths;
+    # "router" = CLOUD model via the router (a LiteLLM model_list name), cloud
+    #            synthesis paths, billed.
+    # Required, and always one of the two (#722). It used to be `None` for the
+    # Claude arms, meaning "whatever the deployed config says", and the deployed
+    # config has said `local` since #584: a Claude arm then ran through the local
+    # synthesis paths, unbilled. runner.arm_config refuses anything else.
+    re_backend: str
     max_tool_calls: int
     seed: int | None = None  # None = server default; unpinned, so runs are not reproducible
     evidence: str = "ghidra"
@@ -95,8 +102,22 @@ _REGISTRY: dict[str, Arm] = {
     # answers nothing, which is the lesson of qwen@75.
     "qwen@30": Arm("qwen@30", _LOCAL_MODEL, "local", 30),
     "qwen@75": Arm("qwen@75", _LOCAL_MODEL, "local", 75),
-    "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", None, 10),
-    "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", None, 10),
+    # Cloud arms: "router", explicitly (#722). Inheriting the host's
+    # `re_backend: local` sent these through the local synthesis paths (the
+    # OpenAI-leg forced call, local-only result caps, unbilled synthesis), so a
+    # run measured a hybrid rather than the cloud harness.
+    "claude-sonnet-5": Arm("claude-sonnet-5", "claude-sonnet-5", "router", 10),
+    "claude-opus-5": Arm("claude-opus-5", "claude-opus-5", "router", 10),
+    # Frontier arms, eval-only. Each model is reached through an `eval-*` LiteLLM
+    # alias on the spend-capped eval workspace key (ANTHROPIC_RESEARCH_API_KEY),
+    # which only the router can attach; no interpret/pipeline/vars setting may name the
+    # alias or its model (tests/test_frontier_arms_are_eval_only.py), so the
+    # automated RE stage cannot drift onto them through a default or escalation.
+    # Both run with Anthropic's STANDARD cyber safeguards, so a refusal is possible
+    # and is recorded as one (a refused cell is excluded, never scored as zero).
+    # Both reject forced tool use; cloud_synthesize retries once with `auto`.
+    "opus55@10": Arm("opus55@10", "eval-opus55", "router", 10),
+    "fable51@10": Arm("fable51@10", "eval-fable51", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the

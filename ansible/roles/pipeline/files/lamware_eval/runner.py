@@ -43,16 +43,26 @@ _EVAL_TIMEOUT = 12600
 # Hand-maintained rates drift silently (see the opus-4-6 3x overcount fixed in
 # db_ingest, PR #182). LiteLLM's spend log is authoritative; treat these as an
 # estimate for the scorecard only.
-# NOTE: sonnet-5 is at INTRODUCTORY pricing through 2026-08-31, then $3/$15.
 #
 # An entry is (input, output) or (input, output, cache_write, cache_read). The
 # short form prices prompt-cache tokens at _CACHE_WRITE_MULT / _CACHE_READ_MULT
 # times the input rate; give the long form when a model's published cache rates
 # are not those multiples.
 _RATES: dict[str, tuple[float, ...]] = {
+    # $2/$10 was announced as introductory pricing through 2026-08-31, with a
+    # rise to $3/$15 scheduled for 2026-09-01. That rise was cancelled: Anthropic's
+    # pricing page (read 2026-10-08) lists $2/$10 as the standard price. Cache
+    # rates are the standard multiples ($2.50 write, $0.20 read).
     "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
+    # Long form for the frontier eval arms, because neither cache READ rate is the
+    # standard 0.1x. $/M: in, out, 5-minute cache write, cache read. From
+    # Anthropic's pricing page, 2026-10:
+    #   Opus 5.5:  $4 / $20, write $5,     read $0.20 (0.05x;  0.1x would be 0.40)
+    #   Fable 5.1: $10 / $50, write $12.50, read $0.25 (0.025x; 0.1x would be 1.00)
+    "eval-opus55": (4.0, 20.0, 5.0, 0.20),
+    "eval-fable51": (10.0, 50.0, 12.5, 0.25),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache
@@ -706,6 +716,51 @@ def replay_variant(init: dict, modality: str, source_head: str, read: dict,
     return init, source_head, {**read, **rec}
 
 
+def arm_config(arm: Arm, base_cfg: dict, dotnet_mode: str) -> dict:
+    """The interpret config one cell runs under: the deployed config, overridden
+    by the arm."""
+    # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
+    # Otherwise the interpret stage escalates into base_cfg's escalation_model
+    # and the arm silently measures a different model: on 2026-07-25 all 7
+    # claude-sonnet-5 cells finished on claude-opus-4-6 (escalated=True), so the
+    # run produced no clean sonnet-5 data at all.
+    cfg = {**base_cfg, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
+           "escalation_model": arm.model,
+           "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384),
+           "dotnet_mode": dotnet_mode}
+    if arm.re_backend == "local":
+        # TWO keys, because the interpret container has two paths and they read
+        # different ones. The agentic RE loop checks `re_backend`
+        # (interpret-ghidra.py:3142); the single-shot paths — .NET, Java,
+        # PowerShell, Go, Office, PyInstaller — check `single_shot_backend`
+        # (:2874). Setting only the first sent every .NET cell to the Anthropic
+        # passthrough, which 404s for a local model alias, and the whole
+        # stage2-dotnet run died 10 cells for 10 with
+        # `NotFoundError: model: local-qwen-llamacpp-re`.
+        #
+        # `llm_ab_singleshot.py:39` has always set the single-shot key. This
+        # harness never needed it until it learned to read .NET (#505), and the
+        # omission is invisible until an arm is BOTH local and single-shot.
+        cfg["re_backend"] = "local"
+        cfg["single_shot_backend"] = "local"
+    elif arm.re_backend == "router":
+        # A cloud model by its LiteLLM model_list name (claude-sonnet-5,
+        # eval-opus55, ...). Set EXPLICITLY, both keys, because base_cfg is the
+        # deployed config.json and production's is re_backend=local: inherited,
+        # it sends a Claude model down the local synthesis paths, whose forced
+        # OpenAI-leg tool call (which LiteLLM sends on as tool_choice type "any")
+        # Opus 5.5 and Fable 5.1 reject, and whose synthesis calls bill nothing
+        # (#722). "router" resolves the alias and keeps every cloud path
+        # (interpret-ghidra.py).
+        cfg["re_backend"] = "router"
+        cfg["single_shot_backend"] = "router"
+    else:
+        # No third value. "Inherit the deployed config" is how #722 happened.
+        raise ValueError(f"arm {arm.name}: re_backend must be 'local' or 'router', "
+                         f"got {arm.re_backend!r}")
+    return cfg
+
+
 def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
             interpret_cmd: str, ghidra_cmd: str, variant: int | None = None) -> dict:
     """One cell. `variant=None` is a run without order-variants, exactly as before
@@ -738,30 +793,7 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         raise ValueError("the agent's init carries bazaar_family; the eval never sends it (#705)")
     gr = report.get("ghidra") or {}
     claude_family = (report.get("llm_interpretation") or {}).get("analysis", {}).get("malware_family_guess")
-    # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
-    # Otherwise the interpret stage escalates into base_cfg's escalation_model
-    # and the arm silently measures a different model: on 2026-07-25 all 7
-    # claude-sonnet-5 cells finished on claude-opus-4-6 (escalated=True), so the
-    # run produced no clean sonnet-5 data at all.
-    cfg = {**base_cfg, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
-           "escalation_model": arm.model,
-           "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384),
-           "dotnet_mode": dotnet_mode}
-    if arm.re_backend == "local":
-        # TWO keys, because the interpret container has two paths and they read
-        # different ones. The agentic RE loop checks `re_backend`
-        # (interpret-ghidra.py:3142); the single-shot paths — .NET, Java,
-        # PowerShell, Go, Office, PyInstaller — check `single_shot_backend`
-        # (:2874). Setting only the first sent every .NET cell to the Anthropic
-        # passthrough, which 404s for a local model alias, and the whole
-        # stage2-dotnet run died 10 cells for 10 with
-        # `NotFoundError: model: local-qwen-llamacpp-re`.
-        #
-        # `llm_ab_singleshot.py:39` has always set the single-shot key. This
-        # harness never needed it until it learned to read .NET (#505), and the
-        # omission is invisible until an arm is BOTH local and single-shot.
-        cfg["re_backend"] = "local"
-        cfg["single_shot_backend"] = "local"
+    cfg = arm_config(arm, base_cfg, dotnet_mode)
     out = cell_out_dir(sample, arm, variant or 0)
     # Start from an empty cell: see archive_previous_cell for why overwriting is not
     # enough. Stale per-tool-call artifacts would otherwise be scored as this run's

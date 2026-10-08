@@ -246,7 +246,7 @@ def test_the_runner_reads_the_promoted_report(report_dir, tmp_path, monkeypatch)
         return {"analysis": {}, "usage": {}}
 
     monkeypatch.setattr(runner, "run_interpret", fake_interpret)
-    runner.run_arm(sample, Arm("t", "claude-sonnet-5", None, 1), {}, "/bin/true", "/bin/true")
+    runner.run_arm(sample, Arm("t", "claude-sonnet-5", "router", 1), {}, "/bin/true", "/bin/true")
     assert seen["init"]["project_dir"] == init["project_dir"]
     assert seen["init"]["program_name"] == SC
 

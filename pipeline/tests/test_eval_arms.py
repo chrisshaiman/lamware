@@ -10,14 +10,15 @@ def test_local_arms_carry_backend_and_cycles():
     assert resolve_arm("qwen@10").max_tool_calls == 10
 
 
-def test_cloud_arm_has_no_local_backend():
+def test_cloud_arm_routes_explicitly():
+    """Not None: None inherited the host's re_backend=local (#722)."""
     a = resolve_arm("claude-sonnet-5")
-    assert a.model == "claude-sonnet-5" and a.re_backend is None
+    assert a.model == "claude-sonnet-5" and a.re_backend == "router"
 
 
 def test_opus5_arm_is_cloud():
     a = resolve_arm("claude-opus-5")
-    assert a == Arm("claude-opus-5", "claude-opus-5", None, 10)
+    assert a == Arm("claude-opus-5", "claude-opus-5", "router", 10)
 
 
 def test_parse_arms_csv():

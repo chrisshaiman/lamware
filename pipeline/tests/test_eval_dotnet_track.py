@@ -203,18 +203,17 @@ def test_a_local_arm_selects_the_local_backend_on_both_interpret_paths():
 
     Invisible until an arm is BOTH local and single-shot, which is exactly what
     #505 created.
+
+    Behavioural since the config moved into `arm_config`: production's
+    deployed config is the base, and the test's base says cloud on both keys so
+    an inherited value cannot pass for a set one.
     """
-    import ast
-    from pathlib import Path
-    src = (Path(__file__).resolve().parents[2] / "ansible" / "roles" / "pipeline"
-           / "files" / "lamware_eval" / "runner.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "run_arm")
-    assigned = {t.slice.value for t in ast.walk(fn)
-                if isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
-                and isinstance(t.ctx, ast.Store) and isinstance(t.slice.value, str)}
-    assert "re_backend" in assigned
-    assert "single_shot_backend" in assigned, (
+    from lamware_eval.arms import resolve_arm
+    from lamware_eval.runner import arm_config
+    cfg = arm_config(resolve_arm("qwen@10"), {"re_backend": "cloud",
+                                              "single_shot_backend": "cloud"}, "agentic")
+    assert cfg["re_backend"] == "local"
+    assert cfg["single_shot_backend"] == "local", (
         "a local arm still reaches the cloud on the single-shot path")
 
 

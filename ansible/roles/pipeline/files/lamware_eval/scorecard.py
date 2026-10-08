@@ -70,7 +70,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
     # with two that appear nowhere in its evidence.
     # `modalities` sits beside `n` because more than one entry there means the
     # row pools experiments that must not be pooled (#505, #646).
-    cols = ["n", "modalities", "n_valid", "tool_layer_broken",
+    cols = ["n", "modalities", "n_valid", "tool_layer_broken", "refused",
             "n_with_claims", "total_claims", "mean_grounded_ratio",
             "total_grounded_novel", "total_grounded_recited",
             "total_fabricated", "total_bare_symbols", "total_unscoreable",
@@ -81,6 +81,11 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
             "completed_rate", "parse_failures",
             "cells_with_ghidra_warnings",
             "mean_wall_seconds", "total_cost_usd"]
+    # `refused` (the model declined; out of n_valid like tool_layer_broken) is
+    # shown only when a cell was refused, so a run without one renders exactly
+    # the table it always did. The per-cell `error` column names the category.
+    if not any(s.get("refused") for s in summary.values()):
+        cols.remove("refused")
     lines.append("| arm | " + " | ".join(cols) + " |")
     lines.append("|" + "---|" * (len(cols) + 1))
     for arm, s in summary.items():
