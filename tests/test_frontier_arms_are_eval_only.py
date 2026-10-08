@@ -144,6 +144,10 @@ def test_no_request_sending_code_names_an_eval_model():
 @pytest.mark.parametrize("arm_name,alias", [("opus55@10", "eval-opus55"),
                                             ("fable51@10", "eval-fable51")])
 def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_name, alias):
+    # lamware_eval.runner imports the pipeline stages, which need lamware_shared.
+    # CI's top-level test job does not install it; the pipeline job does, and
+    # pipeline/tests/test_frontier_arms.py pins the same routing and exact rates.
+    pytest.importorskip("lamware_shared")
     monkeypatch.syspath_prepend(str(ROOT / "ansible/roles/pipeline/files"))
     from lamware_eval.arms import resolve_arm
     from lamware_eval.runner import _RATES
