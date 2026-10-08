@@ -14,6 +14,8 @@ from lamware_pipeline.config import PipelineConfig
 from lamware_pipeline.correlation_rules import correlation_rows
 from lamware_pipeline.db import build_insert, build_update
 from lamware_pipeline.relationships import write_relationships_safe
+from lamware_pipeline.report_depth import bound_report_depth
+from lamware_pipeline.report_depth import describe as describe_depth_cut
 
 # MITRE ATT&CK tactic mapping — maps technique IDs to their tactic phases.
 # Covers common techniques seen in malware analysis. Techniques not in this
@@ -384,19 +386,38 @@ class _Cleaner:
         self.nul = 0
         self.non_finite = 0
 
-    def _dirty(self, value, in_json: bool) -> bool:
+    # Both walks are iterative (#702). They see report_json whole, and the
+    # guest sets how deep parts of it nest: the recursive versions raised
+    # RecursionError from a pstree 247 processes deep (two frames a level,
+    # any() plus the generator), and the blanket except in ingest_to_db turned
+    # that into a rolled-back analysis with no row. ingest_to_db also bounds
+    # the report's depth first (lamware_pipeline.report_depth); these do not
+    # rely on it.
+
+    @staticmethod
+    def _dirty_leaf(value, in_json: bool) -> bool:
         if isinstance(value, str):
             return _NUL in value
         if isinstance(value, float):
             return in_json and not math.isfinite(value)
-        if isinstance(value, dict):
-            return any(self._dirty(k, in_json) or self._dirty(v, in_json)
-                       for k, v in value.items())
-        if isinstance(value, (list, tuple)):
-            return any(self._dirty(v, in_json) for v in value)
         return False
 
-    def _clean(self, value, in_json: bool):
+    def _dirty(self, value, in_json: bool) -> bool:
+        stack = [value]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if self._dirty_leaf(k, in_json):
+                        return True
+                    stack.append(v)
+            elif isinstance(node, (list, tuple)):
+                stack.extend(node)
+            elif self._dirty_leaf(node, in_json):
+                return True
+        return False
+
+    def _clean_leaf(self, value, in_json: bool):
         if isinstance(value, str):
             if _NUL in value:
                 self.nul += 1
@@ -405,11 +426,56 @@ class _Cleaner:
         if isinstance(value, float) and in_json and not math.isfinite(value):
             self.non_finite += 1
             return None
-        if isinstance(value, dict):
-            return {self._clean(k, in_json): self._clean(v, in_json) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return type(value)(self._clean(v, in_json) for v in value)
         return value
+
+    def _clean(self, value, in_json: bool):
+        """A cleaned copy of ``value``; the input is never modified.
+
+        The recursive version's order is kept exactly — each key cleaned before
+        its value, and a later key that cleans to the same string as an earlier
+        one wins — by building each container only once all of its children
+        are built, as the recursion did.
+        """
+        if not isinstance(value, (dict, list, tuple)):
+            return self._clean_leaf(value, in_json)
+
+        def frame(node):
+            # [source, iterator over its children, the children built so far]
+            items = iter(node.items()) if isinstance(node, dict) else iter(node)
+            return [node, items, []]
+
+        stack = [frame(value)]
+        pending_key = []   # for each dict frame on the stack: the key its open child goes under
+        while True:
+            node, items, built = stack[-1]
+            try:
+                child = next(items)
+            except StopIteration:
+                stack.pop()
+                if isinstance(node, dict):
+                    result = dict(built)
+                else:
+                    result = type(node)(built)
+                if not stack:
+                    return result
+                parent = stack[-1]
+                if isinstance(parent[0], dict):
+                    parent[2].append((pending_key.pop(), result))
+                else:
+                    parent[2].append(result)
+                continue
+            if isinstance(node, dict):
+                k, v = child
+                k = self._clean_leaf(k, in_json)
+                if isinstance(v, (dict, list, tuple)):
+                    pending_key.append(k)
+                    stack.append(frame(v))
+                else:
+                    built.append((k, self._clean_leaf(v, in_json)))
+            elif isinstance(child, (dict, list, tuple)):
+                stack.append(frame(child))
+            else:
+                built.append(self._clean_leaf(child, in_json))
 
     def param(self, value):
         """One bound parameter, returned unchanged (the same object) when clean,
@@ -786,6 +852,14 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
     analysis_id = None
     try:
         warnings: list[str] = []
+        # report_json is the whole report, adapted by psycopg2's Json
+        # (json.dumps, RecursionError from 4,997 levels) and walked by
+        # _Cleaner. run-pipeline bounds the report before writing it, so this is
+        # a no-op there; it is here for every other caller (#702). In place, so
+        # the depth_truncated record is in the row, beside what was removed.
+        depth_line = describe_depth_cut(bound_report_depth(report))
+        if depth_line:
+            warnings.append(depth_line)
         root = _read_report(report, warnings)
 
         # --- Upsert sample ---

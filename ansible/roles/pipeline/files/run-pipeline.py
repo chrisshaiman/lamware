@@ -40,6 +40,8 @@ from lamware_pipeline.correlation import (
     cross_correlate,
     determine_family,
 )
+from lamware_pipeline.report_depth import bound_report_depth
+from lamware_pipeline.report_depth import describe as describe_depth_cut
 from pipeline_status import complete_pipeline, create_analysis_row, update_stage
 from stages.cape import (
     derive_filename,
@@ -217,6 +219,14 @@ VOLATILITY_EXTRA_PLUGINS = _PIPELINE_CONFIG.volatility_extra_plugins
 CANONICAL_REPORT = "report.json"
 
 
+def bound_and_log_depth(report: dict) -> None:
+    """Bound the report's nesting depth in place, and log it when that cut
+    anything (#702; see lamware_pipeline.report_depth)."""
+    line = describe_depth_cut(bound_report_depth(report))
+    if line:
+        log.warning(f"[!] {line}")
+
+
 def write_json_atomic(path: Path, data: dict) -> None:
     """Write ``data`` as JSON to ``path`` so no reader ever sees a partial file.
 
@@ -247,7 +257,14 @@ def write_report(task_id: str, report: dict, reports_dir: Path,
     ``name`` defaults to the canonical report.json, which only the live
     pipeline writes. A replay passes its own ``report.replay-<stamp>.json`` so
     the evidence from the original run is never the file being replaced.
+
+    The report is depth-bounded first, in place (#702): json.dump with indent
+    raised RecursionError from a pstree 495 processes deep, so report.json was
+    never written and ingest_to_db, which runs after this, never ran. In place
+    so the database row gets the same report the file holds; whatever was
+    removed is named in ``report["depth_truncated"]``.
     """
+    bound_and_log_depth(report)
     report_dir = reports_dir / task_id
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / name
@@ -657,6 +674,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         report["volatility"] = {"triggered": False, "reason": reason}
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
+
+    # The cape and volatility sections are final here, and they are the two the
+    # guest can nest arbitrarily deep (#702). Bounded now, not only at
+    # write_report, because everything from here to the write serialises or
+    # walks the whole report: run_summarize's json.dumps raises from 4,997
+    # levels, which a pstree that parsed (limit 4,999) can reach, and that
+    # raise sat outside any handler. Volatility's insights were computed from
+    # the full plugin output inside run_volatility, before this.
+    bound_and_log_depth(report)
 
     # Stage 3.5: Shellcode analysis (dump already extracted during Volatility stage)
     # The two-pass approach runs inside run_volatility: JSON filter right after
