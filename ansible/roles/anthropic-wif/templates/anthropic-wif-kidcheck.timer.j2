@@ -1,0 +1,12 @@
+# /etc/systemd/system/anthropic-wif-kidcheck.timer — managed by Ansible (anthropic-wif role)
+
+[Unit]
+Description=Daily Anthropic WIF signing-key check (ADR-022)
+
+[Timer]
+OnCalendar={{ anthropic_wif_kidcheck_oncalendar }}
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+{{ {
+  "listen_host": anthropic_wif_listen_host,
+  "listen_port": anthropic_wif_listen_port | int,
+  "allowed_peer_uids": anthropic_wif_allowed_peer_uids | map('int') | list,
+  "allowed_models": anthropic_wif_allowed_models,
+  "keycloak_token_url": anthropic_wif_keycloak_token_url,
+  "keycloak_jwks_url": anthropic_wif_keycloak_jwks_url,
+  "client_id": anthropic_wif_client_id,
+  "client_key_file": anthropic_wif_config_dir ~ "/client-key.pem",
+  "expected_issuer": anthropic_wif_expected_issuer,
+  "audience": anthropic_wif_audience,
+  "uploaded_jwks_file": anthropic_wif_config_dir ~ "/uploaded-jwks.json",
+  "anthropic_token_url": anthropic_wif_token_url,
+  "anthropic_base_url": anthropic_wif_api_base,
+  "organization_id": anthropic_wif_organization_id,
+  "workspace_id": anthropic_wif_workspace_id,
+  "service_account_id": anthropic_wif_service_account_id,
+  "federation_rule_id": anthropic_wif_federation_rule_id,
+  "advisory_refresh_seconds": anthropic_wif_advisory_refresh_seconds | int,
+  "mandatory_refresh_seconds": anthropic_wif_mandatory_refresh_seconds | int
+} | to_nice_json }}

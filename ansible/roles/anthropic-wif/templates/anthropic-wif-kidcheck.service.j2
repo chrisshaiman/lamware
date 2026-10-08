@@ -1,0 +1,40 @@
+# /etc/systemd/system/anthropic-wif-kidcheck.service — managed by Ansible (anthropic-wif role)
+# Daily: is Keycloak still signing anthropic-wif tokens with the key that was
+# uploaded inline to Anthropic? Fails (journal ERROR, unit failed) when not, so
+# a realm key rotation shows up here before an eval run, not as a 4xx during one.
+
+[Unit]
+Description=Anthropic WIF signing-key check (ADR-022)
+After=network-online.target keycloak.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ anthropic_wif_user }}
+Group={{ anthropic_wif_user }}
+ExecStart=/usr/bin/python3 -I {{ anthropic_wif_install_dir }}/anthropic_wif.py check-kid --config {{ anthropic_wif_config_dir }}/config.json
+LoadCredential=client-key.pem:{{ anthropic_wif_config_dir }}/client-key.pem
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=

@@ -1,0 +1,52 @@
+# /etc/systemd/system/anthropic-wif.service — managed by Ansible (anthropic-wif role)
+# Localhost WIF token forwarder (ADR-022). Holds no Anthropic credential at rest.
+
+[Unit]
+Description=Anthropic Workload Identity Federation forwarder (ADR-022)
+After=network-online.target keycloak.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ anthropic_wif_user }}
+Group={{ anthropic_wif_user }}
+# -I: isolated mode. No PYTHON* environment, no user site, no script dir on sys.path.
+ExecStart=/usr/bin/python3 -I {{ anthropic_wif_install_dir }}/anthropic_wif.py serve --config {{ anthropic_wif_config_dir }}/config.json
+# The client key stays root-owned 0400; systemd hands this unit a private copy
+# under $CREDENTIALS_DIRECTORY that only the service user can read.
+LoadCredential=client-key.pem:{{ anthropic_wif_config_dir }}/client-key.pem
+# A configuration error exits 2: stop with one clear journal line instead of
+# restarting every 5 s and burying it.
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+UMask=0077
+
+# Hardening. Network stays on: it needs api.anthropic.com:443 and Keycloak on
+# loopback. No ProcSubset=pid: the peer-uid check reads /proc/net/tcp.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
