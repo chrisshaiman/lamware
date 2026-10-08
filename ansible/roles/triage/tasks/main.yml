@@ -35,11 +35,14 @@
 # -------------------------------------------------------------------------
 
 - name: Create a directory for the YARA rule archives
-  # Root-owned and outside anything pipeline can write, so the archive root
-  # downloads cannot be swapped between the checksum and the unpack.
+  # Not /tmp: /tmp is polyinstantiated per user on this host (root's is
+  # /tmp/user/0), so pipeline could not see an archive root put there. A fresh
+  # mkdtemp under the install dir is root-owned, so pipeline can read the
+  # archives but cannot swap one between the checksum and the unpack.
   ansible.builtin.tempfile:
     state: directory
-    prefix: lamware-yara-
+    path: "{{ triage_install_dir }}"
+    prefix: .yara-archives-
   register: triage_yara_tmp
 
 - name: Make the archive directory traversable by pipeline
