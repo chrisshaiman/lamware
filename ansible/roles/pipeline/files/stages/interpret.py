@@ -390,6 +390,8 @@ class TurnTrail:
         self.event("turn",
                    turn_index=msg.get("turn_index"),
                    stop_reason=msg.get("stop_reason"),
+                   # The policy category of a "refusal" stop; None otherwise.
+                   stop_details=msg.get("stop_details"),
                    text_chars=len(text),
                    thinking_chars=len(thinking),
                    tool_calls=msg.get("tool_calls") or [],

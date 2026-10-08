@@ -41,6 +41,26 @@ model_list:
       model: "anthropic/claude-opus-5"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
+  # Frontier eval arms (opus55@10, fable51@10). Eval-only: no interpret,
+  # pipeline or vars setting may name these aliases or their models
+  # (tests/test_frontier_arms_are_eval_only.py), so the automated RE stage
+  # cannot drift onto them. They authenticate with the Lamware eval workspace
+  # key (spend-capped), never the production key, and no production entry uses
+  # the eval key. Empty until the vault defines it: a call then fails with an
+  # auth error rather than billing production. Both models run with Anthropic's
+  # standard cyber safeguards; refusals are measured, not hidden.
+  # A Mythos alias is NOT here: it must not use a static API key, and comes back
+  # with its own token forwarder.
+  - model_name: "eval-opus55"
+    litellm_params:
+      model: "anthropic/claude-opus-5-5"
+      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+
+  - model_name: "eval-fable51"
+    litellm_params:
+      model: "anthropic/claude-fable-5-1"
+      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
   # were removed 2026-09-27. No production stage called them — summary,
   # plain_english and visual all run on llama.cpp — but they kept a live route to

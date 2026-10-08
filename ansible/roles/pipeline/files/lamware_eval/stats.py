@@ -13,8 +13,9 @@ is (sample, variant k), both arms, both valid — never "the i-th cell of each".
 
 Which cells are draws:
 
-* `invalid`     tool layer broken or not completed: it measured the
-                infrastructure, as in the Summary table (#316).
+* `invalid`     tool layer broken, not completed, or refused: it measured the
+                infrastructure (#316), or the model declined to answer, as in
+                the Summary table.
 * `ineffective` a variant whose reordering moved nothing (`variant_effective:
                 false`) is v0's input again; output is deterministic, so it is
                 v0's draw again and counting it would shrink every interval for
@@ -61,7 +62,8 @@ def variant_of(cell: dict) -> int | None:
 
 def is_valid(cell: dict) -> bool:
     """A cell that measured the model (see the module docstring)."""
-    return bool(cell.get("completed")) and not cell.get("tool_layer_broken")
+    return (bool(cell.get("completed")) and not cell.get("tool_layer_broken")
+            and not cell.get("refused"))
 
 
 def draws(cells: list[dict]) -> tuple[dict[tuple[str, str, int], dict], dict]:

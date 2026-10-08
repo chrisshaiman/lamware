@@ -1381,8 +1381,11 @@ def create_message(cli, **kwargs):
     Applies to CPU-local inference above all — the cloud model never approaches these
     latencies, but the same call path serves both.
     """
+    details = None
     with cli.messages.stream(**kwargs) as stream:
-        return stream.get_final_message()
+        for event in stream:
+            details = _stop_details_from(event) or details
+        return _keep_stop_details(stream.get_final_message(), details)
 
 
 # Heartbeat cadence while GENERATING — one line per 25 tokens.
@@ -1446,10 +1449,12 @@ def create_message_streaming(cli, turn_index: int, **kwargs):
     """
     text_tokens = 0
     thinking_tokens = 0
+    details = None
     with _WaitHeartbeat(turn_index) as waiting:
         with cli.messages.stream(**kwargs) as stream:
             for event in stream:
                 etype = getattr(event, "type", "")
+                details = _stop_details_from(event) or details
                 if etype != "content_block_delta":
                     continue
                 waiting.stop()   # first token — prompt eval is over
@@ -1463,7 +1468,7 @@ def create_message_streaming(cli, turn_index: int, **kwargs):
                     emit({"type": "stream", "turn_index": turn_index,
                           "output_tokens": text_tokens,
                           "thinking_tokens": thinking_tokens})
-            return stream.get_final_message()
+            return _keep_stop_details(stream.get_final_message(), details)
 
 
 def emit_turn(response, turn_index: int) -> None:
@@ -1496,6 +1501,9 @@ def emit_turn(response, turn_index: int) -> None:
         "type": "turn",
         "turn_index": turn_index,
         "stop_reason": getattr(response, "stop_reason", None),
+        # The policy category a refusal names (None on every other stop reason),
+        # so the trail says WHY a turn ended in "refusal", not only that it did.
+        "stop_details": _plain(getattr(response, "stop_details", None)),
         # Shape of what came back, so a turn that records nothing can be told apart
         # from a turn that returned nothing. LiteLLM's openai->anthropic conversion
         # drops reasoning_content entirely (#283): llama.cpp generates it, counts it
@@ -1566,6 +1574,118 @@ def add_usage(totals: dict[str, int], usage: dict) -> None:
     """Accumulate one response's usage into a run's totals, every key."""
     for k in USAGE_KEYS:
         totals[k] = (totals.get(k) or 0) + (usage.get(k) or 0)
+
+
+# ---------------------------------------------------------------------------
+# Refusals, and models that cannot be forced to call a tool (Opus 5.5, Fable 5.1)
+# ---------------------------------------------------------------------------
+#
+# Both arrived with the frontier eval arms (opus55@10, fable51@10). Per
+# Anthropic's 2026-10 docs for Claude Opus 5.5 and Claude Fable 5.1:
+#
+#   - a refusal is HTTP 200 with stop_reason "refusal" and a `stop_details` object
+#     naming the policy category. Nothing raises. The loop read it as an end_turn
+#     with no parseable JSON, so a refused cell would have reached the scorecard as
+#     an ordinary analysis that claimed nothing — zero recall, scored as the model's
+#     answer rather than excluded as one it declined to give;
+#   - forced tool use (`tool_choice` type "tool" or "any") is a 400
+#     invalid_request_error. cloud_synthesize forces submit_analysis, so on this
+#     model the one recovery path for an unparseable final failed every time.
+
+
+class ModelRefused(Exception):
+    """The model declined to answer (stop_reason "refusal").
+
+    Raised, not returned, so the ten call sites that can receive a refusal need
+    one handler between them (in main) rather than ten copies of the emit. It is
+    deliberately NOT an anthropic.APIError, so none of the per-call `except
+    APIError` handlers turns it into an API-error final.
+    """
+
+    def __init__(self, refusal: dict[str, Any], *, usage: dict[str, int], model: str,
+                 tool_calls_used: int) -> None:
+        super().__init__(f"model refused (category={refusal.get('category')}, "
+                         f"phase={refusal.get('phase')})")
+        self.refusal = refusal
+        self.usage = usage
+        self.model = model
+        self.tool_calls_used = tool_calls_used
+
+
+def _plain(obj: Any) -> Any:
+    """An SDK model, dict or None as a JSON-ready dict (or None)."""
+    if obj is None or isinstance(obj, dict):
+        return obj
+    dump = getattr(obj, "model_dump", None)
+    if callable(dump):
+        return dump()
+    return {k: getattr(obj, k, None) for k in ("type", "category", "explanation")}
+
+
+def refusal_of(response: Any) -> dict[str, Any] | None:
+    """`{"category", "explanation"}` when the response is a refusal, else None.
+
+    Both may be None: the category comes from `stop_details`, which an older SDK
+    or a proxy may not carry, and the stop_reason alone is enough to know the
+    model declined.
+    """
+    if getattr(response, "stop_reason", None) != "refusal":
+        return None
+    details = _plain(getattr(response, "stop_details", None)) or {}
+    return {"category": details.get("category"),
+            "explanation": details.get("explanation")}
+
+
+def raise_if_refused(response: Any, *, phase: str, usage: dict[str, int], model: str,
+                     tool_calls_used: int) -> None:
+    """Raise ModelRefused if `response` is a refusal. Call AFTER billing it: a
+    refused request still consumed input tokens, and `usage` is what the final
+    reports."""
+    refusal = refusal_of(response)
+    if refusal is not None:
+        raise ModelRefused({**refusal, "phase": phase}, usage=dict(usage), model=model,
+                           tool_calls_used=tool_calls_used)
+
+
+def forced_tool_choice_rejected(exc: BaseException) -> bool:
+    """True when the API refused a FORCED tool_choice for this model.
+
+    The documented error is a 400 whose message reads `tool_choice: type "tool"
+    and "any" are not supported for this model.` Through LiteLLM the body is
+    re-wrapped and its quotes escaped, so this matches the two plain fragments
+    rather than the whole sentence. Any other 400 — a malformed request, a bad
+    schema — is not this, and must not be retried as if it were.
+    """
+    if not isinstance(exc, anthropic.APIStatusError) or exc.status_code != 400:
+        return False
+    text = str(exc)
+    return "tool_choice" in text and "not supported" in text
+
+
+def _stop_details_from(event: Any) -> Any:
+    """`stop_details` off a streamed message_delta event, if it carries one."""
+    if getattr(event, "type", "") != "message_delta":
+        return None
+    delta = getattr(event, "delta", None)
+    if isinstance(delta, dict):
+        return delta.get("stop_details")
+    return getattr(delta, "stop_details", None)
+
+
+def _keep_stop_details(message: Any, details: Any) -> Any:
+    """Put a streamed `stop_details` back on the final message.
+
+    The interpret container pins anthropic==0.52.0, whose stream accumulator
+    copies stop_reason off message_delta but predates stop_details, so the
+    category a refusal names would be lost between the wire and the final
+    message. A newer SDK sets it itself; this then does nothing.
+    """
+    if details is not None and getattr(message, "stop_details", None) is None:
+        try:
+            message.stop_details = details
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return message
 
 
 # ---------------------------------------------------------------------------
@@ -2832,8 +2952,12 @@ def single_shot_completion(use_local: bool, anthropic_client, http_client,
     response = anthropic_client.messages.create(
         model=model, max_tokens=max_tokens, system=system,
         messages=[{"role": "user", "content": content}])
+    usage = usage_from_response(response)
+    # A refused single-shot would otherwise return "" and be parsed as an
+    # analysis that found nothing.
+    raise_if_refused(response, phase=label, usage=usage, model=model, tool_calls_used=0)
     text = "".join(b.text for b in response.content if b.type == "text")
-    return text, usage_from_response(response)
+    return text, usage
 
 
 def run_summarize(client: anthropic.Anthropic, report: dict[str, Any], config: dict[str, Any],
@@ -3116,8 +3240,32 @@ def salvage_reasoning(message: Any, limit: int = SALVAGE_REASONING_CHARS) -> str
 
 
 def main() -> None:
+    """Run the container; a model refusal anywhere ends it with a refused final.
+
+    One handler for every call site that can receive a refusal (see
+    ModelRefused). The final says `"error": "refused"` so nothing downstream can
+    read it as an analysis: analysis_completed() sees the error, and the eval
+    scorecard counts the cell as refused and keeps it out of every statistic.
+    Exit 0: the run did what it was asked and reported the model's answer.
+    """
+    try:
+        _run()
+    except ModelRefused as r:
+        emit_status(f"model refused at {r.refusal.get('phase')} "
+                    f"(category={r.refusal.get('category')})", r.tool_calls_used)
+        emit({
+            "type": "final",
+            "analysis": {"error": "refused", "refusal": r.refusal},
+            "model_used": r.model,
+            "tool_calls_used": r.tool_calls_used,
+            "usage": r.usage,
+        })
+        sys.exit(0)
+
+
+def _run() -> None:
     """Run the agentic interpretation loop or report summarization."""
-    api_key = os.environ.get("LITELLM_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+    api_key =os.environ.get("LITELLM_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
     if not api_key:
         emit({"type": "final", "analysis": {"error": "LITELLM_API_KEY or ANTHROPIC_API_KEY not set"}, "model_used": "none", "tool_calls_used": 0})
         sys.exit(1)
@@ -3297,6 +3445,21 @@ Technical summary: {executive}"""
     # (see single_shot_completion for the measurements), so "pick a client" was the
     # wrong shape — every stage that picked the local one got an empty response.
     ss_local = config.get("single_shot_backend") == "local"
+
+    # re_backend "router": a CLOUD model reached through the router instead of the
+    # passthrough. Only the eval's cloud arms set it (claude-*, opus55@10,
+    # fable51@10). Their models are LiteLLM model_list NAMES (`eval-opus55`, ...),
+    # and the /anthropic passthrough resolves none of them: it forwards the name
+    # to Anthropic as-is (the 404 local aliases get there, #273) and authenticates
+    # with the production ANTHROPIC_API_KEY, not the eval workspace key the
+    # `eval-*` entries carry. Everything else stays cloud: the
+    # `re_backend == "local"` branches below — local synthesis, the OpenAI-leg
+    # forced call, the orchestrator's result caps — do not fire. Switched HERE,
+    # before the single-shot paths, so those reach the alias too; their cloud
+    # branch takes `client`.
+    if config.get("re_backend") == "router" and router_base:
+        client = summary_client
+        emit_status(f"RE routed to cloud model via router: {model}", 0)
 
     # ---- .NET: agentic unless the payload is the single-shot one (#646) ----
     # The PAYLOAD says which, not the config: the agentic payload carries no
@@ -3803,7 +3966,20 @@ Technical summary: {executive}"""
 
         Returns None if the call or extraction fails, so the caller keeps whatever
         it already had rather than trading a partial result for nothing.
+
+        A model that rejects FORCED tool use (Opus 5.5, Fable 5.1: 400 on
+        tool_choice type "tool"/"any") gets ONE retry with tool_choice auto and an explicit
+        instruction to call the tool, the documented substitute. Models that accept
+        the forced call never see the retry. No `strict: true` on the tool: whether
+        the LiteLLM route forwards it, and whether this model accepts it there, is
+        unmeasured, and an unknown field rejected here would fail the retry too.
         """
+        tools = [{
+            "name": "submit_analysis",
+            "description": ("Submit the final structured malware analysis. "
+                            "Call exactly once."),
+            "input_schema": CLOUD_SUBMIT_ANALYSIS_SCHEMA,
+        }]
         try:
             log_request_shape("synth_cloud_recover", current_model, loop_system,
                               None, msgs)
@@ -3815,21 +3991,44 @@ Technical summary: {executive}"""
                     "Submit your analysis as a submit_analysis tool call. Use only "
                     "what your analysis above states; do not invent values."
                 )}],
-                tools=[{
-                    "name": "submit_analysis",
-                    "description": ("Submit the final structured malware analysis. "
-                                    "Call exactly once."),
-                    "input_schema": CLOUD_SUBMIT_ANALYSIS_SCHEMA,
-                }],
+                tools=tools,
                 tool_choice={"type": "tool", "name": "submit_analysis"},
             )
         except anthropic.APIError as e:
-            emit_status(f"cloud re-synthesis failed: {e}", tool_calls_used)
-            return None
+            if not forced_tool_choice_rejected(e):
+                emit_status(f"cloud re-synthesis failed: {e}", tool_calls_used)
+                return None
+            # A 400 is rejected before inference, so there is no usage to bill for
+            # the first attempt; the retry below is billed like any other call.
+            emit_status(f"{current_model} does not accept a forced tool_choice; "
+                        "retrying re-synthesis once with tool_choice auto",
+                        tool_calls_used)
+            try:
+                log_request_shape("synth_cloud_recover_auto", current_model,
+                                  loop_system, None, msgs)
+                resp = client.messages.create(
+                    model=current_model,
+                    max_tokens=max(max_output_tokens, 4096),
+                    system=loop_system,
+                    messages=msgs + [{"role": "user", "content": (
+                        "Call the submit_analysis tool now, exactly once, with your "
+                        "final analysis as its input. Do not reply in prose: a reply "
+                        "without a submit_analysis call is discarded. Use only what "
+                        "your analysis above states; do not invent values."
+                    )}],
+                    tools=tools,
+                    tool_choice={"type": "auto"},
+                )
+            except anthropic.APIError as e2:
+                emit_status(f"cloud re-synthesis failed (auto retry): {e2}",
+                            tool_calls_used)
+                return None
         # Bill it. Omitting this would under-report the cost of the recovery path
         # and make it look free, which is the reporting failure #299 fixed for the
         # local synthesis leg.
         add_usage(totals, usage_from_response(resp))
+        raise_if_refused(resp, phase="synth_cloud_recover", usage=totals,
+                         model=current_model, tool_calls_used=tool_calls_used)
         for block in resp.content:
             if block.type == "tool_use" and block.name == "submit_analysis":
                 got = dict(block.input or {})
@@ -3908,6 +4107,10 @@ Technical summary: {executive}"""
         # many bytes came back, but nothing about HOW the model reached its verdict —
         # which is what chain-of-custody and analyst review actually need.
         emit_turn(response, turn_index=tool_calls_used)
+        # Before the stop_reason dispatch below, whose else-branch would take a
+        # refusal for an end_turn with unparseable text and try to recover it.
+        raise_if_refused(response, phase="loop", usage=totals, model=current_model,
+                         tool_calls_used=tool_calls_used)
 
         # ---- Process response ----
         if response.stop_reason == "tool_use":
@@ -4094,6 +4297,9 @@ Technical summary: {executive}"""
                             b.text for b in final_response.content if b.type == "text"
                         )
                         add_usage(totals, usage_from_response(final_response))
+                        raise_if_refused(final_response, phase="forced_final",
+                                         usage=totals, model=current_model,
+                                         tool_calls_used=tool_calls_used)
                         analysis = parse_final_response(final_text)
                         emit({
                             "type": "final",
@@ -4189,6 +4395,9 @@ Technical summary: {executive}"""
                         b.text for b in final_response.content if b.type == "text"
                     )
                     add_usage(totals, usage_from_response(final_response))
+                    raise_if_refused(final_response, phase="max_calls_final",
+                                     usage=totals, model=current_model,
+                                     tool_calls_used=tool_calls_used)
                     analysis = parse_final_response(final_text)
                     emit({
                         "type": "final",

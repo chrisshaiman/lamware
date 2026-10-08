@@ -10,6 +10,16 @@ from stages.ghidra import collect_analysis_warnings
 from lamware_eval.corpus import CorpusSample
 
 
+def is_refusal(analysis: dict | None) -> bool:
+    """The model declined to answer (interpret-ghidra.py's refused final).
+
+    A refusal is not an analysis that found nothing, and not an infrastructure
+    failure: it says nothing about how well the model reads code, so it is kept
+    out of every statistic and counted on its own (`refused`).
+    """
+    return (analysis or {}).get("error") == "refused"
+
+
 def cell_error(res: dict, analysis: dict) -> str | None:
     """The reason a cell failed, composed identically for live and re-scored runs.
 
@@ -27,6 +37,12 @@ def cell_error(res: dict, analysis: dict) -> str | None:
     the sweep that produced the cell.
     """
     err = res.get("error") or analysis.get("error")
+    if is_refusal(analysis):
+        # The category is what tells a cyber-policy refusal from any other kind,
+        # and the error column is where the scorecard shows it.
+        refusal = analysis.get("refusal") or {}
+        err = (f"refused (category={refusal.get('category')}, "
+               f"phase={refusal.get('phase')})")
     stderr_tail = (res.get("container_stderr") or "").strip()
     if err and stderr_tail:
         err = f"{err} | container stderr: {stderr_tail[-1500:]}"
@@ -233,6 +249,11 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         # not the model. Kept out of the arm aggregates below rather than
         # scored as an ordinary zero-claim result (#316).
         "tool_layer_broken": bool(tool_metrics.get("tool_layer_broken")),
+        # The model declined (stop_reason "refusal"). Out of the aggregates and
+        # the paired statistics like tool_layer_broken, and counted per arm: a
+        # refused cell scored as zero claims would read as the model failing at
+        # the task it declined to attempt.
+        "refused": is_refusal(analysis),
         # Count in the table, full text in the cell dict — a scorecard column
         # has to stay skimmable, but the reason must survive for whoever asks.
         "ghidra_warnings": len(ghidra_warnings or []),
@@ -264,7 +285,9 @@ def aggregate(cells: list[dict]) -> dict:
     2026-07-25 latrodectus/qwen@10 had 8 of 8 tool calls fail and still
     contributed a 0/0 to both arms of a depth A/B, as though depth had been
     fairly tested on it. `n` is what was attempted, `n_valid` what could be
-    measured, and `n_valid` is the denominator for the rates below.
+    measured, and `n_valid` is the denominator for the rates below. Refused
+    cells (the model declined, stop_reason "refusal") are excluded and counted
+    the same way: they measured a policy, not the model's reading of the code.
     """
     by_arm: dict[str, list[dict]] = defaultdict(list)
     for c in cells:
@@ -273,7 +296,9 @@ def aggregate(cells: list[dict]) -> dict:
     for arm, cs in by_arm.items():
         n = len(cs)
         broken = [c for c in cs if c.get("tool_layer_broken")]
-        valid = [c for c in cs if not c.get("tool_layer_broken")]
+        refused = [c for c in cs if c.get("refused")]
+        valid = [c for c in cs
+                 if not c.get("tool_layer_broken") and not c.get("refused")]
         n_valid = len(valid)
         scored = [c for c in valid if (c.get("total") or 0) > 0]
         # One manifest can now yield two modalities: a .NET corpus sample with a
@@ -288,6 +313,7 @@ def aggregate(cells: list[dict]) -> dict:
                 for m in mods),
             "n_valid": n_valid,
             "tool_layer_broken": len(broken),
+            "refused": len(refused),
             "n_with_claims": len(scored),
             "total_claims": sum(c.get("total") or 0 for c in valid),
             "mean_grounded_ratio": (

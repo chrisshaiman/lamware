@@ -63,7 +63,7 @@ def test_a_correlated_arm_is_actually_given_the_evidence():
 
 def test_evidence_modes_are_the_declared_set():
     assert set(EVIDENCE_MODES) == {"ghidra", "correlated"}
-    assert Arm("x", "m", None, 10).evidence == "ghidra", "default must not change behaviour"
+    assert Arm("x", "m", "router", 10).evidence == "ghidra", "default must not change behaviour"
 
 
 # --- what the correlated arm is actually shown ---
