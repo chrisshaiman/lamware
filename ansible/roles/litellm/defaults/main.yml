@@ -35,3 +35,17 @@ litellm_llamacpp_anthropic_base: "http://127.0.0.1:11435"
 # block in templates/config.yaml.j2 and #292. The list is retained so that arms
 # naming a seed keep resolving; the values themselves no longer reach the sampler.
 litellm_llamacpp_seeds: [42, 1337, 8675309]
+
+# The anthropic-wif forwarder (ADR-022). Under the CVP grant, any model_list
+# entry for a grant model (claude-mythos-5-1, the eval-mythos alias) sets
+#   api_base: "{{ litellm_anthropic_wif_base }}"
+#   api_key: "sk-anthropic-wif-placeholder"
+# and never an os.environ/ key: the forwarder drops the placeholder and sends a
+# short-lived federated token instead. Port must equal anthropic_wif_listen_port
+# (tests/test_anthropic_wif_role.py).
+litellm_anthropic_wif_base: "http://127.0.0.1:4010"
+
+# Model id behind the eval-mythos alias (Mythos 5.1, CVP Defense Access).
+# Confirm against the account's GET /v1/models before the first run. It must
+# also be in anthropic_wif_allowed_models, or the forwarder refuses it.
+litellm_eval_mythos_model: "claude-mythos-5-1"
