@@ -16,6 +16,53 @@
 
 set -euo pipefail
 
+# Container work dirs (#694). The container runs as 65534:65534 inside the
+# pipeline user's rootless userns: host subuid 200000 + 65534 - 1 = 265533
+# (/etc/subuid "pipeline:200000:65536"). It must WRITE its output (and the
+# project lock in tool mode) and cannot write a pipeline-owned dir. That used
+# to be solved with `chmod a+rwx`, which let any local user add or replace
+# files in the dir while the job ran.
+#   - JOB_DIR is mktemp's private 0700 dir, owned by pipeline: no other local
+#     user can reach anything below it. The container never traverses it;
+#     podman bind-mounts the subdirs directly.
+#   - Dirs the container reads are pipeline-owned 0755; its nobody reads them
+#     via "other". Dirs it writes are chowned to its uid with `podman unshare`
+#     and are 0700, so only that uid can write them; output is chowned back to
+#     namespace root (== pipeline) after the run so the copy can read it.
+#   - Cleanup uses `podman unshare rm`: files the container wrote are owned by
+#     the subuid, which the pipeline user cannot unlink directly.
+CONTAINER_UID=65534
+CONTAINER_GID=65534
+JOB_DIR=""
+cleanup() {
+    [ -n "$JOB_DIR" ] || return 0
+    podman unshare rm -rf "$JOB_DIR" 2>/dev/null || rm -rf "$JOB_DIR" 2>/dev/null || true
+}
+setup_job_dir() {
+    trap cleanup EXIT
+    JOB_DIR="$(mktemp -d)"
+    mkdir -m 0755 "$JOB_DIR/in"
+    mkdir -m 0700 "$JOB_DIR/out"
+    podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
+}
+
+# Copy the container's output to $1 once it has exited.
+collect_output() {
+    # Hand the output back to the pipeline user (namespace uid 0). Everything
+    # the container wrote — including the saved Ghidra project — is owned by
+    # the subuid with 0750/0640 perms, unreadable by the pipeline user; without
+    # this, cp silently copied an empty project (analysis.rep with no data/)
+    # and agentic Ghidra tools failed with "Project data directory not found".
+    podman unshare chown -R 0:0 "$JOB_DIR/out"
+    # Entry by entry. NOT `cp -a out/. "$1"/`: copying "." stamps the work
+    # dir's own mode onto the destination, which made it 0777 while the work
+    # dir was a+rwx (#694) and would now make it 0700, hiding it from the
+    # lamware group. Do NOT silence the copy — a failure means lost output.
+    if ! find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 -exec cp -a -t "$1"/ {} +; then
+        echo "Error: failed to copy Ghidra output to $1" >&2
+    fi
+}
+
 if [ $# -lt 1 ]; then
     echo "Usage: run-ghidra <sample_path> [output_dir]" >&2
     echo "       run-ghidra --tool <project_dir> <program_name> <tool_name> <args_json>" >&2
@@ -66,14 +113,19 @@ if [ "$1" = "--tool" ]; then
     # Ghidra must acquire a write lock to open the project. The persisted
     # project is owned pipeline:lamware (0750), but the container runs as
     # nobody (65534) and cannot write the lock file there — opening fails with
-    # "Unable to lock project". Copy the project to a world-writable temp so
-    # the container can lock it. This also makes concurrent tool calls safe:
-    # each call operates on its own copy, with no lock contention on the
-    # shared persisted project.
-    WORK_PROJECT="$(mktemp -d)"
-    trap 'rm -rf "$WORK_PROJECT" 2>/dev/null || true' EXIT
-    cp -a "$PROJECT_DIR/." "$WORK_PROJECT/"
-    chmod -R a+rwX "$WORK_PROJECT"
+    # "Unable to lock project". Copy the project to a private temp and give the
+    # copy to the container's uid so it can lock it. This also makes concurrent
+    # tool calls safe: each call operates on its own copy, with no lock
+    # contention on the shared persisted project.
+    #
+    # The copy used to be `chmod -R a+rwX`, writable by every local user (#694).
+    # JOB_DIR is mktemp's 0700 pipeline-owned dir, and project/ is owned by the
+    # container's uid only (see setup_job_dir at the top for the uid mapping).
+    setup_job_dir
+    mkdir -m 0700 "$JOB_DIR/project"
+    cp -a "$PROJECT_DIR/." "$JOB_DIR/project/"
+    chmod -R u+rwX,go-rwx "$JOB_DIR/project"
+    podman unshare chown -R "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/project"
 
     podman run --rm \
         --network=none \
@@ -85,8 +137,8 @@ if [ "$1" = "--tool" ]; then
         --timeout=120 \
         --tmpfs /tmp:size=1g \
         --tmpfs /nonexistent:size=100m \
-        --user 65534:65534 \
-        -v "$WORK_PROJECT:/project:rw" \
+        --user "$CONTAINER_UID:$CONTAINER_GID" \
+        -v "$JOB_DIR/project:/project:rw" \
         localhost/ghidra:latest \
         --tool /project "$PROGRAM_NAME" "$TOOL_NAME" "$TOOL_ARGS"
     # run-ghidra.py always prints a JSON result dict (with an "error" key on
@@ -118,14 +170,10 @@ if [ "$1" = "--shellcode" ]; then
 
     mkdir -p "$OUTPUT_DIR"
 
-    # Copy dump to temp dir for isolation
-    WORK_DIR="$(mktemp -d)"
-    CONTAINER_OUTPUT="$(mktemp -d)"
-    trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT" 2>/dev/null || true' EXIT
-    chmod 755 "$WORK_DIR"
-    chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
-    cp "$DUMP_FILE" "$WORK_DIR/$DUMP_NAME"
-    chmod 644 "$WORK_DIR/$DUMP_NAME"
+    # Copy dump to a private temp dir for isolation
+    setup_job_dir
+    cp "$DUMP_FILE" "$JOB_DIR/in/$DUMP_NAME"
+    chmod 644 "$JOB_DIR/in/$DUMP_NAME"
 
     podman run --rm \
         --network=none \
@@ -138,19 +186,13 @@ if [ "$1" = "--shellcode" ]; then
         --tmpfs /tmp:size=1g \
         --tmpfs /nonexistent:size=100m \
         --tmpfs /var/cache:size=100m \
-        --user 65534:65534 \
-        -v "$WORK_DIR:/sample:ro" \
-        -v "$CONTAINER_OUTPUT:/output:rw" \
+        --user "$CONTAINER_UID:$CONTAINER_GID" \
+        -v "$JOB_DIR/in:/sample:ro" \
+        -v "$JOB_DIR/out:/output:rw" \
         localhost/ghidra:latest \
         --shellcode "/sample/$DUMP_NAME" "$BASE_ADDR"
 
-    # Container wrote output as UID-mapped 'nobody'; reassign to the pipeline
-    # user inside the rootless userns so the copy can read it (see analysis
-    # mode below for the full rationale).
-    podman unshare chown -R 0:0 "$CONTAINER_OUTPUT" 2>/dev/null || true
-    if ! cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/; then
-        echo "Error: failed to copy Ghidra shellcode output to $OUTPUT_DIR" >&2
-    fi
+    collect_output "$OUTPUT_DIR"
     # Stop here so we don't fall through to analysis mode (which would reject
     # the shellcode arg count and exit 1). Output JSON is already on stdout.
     exit 0
@@ -175,16 +217,12 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Copy sample to temp dir — only the single file is mounted
-WORK_DIR="$(mktemp -d)"
-# Container output goes to a separate temp dir (rootless Podman UID mapping
-# prevents the container's nobody user from writing to pipeline-owned dirs)
-CONTAINER_OUTPUT="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR" "$CONTAINER_OUTPUT" 2>/dev/null || true' EXIT
-chmod 755 "$WORK_DIR"
-chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
-cp "$SAMPLE_PATH" "$WORK_DIR/$SAMPLE_NAME"
-chmod 644 "$WORK_DIR/$SAMPLE_NAME"
+# Copy sample to a private temp dir — only the single file is mounted. Output
+# goes to a separate subdir owned by the container's uid (rootless Podman UID
+# mapping prevents its nobody user from writing to pipeline-owned dirs).
+setup_job_dir
+cp "$SAMPLE_PATH" "$JOB_DIR/in/$SAMPLE_NAME"
+chmod 644 "$JOB_DIR/in/$SAMPLE_NAME"
 
 podman run --rm \
     --network=none \
@@ -197,23 +235,12 @@ podman run --rm \
     --tmpfs /tmp:size=1g \
     --tmpfs /nonexistent:size=100m \
     --tmpfs /var/cache:size=100m \
-    --user 65534:65534 \
-    -v "$WORK_DIR:/sample:ro" \
-    -v "$CONTAINER_OUTPUT:/output:rw" \
+    --user "$CONTAINER_UID:$CONTAINER_GID" \
+    -v "$JOB_DIR/in:/sample:ro" \
+    -v "$JOB_DIR/out:/output:rw" \
     localhost/ghidra:latest \
     "/sample/$SAMPLE_NAME"
 
-# Copy results back to the real output directory.
-#
-# The container runs as rootless-podman's UID-mapped 'nobody', so everything it
-# wrote — including the saved Ghidra project — is owned by a high subuid with
-# 0750/0640 perms, unreadable by the pipeline user. Reassign ownership to the
-# pipeline user *inside* the rootless user namespace (namespace uid 0 == host
-# pipeline uid) so the copy can read it and so tool-mode can later open the
-# project. Without this, cp silently copied an empty project (analysis.rep with
-# no data/) and agentic Ghidra tools failed with "Project data directory not
-# found". Do NOT silence the copy — a failure here means lost analysis output.
-podman unshare chown -R 0:0 "$CONTAINER_OUTPUT" 2>/dev/null || true
-if ! cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/; then
-    echo "Error: failed to copy Ghidra analysis output to $OUTPUT_DIR" >&2
-fi
+# Copy results back to the real output directory (and give the saved project
+# to the pipeline user so tool mode can later open it).
+collect_output "$OUTPUT_DIR"
