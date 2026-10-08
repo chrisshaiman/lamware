@@ -69,7 +69,8 @@ def test_both_modalities_ship_and_neither_is_pooled():
         c = t.get("ansible.builtin.copy")
         if isinstance(c, dict) and isinstance(t.get("loop"), list):
             shipped |= {i for i in t["loop"] if str(i).startswith("corpus-")}
-    assert shipped == {"corpus-native.json", "corpus-dotnet.json"}, shipped
+    assert shipped == {"corpus-native.json", "corpus-dotnet.json",
+                       "corpus-native-intake.json"}, shipped
 
 
 def test_the_pooled_manifest_is_removed_from_hosts_that_have_one():
@@ -132,6 +133,7 @@ def test_the_divergence_check_survives_a_host_with_no_corpus_yet():
 @pytest.mark.parametrize("name,modality", [
     ("corpus-native.json", "native_pe"),
     ("corpus-dotnet.json", "dotnet"),
+    ("corpus-native-intake.json", "native_pe"),
 ])
 def test_each_shipped_manifest_is_valid_and_declares_its_modality(name, modality):
     """#426 asked for the criterion to be recorded. Modality joins it, because a
@@ -152,7 +154,10 @@ def test_no_sample_appears_in_both_corpora():
     def shas(n):
         return {s["sha256"] for s in
                 json.loads((MANIFEST.parent / n).read_text())["samples"]}
-    assert not shas("corpus-native.json") & shas("corpus-dotnet.json")
+    names = ["corpus-native.json", "corpus-dotnet.json", "corpus-native-intake.json"]
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            assert not shas(a) & shas(b), (a, b)
 
 
 def test_the_samples_belonging_to_neither_are_named_rather_than_dropped():
@@ -167,7 +172,8 @@ def test_the_samples_belonging_to_neither_are_named_rather_than_dropped():
 
 
 @pytest.mark.parametrize("field", ["sha256", "corpus_dir"])
-@pytest.mark.parametrize("name", ["corpus-native.json", "corpus-dotnet.json"])
+@pytest.mark.parametrize("name", ["corpus-native.json", "corpus-dotnet.json",
+                                  "corpus-native-intake.json"])
 def test_a_shipped_manifest_has_no_duplicates(name, field):
     data = json.loads((MANIFEST.parent / name).read_text(encoding="utf-8"))
     values = [s[field] for s in data["samples"]]
