@@ -27,14 +27,35 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Copy PCAP to a temp dir so the container can run as nobody
-# without needing access to CAPE-owned files.
-TEMP_PCAP="$(mktemp -d)"
-CONTAINER_OUTPUT="$(mktemp -d)"
-cp "$PCAP_PATH" "$TEMP_PCAP/" 2>/dev/null || true
-chmod -R a+rX "$TEMP_PCAP"
-chmod a+rwx "$CONTAINER_OUTPUT" 2>/dev/null || true
-trap 'rm -rf "$TEMP_PCAP" "$CONTAINER_OUTPUT" 2>/dev/null || true' EXIT
+# Container work dirs (#694). The container runs as 65534:65534 inside the
+# pipeline user's rootless userns: host subuid 200000 + 65534 - 1 = 265533
+# (/etc/subuid "pipeline:200000:65536"). It must WRITE its output and cannot
+# write a pipeline-owned dir. That used to be solved with `chmod a+rwx`, which
+# let any local user add or replace files in the dir while the job ran.
+#   - JOB_DIR is mktemp's private 0700 dir, owned by pipeline: no other local
+#     user can reach anything below it. The container never traverses it;
+#     podman bind-mounts the subdirs directly.
+#   - pcap/ is pipeline-owned 0755 (the PCAP copy is a+r) so the container's
+#     nobody can read it without access to CAPE-owned files.
+#   - out/ is 0700 and chowned to the container's uid with `podman unshare`,
+#     so only that uid can write it; chowned back to namespace root (==
+#     pipeline) after the run so the copy can read it.
+#   - Cleanup uses `podman unshare rm`: files the container wrote are owned by
+#     the subuid, which the pipeline user cannot unlink directly.
+CONTAINER_UID=65534
+CONTAINER_GID=65534
+JOB_DIR=""
+cleanup() {
+    [ -n "$JOB_DIR" ] || return 0
+    podman unshare rm -rf "$JOB_DIR" 2>/dev/null || rm -rf "$JOB_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+JOB_DIR="$(mktemp -d)"
+mkdir -m 0755 "$JOB_DIR/pcap"
+mkdir -m 0700 "$JOB_DIR/out"
+podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
+cp "$PCAP_PATH" "$JOB_DIR/pcap/" 2>/dev/null || true
+chmod -R a+rX "$JOB_DIR/pcap"
 
 podman run --rm \
     --network=none \
@@ -48,11 +69,18 @@ podman run --rm \
     --tmpfs /nonexistent:size=10m \
     --tmpfs /var/log/suricata:size=50m \
     --tmpfs /var/run/suricata:size=10m \
-    --user 65534:65534 \
-    -v "$TEMP_PCAP:/pcap:ro" \
-    -v "$CONTAINER_OUTPUT:/output:rw" \
+    --user "$CONTAINER_UID:$CONTAINER_GID" \
+    -v "$JOB_DIR/pcap:/pcap:ro" \
+    -v "$JOB_DIR/out:/output:rw" \
     localhost/pcap-analysis:latest \
     "/pcap/$PCAP_NAME"
 
-# Copy results back to the real output directory
-cp -a "$CONTAINER_OUTPUT"/. "$OUTPUT_DIR"/ 2>/dev/null || true
+# Hand the container's output back to the pipeline user (namespace uid 0).
+podman unshare chown -R 0:0 "$JOB_DIR/out"
+
+# Copy results back to the real output directory, entry by entry. NOT
+# `cp -a out/. "$OUTPUT_DIR"/`: copying "." stamps the work dir's own mode onto
+# OUTPUT_DIR, which made it 0777 while the work dir was a+rwx (#694) and would
+# now make it 0700, hiding it from the lamware group.
+find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 \
+    -exec cp -a -t "$OUTPUT_DIR"/ {} + 2>/dev/null || true

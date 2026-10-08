@@ -28,8 +28,8 @@ open-source use.
 
 | Rule Set | License | Usage | Notes |
 |---|---|---|---|
-| [Yara-Rules/rules](https://github.com/Yara-Rules/rules) | GPL v2 | Community malware detection rules | Cloned at deploy time, not bundled |
-| [ReversingLabs YARA](https://github.com/reversinglabs/reversinglabs-yara-rules) | MIT | Malware family detection rules | Cloned at deploy time, not bundled |
+| [Yara-Rules/rules](https://github.com/Yara-Rules/rules) | GPL v2 | Community malware detection rules | Fetched at deploy time (pinned archive), not bundled |
+| [ReversingLabs YARA](https://github.com/reversinglabs/reversinglabs-yara-rules) | MIT | Malware family detection rules | Fetched at deploy time (pinned archive), not bundled |
 
 ## Infrastructure
 

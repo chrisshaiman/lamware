@@ -34,18 +34,79 @@
 # YARA community rules
 # -------------------------------------------------------------------------
 
-- name: Clone YARA community rule repositories
-  ansible.builtin.git:
-    repo: "{{ item.url }}"
-    dest: "{{ triage_rules_dir }}/{{ item.name }}"
-    version: "{{ item.version }}"
-    depth: 1
-    force: true
+- name: Create a directory for the YARA rule archives
+  # Not /tmp: /tmp is polyinstantiated per user on this host (root's is
+  # /tmp/user/0), so pipeline could not see an archive root put there. A fresh
+  # mkdtemp under the install dir is root-owned, so pipeline can read the
+  # archives but cannot swap one between the checksum and the unpack.
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ triage_install_dir }}"
+    prefix: .yara-archives-
+  register: triage_yara_tmp
+
+- name: Make the archive directory traversable by pipeline
+  ansible.builtin.file:
+    path: "{{ triage_yara_tmp.path }}"
+    mode: "0755"
+
+- name: Download pinned YARA rule archives
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ triage_yara_tmp.path }}/{{ item.name }}.tar.gz"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+  loop: "{{ triage_yara_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create YARA rule directories
+  ansible.builtin.file:
+    path: "{{ triage_rules_dir }}/{{ item.dest }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+  loop: "{{ triage_yara_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Unpack YARA rules
+  # As pipeline, not root: the rules dir is pipeline's, and root writing into a
+  # tree another user owns follows whatever symlinks that user left there.
+  # The marker names the archive's checksum, so a moved pin unpacks again and an
+  # unchanged one is a no-op.
+  ansible.builtin.unarchive:
+    src: "{{ triage_yara_tmp.path }}/{{ item.name }}.tar.gz"
+    dest: "{{ triage_rules_dir }}/{{ item.dest }}"
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    creates: "{{ triage_rules_dir }}/{{ item.dest }}/.lamware-archive-{{ item.sha256[:16] }}"
   become: true
   become_user: pipeline
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
+
+- name: Record which archive each rules directory holds
+  # Unconditional and idempotent: reached only if every unpack succeeded, and a
+  # touch that preserves times reports no change on an existing marker.
+  ansible.builtin.file:
+    path: "{{ triage_rules_dir }}/{{ item.dest }}/.lamware-archive-{{ item.sha256[:16] }}"
+    state: touch
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+  become: true
+  become_user: pipeline
+  loop: "{{ triage_yara_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove the YARA rule archives
+  ansible.builtin.file:
+    path: "{{ triage_yara_tmp.path }}"
+    state: absent
 
 # -------------------------------------------------------------------------
 # Container image build
