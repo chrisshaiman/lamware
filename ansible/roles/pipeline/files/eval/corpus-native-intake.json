@@ -1,0 +1,83 @@
+{
+  "_selection": {
+    "modality": "native_pe",
+    "criterion": "Samples are selected for whether the RE agent reads the ORIGINAL sample: Ghidra analysed the submitted binary itself, and production's agent input was that binary (source original_sample), not a dropped runtime, an installer wrapper or a CAPE payload. None of them exercises cross-tool correlation: zero cross-process injection writes, and Volatility did not trigger. So this corpus measures RE on a real binary with only CAPE signatures as correlated evidence. That is a different measurement from corpus-native.json, which is selected for exercising correlation, and the two are never pooled.",
+    "split": "Its own manifest rather than additions to corpus-native.json (owner's decision, 2026-10-08), so that every earlier corpus-native scorecard stays comparable. The provenance stamp records which manifest produced a scorecard (#486).",
+    "source": "Intake batch 2026-10-07 (#716): 10 MalwareBazaar samples first seen 2026-09-25..10-07, detonated 2026-10-08. All 10 passed promotion's dry run (#634 leak check clean). These 4 met the criterion.",
+    "not_selected": [
+      {
+        "sha256": "ffce7a3896c7e9e8172737d45c1eaed7f62b0a09b65ce22c5eeff9f25b7ace9d",
+        "mb_family": "stealc",
+        "reason": "agent input was a 2,395-function dropped PE, not the 101-function original"
+      },
+      {
+        "sha256": "960b0b1d55bbea03966505540d6ddff28a3400206621c73bd9e0627f47cf8349",
+        "mb_family": "vidar",
+        "reason": "Ghidra did not analyse the original; agent input was a CAPE payload"
+      },
+      {
+        "sha256": "0693e042dd629efb54a385e8fee6cd00c7a54543d31bceb3f790365a72e55448",
+        "mb_family": "remcosrat",
+        "reason": "104-function stub, malscore 2.2"
+      },
+      {
+        "sha256": "3dbbd0d946ccb43a77198e3b863c8b3150f6f328ac7c7e196cc75cd2519755e3",
+        "mb_family": "phorpiex",
+        "reason": "37-function second sample of a family already selected"
+      },
+      {
+        "sha256": "efaac0749d981772f92b3a98099a1e08c3f0d310eade130615fd72caa3e4d0df",
+        "mb_family": "lummastealer",
+        "reason": "original not analysed; agent input a 5-function payload. It is the batch's only correlating sample, a candidate for corpus-native once its RE input is usable"
+      },
+      {
+        "sha256": "dcb2cfd87af6581fe54e37daf742a7828834cf4ca90b37c73dee4f2171dff97a",
+        "mb_family": "socks5systemz",
+        "reason": "agent read the Inno Setup installer wrapper"
+      }
+    ],
+    "known_input_gap": "Triage YARA matched nothing in these reports (#736, dead since 2026-05-09). YARA does not reach the RE agent's input, so this corpus is unaffected, but the reports' evasion and summary stages ran without it."
+  },
+  "samples": [
+    {
+      "sha256": "870d8065347e60122d782496b9ba1880ea7826ad86febcc3b19e056f1da894c3",
+      "mb_family": "stealc",
+      "corpus_dir": "/opt/pipeline/eval-corpus/stealc_870d8065",
+      "analyst_label": null,
+      "role": "re-original",
+      "selected_because": "Ghidra analysed the original (1493 functions) and production's agent read it. CAPE task 1283: malscore 7.0, 6 ATT&CK techniques. No injection writes, so no cross-tool correlation.",
+      "source_cape_task": 1283,
+      "expected_injection_buffers": 0
+    },
+    {
+      "sha256": "fa3e9bf80185c5524b3669d856f619ff94538fb71b3c56a636cc0d819e3e81a1",
+      "mb_family": "vidar",
+      "corpus_dir": "/opt/pipeline/eval-corpus/vidar_fa3e9bf8",
+      "analyst_label": null,
+      "role": "re-original",
+      "selected_because": "Ghidra analysed the original (4353 functions) and production's agent read it. CAPE task 1284: malscore 8.0, 7 ATT&CK techniques. No injection writes, so no cross-tool correlation.",
+      "source_cape_task": 1284,
+      "expected_injection_buffers": 0
+    },
+    {
+      "sha256": "034174f5266a4276cf29cfdb23fc3fa52699438ff60c8055b7df12c88341a49b",
+      "mb_family": "remcosrat",
+      "corpus_dir": "/opt/pipeline/eval-corpus/remcosrat_034174f5",
+      "analyst_label": null,
+      "role": "re-original",
+      "selected_because": "Ghidra analysed the original (2775 functions) and production's agent read it. CAPE task 1287: malscore 10.0, 4 ATT&CK techniques. No injection writes, so no cross-tool correlation.",
+      "source_cape_task": 1287,
+      "expected_injection_buffers": 0
+    },
+    {
+      "sha256": "13464460a6a916cfcfeba3f29c7d16708bf4ec638af94b0a3b165c5ccb994eb6",
+      "mb_family": "phorpiex",
+      "corpus_dir": "/opt/pipeline/eval-corpus/phorpiex_13464460",
+      "analyst_label": null,
+      "role": "re-original",
+      "selected_because": "Ghidra analysed the original (68 functions) and production's agent read it. CAPE task 1289: malscore 8.0, 4 ATT&CK techniques. No injection writes, so no cross-tool correlation.",
+      "source_cape_task": 1289,
+      "expected_injection_buffers": 0
+    }
+  ]
+}

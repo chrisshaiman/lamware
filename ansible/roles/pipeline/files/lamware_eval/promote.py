@@ -65,7 +65,8 @@ _FAMILY_RE = re.compile(r"\A[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 
 #: Ansible ships these from the repo and overwrites the host copy on deploy.
-_ANSIBLE_OWNED_MANIFESTS = frozenset({"corpus-native.json", "corpus-dotnet.json"})
+_ANSIBLE_OWNED_MANIFESTS = frozenset({"corpus-native.json", "corpus-dotnet.json",
+                                      "corpus-native-intake.json"})
 
 
 class PromotionError(Exception):

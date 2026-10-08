@@ -693,6 +693,7 @@
   loop:
     - corpus-native.json
     - corpus-dotnet.json
+    - corpus-native-intake.json
 
 # The pooled manifest is REMOVED rather than left in place. Leaving a manifest
 # that spans both modalities on the host is an invitation to run exactly the
