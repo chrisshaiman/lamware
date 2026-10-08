@@ -243,12 +243,50 @@ def get_cape_signatures(cape_data: dict) -> list[str]:
     report_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/reports/report.json")
     if not report_path.exists():
         return []
+    report, failure = load_cape_report(report_path)
+    if failure:
+        # extract_cape_intel reads the same file and records the failure in
+        # report["cape"]["error"]; this caller can only return no signatures.
+        print(f"  [!] Cape signatures not read: {failure}", file=sys.stderr)
+        return []
+    sigs = report.get("signatures")
+    if not isinstance(sigs, list):
+        return []
+    return [s.get("name", "") for s in sigs if isinstance(s, dict)]
+
+
+# What json.load raises for a Cape report.json that is valid JSON but cannot be
+# read here, besides JSONDecodeError (a ValueError) and OSError (#702): the
+# same set as stages/volatility._UNREADABLE_JSON (#692).
+#
+#   RecursionError  nesting past the decoder's limit (~5,000 levels, measured
+#                   on Python 3.12.13 for Volatility's output; same decoder).
+#   ValueError      an integer literal past the 4,300-digit conversion limit.
+#   MemoryError     a file the decoder cannot hold.
+#
+# Cape's report is built from what the guest did, so neither is ruled out.
+# Before, both readers caught only JSONDecodeError (plus OSError or KeyError),
+# so these raised out of extract_cape_intel into run-pipeline's `except
+# Exception` around the whole Cape stage, which replaced report["cape"] with
+# {"task_id": None, "status": "error"} — losing the task id the later stages
+# (PCAP, Volatility) read.
+_UNREADABLE_REPORT = (OSError, ValueError, RecursionError, MemoryError)
+
+
+def load_cape_report(report_path: Path) -> tuple[dict | None, str | None]:
+    """Cape's report.json as a dict, or (None, why) when it cannot be read.
+
+    ``why`` names the exception type only, never its text: a decoder message
+    can quote the document, and the document is the guest's.
+    """
     try:
         with report_path.open() as f:
             report = json.load(f)
-        return [s.get("name", "") for s in report.get("signatures", [])]
-    except (json.JSONDecodeError, KeyError):
-        return []
+    except _UNREADABLE_REPORT as e:
+        return None, f"{type(e).__name__} reading Cape report JSON"
+    if not isinstance(report, dict):
+        return None, "Cape report JSON is not an object"
+    return report, None
 
 
 def _get_arg(args, name):
@@ -541,11 +579,9 @@ def extract_cape_intel(cape_data: dict, output_dir: Path = None) -> dict:
     report_path = Path(f"/opt/CAPEv2/storage/analyses/{task_id}/reports/report.json")
     if not report_path.exists():
         return {}
-    try:
-        with report_path.open() as f:
-            full_report = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {"error": "Failed to parse Cape report JSON"}
+    full_report, failure = load_cape_report(report_path)
+    if failure:
+        return {"error": f"Failed to parse Cape report JSON ({failure})"}
 
     intel = {}
 
