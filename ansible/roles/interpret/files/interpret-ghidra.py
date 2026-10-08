@@ -1291,18 +1291,20 @@ def log_request_result(phase: str, response: Any, elapsed_s: float,
     silently at zero — the failure mode this issue is about, reproduced one layer down.
     """
     try:
+        # The same extractors the loop and the single-shot paths use, so the trail
+        # cannot record a different token count from the one that gets priced —
+        # cache tokens included (#718).
         usage: dict[str, Any] = {}
         u = getattr(response, "usage", None)
         if u is not None and not isinstance(u, dict):          # Anthropic SDK object
-            usage = {"input_tokens": getattr(u, "input_tokens", 0),
-                     "output_tokens": getattr(u, "output_tokens", 0)}
+            usage = usage_from_response(response)
         elif isinstance(response, dict):                        # OpenAI JSON body
-            raw = response.get("usage") or {}
-            usage = {"input_tokens": raw.get("prompt_tokens", 0),
-                     "output_tokens": raw.get("completion_tokens", 0)}
+            usage = openai_usage(response.get("usage"))
         elif isinstance(u, dict):
-            usage = {"input_tokens": u.get("input_tokens", u.get("prompt_tokens", 0)),
-                     "output_tokens": u.get("output_tokens", u.get("completion_tokens", 0))}
+            if "input_tokens" in u or "output_tokens" in u:
+                usage = usage_from_response(response)
+            else:
+                usage = openai_usage(u)
         emit({"type": "request_result", "request_phase": phase, "wire": wire,
               "usage": usage, "elapsed_s": round(elapsed_s, 1),
               "stop_reason": getattr(response, "stop_reason", None)})
@@ -1509,15 +1511,61 @@ def emit_turn(response, turn_index: int) -> None:
     })
 
 
-def usage_from_response(response) -> dict:
-    """Extract token usage from a Claude API response."""
+# Every key a `usage` dict this script emits carries (#718). Anthropic reports prompt-
+# cache tokens SEPARATELY from input_tokens: a cache write is billed at 1.25x the input
+# rate and a cache read at 0.1x, and neither is counted in input_tokens. The system
+# prompts here all carry `cache_control: ephemeral`, so on a cloud run where caching
+# engages those tokens are real spend. Reading only input/output dropped them before
+# anything downstream could price them — and an eval cell with no cache fields could
+# not say whether caching never engaged or the counts were thrown away.
+#
+# A literal, not a comprehension, so the report-key guard
+# (tests/test_report_reads_have_producers.py) can see this file writes each key.
+_EMPTY_USAGE = {"input_tokens": 0, "output_tokens": 0,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+USAGE_KEYS = tuple(_EMPTY_USAGE)
+
+
+def empty_usage() -> dict[str, int]:
+    """A zeroed usage dict with every key in USAGE_KEYS."""
+    return dict(_EMPTY_USAGE)
+
+
+def usage_from_response(response) -> dict[str, int]:
+    """Extract token usage from an Anthropic-shaped response, cache tokens included.
+
+    Accepts the SDK object (attributes) or a dict-shaped `usage`. The SDK types the
+    cache fields Optional, and a response routed through LiteLLM's /v1/messages for a
+    local model omits them, so absent and None both read as 0 — the honest value for
+    a server that has no billed cache.
+    """
     usage = getattr(response, "usage", None)
-    if usage:
-        return {
-            "input_tokens": getattr(usage, "input_tokens", 0),
-            "output_tokens": getattr(usage, "output_tokens", 0),
-        }
-    return {"input_tokens": 0, "output_tokens": 0}
+    if not usage:
+        return empty_usage()
+    if isinstance(usage, dict):
+        return {k: usage.get(k) or 0 for k in USAGE_KEYS}
+    return {k: getattr(usage, k, None) or 0 for k in USAGE_KEYS}
+
+
+def openai_usage(raw: dict | None) -> dict[str, int]:
+    """The OpenAI-leg usage block in this script's (Anthropic) key names.
+
+    Only local models are sent over /chat/completions (single_shot_completion,
+    summarize_via_openai_leg, synthesis 2b). llama.cpp's KV-cache reuse is not billed
+    and the body carries no Anthropic cache fields, so both cache counts are 0 —
+    present, so every emitted usage has the same shape.
+    """
+    raw = raw or {}
+    usage = empty_usage()
+    usage["input_tokens"] = raw.get("prompt_tokens", 0) or 0
+    usage["output_tokens"] = raw.get("completion_tokens", 0) or 0
+    return usage
+
+
+def add_usage(totals: dict[str, int], usage: dict) -> None:
+    """Accumulate one response's usage into a run's totals, every key."""
+    for k in USAGE_KEYS:
+        totals[k] = (totals.get(k) or 0) + (usage.get(k) or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -2673,9 +2721,7 @@ def summarize_via_openai_leg(http_client: httpx.Client, base_url: str, api_key: 
         raise
     choice = (data.get("choices") or [{}])[0]
     text = (choice.get("message") or {}).get("content") or ""
-    u = data.get("usage") or {}
-    return text, {"input_tokens": u.get("prompt_tokens", 0),
-                  "output_tokens": u.get("completion_tokens", 0)}
+    return text, openai_usage(data.get("usage"))
 
 
 def _flatten_system(system) -> str:
@@ -2781,10 +2827,7 @@ def single_shot_completion(use_local: bool, anthropic_client, http_client,
         data = resp.json()
         log_request_result(label, data, time.time() - t0, wire="openai")
         msg = ((data.get("choices") or [{}])[0].get("message") or {})
-        u = data.get("usage") or {}
-        return (msg.get("content") or ""), {
-            "input_tokens": u.get("prompt_tokens", 0),
-            "output_tokens": u.get("completion_tokens", 0)}
+        return (msg.get("content") or ""), openai_usage(data.get("usage"))
 
     response = anthropic_client.messages.create(
         model=model, max_tokens=max_tokens, system=system,
@@ -3567,8 +3610,9 @@ Technical summary: {executive}"""
     tool_calls_used = 0
     deferred = 0          # tool calls postponed by the per-turn batch limit (#234)
     current_model = model
-    total_input_tokens = 0
-    total_output_tokens = 0
+    # Every key in USAGE_KEYS, cache tokens included (#718). A dict rather than one
+    # counter per key so no emit site below can carry a subset of the totals.
+    totals = empty_usage()
 
     emit_status(f"Starting analysis with {current_model}", tool_calls_used)
 
@@ -3760,7 +3804,6 @@ Technical summary: {executive}"""
         Returns None if the call or extraction fails, so the caller keeps whatever
         it already had rather than trading a partial result for nothing.
         """
-        nonlocal total_input_tokens, total_output_tokens
         try:
             log_request_shape("synth_cloud_recover", current_model, loop_system,
                               None, msgs)
@@ -3786,9 +3829,7 @@ Technical summary: {executive}"""
         # Bill it. Omitting this would under-report the cost of the recovery path
         # and make it look free, which is the reporting failure #299 fixed for the
         # local synthesis leg.
-        u = usage_from_response(resp)
-        total_input_tokens += u.get("input_tokens") or 0
-        total_output_tokens += u.get("output_tokens") or 0
+        add_usage(totals, usage_from_response(resp))
         for block in resp.content:
             if block.type == "tool_use" and block.name == "submit_analysis":
                 got = dict(block.input or {})
@@ -3831,7 +3872,7 @@ Technical summary: {executive}"""
                 "analysis": {"error": f"Claude API error: {e}"},
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
-                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                "usage": dict(totals),
             })
             sys.exit(1)
         except Exception as e:  # noqa: BLE001 - see below; must not die silently
@@ -3853,14 +3894,12 @@ Technical summary: {executive}"""
                              "traceback": traceback.format_exc()[-2000:]},
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
-                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                "usage": dict(totals),
             })
             sys.exit(1)
 
         # Accumulate token usage across all calls in the loop
-        resp_usage = usage_from_response(response)
-        total_input_tokens += resp_usage["input_tokens"]
-        total_output_tokens += resp_usage["output_tokens"]
+        add_usage(totals, usage_from_response(response))
 
         # ---- Forensic turn record (#197) ----
         # The orchestrator cannot see any of this: the protocol between us carries only
@@ -4034,7 +4073,7 @@ Technical summary: {executive}"""
                             "analysis": analysis,
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
-                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                            "usage": dict(totals),
                         })
                         sys.exit(0)
                     try:
@@ -4054,16 +4093,14 @@ Technical summary: {executive}"""
                         final_text = "".join(
                             b.text for b in final_response.content if b.type == "text"
                         )
-                        final_usage = usage_from_response(final_response)
-                        total_input_tokens += final_usage["input_tokens"]
-                        total_output_tokens += final_usage["output_tokens"]
+                        add_usage(totals, usage_from_response(final_response))
                         analysis = parse_final_response(final_text)
                         emit({
                             "type": "final",
                             "analysis": analysis,
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
-                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                            "usage": dict(totals),
                         })
                     # httpx too: a transport failure here is as silent as an API
                     # error, and loses the same salvage (#588).
@@ -4075,7 +4112,7 @@ Technical summary: {executive}"""
                                          "tools_invoked": _tool_names_from(messages)},
                             "model_used": current_model,
                             "tool_calls_used": tool_calls_used,
-                            "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                            "usage": dict(totals),
                         })
                     sys.exit(0)
 
@@ -4134,7 +4171,7 @@ Technical summary: {executive}"""
                         "analysis": local_synthesize(messages),
                         "model_used": current_model,
                         "tool_calls_used": tool_calls_used,
-                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                        "usage": dict(totals),
                     })
                     sys.exit(0)
                 try:
@@ -4151,16 +4188,14 @@ Technical summary: {executive}"""
                     final_text = "".join(
                         b.text for b in final_response.content if b.type == "text"
                     )
-                    final_usage = usage_from_response(final_response)
-                    total_input_tokens += final_usage["input_tokens"]
-                    total_output_tokens += final_usage["output_tokens"]
+                    add_usage(totals, usage_from_response(final_response))
                     analysis = parse_final_response(final_text)
                     emit({
                         "type": "final",
                         "analysis": analysis,
                         "model_used": current_model,
                         "tool_calls_used": tool_calls_used,
-                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                        "usage": dict(totals),
                     })
                 except anthropic.APIError as e:
                     emit({
@@ -4168,7 +4203,7 @@ Technical summary: {executive}"""
                         "analysis": {"error": f"Claude API error on max-calls final: {e}"},
                         "model_used": current_model,
                         "tool_calls_used": tool_calls_used,
-                        "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                        "usage": dict(totals),
                     })
                 sys.exit(0)
 
@@ -4215,7 +4250,7 @@ Technical summary: {executive}"""
                 "analysis": analysis,
                 "model_used": current_model,
                 "tool_calls_used": tool_calls_used,
-                "usage": {"input_tokens": total_input_tokens, "output_tokens": total_output_tokens},
+                "usage": dict(totals),
             })
             sys.exit(0)
 

@@ -128,6 +128,11 @@ def describe(response) -> dict:
         "stop_reason": getattr(response, "stop_reason", "?"),
         "in_tok": getattr(usage, "input_tokens", None),
         "out_tok": getattr(usage, "output_tokens", None),
+        # Not part of in_tok: Anthropic reports prompt-cache writes and reads
+        # separately (#718), so an arm run against a cloud model would otherwise
+        # look cheaper than it was. None on a server that does not report them.
+        "cache_write_tok": getattr(usage, "cache_creation_input_tokens", None),
+        "cache_read_tok": getattr(usage, "cache_read_input_tokens", None),
         "text_head": text[:200].replace("\n", " "),
     }
 
@@ -235,6 +240,7 @@ def main() -> int:
                 row = {"blocks": 0, "block_types": "ERROR", "text_chars": 0,
                        "thinking_chars": 0, "stop_reason": type(exc).__name__,
                        "in_tok": None, "out_tok": None,
+                       "cache_write_tok": None, "cache_read_tok": None,
                        "text_head": str(exc)[:200], "error": str(exc)[:400]}
             row.update({"arm": arm_name, "rep": rep, "wall": time.time() - started})
             rows.append(row)

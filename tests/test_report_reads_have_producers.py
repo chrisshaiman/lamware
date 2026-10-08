@@ -178,6 +178,19 @@ ALLOWED: dict[str, Allowed] = {
         "evidence_record", f"{_FILES}/stages/correlated_evidence.py")
        for k in ("given", "keys", "bytes", "reason")},
 
+    # Prompt-cache token counts (#718). The interpret container emits both on
+    # every usage dict it returns; run_interpret, run_summarize and
+    # run_plain_english pass that dict through whole into these sections.
+    # db_ingest prices them. Written since the fixture was built.
+    **{f"{section}.{key}": _unobserved(
+        "added by #718, after the shapes fixture was built; the interpret "
+        "container writes it on every usage dict it emits",
+        f"{_ROLES}/interpret/files/interpret-ghidra.py")
+       for section in ("llm_interpretation.usage", "executive_summary.usage",
+                       "evasion_analysis.usage", "visual_analysis.usage",
+                       "plain_english_usage")
+       for key in ("cache_creation_input_tokens", "cache_read_input_tokens")},
+
     # --- run_interpret is handed ONE program's entry, not the whole section ---
     # Since #651 (routed payload) and #666 (native canonical) the agent's target is
     # an analyzed_files entry. These optional reads exist only on the whole ghidra

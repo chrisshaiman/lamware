@@ -47,6 +47,8 @@ SRC = shape.formbook_shaped_source()
 FULL_INIT = build_dotnet_agentic_init(shape.dotnet_analysis(SRC), {}, [])
 FINAL_JSON = json.dumps({"malware_family_guess": "formbook",
                          "capabilities": ["loads a .NET assembly from bitmap pixels"]})
+# Every emitted usage carries both prompt-cache counts (#718); the stub reports none.
+NO_CACHE = {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
 CALLS = [
     ("tu_1", "get_method_source", {"class_name": "BattleForm", "method_name": "Ignite"}),
     ("tu_2", "search_source", {"pattern": '"Load"'}),
@@ -195,9 +197,9 @@ def test_the_final_carries_the_usage_of_every_turn(monkeypatch):
     assert final["analysis"]["malware_family_guess"] == "formbook"
     assert final["tool_calls_used"] == 2
     assert len(requests) == 3
-    assert final["usage"] == {"input_tokens": 30, "output_tokens": 15}
+    assert final["usage"] == {"input_tokens": 30, "output_tokens": 15, **NO_CACHE}
     turns = [e for e in emitted if e["type"] == "turn"]
-    assert len(turns) == 3 and all(t["usage"] == {"input_tokens": 10, "output_tokens": 5}
+    assert len(turns) == 3 and all(t["usage"] == {"input_tokens": 10, "output_tokens": 5, **NO_CACHE}
                                    for t in turns)
 
 
@@ -210,7 +212,7 @@ def test_force_final_on_the_dotnet_path_salvages_with_usage(monkeypatch):
     final = emitted[-1]
     assert final["type"] == "final" and "error" not in final["analysis"]
     assert final["tool_calls_used"] == 2
-    assert final["usage"] == {"input_tokens": 30, "output_tokens": 15}
+    assert final["usage"] == {"input_tokens": 30, "output_tokens": 15, **NO_CACHE}
     assert "tools" not in requests[-1], "the cloud forced final must not offer tools"
 
 
@@ -327,7 +329,7 @@ def test_the_orchestrator_serves_the_dotnet_tools_end_to_end(tmp_path):
     assert a["source_in_first_message"] is False
     assert a["first_message_chars"] < 0.2 * len(SRC)
     assert res["tool_calls_used"] == 1
-    assert res["usage"] == {"input_tokens": 200, "output_tokens": 14}
+    assert res["usage"] == {"input_tokens": 200, "output_tokens": 14, **NO_CACHE}
     log = json.loads((out / "llm_audit" / "tool_calls_dotnet.json").read_text())
     assert [e["tool"] for e in log] == ["get_method_source"]
     assert shape.LOAD_LINE_MARK in log[0]["result"]["source"]
@@ -351,7 +353,7 @@ def test_the_synthesis_reserve_reaches_a_dotnet_run(tmp_path):
     assert res["forced_final"]["reason"] == "synthesis_reserve"
     assert res["forced_final"]["answered"] is True
     assert res["analysis"]["malware_family_guess"] == "formbook"
-    assert res["usage"] == {"input_tokens": 200, "output_tokens": 14}
+    assert res["usage"] == {"input_tokens": 200, "output_tokens": 14, **NO_CACHE}
     assert json.loads((out / "llm_audit" / "tool_calls_dotnet.json").read_text()) == []
 
 

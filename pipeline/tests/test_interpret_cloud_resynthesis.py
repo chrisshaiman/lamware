@@ -177,11 +177,20 @@ def test_recovery_failure_keeps_the_original_analysis():
 def test_the_recovery_bills_its_tokens():
     """An unbilled retry looks free and would distort the cost comparison that
     decides whether production moves off Claude. Same reporting failure #299
-    fixed for the local synthesis leg."""
-    src = ast.unparse(_func("cloud_synthesize"))
-    assert "total_input_tokens" in src and "total_output_tokens" in src, (
-        "the recovery call must add its usage to the run totals")
-    assert "usage_from_response" in src
+    fixed for the local synthesis leg.
+
+    Structural, and the weaker of two guards: since #718 the run totals are one
+    dict accumulated by `add_usage`, and
+    test_usage_cache_tokens.py::test_the_cloud_recovery_call_is_billed_with_its_cache
+    drives this path and checks the emitted total. This pins the construct."""
+    billed = [
+        node for node in ast.walk(_func("cloud_synthesize"))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "add_usage"
+        and isinstance(node.args[0], ast.Name) and node.args[0].id == "totals"
+        and isinstance(node.args[1], ast.Call)
+        and getattr(node.args[1].func, "id", None) == "usage_from_response"
+    ]
+    assert billed, "the recovery call must add its usage to the run totals"
 
 
 def test_recovered_analyses_are_marked():
