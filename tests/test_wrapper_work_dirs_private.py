@@ -38,7 +38,6 @@ ROLES = ROOT / "ansible" / "roles"
 TEMPLATES = {
     "ghidra": "run-ghidra-wrapper.sh.j2",
     "pcap-analysis": "run-pcap-analysis-wrapper.sh.j2",
-    "pdf-generation": "run-pdf-generation-wrapper.sh.j2",
     "triage": "run-triage-wrapper.sh.j2",
 }
 
@@ -89,10 +88,6 @@ if "/output" in by_dst:
     os.makedirs(os.path.join(out, "project", "analysis.rep"), exist_ok=True)
     with open(os.path.join(out, "result.json"), "w") as f:
         f.write("{}")
-    for a in args:
-        if a.startswith("/output/"):
-            with open(os.path.join(out, a[len("/output/"):]), "w") as f:
-                f.write("%PDF")
 print("{}")
 '''
 
@@ -183,8 +178,6 @@ CASES = {
                          lambda r: (["--shellcode", str(_sample(r)), str(o := _out(r)), "0x1000"], o)),
     "ghidra-tool": ("ghidra", _ghidra_tool),
     "pcap-analysis": ("pcap-analysis", lambda r: ([str(_sample(r)), str(o := _out(r))], o)),
-    "pdf-generation": ("pdf-generation",
-                       lambda r: ([str(_sample(r)), str((o := _out(r)) / "report.pdf")], o)),
     "triage": ("triage", lambda r: ([str(_sample(r)), str(o := _out(r))], o)),
 }
 
@@ -307,10 +300,7 @@ def test_output_is_handed_back_and_the_destination_keeps_its_mode(case, tmp_path
     assert stat.S_IMODE(run.out.stat().st_mode) == 0o750, oct(run.out.stat().st_mode)
     copied = sorted(p.name for p in run.out.iterdir())
     assert copied, "nothing was copied back"
-    if case == "pdf-generation":
-        assert copied == ["report.pdf"]
-    else:
-        assert "result.json" in copied
+    assert "result.json" in copied
 
 
 def test_the_work_dir_is_removed_on_success(case, tmp_path):

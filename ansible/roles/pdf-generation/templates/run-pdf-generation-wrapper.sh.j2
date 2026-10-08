@@ -29,34 +29,15 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Container work dirs (#694). The container runs as 65534:65534 inside the
-# pipeline user's rootless userns: host subuid 200000 + 65534 - 1 = 265533
-# (/etc/subuid "pipeline:200000:65536"). It must WRITE the PDF and cannot write
-# a pipeline-owned dir. That used to be solved with `chmod a+rwx`, which let any
-# local user add or replace files in the dir while the job ran.
-#   - JOB_DIR is mktemp's private 0700 dir, owned by pipeline: no other local
-#     user can reach anything below it. The container never traverses it;
-#     podman bind-mounts the subdirs directly.
-#   - in/ is pipeline-owned 0755; the container's nobody reads via "other".
-#   - out/ is 0700 and chowned to the container's uid with `podman unshare`,
-#     so only that uid can write it; chowned back to namespace root (==
-#     pipeline) after the run so the copy can read it.
-#   - Cleanup uses `podman unshare rm`: files the container wrote are owned by
-#     the subuid, which the pipeline user cannot unlink directly.
-CONTAINER_UID=65534
-CONTAINER_GID=65534
-JOB_DIR=""
-cleanup() {
-    [ -n "$JOB_DIR" ] || return 0
-    podman unshare rm -rf "$JOB_DIR" 2>/dev/null || rm -rf "$JOB_DIR" 2>/dev/null || true
-}
-trap cleanup EXIT
-JOB_DIR="$(mktemp -d)"
-mkdir -m 0755 "$JOB_DIR/in"
-mkdir -m 0700 "$JOB_DIR/out"
-podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
-cp "$REPORT_PATH" "$JOB_DIR/in/$REPORT_NAME"
-chmod 644 "$JOB_DIR/in/$REPORT_NAME"
+# Copy report to temp dir with world-readable permissions
+# so the container's nobody user (65534) can read it.
+# Output also goes to the temp dir (nobody can't write to cape-owned dirs),
+# then we copy the PDF back to the real output dir after the container exits.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+chmod a+rwx "$WORK_DIR" 2>/dev/null || true
+cp "$REPORT_PATH" "$WORK_DIR/$REPORT_NAME"
+chmod 644 "$WORK_DIR/$REPORT_NAME"
 
 podman run --rm \
     --network=none \
@@ -68,18 +49,15 @@ podman run --rm \
     --timeout={{ pdf_generation_container_timeout }} \
     --tmpfs /tmp:size=100m \
     --tmpfs /nonexistent:size=10m \
-    --user "$CONTAINER_UID:$CONTAINER_GID" \
-    -v "$JOB_DIR/in:/report:ro" \
-    -v "$JOB_DIR/out:/output:rw" \
+    --user 65534:65534 \
+    -v "$WORK_DIR:/report:ro" \
+    -v "$WORK_DIR:/output:rw" \
     localhost/pdf-generation:latest \
     "/report/$REPORT_NAME" "/output/$OUTPUT_NAME"
 
-# Hand the container's output back to the pipeline user (namespace uid 0).
-podman unshare chown -R 0:0 "$JOB_DIR/out"
-
 # Copy PDF from temp dir to the real output location
-if [ -f "$JOB_DIR/out/$OUTPUT_NAME" ]; then
-    cp "$JOB_DIR/out/$OUTPUT_NAME" "$OUTPUT_DIR/$OUTPUT_NAME"
+if [ -f "$WORK_DIR/$OUTPUT_NAME" ]; then
+    cp "$WORK_DIR/$OUTPUT_NAME" "$OUTPUT_DIR/$OUTPUT_NAME"
     echo "PDF report written to: $OUTPUT_DIR/$OUTPUT_NAME"
 else
     echo "Error: PDF was not generated" >&2
