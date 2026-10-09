@@ -509,11 +509,23 @@ def test_the_models_risk_assessment_never_becomes_the_severity():
     programmatic verdict, the severity column stays NULL."""
     report = copy.deepcopy(BASE_REPORT)
     del report["severity"]
-    del report["executive_summary"]["severity"]
+    # Both model-written fields are left IN, set to a verdict. The previous
+    # version deleted executive_summary.severity first, so the fallback it was
+    # meant to catch never ran and the test passed either way.
+    report["executive_summary"]["severity"] = "critical"
     report["llm_interpretation"]["analysis"]["risk_assessment"] = "critical"
     run = run_ingest(report)
     text, params = next((t, p) for t, p in run.calls if t.startswith("INSERT INTO analyses"))
     assert params[_columns(text).index("severity")] is None
+
+
+def test_the_programmatic_severity_is_what_gets_stored():
+    report = copy.deepcopy(BASE_REPORT)
+    report["severity"] = "medium"
+    report["executive_summary"]["severity"] = "critical"
+    run = run_ingest(report)
+    text, params = next((t, p) for t, p in run.calls if t.startswith("INSERT INTO analyses"))
+    assert params[_columns(text).index("severity")] == "medium"
 
 
 def test_a_report_that_is_not_an_object_still_ingests():
