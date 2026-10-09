@@ -29,19 +29,68 @@
     mode: "0440"
     validate: "visudo -cf %s"
 
+# The code directory is root's. It was 2770 auto-feeder:lamware, so every lamware
+# member (pipeline, cape, lamware-api) could rename a file over auto-feeder.py,
+# drop a module that shadows an import (the script's directory is first on
+# sys.path), plant the state/lock/log names as symlinks the feeder then wrote
+# through, or write a .pyc into the group-writable __pycache__. The feeder is the
+# user with unrestricted egress and sudo to run-pipeline.
 - name: Create auto-feeder directory
   ansible.builtin.file:
     path: "{{ auto_feeder_install_dir }}"
     state: directory
+    owner: root
+    group: lamware
+    mode: "0750"
+
+- name: Remove the bytecode cache from the code directory
+  ansible.builtin.file:
+    path: "{{ auto_feeder_install_dir }}/__pycache__"
+    state: absent
+
+- name: Create the feeder's runtime directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
     owner: "{{ auto_feeder_user }}"
     group: lamware
-    mode: "2770"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ auto_feeder_run_dir }}", mode: "2750"}
+    - {path: "{{ auto_feeder_state_dir }}", mode: "2770"}
 
+- name: Move runtime files out of the code directory
+  ansible.builtin.command:
+    cmd: "mv -n {{ auto_feeder_install_dir }}/{{ item.name }} {{ item.dest }}/{{ item.name }}"
+    removes: "{{ auto_feeder_install_dir }}/{{ item.name }}"
+  loop:
+    - {name: state.json, dest: "{{ auto_feeder_state_dir }}"}
+    - {name: auto-feeder.log, dest: "{{ auto_feeder_run_dir }}"}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove runtime leftovers from the code directory
+  ansible.builtin.file:
+    path: "{{ auto_feeder_install_dir }}/{{ item }}"
+    state: absent
+  loop: [run.lock, state.json, auto-feeder.log]
+
+- name: Give the moved runtime files to the feeder
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ auto_feeder_user }}"
+    group: lamware
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ auto_feeder_state_dir }}/state.json", mode: "0664"}
+    - {path: "{{ auto_feeder_run_dir }}/auto-feeder.log", mode: "0640"}
+  failed_when: false   # absent on a fresh host; the feeder creates them
 - name: Deploy auto-feeder script
   ansible.builtin.template:
     src: auto-feeder.py.j2
     dest: "{{ auto_feeder_install_dir }}/auto-feeder.py"
-    owner: "{{ auto_feeder_user }}"
+    # Root's: the feeder reads and runs it, and cannot change it.
+    owner: root
     group: "{{ auto_feeder_user }}"
     mode: "0750"
   notify: Restart auto-feeder timer

@@ -70,7 +70,7 @@ def _read_network_monitor() -> dict | None:
 
 
 def _read_auto_feeder() -> dict | None:
-    """Read /opt/auto-feeder/state.json."""
+    """Read the auto-feeder's state.json (settings.auto_feeder_state)."""
     try:
         with open(settings.auto_feeder_state) as f:
             return json.load(f)

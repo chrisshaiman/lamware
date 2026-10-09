@@ -67,9 +67,13 @@ except Exception as _ntfy_err:  # noqa: BLE001 - see above
 # ---------------------------------------------------------------------------
 
 INSTALL_DIR = Path("{{ auto_feeder_install_dir }}")
-STATE_FILE = INSTALL_DIR / "state.json"
-LOCK_FILE = INSTALL_DIR / "run.lock"
-LOG_FILE = INSTALL_DIR / "auto-feeder.log"
+# Runtime files are kept out of the code directory, which is root's. The state
+# directory is group-writable (the API resets the failure counter), so state.json
+# is replaced atomically and never opened through a link; the lock and log live
+# where only the feeder writes.
+STATE_FILE = Path("{{ auto_feeder_state_dir }}") / "state.json"
+LOCK_FILE = Path("{{ auto_feeder_run_dir }}") / "run.lock"
+LOG_FILE = Path("{{ auto_feeder_run_dir }}") / "auto-feeder.log"
 
 # Read shared config from sample-feeder
 SAMPLE_FEEDER_CONFIG = Path("{{ sample_feeder_dir | default('/opt/sample-feeder') }}/config.json")
@@ -128,20 +132,36 @@ def load_state() -> dict:
         "today_samples": 0,
         "total_samples": 0,
     }
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE) as f:
-                state = json.load(f)
+    try:
+        fd = os.open(STATE_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd) as f:
+            state = json.load(f)
+        if isinstance(state, dict):
             defaults.update(state)
-        except (json.JSONDecodeError, OSError):
-            pass
+    except (json.JSONDecodeError, OSError):
+        pass
     return defaults
 
 
 def save_state(state: dict) -> None:
-    """Persist state to disk."""
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    """Persist state atomically: a new file renamed over the old one.
+
+    The state directory is group-writable, so the old `open(STATE_FILE, "w")`
+    followed a planted symlink and wrote, as the feeder, wherever it pointed.
+    Group lamware keeps rw (0664), because the API rewrites this file too.
+    """
+    fd, tmp = tempfile.mkstemp(prefix=".state.json.", dir=STATE_FILE.parent)
+    try:
+        os.fchmod(fd, 0o664)
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, STATE_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def load_seen_hashes() -> set:
@@ -495,7 +515,7 @@ def run_cycle() -> None:
 def main() -> None:
     """Acquire lock and run one cycle."""
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = open(LOCK_FILE, "w")
+    lock_fd = os.fdopen(os.open(LOCK_FILE, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o640), "w")
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

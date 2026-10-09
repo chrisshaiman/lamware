@@ -6,6 +6,11 @@ auto_feeder_enabled: false
 
 # Installation directory
 auto_feeder_install_dir: /opt/auto-feeder
+# Runtime files live in subdirectories, so the code directory itself is root's.
+# run/: the log and lock, written by the feeder only (2750).
+# state/: state.json, which the API also rewrites (2770). Nothing else is writable.
+auto_feeder_run_dir: "{{ auto_feeder_install_dir }}/run"
+auto_feeder_state_dir: "{{ auto_feeder_install_dir }}/state"
 
 # Cooldown between ingestion cycles (minutes)
 # Must be longer than a typical pipeline run (CAPE ~3min + analysis ~5min)
