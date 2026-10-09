@@ -31,3 +31,10 @@ cape_resultserver_port: 2042
 # inside the guest that evasive malware looks for; evtx exports logs Windows
 # already keeps.
 cape_capture_evtx: true
+
+# CAPE's database credentials (tasks/credentials.yml). The default is cape2.sh's
+# published one, named here only so the role can recognise it and replace it once.
+cape_db_user: cape
+cape_db_default_password: SuperPuperSecret
+# Root-only copies of anything the credential change overwrites (CLAUDE.md §5).
+cape_rollback_dir: /root/lamware-rollback/cape
