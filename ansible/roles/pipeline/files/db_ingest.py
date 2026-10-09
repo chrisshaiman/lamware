@@ -929,8 +929,12 @@ def ingest_to_db(report: dict, existing_analysis_id: int | None = None):
         # act on; a model-supplied one looks identical to a real verdict and is
         # trusted like one. The model's view is still stored on the analysis row
         # via the interpretation fields, so nothing is lost but the authority.
-        severity = (root.text("severity", None)
-                    or summary.text("severity", None))
+        #
+        # `executive_summary` is model output too (run_summarize writes it), so
+        # its `severity` is not a fallback either. It was, until 2026-10-09: on a
+        # replayed or legacy report with no top-level severity, the summary model
+        # set the verdict column.
+        severity = root.text("severity", None)
         family = (root.text("family", None)
                   or analysis.text("malware_family_guess", None))
         # model_final if the key is present (even as null), else model_initial —

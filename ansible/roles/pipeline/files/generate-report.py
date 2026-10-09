@@ -363,10 +363,9 @@ def render_header(report: dict) -> str:
     task_id = report.get("task_id", "unknown")
     started = report.get("started_at", "")
 
-    severity = (report.get("severity")
-                or report.get("executive_summary", {}).get("severity")
-                or report.get("llm_interpretation", {}).get("analysis", {}).get("risk_assessment")
-                or "unknown")
+    # Programmatic only, as in db_ingest: the executive summary and
+    # risk_assessment are model output and must not print as the verdict.
+    severity = report.get("severity") or "unknown"
 
     family = (report.get("family")
               or report.get("llm_interpretation", {}).get("analysis", {}).get("malware_family_guess")

@@ -137,7 +137,15 @@ def test_db_ingest_does_not_take_the_models_word_for_severity():
     """
     src = (ROOT / "ansible" / "roles" / "pipeline" / "files"
            / "db_ingest.py").read_text(encoding="utf-8")
-    idx = src.index("severity = (root.text(")
-    expr = src[idx:idx + 200]
+    # The whole assignment statement, however it is wrapped.
+    idx = src.index("        severity = ")
+    end = src.index("\n", idx)
+    while src[idx:end].count("(") > src[idx:end].count(")"):
+        end = src.index("\n", end + 1)
+    expr = src[idx:end]
+    assert "root.text(\"severity\"" in expr, expr
     assert "risk_assessment" not in expr, (
         f"db_ingest still falls back to the model's risk_assessment: {expr!r}")
+    # executive_summary is model output too (run_summarize), 2026-10-09.
+    assert "summary" not in expr, (
+        f"db_ingest still falls back to the model's executive summary: {expr!r}")
