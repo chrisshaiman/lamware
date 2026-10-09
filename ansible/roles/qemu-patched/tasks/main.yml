@@ -33,10 +33,22 @@
     groups: libvirt,kvm
     append: true
 
+# This role builds the patched emulator with CAPE's own installer, so it needs a
+# CAPE tree. It must NOT manage that tree on a host where CAPE is installed: the
+# live tree is upgraded by cape2.sh and carries local patches (one load-bearing:
+# without it every detonation completes with zero processes). `force: true` at a
+# pinned commit would reset it to that pin and drop them. So the clone, and the
+# git it needs, happen only when there is no tree yet.
+- name: Check whether a CAPEv2 tree is already installed
+  ansible.builtin.stat:
+    path: "{{ cape_install_dir }}/.git"
+  register: qemu_patched_cape_tree
+
 - name: Install git
   ansible.builtin.apt:
     name: git
     state: present
+  when: not qemu_patched_cape_tree.stat.exists
 
 - name: Create CAPEv2 install directory
   ansible.builtin.file:
@@ -50,12 +62,14 @@
   ansible.builtin.git:
     repo: https://github.com/kevoreilly/CAPEv2.git
     dest: "{{ cape_install_dir }}"
-    # Pinned 2026-04-19. force: true needed because cape2.sh modifies repo files.
+    # Pinned 2026-04-19, for a FRESH host only. force: true needed because
+    # cape2.sh modifies repo files. Never run against an installed tree (above).
     version: aa66fbd329052408a9599cf954a5cf72d8b1d61d
     depth: 1
     force: true
   become: true
   become_user: "{{ cape_user }}"
+  when: not qemu_patched_cape_tree.stat.exists
 
 - name: Ensure cape owns its install directory
   ansible.builtin.file:
@@ -257,12 +271,50 @@
     dest: /usr/share/qemu/efi-e1000.rom
     state: link
 
-- name: Install patched QEMU binary (after apt reinstall to avoid overwrite)
+# Installed from the preserved copy (#308), never from kvm-qemu.sh's build
+# directory. That directory is a fixed name in the shared /tmp, it is gone after
+# the one-time build, and any local user can create it again — the next run of
+# this role would then install their file as the hypervisor. The preserved copy
+# is root's; it is checked before it is trusted, as cape's restore-qemu does (#703).
+- name: Read the preserved patched emulator
+  ansible.builtin.stat:
+    path: "{{ qemu_patched_preserved_path }}"
+    checksum_algorithm: sha256
+    follow: false
+  register: qemu_patched_preserved_bin
+
+- name: Read the distro-path emulator
+  ansible.builtin.stat:
+    path: /usr/bin/qemu-system-x86_64
+    checksum_algorithm: sha256
+    follow: false
+  register: qemu_patched_distro_bin
+
+- name: Refuse a preserved emulator that is missing or not root's alone
+  ansible.builtin.assert:
+    that:
+      - qemu_patched_preserved_bin.stat.exists
+      - qemu_patched_preserved_bin.stat.isreg
+      - not qemu_patched_preserved_bin.stat.islnk
+      - qemu_patched_preserved_bin.stat.pw_name == 'root'
+      - not qemu_patched_preserved_bin.stat.wgrp
+      - not qemu_patched_preserved_bin.stat.woth
+    fail_msg: >-
+      {{ qemu_patched_preserved_path }} is missing, or is not a regular file that
+      only root can write, so it will not be installed as the hypervisor. Delete
+      /opt/.cape-kvm-qemu-installed and re-run this role to rebuild.
+
+- name: Install patched QEMU binary from the preserved copy (after apt reinstall)
   ansible.builtin.copy:
-    src: /tmp/qemu-9.2.2_builded/usr/bin/qemu-system-x86_64
+    src: "{{ qemu_patched_preserved_path }}"
     dest: /usr/bin/qemu-system-x86_64
-    mode: "0755"
     remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: >-
+    not qemu_patched_distro_bin.stat.exists
+    or qemu_patched_distro_bin.stat.checksum != qemu_patched_preserved_bin.stat.checksum
 
 - name: Restart libvirtd to pick up patched QEMU machine types
   ansible.builtin.systemd:
