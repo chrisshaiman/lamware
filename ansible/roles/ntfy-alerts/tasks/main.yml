@@ -131,18 +131,14 @@
   loop:
     - lamware-notify-relay.service
     - lamware-notify-relay.path
-  register: ntfy_relay_units
-
-- name: Reload systemd for the relay units
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: ntfy_relay_units is changed
 
 - name: Enable and start the relay trigger
   ansible.builtin.systemd:
     name: lamware-notify-relay.path
     enabled: true
     state: started
+    # Unconditional and cheap: picks up a changed .service/.path on every run.
+    daemon_reload: true
 
 # -------------------------------------------------------------------------
 # Digest scheduling
