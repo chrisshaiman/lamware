@@ -76,9 +76,7 @@ async def feeder_pause(
     iteration and skips processing while it exists.
     """
     try:
-        # touch — open for writing without truncating (creates if absent)
-        with open(settings.pause_file, "a"):
-            os.utime(settings.pause_file, None)
+        _touch_nofollow(settings.pause_file)
     except OSError as exc:
         raise HTTPException(
             status_code=500,
@@ -123,8 +121,7 @@ async def feeder_resume(
     trigger_path = settings.pause_file + ".trigger"
     kicked = False
     try:
-        with open(trigger_path, "w") as f:
-            f.write("")
+        _touch_nofollow(trigger_path)
         kicked = True
     except OSError as exc:
         log.warning("Could not create trigger file: %s", exc)
@@ -160,6 +157,29 @@ async def feeder_reset(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _touch_nofollow(path: str) -> None:
+    """Create `path` if absent and update its mtime, without following a link.
+
+    The control directory (/opt/pipeline/control) is group-writable by every
+    lamware member and not sticky, so any of them can plant PAUSE or
+    PAUSE.trigger as a symlink. A plain open() followed it: pause opened the
+    link's target for append, and resume opened the trigger's target with "w",
+    TRUNCATING whatever file the API can write. Same class as #537, which fixed
+    _update_state below but not these two.
+
+    O_NOFOLLOW makes a symlink fail with ELOOP instead of being followed;
+    O_NONBLOCK stops a planted FIFO from hanging the request; no O_TRUNC; and
+    anything that is not a regular file is refused. Raises OSError.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o640)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"refusing non-regular file at {path}")
+        os.utime(fd)
+    finally:
+        os.close(fd)
 
 
 def _read_state() -> dict | None:
