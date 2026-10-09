@@ -88,6 +88,12 @@ if "/output" in by_dst:
     os.makedirs(os.path.join(out, "project", "analysis.rep"), exist_ok=True)
     with open(os.path.join(out, "result.json"), "w") as f:
         f.write("{}")
+    # A compromised analyser's parting gifts (H1): links and a FIFO.
+    if os.environ.get("STUB_PLANT"):
+        victim = os.environ["STUB_PLANT"]
+        os.symlink(victim, os.path.join(out, "evil.json"))
+        os.symlink(os.path.dirname(victim), os.path.join(out, "evildir"))
+        os.mkfifo(os.path.join(out, "pipe"))
 print("{}")
 '''
 
@@ -182,7 +188,8 @@ CASES = {
 }
 
 
-def _execute(case: str, root: Path, *, fail: bool = False, kill: signal.Signals | None = None) -> Run:
+def _execute(case: str, root: Path, *, fail: bool = False, kill: signal.Signals | None = None,
+             plant: Path | None = None, pre_link: Path | None = None) -> Run:
     role, build = CASES[case]
     stubs = root / "bin"
     stubs.mkdir()
@@ -207,6 +214,11 @@ def _execute(case: str, root: Path, *, fail: bool = False, kill: signal.Signals 
     }
     if fail:
         env["STUB_FAIL"] = "1"
+    if plant is not None:
+        env["STUB_PLANT"] = str(plant)
+    if pre_link is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "result.json").symlink_to(pre_link)
     if kill is None:
         proc = subprocess.run([str(wrapper), *argv], env=env, capture_output=True,
                               text=True, timeout=60)
@@ -348,3 +360,39 @@ def test_cleanup_runs_inside_the_userns(case, tmp_path):
     job = next(p for p in run.run_call["tree"] if Path(p).parent == run.tmp)
     assert any(c["call"] == "unshare" and c["argv"][:2] == ["rm", "-rf"]
                and c["argv"][-1] == job for c in run.calls), run.calls
+
+
+# --- H1: container output never carries a link into the report dir ------------
+
+def _victim(root: Path) -> Path:
+    d = root / "outside"
+    d.mkdir()
+    v = d / "victim"
+    v.write_text("untouched")
+    return v
+
+
+def test_links_and_fifos_in_container_output_are_not_handed_back(case, tmp_path):
+    if case == "ghidra-tool":
+        pytest.skip("tool mode answers on stdout and hands no files back")
+    victim = _victim(tmp_path)
+    run = _execute(case, tmp_path, plant=victim)
+    assert run.returncode == 0, run.proc.stderr
+    names = {p.name for p in run.out.iterdir()}
+    assert not names & {"evil.json", "evildir", "pipe"}, names
+    for p in run.out.rglob("*"):
+        assert not p.is_symlink(), f"link handed back: {p}"
+    assert victim.read_text() == "untouched"
+    assert "dropped non-regular output entry" in run.proc.stderr
+
+
+def test_a_link_already_at_the_destination_is_replaced_not_written_through(case, tmp_path):
+    if case == "ghidra-tool":
+        pytest.skip("tool mode answers on stdout and hands no files back")
+    victim = _victim(tmp_path)
+    run = _execute(case, tmp_path, pre_link=victim)
+    assert run.returncode == 0, run.proc.stderr
+    assert victim.read_text() == "untouched"
+    dest = run.out / "result.json"
+    if dest.exists() or dest.is_symlink():
+        assert not dest.is_symlink(), "result.json is still the planted link"

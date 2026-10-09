@@ -113,3 +113,32 @@ def test_the_buffer_bytes_are_still_extracted_correctly(tmp_path):
 ])
 def test_parse_size_handles_capes_inconsistent_formats(raw, expected):
     assert _parse_size(raw) == expected
+
+
+# --- the bytes are the sample's: never written through a planted link (H1) ----
+
+def test_a_linked_injection_directory_is_refused_and_its_target_untouched(tmp_path):
+    """cape_injections planted as a link (report dirs are group-writable, and
+    containers hand output back into them) must not receive the buffer."""
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (report_dir / "cape_injections").symlink_to(elsewhere)
+    out = extract_injection_buffers(_report(BUF32, "32"), report_dir)
+    assert out == []
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_a_linked_buffer_file_is_replaced_not_written_through(tmp_path):
+    report_dir = tmp_path / "report"
+    (report_dir / "cape_injections").mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"untouched")
+    name = "inject_1000_to_4242_at_400000.bin"
+    (report_dir / "cape_injections" / name).symlink_to(victim)
+    out = extract_injection_buffers(_report(BUF32, "32"), report_dir)
+    assert victim.read_bytes() == b"untouched"
+    written = report_dir / "cape_injections" / name
+    assert not written.is_symlink() and written.read_bytes() == bytes(range(32))
+    assert out and str(out[0]["path"]) == str(written)

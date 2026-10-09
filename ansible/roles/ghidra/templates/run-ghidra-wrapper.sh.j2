@@ -54,11 +54,19 @@ collect_output() {
     # this, cp silently copied an empty project (analysis.rep with no data/)
     # and agentic Ghidra tools failed with "Project data directory not found".
     podman unshare chown -R 0:0 "$JOB_DIR/out"
+    # Container output is untrusted: a compromised analyser can leave symlinks (or
+    # FIFOs, devices) in it, and `cp -a` copies a link AS a link into the report
+    # dir, where the pipeline later writes through it. Only regular files and
+    # directories are handed back; anything else is deleted and named on stderr.
+    find "$JOB_DIR/out" -mindepth 1 ! -type f ! -type d -print -delete \
+        | sed 's/^/run-ghidra: dropped non-regular output entry: /' >&2
     # Entry by entry. NOT `cp -a out/. "$1"/`: copying "." stamps the work
     # dir's own mode onto the destination, which made it 0777 while the work
     # dir was a+rwx (#694) and would now make it 0700, hiding it from the
-    # lamware group. Do NOT silence the copy — a failure means lost output.
-    if ! find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 -exec cp -a -t "$1"/ {} +; then
+    # lamware group. --remove-destination: a link already AT the destination
+    # (report dirs are group-writable) is replaced, not written through. Do NOT
+    # silence the copy — a failure means lost output.
+    if ! find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 -exec cp -a --remove-destination -t "$1"/ {} +; then
         echo "Error: failed to copy Ghidra output to $1" >&2
     fi
 }
