@@ -1,0 +1,17 @@
+# Managed by Ansible (ntfy-alerts role). Delivers alerts queued by pipeline-uid
+# processes, which cannot reach ntfy themselves (#729). Started by
+# lamware-notify-relay.path; see ntfy_relay.py.
+[Unit]
+Description=lamware alert relay (drop box -> ntfy)
+
+[Service]
+Type=oneshot
+User={{ ntfy_user }}
+Group={{ ntfy_user }}
+ExecStart=/usr/bin/python3 {{ ntfy_install_dir }}/ntfy_relay.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ ntfy_dropbox_dir }}
+TimeoutStartSec=120

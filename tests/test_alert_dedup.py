@@ -74,8 +74,8 @@ def test_every_alert_key_is_unique():
     # Count is a drift guard: a new alert site should make someone confirm its
     # key is distinct, since a collision silently suppresses the older alert.
     # 8 through #379; cape_storage added by #385; sample_exposure by #392;
-    # cape_machines by #451; inetsim_dns by #464.
-    assert len(keys) == 12, f"expected 12 alert sites, found {len(keys)}: {keys}"
+    # cape_machines by #451; inetsim_dns by #464; proc_notify by #729.
+    assert len(keys) == 13, f"expected 13 alert sites, found {len(keys)}: {keys}"
     assert len(set(keys)) == len(keys), f"duplicate alert keys: {keys}"
 
 

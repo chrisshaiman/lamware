@@ -22,3 +22,18 @@ ntfy_digest_enabled: true
 # entries, or the orphan comes back on the next fresh host.
 ntfy_digest_former_cron_users:
   - cape
+  - pipeline
+
+# Alert delivery runs as its own user (#729). The pipeline user has no DNS and
+# no egress except loopback :5432/:8000, so every alert it sent itself — the
+# daily digest (cron) and the spool runner's quarantine alerts — failed with a
+# name-resolution error, into a log nobody reads, from the egress lockdown on.
+# This user is outside that lockdown and is the only one that talks to ntfy.
+ntfy_user: lamware-notify
+# Pipeline-uid processes hand alerts over as DATA: a file in this directory,
+# which a path unit delivers as ntfy_user. Mode 1730 ntfy_user:pipeline —
+# pipeline can create files but not list, read or delete anyone else's.
+ntfy_dropbox_dir: /var/spool/lamware-notify
+# A compromised pipeline can only submit alert text; these bound how much.
+ntfy_relay_max_per_run: 20
+ntfy_relay_max_bytes: 16384

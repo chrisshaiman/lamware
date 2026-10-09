@@ -13,7 +13,7 @@ path unit hit its trigger limit and every later upload silently never started.
 
 These tests EXECUTE the rendered runner against a temporary spool, with a fake
 run-pipeline that exits 0, exits 1, is SIGKILLed, or is still running when the
-unit is stopped, and a fake ntfy_notify.py that records what it was asked to
+unit is stopped, and a fake ntfy_enqueue.py that records what it was asked to
 send. Nothing here greps the script for the word `mv`.
 """
 import json
@@ -76,7 +76,8 @@ class Spool:
         self.sent.write_text("")
         ntfy = tmp / "ntfy"
         ntfy.mkdir()
-        (ntfy / "ntfy_notify.py").write_text(
+        # The runner queues through ntfy_enqueue.py (#729); same CLI.
+        (ntfy / "ntfy_enqueue.py").write_text(
             "import sys, json\n"
             f"open({str(self.sent)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n")
         fake = tmp / "run-pipeline"

@@ -1,0 +1,12 @@
+# Managed by Ansible (ntfy-alerts role). Fires the relay when a queued alert
+# exists. Matches `alert-*.json` only: in-progress `.alert-*` files and
+# `.rejected-*` files never trigger it, so nothing can make it loop.
+[Unit]
+Description=lamware alert relay trigger
+
+[Path]
+PathExistsGlob={{ ntfy_dropbox_dir }}/alert-*.json
+Unit=lamware-notify-relay.service
+
+[Install]
+WantedBy=multi-user.target
