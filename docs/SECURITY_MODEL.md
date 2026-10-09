@@ -45,7 +45,7 @@ Every analysis tool runs in a **rootless** Podman container with:
 - All binary data wrapped in `UNTRUSTED_DATA` / `UNTRUSTED_CODE` delimiters, with delimiter-escape and newline neutralisation on adversary-controlled fields
 - LLM output is informational only — never modifies verdicts or triggers actions (`pin_finding` returns *proposed* only; a separate analyst-confirmed step is required to persist anything)
 - **Pipeline interpret stage:** regex-whitelist validation of arguments for the six Ghidra tools before they reach the decompiler (tools outside that set fall through to the caller's own checks), plus post-processing detection for prompt-influence keywords
-- **Investigation agent:** the primary boundary is containment — Ghidra/sandbox tools run with no network, read-only, all capabilities dropped, and only ever return data to the analyst (no action or verdict side effects). *(Arg-shape validation at the agent's tool-dispatch boundary is a tracked hardening follow-up.)*
+- **Investigation agent:** the primary boundary is containment — Ghidra/sandbox tools run with no network, read-only, all capabilities dropped, and only ever return data to the analyst (no action or verdict side effects). Tool arguments are also validated against each tool's schema at the dispatch boundary (`validate_tool_args`, `api/app/investigate/tools.py`) before any tool runs.
 - Full audit logging of prompts and responses
 - Triage/Cape/Volatility determine maliciousness — AI explains *how*, not *whether*
 
@@ -53,7 +53,7 @@ Every analysis tool runs in a **rootless** Podman container with:
 
 - `rehype-sanitize` on all markdown rendering (LLM narratives contain malware-derived content)
 - CORS restricted to explicit methods and headers (no wildcards)
-- API key authentication on all REST and WebSocket endpoints
+- Keycloak-issued JWTs (RS256), validated against Keycloak's JWKS, on all REST and WebSocket endpoints. The earlier API-key scheme is gone (`test_api_key_no_longer_accepted`)
 - `npm audit` in CI for frontend dependency vulnerabilities
 
 **Development security (CI gates on every PR):**
