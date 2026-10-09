@@ -34,6 +34,10 @@ from ntfy_notify import defang_ioc, send_alert
 # Configuration
 # ---------------------------------------------------------------------------
 
+# Group lamware (setgid dir) may read what this writes; /api/alerts serves
+# latest-digest.json. Nobody else may (#729 moved the digest off pipeline).
+os.umask(0o027)
+
 INSTALL_DIR = Path("{{ ntfy_install_dir }}")
 DIGEST_FILE = INSTALL_DIR / "latest-digest.json"
 

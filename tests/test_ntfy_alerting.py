@@ -138,9 +138,13 @@ def test_the_module_group_matches_the_directory():
         "exists to make it reachable")
 
 
-def test_the_digest_script_is_reachable_too():
-    assert _task("Deploy daily digest script")["ansible.builtin.template"]["group"] \
-        == "lamware"
+def test_the_digest_script_is_readable_only_by_the_user_that_runs_it():
+    """#729 moved the digest to the notify user. It carries the DB password and
+    the LiteLLM key, and nobody else runs it, so it is owner-only now; it was
+    group lamware, which made both readable by every member of that group."""
+    t = _task("Deploy daily digest script")["ansible.builtin.template"]
+    assert t["owner"] == t["group"] == "{{ ntfy_user }}"
+    assert t["mode"] == "0700"
 
 
 def test_the_import_guard_catches_more_than_ImportError():

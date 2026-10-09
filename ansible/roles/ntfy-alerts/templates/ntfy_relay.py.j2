@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""
+ntfy_relay.py — deliver alerts queued by pipeline-uid processes (#729).
+
+Runs as {{ ntfy_user }} from lamware-notify-relay.service, which a path unit
+starts whenever `alert-*.json` exists in the drop box. Everything in the drop
+box was written by the pipeline user, which handles hostile samples, so each
+file is treated as untrusted DATA: opened without following links, size-capped,
+parsed as JSON, and reduced to a title, a message, an allowlisted priority and
+a tag string. It is never executed or interpreted further, and send_alert
+defangs both strings before they reach a phone.
+
+Every queued file is removed after one attempt, delivered or not. Leaving a
+failed one in place would re-trigger the path unit in a loop; the failure is
+logged here instead (journalctl -u lamware-notify-relay). A file that is not a
+well-formed alert is renamed to `.rejected-*`, out of the glob, for the same
+reason.
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import json
+import os
+import re
+import stat
+import sys
+
+sys.path.insert(0, "{{ ntfy_install_dir }}")
+from ntfy_notify import send_alert  # noqa: E402
+
+DROPBOX = "{{ ntfy_dropbox_dir }}"
+MAX_PER_RUN = {{ ntfy_relay_max_per_run | int }}
+MAX_BYTES = {{ ntfy_relay_max_bytes | int }}
+PRIORITIES = {"urgent", "high", "default", "low", "min"}
+TITLE_MAX = 120
+MESSAGE_MAX = 2000
+
+_NAME = re.compile(r"^alert-[0-9]{1,24}-[0-9]{1,10}\.json$")
+_TAGS = re.compile(r"^[a-z0-9_,-]{0,64}$")
+
+
+def log(msg: str) -> None:
+    print(f"lamware-notify-relay: {msg}", file=sys.stderr, flush=True)
+
+
+def read_alert(path: str) -> dict | None:
+    """The alert in `path`, or None if it is not a well-formed one."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None          # a symlink (ELOOP), or gone
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
+            return None
+        raw = os.read(fd, MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title, message = data.get("title"), data.get("message")
+    if not isinstance(title, str) or not isinstance(message, str):
+        return None
+    priority = data.get("priority")
+    tags = data.get("tags")
+    return {
+        "title": title[:TITLE_MAX],
+        "message": message[:MESSAGE_MAX],
+        "priority": priority if priority in PRIORITIES else "default",
+        "tags": tags if isinstance(tags, str) and _TAGS.match(tags) else "",
+    }
+
+
+def _set_aside(dropbox: str, name: str) -> None:
+    try:
+        os.rename(os.path.join(dropbox, name), os.path.join(dropbox, f".rejected-{name}"))
+    except OSError as e:
+        log(f"could not set aside {name!r}: {e}")
+
+
+def _remove(dropbox: str, name: str) -> None:
+    try:
+        os.unlink(os.path.join(dropbox, name))
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        # Not a regular file we can unlink (e.g. a directory): move it out of
+        # the glob so the path unit does not fire on it forever.
+        log(f"could not remove {name!r}: {e}")
+        _set_aside(dropbox, name)
+
+
+def run(dropbox: str = DROPBOX, send=send_alert) -> dict:
+    names = sorted(n for n in os.listdir(dropbox) if n.startswith("alert-"))
+    counts = {"sent": 0, "failed": 0, "rejected": 0, "dropped": 0}
+    for i, name in enumerate(names):
+        if not _NAME.match(name):
+            _set_aside(dropbox, name)
+            counts["rejected"] += 1
+            continue
+        if i >= MAX_PER_RUN:
+            _remove(dropbox, name)
+            counts["dropped"] += 1
+            continue
+        alert = read_alert(os.path.join(dropbox, name))
+        if alert is None:
+            _set_aside(dropbox, name)
+            counts["rejected"] += 1
+            continue
+        ok = send(alert["title"], alert["message"],
+                  priority=alert["priority"], tags=alert["tags"])
+        _remove(dropbox, name)
+        if ok:
+            counts["sent"] += 1
+        else:
+            counts["failed"] += 1
+            log(f"NOT DELIVERED: {name} title={alert['title']!r}")
+    if counts["dropped"]:
+        send("Alerts dropped",
+             f"{counts['dropped']} queued alert(s) dropped: more than "
+             f"{MAX_PER_RUN} arrived at once.", priority="high", tags="warning")
+    log(json.dumps(counts))
+    return counts
+
+
+if __name__ == "__main__":
+    c = run()
+    sys.exit(1 if c["failed"] else 0)

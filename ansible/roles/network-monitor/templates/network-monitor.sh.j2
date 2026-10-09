@@ -482,13 +482,7 @@ pipeline_patterns=(
     '*/run-pipeline /tmp/*'
     # Feeders (auto-feeder delegates via sudo)
     'python3 /opt/sample-feeder/sample_feeder.py*'
-    # Cron jobs
-    # Templated like the alert call sites (#350): these are the ALLOWLIST, so a
-    # stale path fails in the opposite direction — the digest keeps running and
-    # starts being reported as an unexpected process, which is a false alarm on
-    # the one report a human is meant to trust.
-    'python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/daily-digest.py*'
-    '/bin/sh -c *ntfy-alerts*'
+    # Cron jobs. (The daily digest moved to the notify user, #729.)
     '/opt/pipeline/cleanup.sh*'
     '/bin/sh -c *pipeline*'
     '/opt/pipeline/venv/bin/python* /opt/pipeline/generate-report.py*'
@@ -576,6 +570,22 @@ if [ -n "$autofeeder_unexpected" ]; then
     autofeeder_process_status="warning"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected auto-feeder processes: $autofeeder_unexpected"
     queue_alert proc_autofeeder "Unexpected Processes" "auto-feeder user: $autofeeder_unexpected" --priority high --tags warning
+fi
+
+# --- notify user: alert delivery (#729) ---
+# Templated like the alert call sites (#350): these are the ALLOWLIST, so a
+# stale path fails in the opposite direction — the digest keeps running and
+# starts being reported as an unexpected process, which is a false alarm on
+# the one report a human is meant to trust.
+notify_patterns=(
+    'python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/daily-digest.py*'
+    '/bin/sh -c *ntfy-alerts*'
+    '/usr/bin/python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_relay.py*'
+)
+notify_unexpected=$(check_user_processes "{{ ntfy_user | default('lamware-notify') }}" "${notify_patterns[@]}")
+if [ -n "$notify_unexpected" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: Unexpected notify-user processes: $notify_unexpected"
+    queue_alert proc_notify "Unexpected Processes" "{{ ntfy_user | default('lamware-notify') }} user: $notify_unexpected" --priority high --tags warning
 fi
 
 # --- lamware-api user: only uvicorn ---

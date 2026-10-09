@@ -30,7 +30,9 @@ set -uo pipefail
 SPOOL="{{ api_spool_dir | default('/opt/pipeline/spool') }}"
 FAILED="{{ api_spool_failed_dir | default('/opt/pipeline/spool-failed') }}"
 PIPELINE_CMD="{{ pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
-NTFY="{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_notify.py"
+# Queued, not sent: this runs as pipeline, which has no DNS or egress, so a
+# direct ntfy call could never succeed (#729). The relay delivers it.
+NTFY="{{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_enqueue.py"
 TAIL_LINES=60
 # Captured output of the run in progress. On disk under the pipeline-only
 # quarantine directory rather than in /run (tmpfs, RAM-backed) because a full
@@ -52,10 +54,10 @@ trap 'stopping=1' TERM INT HUP
 log() { printf 'pipeline-spool: %s\n' "$*" >&2; }
 
 alert() {
-    # $1 title, $2 message, $3 priority. ntfy_notify exits 1 when alerts are
-    # disabled; that is not an error here, the log line above is still written.
+    # $1 title, $2 message, $3 priority. ntfy_enqueue exits 1 only when it
+    # could not queue the alert; delivery is logged by the relay unit.
     timeout 30 python3 "$NTFY" "$1" "$2" --priority "$3" --tags warning \
-        >/dev/null 2>&1 || log "ntfy alert not delivered (title=$1)"
+        >/dev/null 2>&1 || log "ntfy alert not queued (title=$1)"
 }
 
 # What an alert may say about a sample. The spool name is

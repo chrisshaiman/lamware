@@ -6,19 +6,56 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 
+# Alert delivery runs as its own user (#729). Every sender that ran as
+# `pipeline` — the daily digest and the spool runner — failed after the pipeline
+# egress lockdown (no DNS, no route to ntfy). This user is outside it.
+- name: Create the alert delivery user
+  ansible.builtin.user:
+    name: "{{ ntfy_user }}"
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+# setgid so files the digest writes (latest-digest.json, which /api/alerts
+# serves) are group lamware without the notify user joining that group.
 - name: Create ntfy-alerts directory
   ansible.builtin.file:
     path: "{{ ntfy_install_dir }}"
     state: directory
-    owner: pipeline
+    owner: "{{ ntfy_user }}"
     group: lamware
-    mode: "0750"
+    mode: "2750"
+
+# The directory used to be pipeline-owned, so its bytecode cache is too. Python
+# loads a cached .pyc whose recorded source mtime and size match without
+# re-reading the source, so a pipeline-writable cache in a directory the notify
+# user imports from would let pipeline run code as the notify user, which has
+# egress. Removed when it is not the notify user's; it regenerates.
+- name: Check who owns the module bytecode cache
+  ansible.builtin.stat:
+    path: "{{ ntfy_install_dir }}/__pycache__"
+  register: ntfy_pycache
+
+- name: Remove a bytecode cache the notify user does not own
+  ansible.builtin.file:
+    path: "{{ ntfy_install_dir }}/__pycache__"
+    state: absent
+  when: ntfy_pycache.stat.exists and ntfy_pycache.stat.pw_name != ntfy_user
+
+- name: Hand the digest's existing output files to the notify user
+  ansible.builtin.file:
+    path: "{{ ntfy_install_dir }}/{{ item }}"
+    owner: "{{ ntfy_user }}"
+    group: lamware
+    mode: "0640"
+  loop: [digest.log, digest.err, latest-digest.json]
+  failed_when: false   # absent on a fresh host; the digest creates them
 
 - name: Deploy ntfy notification module
   ansible.builtin.template:
     src: ntfy_notify.py.j2
     dest: "{{ ntfy_install_dir }}/ntfy_notify.py"
-    owner: pipeline
+    owner: "{{ ntfy_user }}"
     # group lamware, matching the DIRECTORY, not pipeline (#347). auto-feeder
     # runs as its own user and is in lamware; with group pipeline it could
     # traverse the directory and not read the module. It has been importing
@@ -34,18 +71,78 @@
   # below; not no_log, for the same reason.
   diff: false
 
+# Owner-only: only the notify user runs it, and it carries the DB password and
+# the LiteLLM key. It used to be group lamware, readable by every member.
 - name: Deploy daily digest script
   ansible.builtin.template:
     src: daily-digest.py.j2
     dest: "{{ ntfy_install_dir }}/daily-digest.py"
-    owner: pipeline
-    group: lamware
-    mode: "0750"
+    owner: "{{ ntfy_user }}"
+    group: "{{ ntfy_user }}"
+    mode: "0700"
   # Suppresses the rendered body under --diff, which would otherwise print
   # litellm_master_key. NOT no_log: that also censors failure messages, so a
   # firing `| mandatory` would report "censored" instead of naming the missing
   # variable — the opaque-guard problem #238 exists to fix.
   diff: false
+
+# -------------------------------------------------------------------------
+# Relay for alerts raised by pipeline-uid processes (#729)
+#
+# The spool runner runs as pipeline and cannot reach ntfy. It hands the alert
+# over as a file (ntfy_enqueue.py); a path unit delivers it as the notify user
+# (ntfy_relay.py). Pipeline gains no code execution and no network: it can only
+# submit alert text, which the relay size-caps, rate-limits and defangs.
+# -------------------------------------------------------------------------
+
+- name: Create the alert drop box
+  # 1730 notify:pipeline — pipeline can create files (w+x) but not list, read,
+  # or (sticky) delete anyone else's; nobody else can enter.
+  ansible.builtin.file:
+    path: "{{ ntfy_dropbox_dir }}"
+    state: directory
+    owner: "{{ ntfy_user }}"
+    group: pipeline
+    mode: "1730"
+
+- name: Deploy the alert enqueue script (run by pipeline-uid callers)
+  ansible.builtin.template:
+    src: ntfy_enqueue.py.j2
+    dest: "{{ ntfy_install_dir }}/ntfy_enqueue.py"
+    owner: "{{ ntfy_user }}"
+    group: lamware
+    mode: "0750"
+
+- name: Deploy the alert relay
+  ansible.builtin.template:
+    src: ntfy_relay.py.j2
+    dest: "{{ ntfy_install_dir }}/ntfy_relay.py"
+    owner: "{{ ntfy_user }}"
+    group: "{{ ntfy_user }}"
+    mode: "0700"
+
+- name: Deploy the alert relay units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - lamware-notify-relay.service
+    - lamware-notify-relay.path
+  register: ntfy_relay_units
+
+- name: Reload systemd for the relay units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: ntfy_relay_units is changed
+
+- name: Enable and start the relay trigger
+  ansible.builtin.systemd:
+    name: lamware-notify-relay.path
+    enabled: true
+    state: started
 
 # -------------------------------------------------------------------------
 # Digest scheduling
@@ -64,7 +161,7 @@
     name: "lamware daily digest"
     hour: "{{ ntfy_digest_hour }}"
     minute: "0"
-    user: pipeline
+    user: "{{ ntfy_user }}"
     # No `cd`: the script resolves INSTALL_DIR absolutely and every write is an
     # absolute path, so the previous `cd /tmp` implied a dependency that does
     # not exist (#353). Worse, it put a world-writable directory first on
@@ -82,7 +179,7 @@
 - name: Remove daily digest cron if disabled
   ansible.builtin.cron:
     name: "lamware daily digest"
-    user: pipeline
+    user: "{{ ntfy_user }}"
     state: absent
   when: not (ntfy_digest_enabled | bool)
 

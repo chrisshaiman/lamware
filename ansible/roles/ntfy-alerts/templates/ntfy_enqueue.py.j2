@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""
+ntfy_enqueue.py — hand an alert to the lamware-notify relay (#729).
+
+For callers that run as the pipeline user, which has no DNS and no egress and
+so cannot reach ntfy itself. The alert is written as a JSON file into the drop
+box; a path unit delivers it as {{ ntfy_user }}, through ntfy_notify.send_alert
+(which defangs). Same command line as ntfy_notify.py:
+
+  python3 ntfy_enqueue.py "title" "message" --priority high --tags warning
+
+Exit 0 when the alert was queued, 1 when it could not be. Queued is not
+delivered: delivery failures are logged by lamware-notify-relay.service.
+
+This file is managed by Ansible. Do not edit manually.
+
+Author: Christopher Shaiman
+License: Apache 2.0
+"""
+import argparse
+import json
+import os
+import sys
+import tempfile
+import time
+
+DROPBOX = "{{ ntfy_dropbox_dir }}"
+PRIORITIES = ("urgent", "high", "default", "low", "min")
+
+
+def enqueue(title: str, message: str, priority: str = "default", tags: str = "",
+            dropbox: str = DROPBOX) -> str:
+    """Write one alert into the drop box atomically; return its path.
+
+    Written under a dot-name and renamed into place, so the relay (which only
+    reads `alert-*.json`) never sees a half-written file.
+    """
+    body = json.dumps({"title": title, "message": message, "priority": priority,
+                       "tags": tags, "queued_at": time.time()})
+    fd, tmp = tempfile.mkstemp(prefix=".alert-", dir=dropbox)
+    try:
+        # The relay is a different user. The drop box (1730, no access for
+        # others) is what keeps everyone else out, so the file itself may be
+        # world-readable; the caller's umask 077 would make it unreadable.
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(body)
+        final = os.path.join(dropbox, f"alert-{time.time_ns()}-{os.getpid()}.json")
+        os.rename(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return final
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Queue an ntfy notification")
+    parser.add_argument("title")
+    parser.add_argument("message")
+    parser.add_argument("--priority", default="default", choices=PRIORITIES)
+    parser.add_argument("--tags", default="")
+    parser.add_argument("--click", default="", help="accepted for CLI parity; ignored")
+    args = parser.parse_args()
+    try:
+        enqueue(args.title, args.message, priority=args.priority, tags=args.tags)
+    except OSError as e:
+        print(f"ntfy_enqueue: could not queue alert: {e}", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
