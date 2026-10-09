@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     # Filesystem paths used by routers
     reports_dir: str = "/opt/pipeline/reports"
     network_monitor_status: str = "/opt/network-monitor/status.json"
-    auto_feeder_state: str = "/opt/auto-feeder/state.json"
-    auto_feeder_log: str = "/opt/auto-feeder/auto-feeder.log"
+    auto_feeder_state: str = "/opt/auto-feeder/state/state.json"
+    auto_feeder_log: str = "/opt/auto-feeder/run/auto-feeder.log"
     pause_file: str = "/opt/pipeline/control/PAUSE"
     digest_file: str = "/opt/ntfy-alerts/latest-digest.json"
     pipeline_cmd: str = "/usr/local/bin/run-pipeline"
