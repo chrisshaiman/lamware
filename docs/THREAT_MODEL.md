@@ -83,8 +83,12 @@ WireGuard private key, or authenticate to Keycloak.
 - The detonation bridge `virbr-det` has **no route** to the management interface (internet, named
   by `management_interface` — `enp3s0f0` here, not literally `eth0`) or
   `wg0` (management VPN), enforced by iptables `FORWARD … -j DROP` rules at the
-  hypervisor, set before any ACCEPT rule. Guest-level containment is *not*
-  relied upon.
+  hypervisor, inserted at the top of FORWARD when the networking role runs.
+  Nothing yet keeps rules inserted later (by CAPE's rooter, or the container
+  network) below them. network-monitor checks that the DROPs exist and that no
+  ACCEPT for the same bridge and interface precedes them (it does not inspect
+  jumps into other chains); replacing the deny-list with a default-deny is #603. Guest-level
+  containment is *not* relied upon.
 - INetSim answers guest network requests locally, so C2 callbacks are logged
   without any real outbound packet.
 - A successful guest escape lands on a stripped-down host with no cloud
@@ -98,9 +102,12 @@ WireGuard private key, or authenticate to Keycloak.
 pipeline user or host.
 
 - Every analysis container runs `--network=none --read-only --cap-drop=ALL
-  --security-opt=no-new-privileges --user 65534:65534`, mounting only the one
-  file it needs. No network namespace, no writable root, no capabilities, no
-  privilege escalation.
+  --security-opt=no-new-privileges`, as an unprivileged user (`--user
+  65534:65534`, or the image's `USER` for the Python sandbox). Volatility is the
+  exception and runs as the image default; that is #339. Mounts are limited to
+  what the job reads and writes: its inputs and its output directory. No network
+  namespace, no writable root, no capabilities, no privilege escalation.
+  `tests/test_container_flag_parity.py` checks the flags on every `podman run`.
 - Containers are rootless Podman under a dedicated `pipeline` service user,
   separate from `cape`, the API user, and root.
 - That separation is a *privilege* boundary, not a data one. `pipeline` and
@@ -174,29 +181,32 @@ exfiltrate, or misuse tools.
 *Threat:* an unauthenticated party submits samples, reads results, or exploits
 the API.
 
-The edge is deliberately split. Stating it plainly, because the previous wording
-implied the whole control plane was WireGuard-only and it is not (#529):
+Since #600/#604 the whole control plane is WireGuard-only. nginx no longer listens on
+the public address for TLS at all; its only public listener is plain HTTP on port 80,
+which serves ACME HTTP-01 challenges and redirects everything else to HTTPS. (The OVH
+firewall rule that opened 443 for the old public listener is still there; removing it
+is #529.)
 
-| Path | Public 443 | WireGuard |
+| Path | Public | WireGuard |
 |---|---|---|
-| SPA, `/api/`, `/ws/` | yes — **intentional** | yes |
-| `/auth/` (Keycloak login) | yes | yes |
+| SPA, `/api/`, `/ws/` | **no** | yes |
+| `/auth/` (Keycloak login) | **no** | yes |
 | `/auth/admin/` (Keycloak admin console) | **no** | yes |
 | `/docs`, `/redoc`, `/openapi.json` | **no** | yes |
 | Cape UI/API (`:8000`) | never bound publicly | yes |
+| `/.well-known/acme-challenge/` (port 80) | yes, ACME only | yes |
 
 - Cape's UI/API bind to the WireGuard address only. This is the load-bearing
   reason WireGuard still exists: Cape v2's web interface is not a hardened
   internet-facing application, and it can submit samples, read every analysis,
   and reach the detonation infrastructure. Nothing else stands in front of it.
-- The admin console and the OpenAPI documents are restricted to the WireGuard
-  subnet by `allow`/`deny` in the nginx site config. Both listeners share one
-  `server` block, so the split is per-location on `$remote_addr`.
-- The public SPA is protected by Keycloak (PKCE S256, brute-force lockout after
-  5 failures with a 900 s cap), nginx `limit_req`, and the `keycloak-auth`
-  fail2ban jail. Those are all **in the request path**; WireGuard is not, which
-  is what makes it worth keeping as a second, independent layer on the paths
-  above.
+- The admin console and the OpenAPI documents keep their `allow`/`deny`
+  restriction to the WireGuard subnet in the nginx site config, as defence in
+  depth now that the public TLS listener is gone.
+- Behind WireGuard, the SPA is still protected by Keycloak (PKCE S256,
+  brute-force lockout after 5 failures with a 900 s cap), nginx `limit_req`, and
+  the `keycloak-auth` fail2ban jail, so a WireGuard peer is not automatically an
+  authenticated user.
 - SSH does not depend on WireGuard — it listens on `0.0.0.0:22` and is
   restricted to `admin_cidrs` at the OVH robot firewall.
 - The web app authenticates via Keycloak using the OAuth2 **PKCE** flow.
