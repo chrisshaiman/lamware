@@ -1881,7 +1881,17 @@ def main():
             # sentence that reads as a finding rather than an outage.
             log.info(f"  Triage:     FAILED — {report.get('error', 'unknown')}")
         else:
-            log.info(f"  Triage:     {yara_count} YARA matches")
+            ys = triage.get("yara_status") or {}
+            if ys and not ys.get("compiled"):
+                # "0 YARA matches" from zero loaded rules read as a finding for
+                # five months (#736). Say that YARA did not run.
+                log.warning(f"  Triage:     YARA DID NOT RUN — {ys.get('error') or 'no rules compiled'}")
+            elif ys.get("error"):
+                log.warning(f"  Triage:     {yara_count} YARA matches from a PARTIAL rule set "
+                            f"({ys['compiled']} rules) — {ys['error']}")
+            else:
+                rules = f" ({ys['compiled']} rules)" if ys.get("compiled") else ""
+                log.info(f"  Triage:     {yara_count} YARA matches{rules}")
         log.info(f"  Cape:       {cape_status}")
         log.info(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
         log.info(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")

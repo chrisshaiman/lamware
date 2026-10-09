@@ -27,6 +27,20 @@
   loop:
     - "{{ triage_install_dir }}"
     - "{{ triage_output_dir }}"
+
+# The rules are bind-mounted into a container running as --user 65534, which is
+# host uid 265533: neither pipeline nor in lamware. At 0750 the container got
+# EACCES on /rules and run_yara returned no matches without saying why, from
+# 2026-05-09 until #736. The rule sets are public, so "other" may read them;
+# only pipeline may write.
+- name: Create the YARA rules directories, readable by the container
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0755"
+  loop:
     - "{{ triage_rules_dir }}"
     - "{{ triage_rules_dir }}/custom"
 
@@ -66,7 +80,7 @@
     state: directory
     owner: pipeline
     group: lamware
-    mode: "0750"
+    mode: "0755"
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
@@ -102,6 +116,18 @@
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
+
+- name: Make every rule readable by the container user (#736)
+  # Unpacked and older files keep whatever mode they were created with (git's
+  # 0660/0770 from the old clone). Symbolic X: directories get traverse,
+  # files do not become executable. Reports changed only when a mode moves.
+  ansible.builtin.file:
+    path: "{{ triage_rules_dir }}"
+    state: directory
+    recurse: true
+    mode: "u=rwX,g=rX,o=rX"
+  become: true
+  become_user: pipeline
 
 - name: Remove the YARA rule archives
   ansible.builtin.file:
@@ -181,7 +207,7 @@
 - name: Smoke test triage container
   ansible.builtin.shell: |
     echo 'test' > /tmp/triage-test-sample.txt
-    {{ triage_install_dir }}/run-triage /tmp/triage-test-sample.txt /tmp/triage-test-output 2>&1
+    {{ triage_install_dir }}/run-triage /tmp/triage-test-sample.txt /tmp/triage-test-output
     rm -f /tmp/triage-test-sample.txt
     rm -rf /tmp/triage-test-output
   args:
@@ -190,4 +216,9 @@
   become_user: pipeline
   changed_when: false
   register: triage_smoke_test
-  failed_when: "'triage' not in triage_smoke_test.stdout"
+  # Not just "it printed something": the container must have loaded the rules.
+  # A run that compiled none still printed a valid report for five months (#736).
+  failed_when: >-
+    triage_smoke_test.rc != 0
+    or (triage_smoke_test.stdout | from_json).triage.yara_status.compiled | int
+       < triage_yara_min_compiled | int
