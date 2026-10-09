@@ -109,26 +109,51 @@ def section_entropies(path: Path) -> list[dict]:
     return sections
 
 
-def run_yara(path: Path, rules_dir: str = "/rules") -> list[dict]:
-    """Scan file against all YARA rules in the rules directory."""
-    matches = []
+def run_yara(path: Path, rules_dir: str = "/rules") -> tuple[list[dict], dict]:
+    """Scan file against all YARA rules in the rules directory.
+
+    Returns (matches, status). `status` says how many rule files were found and
+    compiled, and why none were. Every way of getting no matches used to look
+    the same: a missing dir, an UNREADABLE dir (rglob yields nothing on
+    EACCES) and a rule that fails to compile all returned [] silently. YARA
+    matched nothing from 2026-05-09 to 2026-10-08 because the container could
+    not read /rules, and every report said "0 YARA matches" (#736).
+    """
+    matches: list[dict] = []
+    status: dict = {"rules_dir": rules_dir, "rule_files": 0, "compiled": 0,
+                    "compile_errors": 0, "error": None}
     rules_path = Path(rules_dir)
     if not rules_path.exists():
-        return matches
-    for rule_file in sorted(rules_path.rglob("*.yar")) + sorted(rules_path.rglob("*.yara")):
+        status["error"] = f"rules dir not found: {rules_dir}"
+        return matches, status
+    walk_errors: list[str] = []
+    rule_files: list[Path] = []
+    for root, _dirs, files in os.walk(rules_path, onerror=lambda e: walk_errors.append(str(e))):
+        rule_files += [Path(root) / f for f in files if f.endswith((".yar", ".yara"))]
+    rule_files.sort()
+    status["rule_files"] = len(rule_files)
+    if walk_errors:
+        status["error"] = f"{len(walk_errors)} unreadable dir(s), first: {walk_errors[0]}"
+    for rule_file in rule_files:
         try:
             rules = yara.compile(filepath=str(rule_file))
-            for match in rules.match(str(path)):
-                source = rule_file.parent.name or "unknown"
-                matches.append({
-                    "rule": match.rule,
-                    "source": source,
-                    "tags": list(match.tags),
-                    "meta": {k: str(v) for k, v in match.meta.items()},
-                })
         except yara.Error:
+            # Expected for some community rules (modules this build lacks, such
+            # as androguard/cuckoo); counted so a wholesale failure is visible.
+            status["compile_errors"] += 1
             continue
-    return matches
+        status["compiled"] += 1
+        for match in rules.match(str(path)):
+            matches.append({
+                "rule": match.rule,
+                "source": rule_file.parent.name or "unknown",
+                "tags": list(match.tags),
+                "meta": {k: str(v) for k, v in match.meta.items()},
+            })
+    if status["compiled"] == 0 and status["error"] is None:
+        status["error"] = (f"no rule compiled ({status['rule_files']} file(s), "
+                           f"{status['compile_errors']} compile error(s))")
+    return matches, status
 
 
 def run_ssdeep(path: Path) -> str:
@@ -231,7 +256,7 @@ def main():
     sections = section_entropies(sample_path)
     compile_ts = pe_compile_timestamp(sample_path)
     fuzzy_hash = run_ssdeep(sample_path)
-    yara_matches = run_yara(sample_path)
+    yara_matches, yara_status = run_yara(sample_path)
     floss_result = run_floss(sample_path)
     routing_tags = derive_routing_tags(file_type, yara_matches)
 
@@ -246,6 +271,7 @@ def main():
             "pe_compile_timestamp": compile_ts,
             "sections": sections,
             "yara_matches": yara_matches,
+            "yara_status": yara_status,
             "floss": floss_result,
             "routing_tags_added": routing_tags,
         }

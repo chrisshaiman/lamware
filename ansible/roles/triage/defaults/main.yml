@@ -33,3 +33,8 @@ triage_yara_repos:
     url: https://github.com/reversinglabs/reversinglabs-yara-rules/archive/e0a0be54aa1e11ccfd6854e4f19e9476f328fd84.tar.gz
     sha256: 0fd2319ed56875772fe843e542520ca4c84e91c72857ed1ac3274a8685ebb4a3
     dest: reversinglabs
+
+# The deploy's smoke test fails below this many compiled rule files. Measured
+# 2026-10-08 with the pinned rule sets: 904 files, 846 compile; the 58 that do
+# not use modules this YARA build lacks (androguard, cuckoo).
+triage_yara_min_compiled: 800
