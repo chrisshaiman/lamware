@@ -28,6 +28,7 @@ these describe an AWS data plane that no longer exists.
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
+| [023](#adr-023-image-builds-are-hermetic--ansible-fetches-every-build-input-as-root-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: Ansible fetches inputs, `podman build` has no network | Proposed |
 
 ### Detonation environment
 
@@ -1051,3 +1052,92 @@ So the rule already held everywhere except the agentic .NET tools.
   a format parser; an exception needs a written reason in its allowlist.
 - New tools — for the pipeline agent or the analyst agent — follow the same rule: if a
   tool interprets sample bytes, it runs in a sandbox, brokered.
+
+---
+
+## ADR-023: Image builds are hermetic — Ansible fetches every build input as root, pinned and checksummed; `podman build` runs with no network
+
+**Status:** Proposed (2026-10-08)
+**Refs:** #728 (pdf-generation image stale since 2026-05-17), #725 (triage YARA), #344
+**Extends:** the 2026-08-08 rule that third-party *source* is fetched by the role with
+`get_url` + checksum and `COPY`ed in (`tests/test_container_build_pinning.py`). That rule
+never covered package managers. This decides them.
+
+### Decision
+
+1. **Nothing inside a Containerfile reaches the network.** `podman build` runs with
+   `--network=none`. No `pip install` from an index, no `apt-get update/install` from a
+   mirror, no `curl`/`wget`/`git clone`, no `dotnet tool install` from NuGet.
+2. **Ansible fetches every input as root, before the build, into the build context**, and
+   verifies each one:
+   - **Python:** a wheelhouse from `pip download --require-hashes --only-binary=:all:`
+     (target `cp312` / `manylinux`, matching the image) against a hash-locked
+     `requirements.lock`. The Containerfile installs `--no-index --find-links` with
+     `--require-hashes`.
+   - **Debian packages:** resolved and fetched with `apt-get install --download-only` in a
+     throwaway root-run container of the *same pinned base image*, versions recorded in
+     the role. Installed offline in the build (`apt-get install ./*.deb`). apt's signed
+     Release chain verifies them at download.
+   - **Source archives, tools, NuGet packages:** `get_url` with `checksum: sha256:…`, as
+     today.
+   - **Base images:** pinned by digest (`FROM …@sha256:…`), pulled as root and loaded into
+     the pipeline user's image store. Moving a base image is a deliberate change to the
+     digest, not a side effect of a tag moving or of a cache being cleared.
+3. **A stale image fails the deploy.** Each image carries a label with a hash of its build
+   context. After the build, the deploy compares the label of the image the wrappers will
+   run against the context it just shipped, and fails on a mismatch, rather than reporting
+   `changed` for a build that kept an old image.
+
+Downloads run code from nobody: `pip download --only-binary` and `apt-get --download-only`
+execute no package scripts. Installation, which does, happens in the build, which has no
+network. A compromised upstream package therefore runs with nothing to talk to.
+
+### Context: what was observed
+
+- **The pdf-generation image is from 2026-05-17.** Its build is `--no-cache`, so it runs
+  `pip install weasyprint` on every deploy, as the pipeline user, which has no DNS since the
+  egress lockdown (#343). No build has succeeded since: the deploy on 2026-10-08 failed at
+  that step with `Temporary failure in name resolution`. The image's `generate-report.py`
+  differs from the repo's, and six later report-generator commits, including the
+  header-hash fix (302c05a), never reached a PDF.
+- **Triage's YARA step could not succeed** for the same reason: the rules were
+  `git clone`d as pipeline, on a host with no git, and were last fetched 2026-05-17. #725
+  fixed that one with pinned, checksummed archives, the pattern this ADR generalises.
+- **12 of 14 image roles install packages at build time.** Only go-analysis and
+  python-sandbox do not. Six roles build `--no-cache`, so their package steps run on every
+  deploy; the other eight reuse cached layers for them. Either way, a package step that
+  runs depends on network access the build user is not meant to have, and a new host or
+  a cleared cache runs all of them.
+- **Base images are pulled once and never refreshed.** Tags float upstream; nothing here
+  moves them.
+
+The surface looked healthy throughout: a build task reports `changed`, the old image keeps
+running, and nothing compares what runs with what the repo says should run.
+
+### Alternatives considered
+
+- **Give the pipeline user network for builds.** Rejected. Pipeline's lack of DNS and
+  egress is the containment for everything that touches a sample. Weakening it for build
+  convenience trades the property the host exists to have.
+- **A dedicated build user with egress, images handed to pipeline with `podman save` /
+  `load`.** Simpler: the Containerfiles barely change. Rejected as the default because it
+  runs every upstream install script *with* network on the analysis host at deploy time,
+  and the inputs stay implicit in the build log instead of visible and checksummed in the
+  role. Kept as the fallback for a role whose dependencies cannot be resolved offline,
+  recorded per role with the reason.
+- **Build images off-host (CI or the controller) and ship them.** Deferred, not rejected.
+  It moves the build off the analysis host entirely, but needs a registry or artifact
+  transfer and a reproducibility story this repo does not have yet.
+
+### Consequences
+
+- One PR per role group, pdf-generation first: it serves stale code today, and its
+  wrapper change from #725 waits on `fix/pdf-generation-offline-build`. Then the other
+  `--no-cache` roles, then the cached ones.
+- `tests/test_container_build_pinning.py` widens from source fetches to package managers,
+  with a `MIGRATION_PENDING` list that must shrink, and a check that every `podman build`
+  task passes `--network=none`.
+- Builds get slower to change: adding a Python dependency means regenerating a hash-locked
+  lockfile. That is the point. The analysis toolchain decides what an analysis sees.
+- Not solved here: whether the *running* analysis containers' images are the ones the repo
+  describes is what decision 3 makes checkable; it does not by itself rebuild anything.
