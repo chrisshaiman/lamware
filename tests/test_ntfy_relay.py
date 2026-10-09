@@ -219,9 +219,10 @@ def test_the_relay_runs_as_the_notify_user_and_can_write_only_the_drop_box():
 
 
 def test_no_pipeline_owned_sender_is_left():
-    """The cron and every deployed file belong to the notify user now."""
-    cron = _task("Install daily digest cron job")["ansible.builtin.cron"]
-    assert cron["user"] == "{{ ntfy_user }}"
+    """The digest's schedule and every deployed file belong to the notify user."""
+    cp = configparser.ConfigParser()
+    cp.read_string(_render("lamware-digest.service.j2"))
+    assert cp["Service"]["User"] == DEFAULTS["ntfy_user"]
     assert "pipeline" in DEFAULTS["ntfy_digest_former_cron_users"], (
         "the pipeline crontab entry must be removed, or it keeps firing and failing")
     for name in ("Deploy ntfy notification module", "Deploy daily digest script",

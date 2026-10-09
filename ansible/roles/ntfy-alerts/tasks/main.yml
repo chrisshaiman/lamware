@@ -150,33 +150,36 @@
 # notifications" silently also meant "the dashboard stops updating", with no
 # error and no staleness indicator. send_alert already no-ops when disabled, so
 # the digest still generates and the push simply does not happen.
+#
+# A systemd timer, not cron (#729): the notify user is not in /etc/cron.allow,
+# which every hardening run rewrites, and has no reason to own a crontab.
 # -------------------------------------------------------------------------
 
-- name: Install daily digest cron job
-  ansible.builtin.cron:
-    name: "lamware daily digest"
-    hour: "{{ ntfy_digest_hour }}"
-    minute: "0"
-    user: "{{ ntfy_user }}"
-    # No `cd`: the script resolves INSTALL_DIR absolutely and every write is an
-    # absolute path, so the previous `cd /tmp` implied a dependency that does
-    # not exist (#353). Worse, it put a world-writable directory first on
-    # sys.path for anything the script imports — the same shadowing that broke
-    # an eval run in #371.
-    #
-    # No `>> digest.log` either: the script's RotatingFileHandler already owns
-    # that file. Redirecting stdout into it as well duplicated every line and
-    # raced the handler's rollover, with the shell holding an append offset
-    # into a file being renamed underneath it. stderr still goes to a separate
-    # file so a crash before logging is set up is not lost.
-    job: "python3 {{ ntfy_install_dir }}/daily-digest.py 2>> {{ ntfy_install_dir }}/digest.err"
+- name: Deploy the daily digest units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - lamware-digest.service
+    - lamware-digest.timer
+
+- name: Schedule the daily digest
+  ansible.builtin.systemd:
+    name: lamware-digest.timer
+    enabled: true
+    state: started
+    daemon_reload: true
   when: ntfy_digest_enabled | bool
 
-- name: Remove daily digest cron if disabled
-  ansible.builtin.cron:
-    name: "lamware daily digest"
-    user: "{{ ntfy_user }}"
-    state: absent
+- name: Unschedule the daily digest if disabled
+  ansible.builtin.systemd:
+    name: lamware-digest.timer
+    enabled: false
+    state: stopped
+    daemon_reload: true
   when: not (ntfy_digest_enabled | bool)
 
 # -------------------------------------------------------------------------
@@ -201,18 +204,20 @@
     state: absent
   loop: "{{ ntfy_digest_former_cron_users }}"
 
-- name: Assert exactly one crontab still schedules the digest
+- name: Assert no crontab schedules the digest, and the timer matches the setting
   # The removal above only covers owners we thought to name. This checks the
-  # outcome instead of trusting the list: a job that changed hands again would
-  # otherwise be silently rescheduled twice, which is precisely how #348 hid.
+  # outcome instead of trusting the list: a job left in any crontab would run
+  # alongside the timer, which is precisely how #348 hid.
   ansible.builtin.shell: |
     set -o pipefail
-    grep -l "daily-digest.py" /var/spool/cron/crontabs/* 2>/dev/null | wc -l
+    n=$(grep -l "daily-digest.py" /var/spool/cron/crontabs/* 2>/dev/null | wc -l)
+    t=$(systemctl is-enabled lamware-digest.timer 2>/dev/null || true)
+    echo "$n $t"
   args:
     executable: /bin/bash
-  register: ntfy_digest_crontab_count
+  register: ntfy_digest_schedule
   changed_when: false
   failed_when: >
-    (ntfy_digest_enabled | bool and ntfy_digest_crontab_count.stdout | trim | int != 1)
-    or (not (ntfy_digest_enabled | bool)
-        and ntfy_digest_crontab_count.stdout | trim | int != 0)
+    (ntfy_digest_schedule.stdout.split() | first | int) != 0
+    or ((ntfy_digest_enabled | bool)
+        != ((ntfy_digest_schedule.stdout.split() | last) == 'enabled'))

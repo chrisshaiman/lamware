@@ -1,0 +1,12 @@
+# Managed by Ansible (ntfy-alerts role). Schedules lamware-digest.service.
+[Unit]
+Description=lamware daily digest schedule
+
+[Timer]
+OnCalendar=*-*-* {{ '%02d' | format(ntfy_digest_hour | int) }}:00:00
+# Not Persistent: a missed digest is not replayed at boot, as with cron.
+Persistent=false
+Unit=lamware-digest.service
+
+[Install]
+WantedBy=timers.target

@@ -19,6 +19,7 @@ not alerting, or alerting when told not to:
         notifications also froze the dashboard.
   #353  doubled log lines, an optional DB password, an inert `cd /tmp`.
 """
+import configparser
 import re
 from pathlib import Path
 
@@ -168,11 +169,11 @@ def test_the_module_template_suppresses_diff():
 # #351 — the dashboard must not depend on push notifications
 # ---------------------------------------------------------------------------
 
-def test_the_digest_cron_is_gated_on_the_digest_setting_alone():
+def test_the_digest_schedule_is_gated_on_the_digest_setting_alone():
     """ntfy_enabled is a DELIVERY setting; latest-digest.json is generated DATA
     the dashboard reads. send_alert already no-ops when disabled."""
-    install = _task("Install daily digest cron")
-    remove = _task("Remove daily digest cron")
+    install = _task("Schedule the daily digest")
+    remove = _task("Unschedule the daily digest if disabled")
     assert "ntfy_enabled" not in install["when"], (
         f"digest generation still coupled to push delivery: {install['when']!r}")
     assert "ntfy_digest_enabled" in install["when"]
@@ -197,9 +198,10 @@ def test_former_cron_owners_are_cleaned_up():
 def test_the_outcome_is_asserted_not_just_the_removal_list():
     """The list only covers owners someone thought to name. A job that changed
     hands again would be scheduled twice, silently — which is how #348 hid."""
-    t = _task("Assert exactly one crontab")
+    t = _task("Assert no crontab schedules the digest, and the timer matches the setting")
     assert t.get("changed_when") is False
     assert "daily-digest.py" in t["ansible.builtin.shell"]
+    assert "lamware-digest.timer" in t["ansible.builtin.shell"]
     assert "failed_when" in t
 
 
@@ -258,20 +260,31 @@ def test_logging_has_exactly_one_writer_for_digest_log():
     code = _code_only(DIGEST_T)
     assert "RotatingFileHandler" in code
     assert "StreamHandler" not in code
-    job = _task("Install daily digest cron")["ansible.builtin.cron"]["job"]
-    assert ">> " not in job.replace("2>> ", ""), (
-        f"cron still redirects stdout into the handler's file: {job!r}")
+    svc = _digest_unit()["Service"]
+    assert svc["StandardOutput"] == "null", (
+        f"stdout must not be appended into the handler's file: {svc['StandardOutput']!r}")
+    assert "digest.log" not in svc["StandardError"]
 
 
-def test_the_cron_does_not_cd_into_a_world_writable_directory():
+def test_the_digest_does_not_run_from_a_world_writable_directory():
     """`cd /tmp` was inert for path resolution and actively harmful for imports:
     it puts a world-writable directory first on sys.path (#371)."""
-    job = _task("Install daily digest cron")["ansible.builtin.cron"]["job"]
-    assert "cd /tmp" not in job, f"still cds into /tmp: {job!r}"
+    svc = _digest_unit()["Service"]
+    assert "WorkingDirectory" not in svc, f"runs from {svc.get('WorkingDirectory')!r}"
+    assert svc["ExecStart"].split()[1].startswith("/opt/"), svc["ExecStart"]
 
 
 def test_stderr_is_still_captured_somewhere():
     """Dropping the redirect must not mean losing a crash that happens before
     logging is configured."""
-    job = _task("Install daily digest cron")["ansible.builtin.cron"]["job"]
-    assert "2>>" in job or "2>" in job, f"stderr goes nowhere: {job!r}"
+    svc = _digest_unit()["Service"]
+    assert svc["StandardError"] == "append:/opt/ntfy-alerts/digest.err", (
+        f"stderr goes nowhere useful: {svc.get('StandardError')!r}")
+
+
+def _digest_unit() -> configparser.ConfigParser:
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read_string(jinja2.Template(
+        (NTFY / "templates" / "lamware-digest.service.j2").read_text()).render(
+            ntfy_user="lamware-notify", ntfy_install_dir="/opt/ntfy-alerts"))
+    return cp

@@ -1,0 +1,23 @@
+# Managed by Ansible (ntfy-alerts role). The daily digest, as the notify user
+# (#729). A systemd timer rather than cron: /etc/cron.allow is rewritten by
+# every hardening run, and the notify user has no reason to own a crontab.
+[Unit]
+Description=lamware daily digest
+
+[Service]
+Type=oneshot
+User={{ ntfy_user }}
+Group={{ ntfy_user }}
+# Absolute path, no WorkingDirectory: a `cd /tmp` put a world-writable
+# directory first on sys.path (#353, #371).
+ExecStart=/usr/bin/python3 {{ ntfy_install_dir }}/daily-digest.py
+# The script's RotatingFileHandler is the only writer of digest.log. stderr is
+# kept separately so a crash before logging is configured is not lost (#353).
+StandardOutput=null
+StandardError=append:{{ ntfy_install_dir }}/digest.err
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ ntfy_install_dir }}
+TimeoutStartSec=900

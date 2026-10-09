@@ -578,8 +578,8 @@ fi
 # starts being reported as an unexpected process, which is a false alarm on
 # the one report a human is meant to trust.
 notify_patterns=(
-    'python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/daily-digest.py*'
-    '/bin/sh -c *ntfy-alerts*'
+    # Both run from systemd units (lamware-digest, lamware-notify-relay).
+    '/usr/bin/python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/daily-digest.py*'
     '/usr/bin/python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_relay.py*'
 )
 notify_unexpected=$(check_user_processes "{{ ntfy_user | default('lamware-notify') }}" "${notify_patterns[@]}")
