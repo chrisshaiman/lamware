@@ -482,7 +482,8 @@
     /etc/poetry/venv/bin/poetry run python3 manage.py shell -c "
     from django.contrib.auth.models import User
     if not User.objects.filter(username='{{ cape_user }}').exists():
-        User.objects.create_superuser('{{ cape_user }}', '{{ cape_user }}@localhost', '{{ cape_user }}')
+        # password=None: unusable. Nothing logs in with this account; the API uses its token.
+        User.objects.create_superuser('{{ cape_user }}', '{{ cape_user }}@localhost', None)
         print('created')
     else:
         print('exists')
@@ -493,6 +494,11 @@
   become_user: "{{ cape_user }}"
   register: cape_django_user
   changed_when: "'created' in cape_django_user.stdout"
+
+# The installer's two known-value credentials: the superuser's password and the
+# cape Postgres role's. See credentials.yml for why each is handled as it is.
+- name: Replace CAPE's default credentials
+  ansible.builtin.include_tasks: credentials.yml
 
 - name: Generate Cape API token
   ansible.builtin.shell: |
