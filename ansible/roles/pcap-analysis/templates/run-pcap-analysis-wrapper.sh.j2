@@ -78,9 +78,16 @@ podman run --rm \
 # Hand the container's output back to the pipeline user (namespace uid 0).
 podman unshare chown -R 0:0 "$JOB_DIR/out"
 
+# Container output is untrusted: a compromised analyser can leave symlinks (or
+# FIFOs, devices) in it, and `cp -a` copies a link AS a link into the report
+# dir, where the pipeline later writes through it. Only regular files and
+# directories are handed back; anything else is deleted and named on stderr.
+find "$JOB_DIR/out" -mindepth 1 ! -type f ! -type d -print -delete \
+    | sed 's/^/run-pcap-analysis: dropped non-regular output entry: /' >&2
+
 # Copy results back to the real output directory, entry by entry. NOT
 # `cp -a out/. "$OUTPUT_DIR"/`: copying "." stamps the work dir's own mode onto
 # OUTPUT_DIR, which made it 0777 while the work dir was a+rwx (#694) and would
 # now make it 0700, hiding it from the lamware group.
 find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 \
-    -exec cp -a -t "$OUTPUT_DIR"/ {} + 2>/dev/null || true
+    -exec cp -a --remove-destination -t "$OUTPUT_DIR"/ {} + 2>/dev/null || true

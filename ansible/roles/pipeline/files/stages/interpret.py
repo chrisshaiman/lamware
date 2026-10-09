@@ -13,7 +13,6 @@ License: Apache 2.0
 """
 
 import json
-import os
 import queue
 import re
 import subprocess
@@ -21,6 +20,7 @@ import threading
 import time
 from pathlib import Path
 
+from lamware_shared import safe_write
 from lamware_shared.tool_validators import GHIDRA_ARG_VALIDATORS, validate_ghidra_args
 
 from stages.dotnet_agentic import broker_from_payload
@@ -283,8 +283,12 @@ class TurnTrail:
     # nothing in the record distinguished that from loop time.
     _SYNTHESIS_MARKERS = ("requesting final analysis", "Hit max tool calls")
 
-    def __init__(self, path: Path, started: float) -> None:
+    def __init__(self, path: Path, started: float, root: Path | None = None) -> None:
         self.path = path
+        # The trusted directory the trail's path is resolved under, link-free
+        # (safe_write). The report directory in production; the trail's own
+        # directory when a caller does not say.
+        self.root = root if root is not None else path.parent
         self.started = started
         self.seq = 0
         self.phase = "loop"
@@ -301,10 +305,8 @@ class TurnTrail:
         if self._broken:
             return
         try:
-            with self.path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row, default=str) + "\n")
-                fh.flush()
-                os.fsync(fh.fileno())
+            safe_write.append_text(self.path, json.dumps(row, default=str) + "\n",
+                                   root=self.root)
         except Exception as e:  # noqa: BLE001
             self._broken = True
             print(f"    [!] turn trail disabled ({type(e).__name__}: {e})")
@@ -332,10 +334,8 @@ class TurnTrail:
         try:
             self.results_dir.mkdir(parents=True, exist_ok=True)
             path = self.results_dir / f"{self.seq + 1:04d}.json"
-            with path.open("w", encoding="utf-8") as fh:
-                json.dump(result, fh, indent=2, default=str)
-                fh.flush()
-                os.fsync(fh.fileno())
+            safe_write.write_text(path, json.dumps(result, indent=2, default=str),
+                                  root=self.root)
             return str(path)
         except Exception as e:  # noqa: BLE001
             print(f"    [!] could not persist tool result ({type(e).__name__}: {e})")
@@ -806,6 +806,7 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
     trail = TurnTrail(
         audit_dir / (audit_path.stem + ".trail.jsonl"),
         start_time,
+        root=output_dir,
     )
     trail.event("run_start",
                 model=interpret_config.get("model"),
@@ -932,8 +933,8 @@ def run_interpret(ghidra_result: dict, output_dir: Path,
                 trail.final(msg, duration)
 
                 # Save audit log
-                with audit_path.open("w") as f:
-                    json.dump(tool_call_log, f, indent=2)
+                safe_write.write_text(audit_path, json.dumps(tool_call_log, indent=2),
+                                      root=output_dir)
 
                 result["audit"]["turn_trail"] = str(trail.path)
                 return result

@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 from lamware_pipeline.cape_guest import MACHINE_REQUIRED
 from lamware_pipeline.config import PipelineConfig
+from lamware_shared import safe_write
 
 from stages.process_activity import summarize_process_activity
 
@@ -401,8 +402,14 @@ def extract_injection_buffers(full_report: dict, output_dir: Path) -> list[dict]
             safe_addr = base_addr.replace("0x", "") if base_addr else "unknown"
             filename = f"inject_{source_pid}_to_{target_pid}_at_{safe_addr}.bin"
             filepath = inject_dir / filename
-            with filepath.open("wb") as f:
-                f.write(raw_bytes)
+            # The bytes are the sample's own memory, and the report directory is
+            # group-writable (and receives container output): never written
+            # through a planted link, at the file or at any directory above it.
+            try:
+                safe_write.write_bytes(filepath, raw_bytes, root=output_dir)
+            except (OSError, ValueError) as e:
+                print(f"    [!] injection buffer not written, path refused: {filename}: {e}")
+                continue
 
             import hashlib
             content_hash = hashlib.sha256(raw_bytes).hexdigest()

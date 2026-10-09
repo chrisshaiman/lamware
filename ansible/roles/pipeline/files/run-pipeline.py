@@ -42,6 +42,7 @@ from lamware_pipeline.correlation import (
 )
 from lamware_pipeline.report_depth import bound_report_depth
 from lamware_pipeline.report_depth import describe as describe_depth_cut
+from lamware_shared import safe_write
 from pipeline_status import complete_pipeline, create_analysis_row, update_stage
 from stages.cape import (
     derive_filename,
@@ -238,16 +239,11 @@ def write_json_atomic(path: Path, data: dict) -> None:
     in the same directory because ``os.replace`` is only atomic within one
     filesystem.
     """
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        with tmp.open("w") as f:
-            json.dump(data, f, indent=2, default=str)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    # Via safe_write: the temp name used to be the predictable
+    # `.<name>.<pid>.tmp`, opened with a plain open("w"), in a directory every
+    # lamware member can write. A link planted at that name was written through,
+    # then os.replace'd over report.json.
+    safe_write.write_text(path, json.dumps(data, indent=2, default=str), root=path.parent)
 
 
 def write_report(task_id: str, report: dict, reports_dir: Path,

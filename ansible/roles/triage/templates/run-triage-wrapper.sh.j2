@@ -80,7 +80,15 @@ podman run --rm \
 # Hand the container's output back to the pipeline user (namespace uid 0).
 podman unshare chown -R 0:0 "$JOB_DIR/out"
 
-# Copy output files back to the real output directory
-if [ "$(ls -A "$JOB_DIR/out" 2>/dev/null)" ]; then
-    cp -r "$JOB_DIR/out"/* "$OUTPUT_DIR/" 2>/dev/null || true
-fi
+# Container output is untrusted: a compromised analyser can leave symlinks (or
+# FIFOs, devices) in it, and `cp -a` copies a link AS a link into the report
+# dir, where the pipeline later writes through it. Only regular files and
+# directories are handed back; anything else is deleted and named on stderr.
+find "$JOB_DIR/out" -mindepth 1 ! -type f ! -type d -print -delete \
+    | sed 's/^/run-triage: dropped non-regular output entry: /' >&2
+
+# Copy back entry by entry, as the ghidra and pcap wrappers do. `cp -r out/*`
+# followed a link left in the output; --remove-destination replaces a link
+# already at the destination instead of writing through it.
+find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 \
+    -exec cp -a --remove-destination -t "$OUTPUT_DIR"/ {} + 2>/dev/null || true
