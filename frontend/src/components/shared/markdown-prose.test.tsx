@@ -123,3 +123,41 @@ describe("MarkdownProse — no live links from model output", () => {
     expect(container.textContent).toContain(text);
   });
 });
+
+/**
+ * #731: an <img> fetches on render, so the property is "no <img> element exists at
+ * all" — not "the src looks defanged". Every form below rendered a live <img src>
+ * before this change, reproduced with the real unified/remark-gfm/rehype-sanitize.
+ */
+describe("MarkdownProse — no images from model output (#731)", () => {
+  const cases: Array<[string, string]> = [
+    ["protocol-relative", "![beacon](//evil.onion/a.png)"],
+    ["non-TLD host", "![x](http://c2host/pixel.gif)"],
+    ["decimal IPv4", "![x](http://3232235777/p.png)"],
+    ["same-origin path", "![x](/api/analyses/1/beacon.png)"],
+    ["reference style", "![x][r]\n\n[r]: //evil.onion/r.png"],
+    ["data URI", "![x](data:image/png;base64,iVBORw0KGgo=)"],
+  ];
+  for (const [label, md] of cases) {
+    it(`renders no <img> for a ${label} image`, () => {
+      const { container } = render(<MarkdownProse>{md}</MarkdownProse>);
+      expect(container.querySelectorAll("img")).toHaveLength(0);
+    });
+  }
+
+  it("still tells the analyst an image was referenced, by its alt text", () => {
+    const { container } = render(<MarkdownProse>{"![payload screenshot](//host/s.png)"}</MarkdownProse>);
+    expect(container.textContent).toContain("[image: payload screenshot]");
+    const marker = container.querySelector("[data-neutralised-image]");
+    expect(marker?.getAttribute("title") ?? "").not.toMatch(/https?:\/\//i);
+  });
+});
+
+describe("MarkdownProse — anchors carry HTML attributes only", () => {
+  it("does not spread react-markdown's node prop onto <a>", () => {
+    const { container } = render(<MarkdownProse>{"[home](/analyses)"}</MarkdownProse>);
+    const a = container.querySelector("a");
+    expect(a).not.toBeNull();
+    expect(a?.hasAttribute("node")).toBe(false);
+  });
+});

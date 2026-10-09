@@ -33,7 +33,7 @@ export function MarkdownProse({ children, className }: MarkdownProseProps) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize]}
-        components={{ a: DefangedAnchor }}
+        components={{ a: DefangedAnchor, img: InertImage }}
       >
         {defang(children)}
       </ReactMarkdown>
@@ -62,8 +62,12 @@ export function MarkdownProse({ children, className }: MarkdownProseProps) {
 function DefangedAnchor({
   href,
   children,
+  // react-markdown passes its hast `node`; spread onto <a> it renders as a
+  // bogus DOM attribute. Taken out here so `rest` holds HTML attributes only.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- removed, not used
+  node: _node,
   ...rest
-}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+}: React.AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
   if (isInAppHref(href)) {
     return (
       <a href={href} {...rest}>
@@ -78,6 +82,32 @@ function DefangedAnchor({
       className="break-all text-[var(--color-text-secondary)] underline decoration-dotted"
     >
       {children}
+    </span>
+  );
+}
+
+/**
+ * Never render an image from model prose (#731).
+ *
+ * An <img> fetches as soon as it renders: no click needed. A scheme-less,
+ * non-TLD or numeric-IP src (`//host/x.png`, `http://3232235777/x`, a bare
+ * single-label host) passes defang()'s TLD allowlist and rehype-sanitize's
+ * protocol check, so the analyst's browser would request it from wherever the
+ * model echoed it, beaconing that this report was opened. Production's CSP
+ * (`img-src 'self' data:`) happens to block most of that; the dev server has no
+ * CSP, and a same-origin `/api/...` src is not blocked by it at all. Analysis
+ * prose has no legitimate images, so none are rendered: the alt text is shown,
+ * and the source only as defanged text in a tooltip.
+ */
+function InertImage({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>) {
+  const source = typeof src === "string" ? src : "";
+  return (
+    <span
+      data-neutralised-image="true"
+      title={`Image not loaded: ${defang(source)}`}
+      className="text-[var(--color-text-secondary)] italic"
+    >
+      [image{alt ? `: ${alt}` : ""}]
     </span>
   );
 }
