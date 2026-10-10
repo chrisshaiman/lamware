@@ -17,6 +17,7 @@
 import logging
 import re
 
+from lamware_shared.untrusted import neutralize_delimiters
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -75,11 +76,22 @@ def _sanitize_untrusted(value: str, max_len: int = 512) -> str:
     tokens, and caps length.
     """
     s = value.replace("\r", " ").replace("\n", " ")
-    s = s.replace("---END_UNTRUSTED_DATA---", "[DELIMITER-REMOVED]")
-    s = s.replace("---UNTRUSTED_DATA---", "[DELIMITER-REMOVED]")
+    # The shared matcher, not two exact strings (#361): spacing, case, the
+    # `</...>` tag form and the CODE variants all got through the exact match.
+    s = neutralize_delimiters(s)
     if len(s) > max_len:
         s = s[:max_len] + "…[truncated]"
     return s
+
+
+def _neutralise_narrative(narrative: str | None) -> str:
+    """The stored narrative, fence markers neutralised, newlines kept (markdown).
+
+    It echoes model output that read the sample, so a near-miss closing marker
+    printed into it would close the fence in every later investigate session on
+    that analysis. The shared matcher catches what the old exact replace missed.
+    """
+    return neutralize_delimiters(narrative or "").strip()
 
 
 def technique_line(tid: object, tname: object, tactics: object) -> str:
@@ -236,12 +248,7 @@ def _build_context_block(analysis_id: int, session: Session) -> str:
 
     # Narrative — adversary-controlled, wrapped in UNTRUSTED_DATA.
     # Preserve newlines (needed for markdown) but strip delimiter tokens only.
-    narrative_text = (
-        (narrative or "")
-        .replace("---END_UNTRUSTED_DATA---", "[DELIMITER-REMOVED]")
-        .replace("---UNTRUSTED_DATA---", "[DELIMITER-REMOVED]")
-        .strip()
-    )
+    narrative_text = _neutralise_narrative(narrative)
     if len(narrative_text) > 3000:
         narrative_text = narrative_text[:3000] + "\n[truncated]"
     lines += [
