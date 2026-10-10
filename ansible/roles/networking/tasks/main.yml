@@ -39,11 +39,25 @@
 # Detonation bridge — libvirt isolated network
 # -------------------------------------------------------------------------
 
+# Kept in a root-only directory, not the shared /tmp (M14). The definition is
+# handed to `virsh net-define` as root; staging it where every local user can
+# create names put a pre-planted path (a directory, at least) between the
+# template and the define. It also stays, so a re-define reads the reviewed file.
+- name: Create the root-only directory for libvirt definitions
+  ansible.builtin.file:
+    path: "{{ networking_libvirt_def_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Copy detonation network XML definition
   ansible.builtin.template:
     src: detonation-network.xml.j2
-    dest: /tmp/detonation-network.xml
-    mode: "0644"
+    dest: "{{ networking_libvirt_def_dir }}/detonation-network.xml"
+    owner: root
+    group: root
+    mode: "0600"
 
 - name: Check if detonation libvirt network is defined
   ansible.builtin.command: virsh net-info detonation
@@ -52,7 +66,7 @@
   failed_when: false
 
 - name: Define detonation libvirt network
-  ansible.builtin.command: virsh net-define /tmp/detonation-network.xml
+  ansible.builtin.command: virsh net-define {{ networking_libvirt_def_dir }}/detonation-network.xml
   when: networking_virsh_info.rc != 0
   changed_when: true
 
@@ -70,7 +84,8 @@
     'Autostart:      yes' not in networking_virsh_info.stdout
   changed_when: true
 
-- name: Remove temp network XML
+# The old staging copy, from before the definition moved out of /tmp.
+- name: Remove the old /tmp copy of the network XML
   ansible.builtin.file:
     path: /tmp/detonation-network.xml
     state: absent

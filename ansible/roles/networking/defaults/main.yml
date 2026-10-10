@@ -23,3 +23,6 @@ networking_inetsim_tcp_ports:
   - 443
   - 25
   - 21
+
+# Root-only home for libvirt definitions this role hands to virsh (not /tmp).
+networking_libvirt_def_dir: /etc/lamware/libvirt
