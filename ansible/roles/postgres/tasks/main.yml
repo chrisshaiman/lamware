@@ -44,7 +44,8 @@
   become_user: postgres
   community.postgresql.postgresql_user:
     name: "{{ litellm_db_user | default('litellm') }}"
-    password: "{{ litellm_db_password | default('litellm') }}"
+    # mandatory: a default here is a known password on a real role.
+    password: "{{ litellm_db_password | mandatory }}"
     role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
 
 - name: Create LiteLLM spend tracking database
