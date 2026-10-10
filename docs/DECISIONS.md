@@ -28,7 +28,7 @@ these describe an AWS data plane that no longer exists.
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
-| [023](#adr-023-image-builds-are-hermetic--ansible-fetches-every-build-input-as-root-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: Ansible fetches inputs, `podman build` has no network | Proposed |
+| [023](#adr-023-image-builds-are-hermetic--an-unprivileged-fetch-user-downloads-every-build-input-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: an unprivileged fetch user downloads inputs, `podman build` has no network | Accepted |
 
 ### Detonation environment
 
@@ -1055,9 +1055,9 @@ So the rule already held everywhere except the agentic .NET tools.
 
 ---
 
-## ADR-023: Image builds are hermetic — Ansible fetches every build input as root, pinned and checksummed; `podman build` runs with no network
+## ADR-023: Image builds are hermetic — an unprivileged fetch user downloads every build input, pinned and checksummed; `podman build` runs with no network
 
-**Status:** Proposed (2026-10-08)
+**Status:** Accepted (2026-10-09; fetch user amended at the owner's direction)
 **Refs:** #728 (pdf-generation image stale since 2026-05-17), #725 (triage YARA), #344
 **Extends:** the 2026-08-08 rule that third-party *source* is fetched by the role with
 `get_url` + checksum and `COPY`ed in (`tests/test_container_build_pinning.py`). That rule
@@ -1068,20 +1068,23 @@ never covered package managers. This decides them.
 1. **Nothing inside a Containerfile reaches the network.** `podman build` runs with
    `--network=none`. No `pip install` from an index, no `apt-get update/install` from a
    mirror, no `curl`/`wget`/`git clone`, no `dotnet tool install` from NuGet.
-2. **Ansible fetches every input as root, before the build, into the build context**, and
-   verifies each one:
+2. **A dedicated unprivileged user, `lamware-fetch`, downloads every input before the
+   build**, and each one is verified. Not root, and not pipeline: the fetch user is the only
+   one with network for builds, it runs nothing but downloads, and owns nothing else. Ansible
+   copies the verified files into the build context.
    - **Python:** a wheelhouse from `pip download --require-hashes --only-binary=:all:`
      (target `cp312` / `manylinux`, matching the image) against a hash-locked
      `requirements.lock`. The Containerfile installs `--no-index --find-links` with
      `--require-hashes`.
    - **Debian packages:** resolved and fetched with `apt-get install --download-only` in a
-     throwaway root-run container of the *same pinned base image*, versions recorded in
-     the role. Installed offline in the build (`apt-get install ./*.deb`). apt's signed
-     Release chain verifies them at download.
+     throwaway **rootless** container of the *same pinned base image*, run by the fetch
+     user (container root is that user on the host, so apt's resolver runs without host
+     root). Versions recorded in the role. Installed offline in the build
+     (`apt-get install ./*.deb`). apt's signed Release chain verifies them at download.
    - **Source archives, tools, NuGet packages:** `get_url` with `checksum: sha256:…`, as
      today.
-   - **Base images:** pinned by digest (`FROM …@sha256:…`), pulled as root and loaded into
-     the pipeline user's image store. Moving a base image is a deliberate change to the
+   - **Base images:** pinned by digest (`FROM …@sha256:…`), pulled by the fetch user and
+     loaded into the pipeline user's image store. Moving a base image is a deliberate change to the
      digest, not a side effect of a tag moving or of a cache being cleared.
 3. **A stale image fails the deploy.** Each image carries a label with a hash of its build
    context. After the build, the deploy compares the label of the image the wrappers will
@@ -1090,7 +1093,9 @@ never covered package managers. This decides them.
 
 Downloads run code from nobody: `pip download --only-binary` and `apt-get --download-only`
 execute no package scripts. Installation, which does, happens in the build, which has no
-network. A compromised upstream package therefore runs with nothing to talk to.
+network. A compromised upstream package therefore runs with nothing to talk to. And the
+process that does talk to the network holds no privilege beyond its own download
+directory: no root, no access to samples or reports.
 
 ### Context: what was observed
 
@@ -1116,6 +1121,9 @@ running, and nothing compares what runs with what the repo says should run.
 
 ### Alternatives considered
 
+- **Root does the downloading.** The first draft of this ADR. Rejected by the owner on
+  least privilege: downloads need network, not root, and the fetch user gets the first
+  without the second.
 - **Give the pipeline user network for builds.** Rejected. Pipeline's lack of DNS and
   egress is the containment for everything that touches a sample. Weakening it for build
   convenience trades the property the host exists to have.
