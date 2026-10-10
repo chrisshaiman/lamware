@@ -161,10 +161,19 @@ def test_what_the_container_receives_follows_the_switch(tmp_path, enabled):
 def test_the_container_renders_production_s_evidence():
     """The agentic loop's first message carries it (interpret-ghidra.py)."""
     src = (ROOT / "ansible/roles/interpret/files/interpret-ghidra.py").read_text()
-    fn = next(n for n in ast.parse(src).body
+    body = ast.parse(src).body
+    fn = next(n for n in body
               if isinstance(n, ast.FunctionDef) and n.name == "_correlated_evidence_context")
-    ns: dict = {"json": json}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<x>", "exec"), ns)
+    # It now calls the fencing helpers (M8); run them from the same script too.
+    keep = {"strip_control_chars", "neutralize_delimiters", "wrap_untrusted",
+            "sanitize_string", "one_line"}
+    nodes = [n for n in body
+             if (isinstance(n, ast.FunctionDef) and n.name in keep)
+             or (isinstance(n, ast.Assign)
+                 and any(getattr(t, "id", "") == "_DELIMITER_RE" for t in n.targets))]
+    import re as _re
+    ns: dict = {"json": json, "re": _re}
+    exec(compile(ast.Module(body=nodes + [fn], type_ignores=[]), "<x>", "exec"), ns)
     evidence, _ = ce.evidence_for_interpret(REPORT, enabled=True, agentic=True)
     text = ns["_correlated_evidence_context"]({"correlated_evidence": evidence})
     assert "stealth_network" in text and "Memory analysis:" in text
