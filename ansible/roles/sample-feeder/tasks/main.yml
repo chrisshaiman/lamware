@@ -48,7 +48,10 @@
     src: sample-feeder.conf.j2
     dest: "{{ sample_feeder_dir }}/config.json"
     owner: "{{ sample_feeder_user }}"
-    group: lamware
+    # It holds the CAPE API token and the MalwareBazaar key. Group lamware made
+    # them readable by cape and lamware-api too; the only other reader is the
+    # auto-feeder.
+    group: "{{ auto_feeder_user | default('auto-feeder') }}"
     mode: "0640"
   no_log: true
 

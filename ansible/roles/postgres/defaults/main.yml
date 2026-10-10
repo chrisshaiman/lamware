@@ -4,6 +4,8 @@
 # PostgreSQL for pipeline analysis data
 postgres_db_name: malware_analysis
 postgres_db_user: pipeline
-postgres_db_password: "{{ pipeline_db_password | default('changeme') }}"
+# mandatory, not default('changeme'): a missing vault value must stop the deploy,
+# not create a database role with a guessable password.
+postgres_db_password: "{{ pipeline_db_password | mandatory }}"
 postgres_listen_address: "127.0.0.1"
 postgres_port: 5432
