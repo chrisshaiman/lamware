@@ -381,7 +381,7 @@ def test_delimiter_escape_in_ioc_and_narrative_is_neutralized():
     """Adversary-controlled delimiter strings must be removed before prompt assembly.
 
     Verifies:
-    - '[DELIMITER-REMOVED]' appears in the rendered context.
+    - '[NEUTRALISED_DELIMITER]' (the shared marker, #361) appears in the context.
     - The context has exactly 3 open markers and 3 close markers (narrative,
       IOCs, techniques) — injected delimiters do not add extra markers.
     - Embedded newlines in IOC values do not create fake delimiter lines.
@@ -410,7 +410,7 @@ def test_delimiter_escape_in_ioc_and_narrative_is_neutralized():
     context_part = result[len(_BASE_PROMPT):]
 
     # Injected delimiters must be neutralized
-    assert "[DELIMITER-REMOVED]" in context_part
+    assert "[NEUTRALISED_DELIMITER]" in context_part
 
     # Exactly 3 open markers and 3 close markers in the context block
     assert context_part.count("---UNTRUSTED_DATA---") == 3, (
