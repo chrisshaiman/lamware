@@ -103,8 +103,7 @@ pipeline user or host.
 
 - Every analysis container runs `--network=none --read-only --cap-drop=ALL
   --security-opt=no-new-privileges`, as an unprivileged user (`--user
-  65534:65534`, or the image's `USER` for the Python sandbox). Volatility is the
-  exception and runs as the image default; that is #339. Mounts are limited to
+  65534:65534`, or the image's `USER` for the Python sandbox). Mounts are limited to
   what the job reads and writes: its inputs and its output directory. No network
   namespace, no writable root, no capabilities, no privilege escalation.
   `tests/test_container_flag_parity.py` checks the flags on every `podman run`.
