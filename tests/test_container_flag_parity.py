@@ -35,11 +35,6 @@ EXCEPTIONS: dict[tuple[str, str], str] = {
     ("run-sandbox.sh.j2", "--user"): (
         "the Containerfile's USER directive already forces non-root, and the "
         "wrapper says so in a comment; adding --user here would be redundant"),
-    ("run-volatility-wrapper.sh.j2", "--user"): (
-        "runs image-default root inside the rootless userns. Volatility writes to "
-        "/root and /home (both tmpfs, owned by root), so switching to 65534 needs a "
-        "real memory-dump run to validate rather than a blind edit — tracked "
-        "separately"),
 }
 
 

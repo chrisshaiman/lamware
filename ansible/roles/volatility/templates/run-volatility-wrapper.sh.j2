@@ -38,6 +38,28 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# The container runs as 65534 (#339). It used to run as the image default, root
+# inside the rootless userns — which IS the host pipeline uid — with the live
+# report dir mounted rw: a Volatility parser bug reached by a hostile dump wrote
+# as pipeline. Like the other analysers, it now writes only a private job dir
+# that belongs to the container's mapped uid, and its output is handed back by
+# the pipeline user, dropping anything that is not a regular file or directory.
+# HOME=/tmp: nobody's home is /nonexistent on a read-only root, and Volatility
+# creates its cache directory under $HOME (measured: "[Errno 30] Read-only file
+# system: '/nonexistent'" on every plugin).
+CONTAINER_UID=65534
+CONTAINER_GID=65534
+JOB_DIR=""
+cleanup() {
+    if [ -n "$JOB_DIR" ] && [ -d "$JOB_DIR" ]; then
+        podman unshare rm -rf "$JOB_DIR" 2>/dev/null || rm -rf "$JOB_DIR" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+JOB_DIR="$(mktemp -d)"
+mkdir -m 0700 "$JOB_DIR/out"
+podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
+
 # Container is read-only with targeted writable tmpfs mounts for
 # Volatility's cache and temp files. The dump is mounted directly (read-only)
 # — no copy, since dumps are multi-GB.
@@ -65,11 +87,14 @@ mkdir -p "$OUTPUT_DIR"
 # /opt/CAPEv2/storage/analyses, including extracted payloads. Do not mount the
 # storage root.
 # Use timeout(1) instead of --timeout — Podman 4.x rootless timeout is unreliable
+rc=0
 timeout --kill-after=60 {{ volatility_container_timeout }} \
 podman run --rm \
     --network=none \
     --group-add keep-groups \
     --read-only \
+    --user "$CONTAINER_UID:$CONTAINER_GID" \
+    -e HOME=/tmp \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --memory={{ volatility_container_memory }} \
@@ -81,7 +106,7 @@ podman run --rm \
     -v "{{ volatility_install_dir }}/cache:/vol-cache:ro" \
     -v "$DUMP_PATH:/dump/$DUMP_NAME:ro" \
     -v "{{ volatility_symbols_dir }}:/symbols:ro" \
-    -v "$OUTPUT_DIR:/output:rw" \
+    -v "$JOB_DIR/out:/output:rw" \
     --workdir /output \
     localhost/volatility3:latest \
     -f "/dump/$DUMP_NAME" \
@@ -90,4 +115,13 @@ podman run --rm \
     -r json \
     -o /output \
     "$PLUGIN" \
-    "${EXTRA_ARGS[@]}"
+    "${EXTRA_ARGS[@]}" || rc=$?
+
+# Hand the output back whatever the plugin's result: a failed malfind may still
+# have dumped regions worth keeping.
+podman unshare chown -R 0:0 "$JOB_DIR/out"
+find "$JOB_DIR/out" -mindepth 1 ! -type f ! -type d -print -delete \
+    | sed 's/^/run-volatility: dropped non-regular output entry: /' >&2
+find "$JOB_DIR/out" -mindepth 1 -maxdepth 1 \
+    -exec cp -a --remove-destination -t "$OUTPUT_DIR"/ {} + 2>/dev/null || true
+exit "$rc"
