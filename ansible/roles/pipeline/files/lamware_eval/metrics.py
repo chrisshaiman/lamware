@@ -43,6 +43,13 @@ def cell_error(res: dict, analysis: dict) -> str | None:
         refusal = analysis.get("refusal") or {}
         err = (f"refused (category={refusal.get('category')}, "
                f"phase={refusal.get('phase')})")
+    no_prose = analysis.get("synthesis_no_prose")
+    if not err and isinstance(no_prose, dict):
+        # The error column is where a reader looks for why a cell is empty (#755).
+        err = (f"synthesis {no_prose.get('phase')} wrote no prose "
+               f"(stop={no_prose.get('stop_reason')}, "
+               f"{no_prose.get('output_tokens')} tokens); "
+               f"analysis built from {no_prose.get('salvaged_chars')} chars of salvaged reasoning")
     stderr_tail = (res.get("container_stderr") or "").strip()
     if err and stderr_tail:
         err = f"{err} | container stderr: {stderr_tail[-1500:]}"
