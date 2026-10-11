@@ -100,7 +100,7 @@ def render_scorecard(label: str, cells: list[dict], summary: dict,
                  "grounded_via_label", "placeholders",
                  "modality", "input", "evidence_bytes", "evidence_keys", "correlations_shown",
                  "techniques", "techniques_hit", "technique_precision",
-                 "technique_recall", "cape_techniques",
+                 "technique_recall", "techniques_covered", "cape_techniques",
                  "capabilities", "completed", "parse_failed",
                  "tool_calls_used",
                  # tool_layer_broken sits next to the rate because the rate alone

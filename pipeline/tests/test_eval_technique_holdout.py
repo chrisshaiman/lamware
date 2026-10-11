@@ -19,7 +19,7 @@ import json
 
 import pytest
 from lamware_eval.corpus import CorpusSample
-from lamware_eval.metrics import aggregate, compose_cell, technique_hits
+from lamware_eval.metrics import aggregate, compose_cell, technique_hits, techniques_covered
 from lamware_eval.runner import (
     correlated_evidence,
     held_out_techniques,
@@ -166,6 +166,37 @@ def test_no_answer_key_means_no_score_rather_than_a_zero():
     assert c["cape_techniques"] == 0
 
 
+def test_recall_counts_cape_techniques_not_claims():
+    """Three claims on two Cape techniques scored recall 1.5 on Phorpiex (#756).
+
+    Sub-techniques of one parent are one covered technique. Precision still
+    counts claims, because each claim is separately right or wrong.
+    """
+    c = _cell(["T1055.001", "T1055.012", "T1059"], key=["T1055", "T1059"])
+    assert c["techniques_hit"] == 3
+    assert c["techniques_covered"] == 2
+    assert c["technique_recall"] == 1.0
+    assert c["technique_precision"] == 1.0
+
+
+def test_recall_can_never_exceed_one():
+    key = ["T1055", "T1059", "T1027"]
+    claims = ["T1055", "T1055.001", "T1055.002", "T1055.003", "T1059", "T1059.001",
+              "T1027", "T1027.002", "T9999"]
+    assert _cell(claims, key=key)["technique_recall"] == 1.0
+
+
+def test_a_duplicated_key_entry_is_one_technique():
+    """The denominator is distinct techniques, or a repeated key would deflate recall."""
+    assert _cell(["T1055"], key=["T1055", "T1055"])["technique_recall"] == 1.0
+
+
+def test_covered_matches_in_the_same_directions_as_hits():
+    assert techniques_covered(["T1055.003"], ["T1055"]) == ["T1055"]
+    assert techniques_covered(["T1055"], ["T1055.003"]) == []
+    assert techniques_covered(["T1218.012"], ["T1055"]) == []
+
+
 def test_claiming_nothing_scores_no_precision_rather_than_zero():
     c = _cell([])
     assert c["technique_precision"] is None
@@ -188,7 +219,8 @@ def test_the_summary_reports_none_when_nothing_was_scoreable():
 
 
 @pytest.mark.parametrize("col", [
-    "techniques_hit", "technique_precision", "technique_recall", "cape_techniques",
+    "techniques_hit", "technique_precision", "technique_recall", "techniques_covered",
+    "cape_techniques",
     "total_techniques_hit", "mean_technique_precision", "mean_technique_recall",
 ])
 def test_the_scorecard_renders_the_new_figures(col):
