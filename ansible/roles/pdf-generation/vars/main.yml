@@ -1,3 +1,0 @@
----
-# Not a default: derived from the build-fetch role this one depends on.
-pdf_generation_fetch_dir: "{{ build_fetch_home }}/pdf-generation"

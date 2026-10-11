@@ -1,0 +1,158 @@
+---
+# =============================================================================
+# roles/build-fetch/tasks/image.yml — ADR-023, the one hermetic image build
+#
+# Included by every image role (include_role: build-fetch, tasks_from: image).
+# lamware-fetch downloads the inputs; root hands them to pipeline; pipeline
+# builds with --network=none; the deploy fails unless the image it will run is
+# the one it just built. The Containerfile reads:
+#   debs/<set>/*.deb   one directory per entry in hb_deb_sets
+#   wheels/*.whl       when hb_lock is set, with requirements.lock beside it
+#
+# Inputs:
+#   hb_name         short name; also the fetch dir under the fetch user's home
+#   hb_build_dir    the build context (already holding the Containerfile)
+#   hb_tag          image tag the wrappers run
+#   hb_base_images  every FROM, by digest
+#   hb_deb_sets     [{name, image, sources: [one-line apt sources], packages}]
+#   hb_lock         path (on the controller) of a hash-locked requirements file, or ""
+#   hb_python       target Python for wheels (default 3.12)
+# =============================================================================
+
+- name: "{{ hb_name }}: create the fetch dirs"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0700"
+  loop:
+    - "{{ build_fetch_home }}/run"
+    - "{{ build_fetch_home }}/{{ hb_name }}"
+    - "{{ build_fetch_home }}/{{ hb_name }}/debs"
+    - "{{ build_fetch_home }}/{{ hb_name }}/wheels"
+
+- name: "{{ hb_name }}: fetch each base image by digest (lamware-fetch)"
+  ansible.builtin.shell:
+    cmd: >
+      podman --cgroup-manager=cgroupfs --events-backend=file image exists {{ item }}
+      || podman --cgroup-manager=cgroupfs --events-backend=file pull {{ item }}
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+  become: true
+  become_user: "{{ build_fetch_user }}"
+  loop: "{{ hb_base_images }}"
+  register: hb_pull
+  changed_when: "'Writing manifest' in hb_pull.stderr"
+
+- name: "{{ hb_name }}: fetch each Debian package set (lamware-fetch, rootless)"
+  ansible.builtin.include_tasks: image_debs.yml
+  loop: "{{ hb_deb_sets | default([]) }}"
+  loop_control:
+    loop_var: hb_set
+
+- name: "{{ hb_name }}: fetch wheels against the lock"
+  when: hb_lock | default('') | length > 0
+  block:
+    - name: "{{ hb_name }}: deploy the hash-locked requirements"
+      ansible.builtin.copy:
+        src: "{{ hb_lock }}"
+        dest: "{{ build_fetch_home }}/{{ hb_name }}/requirements.lock"
+        owner: "{{ build_fetch_user }}"
+        group: "{{ build_fetch_user }}"
+        mode: "0600"
+      register: hb_lock_file
+    - name: "{{ hb_name }}: pip download --require-hashes --only-binary (lamware-fetch)"
+      # --only-binary: no sdist, so no build backend runs here. --require-hashes:
+      # every file is checked against the lock.
+      ansible.builtin.shell:
+        cmd: |
+          set -eu
+          W="{{ build_fetch_home }}/{{ hb_name }}/wheels"
+          find "$W" -mindepth 1 -delete
+          python3 -m pip download --no-cache-dir --disable-pip-version-check \
+            --require-hashes --only-binary=:all: \
+            --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
+            --platform manylinux2014_x86_64 --platform any \
+            --python-version {{ hb_python | default('3.12') }} --implementation cp \
+            -r "{{ build_fetch_home }}/{{ hb_name }}/requirements.lock" -d "$W"
+          touch "{{ build_fetch_home }}/{{ hb_name }}/wheels-{{ hb_lock_file.checksum }}.done"
+        creates: "{{ build_fetch_home }}/{{ hb_name }}/wheels-{{ hb_lock_file.checksum }}.done"
+        chdir: "{{ build_fetch_home }}"
+      environment:
+        HOME: "{{ build_fetch_home }}"
+      become: true
+      become_user: "{{ build_fetch_user }}"
+
+# --- Hand the verified inputs to pipeline ------------------------------------
+- name: "{{ hb_name }}: clear the previous build inputs"
+  ansible.builtin.file:
+    path: "{{ hb_build_dir }}/{{ item }}"
+    state: absent
+  loop: [debs, wheels, requirements.lock]
+
+- name: "{{ hb_name }}: copy the fetched inputs into the build context"
+  ansible.builtin.copy:
+    src: "{{ build_fetch_home }}/{{ hb_name }}/{{ item }}"
+    dest: "{{ hb_build_dir }}/"
+    remote_src: true
+    owner: pipeline
+    group: pipeline
+    mode: u=rwX,g=rX,o=
+  loop: "{{ ['debs', 'wheels'] + (['requirements.lock'] if hb_lock | default('') | length > 0 else []) }}"
+
+- name: "{{ hb_name }}: remove apt's bookkeeping from the copied packages"
+  ansible.builtin.shell:
+    cmd: find "{{ hb_build_dir }}/debs" -mindepth 2 \( -name partial -o -name lock \) -prune -exec rm -rf {} +
+  changed_when: false
+
+- name: "{{ hb_name }}: hand over each base image pipeline does not have"
+  ansible.builtin.include_tasks: image_base.yml
+  loop: "{{ hb_base_images }}"
+  loop_control:
+    loop_var: hb_base
+
+# --- Build with no network, then prove the image is this build ----------------
+- name: "{{ hb_name }}: hash the build context"
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail;
+      find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+      | sha256sum | cut -c1-64
+    chdir: "{{ hb_build_dir }}"
+    executable: /bin/bash
+  register: hb_context_hash
+  changed_when: false
+
+- name: "{{ hb_name }}: build with no network"
+  ansible.builtin.command:
+    cmd: >
+      podman build --network=none --pull=never
+      --label lamware.build-context={{ hb_context_hash.stdout }}
+      -t {{ hb_tag }} -f {{ hb_build_dir }}/Containerfile {{ hb_build_dir }}
+    chdir: "{{ hb_build_dir }}"
+  become: true
+  become_user: pipeline
+  changed_when: true
+
+- name: "{{ hb_name }}: read the build-context label of the image the wrapper runs"
+  ansible.builtin.command:
+    cmd: >
+      podman image inspect {{ hb_tag }}
+      --format {% raw %}'{{ index .Labels "lamware.build-context" }}'{% endraw %}
+    chdir: "{{ hb_build_dir }}"
+  become: true
+  become_user: pipeline
+  register: hb_image_label
+  changed_when: false
+
+- name: "{{ hb_name }}: fail when the image is not the one this deploy built"
+  # ADR-023 decision 3: a build that "succeeded" while keeping an old image is
+  # how pdf-generation stayed at 2026-05-17 for five months.
+  ansible.builtin.assert:
+    that: hb_image_label.stdout | trim == hb_context_hash.stdout | trim
+    fail_msg: >-
+      {{ hb_tag }} carries build context '{{ hb_image_label.stdout | trim }}',
+      not this deploy's '{{ hb_context_hash.stdout | trim }}'
+    quiet: true

@@ -8,7 +8,7 @@
 # Debian packages from a pinned snapshot, the wheels against requirements.lock.
 FROM {{ pdf_generation_base_image }}
 
-COPY debs/ /tmp/debs/
+COPY debs/main/ /tmp/debs/
 RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
 
 COPY wheels/ /tmp/wheels/
