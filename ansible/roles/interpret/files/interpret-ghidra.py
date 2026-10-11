@@ -190,9 +190,14 @@ def _correlated_evidence_context(init_msg: dict) -> str:
     if not ev:
         return ""
     parts = ["CROSS-TOOL OBSERVATIONS (from sandbox detonation and memory analysis):"]
+    # Everything between the header and the instruction below is derived from
+    # the sample's own behaviour: process names, command lines, mutexes,
+    # signature text. It is fenced like every other untrusted field (M8); our
+    # framing around it is unchanged, because that wording is the experiment.
+    data: list[str] = []
 
     for f in ev.get("cross_correlations", [])[:20]:
-        parts.append(
+        data.append(
             f"  - [{f.get('severity','?')}] {f.get('title','?')} "
             f"(sources: {', '.join(f.get('sources', []) or ['?'])})\n"
             f"    {str(f.get('detail',''))[:400]}"
@@ -201,18 +206,21 @@ def _correlated_evidence_context(init_msg: dict) -> str:
     if sigs:
         names = [str(x.get("name", x))[:60] if isinstance(x, dict) else str(x)[:60]
                  for x in sigs[:25]]
-        parts.append("  Sandbox behavioural signatures: " + ", ".join(names))
+        data.append("  Sandbox behavioural signatures: " + ", ".join(names))
     vol = ev.get("volatility_insights")
     if vol:
-        parts.append("  Memory analysis: " + json.dumps(vol)[:600])
+        data.append("  Memory analysis: " + json.dumps(vol)[:600])
+    if data:
+        parts.append(wrap_untrusted("\n".join(data)))
     warn = ev.get("correlation_warnings", [])
     if warn:
         # Coverage limits, not findings. Without these an empty finding list reads
-        # as a clean sample rather than as a check that could not run.
+        # as a clean sample rather than as a check that could not run. Our own
+        # correlator's text, so it stays outside the fence, as before.
         parts.append("  Coverage limits on the above (a check that could not run is "
                      "NOT evidence of absence):")
         for w in warn[:6]:
-            parts.append(f"    - {str(w)[:220]}")
+            parts.append(f"    - {one_line(w, 220)}")
 
     parts.append(
         "These come from other tools, not from the code you are reading. Treat them "
@@ -232,7 +240,7 @@ def _bazaar_context(init_msg: dict) -> str:
     if bazaar_family:
         parts.append(
             f"THREAT INTEL CONTEXT: MalwareBazaar identifies this sample as "
-            f"'{bazaar_family}'. Use this as your starting hypothesis for family "
+            f"'{one_line(bazaar_family, 80)}'. Use this as your starting hypothesis for family "
             f"identification. If your code analysis disagrees, explain the "
             f"discrepancy — do not silently override the community classification."
         )
@@ -1756,6 +1764,17 @@ def sanitize_string(s: str, max_length: int) -> str:
     return cleaned
 
 
+def one_line(s: str, max_length: int) -> str:
+    """sanitize_string for a value interpolated into ONE line outside a fence.
+
+    sanitize_string keeps newlines on purpose (multi-line content inside a fence
+    needs them). A function name or a family label printed in a heading or a
+    sentence must not be able to start a new line of its own: that is how a
+    sample would write text that sits outside every fence (M8).
+    """
+    return re.sub(r"[\r\n\t]+", " ", sanitize_string(str(s), max_length))
+
+
 # ---------------------------------------------------------------------------
 # Build initial user message from Ghidra export data
 # ---------------------------------------------------------------------------
@@ -1781,7 +1800,7 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
     parts.append("## Binary Under Analysis")
     parts.append(f"- SHA256: `{sha256}`")
     parts.append(f"- Function count: {function_count}")
-    parts.append(f"- Entry point: `{entry_point}`")
+    parts.append(f"- Entry point: `{one_line(entry_point, 64)}`")
     parts.append("")
 
     # --- Imports ---
@@ -1833,9 +1852,15 @@ def build_initial_message(ghidra_data: dict[str, Any], config: dict[str, Any]) -
                 name = fn.get("name", "unknown")
                 address = fn.get("address", "")
                 pseudocode = fn.get("pseudocode", "")
-                parts.append(f"### {name} ({address})")
+                # Symbol names come from the binary, so the name goes INSIDE the
+                # fence (M8). As a heading outside it, a symbol named like an
+                # instruction read as trusted text, even with its delimiters
+                # neutralised. The pseudocode carries the name in its signature
+                # anyway; the heading keeps only the address.
+                parts.append(f"### Function at {one_line(address, 64)}")
                 parts.append("---UNTRUSTED_CODE---")
                 parts.append(f"```c\n{neutralize_delimiters(pseudocode)}\n```")
+                parts.append(f"// function: {one_line(name, 200)}")
                 parts.append("---END_UNTRUSTED_CODE---")
                 parts.append("")
 

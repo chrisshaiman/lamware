@@ -98,13 +98,29 @@ def test_empty_report_yields_empty_evidence():
 
 # --- the agent side ---
 
+# The fencing helpers the evidence block calls (M8), taken from the same script
+# so the test runs the real code rather than a stub of it.
+_FENCE_HELPERS = {"strip_control_chars", "neutralize_delimiters", "wrap_untrusted",
+                  "sanitize_string", "one_line"}
+
+
+def _with_fence_helpers(module_body, fn):
+    import re as _re
+    nodes = [n for n in module_body
+             if (isinstance(n, ast.FunctionDef) and n.name in _FENCE_HELPERS)
+             or (isinstance(n, ast.Assign)
+                 and any(getattr(t, "id", "") == "_DELIMITER_RE" for t in n.targets))]
+    return nodes + [fn], {"re": _re}
+
+
 def _agent_fn(name):
     src = (Path(__file__).resolve().parents[2]
            / "ansible/roles/interpret/files/interpret-ghidra.py").read_text()
-    fn = next(n for n in ast.parse(src).body
-              if isinstance(n, ast.FunctionDef) and n.name == name)
-    ns = {"json": json}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "<x>", "exec"), ns)
+    body = ast.parse(src).body
+    fn = next(n for n in body if isinstance(n, ast.FunctionDef) and n.name == name)
+    nodes, ns = _with_fence_helpers(body, fn)
+    ns["json"] = json
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "<x>", "exec"), ns)
     return ns[name]
 
 
