@@ -46,13 +46,20 @@ def analysis_completed(arm_result: dict) -> bool:
     and `analysis` is a non-empty dict — so every other condition holds and the
     cell counted as a success. In the 29-sample MOTIF sweep that reported
     completed_rate 1.0 while the two largest samples returned nothing usable.
+
+    `synthesis_no_prose` is the same shape one phase earlier (#755): synthesis
+    phase 2a reasoned to its token cap and wrote nothing, and whatever came out
+    was serialised from the tail of that reasoning. The cell still COUNTS (the
+    model failing to conclude is a result about the model, unlike a dead tool
+    layer); it is just not a completed analysis.
     """
     analysis = arm_result.get("analysis") or {}
     err = arm_result.get("error") or analysis.get("error")
     return (arm_result.get("enabled") is True
             and not err
             and bool(analysis)
-            and not analysis.get("parse_note"))
+            and not analysis.get("parse_note")
+            and not analysis.get("synthesis_no_prose"))
 
 
 # At or above this share of failed tool calls, the cell measured nothing about
