@@ -13,6 +13,7 @@ from stages.dotnet_agentic import build_dotnet_interpret_init, dotnet_input_reco
 from stages.dotnet_tools import is_agentic_dotnet
 from stages.ghidra import (
     ROUTED_FLAGS,
+    _project_programs,
     make_ghidra_verifier,
     native_input_record,
     select_native_target,
@@ -299,6 +300,36 @@ class CorpusProjectMissing(RuntimeError):
     production stopped reading, under a cell that says nothing about it. The
     sweep's per-cell `except` turns this into a failed cell carrying the message.
     """
+
+
+class StaleCorpusEntry(RuntimeError):
+    """The corpus points the agent at a program its Ghidra project does not hold (#754).
+
+    Every tool call then fails with "Requested project program file(s) not
+    found", and the cell spends its whole budget measuring that: 8 of 17 native
+    cells on 2026-10-10, two samples hand-promoted before `lamware_eval.promote`
+    existed. Raised before the container starts, so a stale entry costs seconds
+    and says why, instead of a tool_layer_broken cell per ordering.
+    """
+
+
+def stale_corpus_input(init: dict) -> str | None:
+    """Why this init's program cannot be opened, or None if it can (or cannot tell).
+
+    Reads the project's own index with the pipeline's `_project_programs`, the
+    check promote and Stage 4 use. An unreadable index is not evidence the
+    program is missing; a project directory that does not exist is.
+    """
+    project, name = init.get("project_dir"), init.get("program_name")
+    if not project or not name:
+        return None
+    if not Path(project).is_dir():
+        return f"project {project} does not exist (program {str(name)[:16]})"
+    held = _project_programs(Path(project))
+    if held is None or name in held:
+        return None
+    return (f"program {str(name)[:16]} is not in {project}; its index holds "
+            f"{sorted(h[:16] for h in held)[:4]}. Re-promote with lamware_eval.promote")
 
 
 class NoAnalysisData(RuntimeError):
@@ -778,6 +809,9 @@ def run_arm(sample: CorpusSample, arm: Arm, base_cfg: dict,
         report, verify=make_ghidra_verifier(ghidra_cmd), corpus_dir=sample.corpus_dir,
         dotnet_mode=dotnet_mode, dotnet_limits=base_cfg.get("dotnet_tool_limits"),
         dotnet_tools_cfg=base_cfg)
+    stale = stale_corpus_input(init)
+    if stale is not None:
+        raise StaleCorpusEntry(stale)
     if variant is not None:
         # The caps the container will apply: it merges this config over its own
         # DEFAULT_CONFIG, which caps_from_config falls back to.
