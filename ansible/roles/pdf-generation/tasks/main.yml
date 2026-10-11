@@ -186,6 +186,8 @@
         XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
       become: true
       become_user: "{{ build_fetch_user }}"
+      # Inside the "image missing" block: it only runs when there is work to do.
+      changed_when: true
     - name: Copy the archive to pipeline
       ansible.builtin.copy:
         src: "{{ pdf_generation_fetch_dir }}/base.oci"
@@ -200,6 +202,7 @@
         chdir: "{{ pdf_generation_install_dir }}"
       become: true
       become_user: pipeline
+      changed_when: true
   always:
     - name: Remove the image archives
       ansible.builtin.file:
