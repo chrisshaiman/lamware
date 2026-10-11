@@ -41,18 +41,225 @@
     group: pipeline
     mode: "0755"
 
-- name: Build pdf-generation container image
+# --- ADR-023: fetch every build input as lamware-fetch -------------------------
+# Rootless podman for a user with no login session: a private runtime dir and the
+# cgroupfs manager, so nothing needs lingering or a systemd user instance.
+- name: Create the build-fetch work dirs
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0700"
+  loop:
+    - "{{ build_fetch_home }}/run"
+    - "{{ pdf_generation_fetch_dir }}"
+    - "{{ pdf_generation_fetch_dir }}/debs"
+    - "{{ pdf_generation_fetch_dir }}/wheels"
+
+- name: Fetch the base image by digest (lamware-fetch)
+  ansible.builtin.shell:
+    cmd: >
+      podman --cgroup-manager=cgroupfs --events-backend=file
+      image exists {{ pdf_generation_base_image }}
+      || podman --cgroup-manager=cgroupfs --events-backend=file
+      pull {{ pdf_generation_base_image }}
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+  become: true
+  become_user: "{{ build_fetch_user }}"
+  register: pdf_base_pull
+  changed_when: "'Writing manifest' in pdf_base_pull.stderr"
+
+- name: Key the Debian package fetch on everything that decides its result
+  ansible.builtin.set_fact:
+    pdf_debs_key: "{{ (pdf_generation_base_image ~ pdf_generation_debian_snapshot ~ (pdf_generation_debs | join(','))) | hash('sha256') }}"
+
+- name: Fetch Debian packages from the pinned snapshot (lamware-fetch, rootless)
+  vars:
+    pdf_snapshot_main: "http://snapshot.debian.org/archive/debian/{{ pdf_generation_debian_snapshot }}"
+    pdf_snapshot_security: "http://snapshot.debian.org/archive/debian-security/{{ pdf_generation_debian_snapshot }}"
+  # Resolved in a throwaway container of the SAME base image, so the set is exactly
+  # what the build needs. Container root is lamware-fetch on the host. apt runs no
+  # package scripts with --download-only, and verifies the signed Release chain.
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      find "{{ pdf_generation_fetch_dir }}/debs" -mindepth 1 -delete
+      podman --cgroup-manager=cgroupfs --events-backend=file run --rm --network=host \
+        --pull=never \
+        -v "{{ pdf_generation_fetch_dir }}/debs:/out:rw" \
+        {{ pdf_generation_base_image }} sh -euc '
+          S=/etc/apt/sources.list.d/debian.sources
+          sed -i \
+            -e "s#^URIs: http://deb.debian.org/debian-security\$#URIs: {{ pdf_snapshot_security }}#" \
+            -e "s#^URIs: http://deb.debian.org/debian\$#URIs: {{ pdf_snapshot_main }}#" "$S"
+          test "$(grep -c "^URIs: http://snapshot.debian.org/" "$S")" = 2
+          apt-get -o Acquire::Check-Valid-Until=false -o APT::Sandbox::User=root update
+          apt-get -o APT::Sandbox::User=root -o Dir::Cache::archives=/out \
+            install -y --download-only --no-install-recommends {{ pdf_generation_debs | join(" ") }}
+          ls /out/*.deb >/dev/null'
+      touch "{{ pdf_generation_fetch_dir }}/debs-{{ pdf_debs_key }}.done"
+    creates: "{{ pdf_generation_fetch_dir }}/debs-{{ pdf_debs_key }}.done"
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+  become: true
+  become_user: "{{ build_fetch_user }}"
+
+- name: Deploy the hash-locked Python requirements
+  ansible.builtin.copy:
+    src: requirements.lock
+    dest: "{{ pdf_generation_fetch_dir }}/requirements.lock"
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0600"
+  register: pdf_lock
+
+- name: Fetch wheels against the lock (lamware-fetch)
+  # --only-binary: no sdist, so no build backend runs here. --require-hashes:
+  # every file is checked against the lock.
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      find "{{ pdf_generation_fetch_dir }}/wheels" -mindepth 1 -delete
+      python3 -m pip download --no-cache-dir --disable-pip-version-check \
+        --require-hashes --only-binary=:all: \
+        --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
+        --platform manylinux2014_x86_64 --platform any \
+        --python-version 3.12 --implementation cp \
+        -r "{{ pdf_generation_fetch_dir }}/requirements.lock" \
+        -d "{{ pdf_generation_fetch_dir }}/wheels"
+      touch "{{ pdf_generation_fetch_dir }}/wheels-{{ pdf_lock.checksum }}.done"
+    creates: "{{ pdf_generation_fetch_dir }}/wheels-{{ pdf_lock.checksum }}.done"
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    HOME: "{{ build_fetch_home }}"
+  become: true
+  become_user: "{{ build_fetch_user }}"
+
+# --- Hand the verified inputs to the pipeline user's build context ----------------
+- name: Clear the previous build inputs
+  ansible.builtin.file:
+    path: "{{ pdf_generation_install_dir }}/build/{{ item }}"
+    state: absent
+  loop: [debs, wheels]
+
+- name: Copy the fetched inputs into the build context
+  ansible.builtin.copy:
+    src: "{{ pdf_generation_fetch_dir }}/{{ item }}"
+    dest: "{{ pdf_generation_install_dir }}/build/"
+    remote_src: true
+    owner: pipeline
+    group: pipeline
+    mode: u=rwX,g=rX,o=
+  loop: [debs, wheels, requirements.lock]
+
+- name: Remove apt's bookkeeping from the copied packages
+  ansible.builtin.file:
+    path: "{{ pdf_generation_install_dir }}/build/debs/{{ item }}"
+    state: absent
+  loop: [partial, lock]
+
+- name: Is the base image in the pipeline user's store?
+  ansible.builtin.command:
+    cmd: podman image exists {{ pdf_generation_base_image }}
+    chdir: "{{ pdf_generation_install_dir }}"
+  become: true
+  become_user: pipeline
+  register: pdf_base_present
+  failed_when: pdf_base_present.rc not in [0, 1]
+  changed_when: false
+
+- name: Hand the base image over (save as lamware-fetch, load as pipeline)
+  when: pdf_base_present.rc != 0
+  block:
+    - name: Save the base image (lamware-fetch)
+      ansible.builtin.command:
+        cmd: >
+          podman --cgroup-manager=cgroupfs --events-backend=file
+          save --format oci-archive -o {{ pdf_generation_fetch_dir }}/base.oci
+          {{ pdf_generation_base_image }}
+        chdir: "{{ build_fetch_home }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+      become: true
+      become_user: "{{ build_fetch_user }}"
+      # Inside the "image missing" block: it only runs when there is work to do.
+      changed_when: true
+    - name: Copy the archive to pipeline
+      ansible.builtin.copy:
+        src: "{{ pdf_generation_fetch_dir }}/base.oci"
+        dest: "{{ pdf_generation_install_dir }}/base.oci"
+        remote_src: true
+        owner: pipeline
+        group: pipeline
+        mode: "0600"
+    - name: Load the base image (pipeline)
+      ansible.builtin.command:
+        cmd: podman load -i {{ pdf_generation_install_dir }}/base.oci
+        chdir: "{{ pdf_generation_install_dir }}"
+      become: true
+      become_user: pipeline
+      changed_when: true
+  always:
+    - name: Remove the image archives
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ pdf_generation_fetch_dir }}/base.oci"
+        - "{{ pdf_generation_install_dir }}/base.oci"
+
+# --- Build with no network, then prove the image is this build ------------------
+- name: Hash the build context
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail;
+      find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+      | sha256sum | cut -c1-64
+    chdir: "{{ pdf_generation_install_dir }}/build"
+    executable: /bin/bash
+  register: pdf_context_hash
+  changed_when: false
+
+- name: Build pdf-generation container image (no network)
   ansible.builtin.command:
     cmd: >
       podman build
-      --no-cache
-      --network=host
+      --network=none
+      --pull=never
+      --label lamware.build-context={{ pdf_context_hash.stdout }}
       -t localhost/pdf-generation:latest
       -f {{ pdf_generation_install_dir }}/build/Containerfile
       {{ pdf_generation_install_dir }}/build
+    chdir: "{{ pdf_generation_install_dir }}"
   become: true
   become_user: pipeline
   changed_when: true
+
+- name: Read the build-context label of the image the wrapper runs
+  ansible.builtin.command:
+    cmd: >
+      podman image inspect localhost/pdf-generation:latest
+      --format {% raw %}'{{ index .Labels "lamware.build-context" }}'{% endraw %}
+    chdir: "{{ pdf_generation_install_dir }}"
+  become: true
+  become_user: pipeline
+  register: pdf_image_label
+  changed_when: false
+
+- name: Fail when the image is not the one this deploy built
+  # ADR-023 decision 3: a build that "succeeded" while keeping an old image is how
+  # this image stayed at 2026-05-17 for five months.
+  ansible.builtin.assert:
+    that: pdf_image_label.stdout | trim == pdf_context_hash.stdout | trim
+    fail_msg: >-
+      localhost/pdf-generation:latest carries build context
+      '{{ pdf_image_label.stdout | trim }}', not this deploy's
+      '{{ pdf_context_hash.stdout | trim }}'
+    quiet: true
 
 - name: Deploy pdf-generation wrapper script
   ansible.builtin.template:

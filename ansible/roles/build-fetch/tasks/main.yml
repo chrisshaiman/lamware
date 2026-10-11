@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# roles/build-fetch/tasks/main.yml — ADR-023
+#
+# Creates lamware-fetch, the unprivileged user that downloads image build inputs
+# (base images, Debian packages, wheels) so that `podman build` can run with no
+# network. Image roles depend on this role through meta/main.yml.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create the build-fetch user
+  ansible.builtin.user:
+    name: "{{ build_fetch_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ build_fetch_home }}"
+    create_home: true
+    # No supplementary groups: in particular not lamware, which reads reports.
+    groups: []
+    append: false
+
+- name: Keep the build-fetch home private
+  ansible.builtin.file:
+    path: "{{ build_fetch_home }}"
+    state: directory
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0700"
+
+- name: Read the subordinate id maps
+  ansible.builtin.slurp:
+    src: "/etc/{{ item }}"
+  loop: [subuid, subgid]
+  register: build_fetch_subid_maps
+
+- name: Refuse a subordinate id range that overlaps another user's
+  vars:
+    lo: "{{ build_fetch_subid_start | int }}"
+    hi: "{{ (build_fetch_subid_start | int) + (build_fetch_subid_count | int) - 1 }}"
+    clashes: >-
+      {%- set out = [] -%}
+      {%- for f in build_fetch_subid_maps.results -%}
+      {%- for line in (f.content | b64decode).splitlines() if line.count(':') == 2 -%}
+      {%- set p = line.split(':') -%}
+      {%- if p[0] != build_fetch_user and (p[1] | int) <= (hi | int)
+            and (lo | int) <= (p[1] | int) + (p[2] | int) - 1 -%}
+      {%- set _ = out.append(f.item ~ ' ' ~ line) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  ansible.builtin.assert:
+    that: clashes | length == 0
+    fail_msg: "{{ build_fetch_user }}'s range {{ lo }}-{{ hi }} overlaps: {{ clashes }}"
+    quiet: true
+
+- name: Give the build-fetch user its subordinate id range
+  ansible.builtin.lineinfile:
+    path: "/etc/{{ item }}"
+    regexp: "^{{ build_fetch_user }}:"
+    line: "{{ build_fetch_user }}:{{ build_fetch_subid_start }}:{{ build_fetch_subid_count }}"
+  loop: [subuid, subgid]
