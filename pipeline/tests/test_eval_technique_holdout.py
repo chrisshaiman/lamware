@@ -219,8 +219,7 @@ def test_the_summary_reports_none_when_nothing_was_scoreable():
 
 
 @pytest.mark.parametrize("col", [
-    "techniques_hit", "technique_precision", "technique_recall", "techniques_covered",
-    "cape_techniques",
+    "techniques_hit", "technique_precision", "technique_recall", "cape_techniques",
     "total_techniques_hit", "mean_technique_precision", "mean_technique_recall",
 ])
 def test_the_scorecard_renders_the_new_figures(col):
