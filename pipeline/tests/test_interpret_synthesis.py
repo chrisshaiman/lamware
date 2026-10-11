@@ -97,8 +97,8 @@ def test_phase2a_carries_the_loop_tools_block_for_prefix_reuse():
     TOOLS on a .NET run cannot pass).
     """
     block = _t().split("def local_synthesize", 1)[1].split("# ---- Agentic loop", 1)[0]
-    concl = block.split("concl = create_message(", 1)
-    assert len(concl) == 2, "phase 2a must still issue its create_message call"
+    concl = block.split("concl = create_message_until_repetition(", 1)
+    assert len(concl) == 2, "phase 2a must still issue its streaming call (#761)"
     # Up to the next statement, not to the first ")" -- the argument list contains
     # max(max_output_tokens, 8192), whose paren would truncate the slice early.
     call = concl[1].split("concl_text =", 1)[0]
