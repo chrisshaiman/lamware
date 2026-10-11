@@ -90,6 +90,20 @@ def technique_hits(claimed: list[str], available: list[str]) -> list[str]:
             if t in have or t.split(".")[0] in have]
 
 
+def techniques_covered(claimed: list[str], available: list[str]) -> list[str]:
+    """The distinct Cape techniques at least one claim matched: recall's numerator (#756).
+
+    `technique_hits` counts CLAIMS, which is right for precision and wrong for
+    recall: `T1055.001` and `T1055.012` against a key holding only `T1055` are
+    two hits on one technique, and recall over that key scored 1.5 on Phorpiex
+    (3 hits / 2 techniques). Matching follows `technique_hits` exactly: a
+    sub-technique covers its parent, never the reverse.
+    """
+    claims = set(claimed or [])
+    parents = {t.split(".")[0] for t in claims}
+    return sorted(a for a in set(available or []) if a in claims or a in parents)
+
+
 def ghidra_warnings_for(gr: dict) -> list[str]:
     """The analysis warnings for a cell, resolved identically live and offline.
 
@@ -165,6 +179,8 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
     claimed_ids = sorted({t.get("id") for t in techniques
                           if isinstance(t, dict) and t.get("id")})
     hits = technique_hits(claimed_ids, cape_techniques or [])
+    covered = techniques_covered(claimed_ids, cape_techniques or [])
+    key_size = len(set(cape_techniques or []))
     return {
         "arm": arm_name,
         "seed": seed,
@@ -235,8 +251,9 @@ def compose_cell(arm_name: str, sample: CorpusSample, analysis: dict, source_tex
         "techniques_hit": len(hits),
         "technique_precision": (round(len(hits) / len(claimed_ids), 3)
                                 if claimed_ids else None),
-        "technique_recall": (round(len(hits) / len(cape_techniques), 3)
-                             if cape_techniques else None),
+        "techniques_covered": len(covered),
+        "technique_recall": (round(len(covered) / key_size, 3)
+                             if key_size else None),
         "cape_techniques": len(cape_techniques or []),
         "completed": tool_metrics.get("completed"),
         # Reported separately because "finished, but the answer was unparseable"
