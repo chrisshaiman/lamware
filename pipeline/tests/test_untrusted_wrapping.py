@@ -34,7 +34,7 @@ _TREE = ast.parse(SRC)
 for _node in _TREE.body:
     if isinstance(_node, ast.FunctionDef) and _node.name in (
             "strip_control_chars", "neutralize_delimiters", "wrap_untrusted",
-            "sanitize_string"):
+            "sanitize_string", "one_line", "fenced_items"):
         exec(compile(ast.Module([_node], []), "<helpers>", "exec"), _NS)  # noqa: S102
     elif isinstance(_node, ast.Assign) and any(
             getattr(t, "id", "") == "_DELIMITER_RE" for t in _node.targets):

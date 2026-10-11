@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
 import sys
 import uuid
@@ -105,6 +106,10 @@ from stages.volatility import (
 
 log = logging.getLogger("pipeline")
 
+
+
+# MITRE ATT&CK technique id, as the summary model must give it (M9).
+_TECHNIQUE_ID = re.compile(r"T\d{4}(?:\.\d{3})?")
 
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging to stderr. Call add_file_logging() later for per-task log files."""
@@ -1613,6 +1618,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         existing_keys = {(m["ioc_value"], m["technique_id"])
                          for m in report.get("ioc_technique_mappings", [])}
         for link in llm_links:
+            # Model output going into a shared DB table (M9): a technique id is
+            # T####(.###) or it is not stored.
+            if not isinstance(link, dict) or not _TECHNIQUE_ID.fullmatch(
+                    str(link.get("technique_id", ""))):
+                continue
             key = (link.get("ioc_value", ""), link.get("technique_id", ""))
             if key[0] and key[1] and key not in existing_keys:
                 report["ioc_technique_mappings"].append({
