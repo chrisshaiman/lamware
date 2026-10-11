@@ -2,19 +2,20 @@
 # Renders pipeline JSON reports to formatted PDF documents.
 # Isolates HTML/CSS rendering from untrusted malware-derived strings.
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/python:3.12-slim
+#
+# Hermetic (ADR-023): built with --network=none. Every input below was downloaded
+# and verified by lamware-fetch before the build: the base image by digest, the
+# Debian packages from a pinned snapshot, the wheels against requirements.lock.
+FROM {{ pdf_generation_base_image }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libffi-dev \
-    libcairo2 \
-    && rm -rf /var/lib/apt/lists/*
+COPY debs/ /tmp/debs/
+RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
 
-RUN pip install --no-cache-dir \
-    weasyprint \
-    markdown
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/requirements.lock \
+    && rm -rf /tmp/wheels /tmp/requirements.lock
 
 COPY generate-report.py /opt/generate-report.py
 RUN chmod +x /opt/generate-report.py

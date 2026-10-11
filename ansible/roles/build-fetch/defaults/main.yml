@@ -1,0 +1,13 @@
+---
+# roles/build-fetch/defaults/main.yml — ADR-023
+#
+# The only account that downloads image build inputs. It has network and nothing
+# else: no root, no lamware group, no access to samples or reports.
+
+build_fetch_user: lamware-fetch
+build_fetch_home: /var/lib/lamware-fetch
+# Its own subordinate id range for the rootless container that resolves Debian
+# packages. Must not overlap any other user's range: overlapping ranges map two
+# users' container ids onto the same host ids.
+build_fetch_subid_start: 331072
+build_fetch_subid_count: 65536

@@ -40,6 +40,7 @@ TEMPLATES = {
     "pcap-analysis": "run-pcap-analysis-wrapper.sh.j2",
     "triage": "run-triage-wrapper.sh.j2",
     "volatility": "run-volatility-wrapper.sh.j2",
+    "pdf-generation": "run-pdf-generation-wrapper.sh.j2",
 }
 
 # One recording podman: logs every call as a JSON line, snapshots TMPDIR when a
@@ -189,6 +190,10 @@ CASES = {
     # The dump is the "sample"; the plugin is the second argument (#339).
     "volatility": ("volatility",
                    lambda r: ([str(_sample(r)), "windows.malfind", str(o := _out(r))], o)),
+    # The PDF is named by the second argument; named after the stub's output
+    # file so the same planted-link and pre-link cases apply.
+    "pdf-generation": ("pdf-generation",
+                       lambda r: ([str(_sample(r)), str((o := _out(r)) / "result.json")], o)),
 }
 
 
