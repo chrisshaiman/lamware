@@ -28,3 +28,28 @@ ghidra_sha256: c3b458661d69e26e203d739c0c82d143cc8a4a29d9e571f099c2cf4bda62a120
 ghidra_container_memory: "4g"
 ghidra_container_cpus: "2"
 ghidra_container_timeout: "600"
+
+# --- ADR-023: hermetic build inputs ------------------------------------------
+# The base image of both stages, by digest: eclipse-temurin:21-jdk-jammy as it sat
+# in pipeline's store on 2026-10-11 (built 2026-05-15T21:16:07Z), the image this
+# role has run on. Moving it is a deliberate change to this line.
+ghidra_base_image: "docker.io/library/eclipse-temurin@sha256:801b7e1a9c4befaf82bf9a2a58025ef43a7694bbc84779187ad0524d84742772"
+# The Ubuntu archive as it stood just after that image was built. Resolving
+# against a snapshot gives the same package set on every fetch; apt still
+# verifies the signed Release files. https: snapshot.ubuntu.com redirects http.
+ghidra_ubuntu_snapshot: "20260515T220000Z"
+ghidra_snapshot_url: "https://snapshot.ubuntu.com/ubuntu/{{ ghidra_ubuntu_snapshot }}"
+ghidra_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+ghidra_apt_components: "main restricted universe multiverse"
+ghidra_apt_sources:
+  - "deb [{{ ghidra_keyring }}] {{ ghidra_snapshot_url }} jammy {{ ghidra_apt_components }}"
+  - "deb [{{ ghidra_keyring }}] {{ ghidra_snapshot_url }} jammy-updates {{ ghidra_apt_components }}"
+  - "deb [{{ ghidra_keyring }}] {{ ghidra_snapshot_url }} jammy-backports {{ ghidra_apt_components }}"
+  - "deb [{{ ghidra_keyring }}] {{ ghidra_snapshot_url }} jammy-security {{ ghidra_apt_components }}"
+# One set per stage. The unpack stage only unzips the release; the final stage
+# runs run-ghidra.py. unzip is deliberately not in the final image.
+ghidra_unpack_debs:
+  - unzip
+ghidra_runtime_debs:
+  - python3
+  - python3-pip
