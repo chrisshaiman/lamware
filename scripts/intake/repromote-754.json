@@ -1,0 +1,18 @@
+[
+ {
+  "sha256": "d22c96565d2640d993f7280731112287986c24cb1636126da391634ed478ed1e",
+  "signature": "Latrodectus",
+  "file_name": "GameOverlayRenderer.dll",
+  "file_size": 1652784,
+  "first_seen": "2025-11-05 13:41:50",
+  "imphash": ""
+ },
+ {
+  "sha256": "d26bc055f0cfdef6b5e80e6e35a0b9512bd7d233579119a0a874228915fe4ed7",
+  "signature": "SalatStealer",
+  "file_name": "Xeno-v1.3.55.exe",
+  "file_size": 92618994,
+  "first_seen": "2026-07-01 12:16:13",
+  "imphash": "2057790ae7855765d51bdc4142e62f9c"
+ }
+]
