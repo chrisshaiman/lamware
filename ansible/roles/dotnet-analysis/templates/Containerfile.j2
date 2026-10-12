@@ -2,35 +2,53 @@
 # Deobfuscates and decompiles .NET assemblies to C# source code for LLM analysis.
 # Built locally by Ansible. Never pulled from a registry.
 #
+# Hermetic (ADR-023): built with --network=none. Every input below was downloaded
+# and verified by lamware-fetch before the build: the base image by digest, the
+# Debian packages from a pinned Ubuntu snapshot, every NuGet package against its
+# pinned sha512. nuget/nuget.config clears every package source but the copied
+# folder, and each dotnet command below is pointed at it, so nuget.org is never
+# consulted; a package missing from the pin list fails the restore by name.
+#
 # LICENSING NOTE: de4dotEx is licensed under GPL-3.0. It is invoked as a
 # subprocess (not linked or imported) from this Apache 2.0 licensed project.
 # See: https://github.com/AerialMantis/de4dot (GPL-3.0-or-later)
-FROM mcr.microsoft.com/dotnet/sdk:10.0
+FROM {{ dotnet_analysis_base_image }}
 
-RUN dotnet tool install -g ilspycmd \
+# No first-run network calls (telemetry, workload update checks), and NuGet's
+# signature check uses only what is in the package and the SDK's trust store:
+# with no network an online revocation check can only time out.
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 \
+    NUGET_CERT_REVOCATION_MODE=offline
+
+COPY debs/main/ /tmp/debs/
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.x-minimal broke the ghidra build that way). Local files only.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
+
+COPY nuget/ /tmp/nuget/
+
+RUN dotnet tool install -g ilspycmd --version {{ (dotnet_analysis_nuget | selectattr('id', 'equalto', 'ilspycmd') | first).version }} --configfile /tmp/nuget/nuget.config \
     && cp -r /root/.dotnet/tools /opt/dotnet-tools \
     && chmod -R a+rX /opt/dotnet-tools
 
 # Install de4dotEx — GPL-3.0 licensed .NET deobfuscator.
 # Invoked as a subprocess only; not linked into Apache 2.0 code.
-# Source fetched into the build context by the role — see the pyinstaller
-# Containerfile. NB `dotnet publish` below still restores from NuGet, so this
-# build is not fully hermetic; it removes the GitHub dependency, not every one.
+# Source fetched into the build context by the role (pinned commit + sha256);
+# its restore reads only /tmp/nuget. NuGetAudit is off because its vulnerability
+# data comes from a package source, and the only source here is a folder.
 COPY de4dotEx.tar.gz /tmp/de4dotEx.tar.gz
 RUN tar -xzf /tmp/de4dotEx.tar.gz -C /tmp \
     && cd /tmp/de4dotEx-{{ de4dotex_commit }} \
-    && dotnet publish de4dot -c Release -f net8.0 -o /opt/de4dot \
+    && dotnet publish de4dot -c Release -f net8.0 -o /opt/de4dot -p:RestoreConfigFile=/tmp/nuget/nuget.config -p:NuGetAudit=false \
     && chmod -R a+rX /opt/de4dot \
-    && rm -rf /tmp/de4dotEx.tar.gz /tmp/de4dotEx-{{ de4dotex_commit }}
+    && rm -rf /tmp/de4dotEx.tar.gz /tmp/de4dotEx-{{ de4dotex_commit }} /tmp/nuget
 
 ENV PATH="${PATH}:/opt/dotnet-tools:/opt/de4dot"
 
 COPY analyze-dotnet.py /opt/analyze-dotnet.py
 RUN chmod +x /opt/analyze-dotnet.py
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /output /nonexistent && chmod 777 /nonexistent /output
 ENV HOME=/nonexistent
