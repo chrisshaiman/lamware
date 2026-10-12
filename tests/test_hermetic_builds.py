@@ -28,7 +28,7 @@ SHARED = ROLES / "build-fetch" / "tasks"
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
 PACKAGE_MIGRATION_PENDING = {
-    "dotnet-analysis", "pcap-analysis", "powershell-analysis",
+    "dotnet-analysis", "powershell-analysis",
 }
 
 _NETWORK_INSTALL = re.compile(
@@ -179,16 +179,18 @@ _JINJA.filters["hash"] = lambda s, alg: hashlib.new(alg, s.encode()).hexdigest()
 
 
 def _resolve(value, ctx: dict):
-    """A role variable as Ansible would hand it to the shared build: a bare
-    "{{ var }}" is replaced by the variable's value (so lists stay lists), and
-    strings are rendered until no template is left."""
+    """A role variable as Ansible would hand it to the shared build: a string
+    that is one whole "{{ expr }}" is evaluated natively (so `a + b` of two lists
+    stays a list, as Ansible's native types make it), and other strings are
+    rendered until no template is left."""
     if isinstance(value, list):
         return [_resolve(v, ctx) for v in value]
     if not isinstance(value, str):
         return value
-    bare = re.fullmatch(r"\{\{\s*(\w+)\s*\}\}", value)
-    if bare:
-        return _resolve(ctx[bare.group(1)], ctx)
+    whole = re.fullmatch(r"\{\{((?:(?!\{\{|\}\}).)+)\}\}", value.strip())
+    if whole:
+        expr = _JINJA.compile_expression(whole.group(1), undefined_to_none=False)
+        return _resolve(expr(**ctx), ctx)
     for _ in range(8):
         if "{{" not in value:
             break

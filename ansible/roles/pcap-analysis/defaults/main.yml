@@ -22,3 +22,50 @@ zeek_repo_key_url: "https://download.opensuse.org/repositories/security:zeek/xUb
 # inside a container that parses attacker-controlled PCAPs. On rotation, verify
 # the new key out of band and bump this.
 zeek_repo_key_sha256: b67ae73b8543af4195c930b52a07c208611253fdc519873adcf1190ffcfc1377
+# Where the role puts the verified key. Outside the build context: the image no
+# longer configures the repo; only lamware-fetch's resolving container uses the
+# key, mounted at /in/keys/<basename> (build-fetch signing_keys).
+zeek_repo_key_path: "{{ pcap_analysis_install_dir }}/zeek-repo-key.asc"
+
+# --- ADR-023: hermetic build inputs ------------------------------------------
+# The base image, by digest: ubuntu:24.04 as it sat in pipeline's store on
+# 2026-10-11 (built 2026-04-10T06:49:18Z), the image this role has run on.
+# Moving it is a deliberate change to this line.
+pcap_analysis_base_image: "docker.io/library/ubuntu@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
+# The Ubuntu archive as it stood just after that image was built. Resolving
+# against a snapshot gives the same package set on every fetch; apt still
+# verifies the signed Release files. https: snapshot.ubuntu.com redirects http.
+pcap_analysis_ubuntu_snapshot: "20260410T070000Z"
+pcap_analysis_snapshot_url: "https://snapshot.ubuntu.com/ubuntu/{{ pcap_analysis_ubuntu_snapshot }}"
+pcap_analysis_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+pcap_analysis_apt_components: "main restricted universe multiverse"
+pcap_analysis_apt_sources:
+  - "deb [{{ pcap_analysis_keyring }}] {{ pcap_analysis_snapshot_url }} noble {{ pcap_analysis_apt_components }}"
+  - "deb [{{ pcap_analysis_keyring }}] {{ pcap_analysis_snapshot_url }} noble-updates {{ pcap_analysis_apt_components }}"
+  - "deb [{{ pcap_analysis_keyring }}] {{ pcap_analysis_snapshot_url }} noble-backports {{ pcap_analysis_apt_components }}"
+  - "deb [{{ pcap_analysis_keyring }}] {{ pcap_analysis_snapshot_url }} noble-security {{ pcap_analysis_apt_components }}"
+# What the image adds to the base from Ubuntu.
+pcap_analysis_debs:
+  - suricata
+  - python3
+  - python3-json5
+  - jq
+
+# Zeek comes from the openSUSE OBS repo, signed by the key above. OBS keeps only
+# the current build of each package and has no snapshot, so this set cannot be
+# reproduced from an archive: the version is pinned, and a fetch fails once OBS
+# no longer serves it. That failure is the intended one; choose a new version
+# deliberately.
+#
+# 8.2.1-0 is the version in the image running on 2026-10-11 (dpkg-query in
+# localhost/pcap-analysis:latest, built 2026-08-11). As of 2026-10-11 OBS no
+# longer serves it: `zeek` is 9.0.0-0 there, `zeek-lts` 8.0.10-0, and no 8.2.x
+# remains. This fetch fails until the version is changed here.
+pcap_analysis_zeek_obs_repo: "http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/"
+pcap_analysis_zeek_obs_sources:
+  - "deb [signed-by=/in/keys/zeek-repo-key.asc] {{ pcap_analysis_zeek_obs_repo }} /"
+# `zeek` depends on its components at exactly its own version (zeek-core,
+# zeekctl, zeek-zkg, ...), so pinning it pins the set.
+pcap_analysis_zeek_version: "8.2.1-0"
+pcap_analysis_zeek_debs:
+  - "zeek={{ pcap_analysis_zeek_version }}"

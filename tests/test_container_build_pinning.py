@@ -239,12 +239,44 @@ def test_every_fetched_file_is_actually_copied_into_the_image():
     """
     for role in MIGRATED:
         fetched = _get_url_dests(role)
-        assert fetched, f"{role} is listed as migrated but fetches nothing"
+        assert fetched or _signing_keys(role), f"{role} is listed as migrated but fetches nothing"
         copied = _copy_sources(CONTAINERFILES[role])
         missing = [f for f in fetched if f not in copied]
         assert not missing, (
             f"{role}: the role fetches {missing} but the Containerfile never COPYs "
             f"it — it copies {copied}. The build will fail on the host.")
+
+
+def _signing_keys(role: str) -> list[str]:
+    """Repo signing keys the role hands to ADR-023's package fetch (raw Jinja paths).
+
+    These never enter the image: lamware-fetch's resolving container mounts them
+    to verify a third-party repo. So they are not COPYed, and are not in /build/.
+    """
+    tasks = yaml.safe_load((ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8"))
+    keys = []
+    for t in tasks:
+        inc = t.get("ansible.builtin.include_role") or {}
+        if inc.get("name") == "build-fetch" and inc.get("tasks_from") == "image":
+            for s in (t.get("vars") or {}).get("hb_deb_sets", []):
+                keys.extend(s.get("signing_keys", []))
+    return keys
+
+
+def test_every_signing_key_handed_to_the_fetch_is_checksummed_by_the_role():
+    """A repo key decides which packages apt accepts. The fetch trusts whatever
+    file it is handed, so the file must be the dest of a get_url that carries a
+    checksum, in the same role: the same variable on both sides, compared as
+    written, so a renamed path cannot pass by coincidence."""
+    for role in CONTAINERFILES:
+        tasks = yaml.safe_load((ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8"))
+        verified = {t["ansible.builtin.get_url"]["dest"] for t in tasks
+                    if "ansible.builtin.get_url" in t
+                    and str(t["ansible.builtin.get_url"].get("checksum", "")).startswith("sha256:")}
+        for key in _signing_keys(role):
+            assert key in verified, f"{role}: signing key {key} is not a checksummed get_url dest"
+    # Guards the guard: with no role carrying keys, the loop above checks nothing.
+    assert _signing_keys("pcap-analysis"), "pcap-analysis no longer hands the fetch its Zeek key"
 
 
 def test_the_copy_parser_ignores_cross_stage_copies():
