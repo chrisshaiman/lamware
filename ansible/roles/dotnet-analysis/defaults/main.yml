@@ -13,3 +13,74 @@ de4dotex_commit: 660088d663239de6bc0df7da15accabbd15495d7
 
 # sha256 of the codeload tarball for de4dotex_commit
 de4dotex_sha256: 7d989c185190cad59f696b3798597f8e098470d9f393077009f9f35670a4dabd
+
+# --- ADR-023: hermetic build inputs -------------------------------------------
+# Base image, by digest: mcr.microsoft.com/dotnet/sdk:10.0 as the registry served it
+# on 2026-10-12. NOT the older copy in pipeline's store (SDK 10.0.300, runtime
+# 10.0.8): the running image was built from a newer one (runtime 10.0.11), and an
+# older base would roll back .NET fixes in a container that parses hostile
+# assemblies. By release date this is SDK 10.0.401 / runtime 10.0.12 (2026-09-08).
+# Moving it is a deliberate change to this line AND to the 8.0.x pack versions
+# below: the SDK's Microsoft.NETCoreSdk.BundledVersions.props decides which net8.0
+# packs a self-contained publish restores. 8.0.31 shipped the same day as
+# 10.0.401, so that is the expected pin; the first build confirms it (a wrong
+# version fails the offline restore by name, before the image is replaced).
+dotnet_analysis_base_image: "mcr.microsoft.com/dotnet/sdk@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317"
+
+# The Ubuntu archive at 2026-10-10: not older than what the running image installed
+# from the live mirror. apt still verifies the signed Release files.
+dotnet_analysis_ubuntu_snapshot: "20261010T000000Z"
+dotnet_analysis_snapshot: "https://snapshot.ubuntu.com/ubuntu"
+dotnet_analysis_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+# The image's own ubuntu.sources: these four suites, all four components.
+dotnet_analysis_archive: "{{ dotnet_analysis_snapshot }}/{{ dotnet_analysis_ubuntu_snapshot }}"
+dotnet_analysis_components: "main universe restricted multiverse"
+dotnet_analysis_apt_sources:
+  - "deb [{{ dotnet_analysis_keyring }}] {{ dotnet_analysis_archive }} noble {{ dotnet_analysis_components }}"
+  - "deb [{{ dotnet_analysis_keyring }}] {{ dotnet_analysis_archive }} noble-updates {{ dotnet_analysis_components }}"
+  - "deb [{{ dotnet_analysis_keyring }}] {{ dotnet_analysis_archive }} noble-backports {{ dotnet_analysis_components }}"
+  - "deb [{{ dotnet_analysis_keyring }}] {{ dotnet_analysis_archive }} noble-security {{ dotnet_analysis_components }}"
+dotnet_analysis_debs:
+  - python3
+
+# Every NuGet package the build restores: the whole graph, nothing resolved at
+# build time. sha512 is of the .nupkg file (hex); each equals the packageHash
+# nuget.org's catalog records for that version (checked 2026-10-11).
+#   ilspycmd: the version in the image built 2026-09-01 (`dotnet tool list -g`);
+#     a tool package, so it has no dependencies of its own.
+#   dnlib, System.Drawing.Common, Microsoft.Win32.SystemEvents: de4dotEx's
+#     PackageReferences (De4DotCommon.props DnlibVersion, de4dot.code.csproj) and
+#     the one transitive dependency; the same versions, and the same bytes, as that
+#     image's restore recorded.
+#   Microsoft.NETCore.App.* / Microsoft.AspNetCore.App.*: what a self-contained
+#     net8.0 publish (De4DotCommon.props sets SelfContained for Release) restores
+#     on linux-x64. The running image restored the same five ids at 8.0.30; this
+#     base's SDK is expected to ask for 8.0.31 (see the base image note above).
+dotnet_analysis_nuget:
+  - id: ilspycmd
+    version: 11.0.0.9375
+    sha512: 51a0c85e0f171a5f635984a0ef99adeb86e761b582ff5c61d6c5f5887e408c89190b1f02ee21c0aba2929791fe654d57fb2b4ef314175808cd55fbfe2ed97a0c
+  - id: dnlib
+    version: 4.5.0
+    sha512: 14e1d31fbe0d07f66bd3c16887c0623c841810ff908dbc464531309206e44db4943c9a492a994aaf05e3a44405c0fac3c08c0f0266a8a3861334b57db2feb952
+  - id: System.Drawing.Common
+    version: 8.0.8
+    sha512: 318e393b68d144d12d3a41de0dbdaba6796c7be03bb70ead38b5ee7f5581fe059ce78fb39cf4d8e45f1c8ecd194a4b38ff20fd034beeb79a56bfd6a8e33eab52
+  - id: Microsoft.Win32.SystemEvents
+    version: 8.0.0
+    sha512: 25016c508653fbf463c52d8fc3d2773b7c211c2402c4ea7b4aa987fb29c851d3f80c5e7abbcace2d4d5e061ae290524e8029afbc49a37d7e5186fe06aa4609b2
+  - id: Microsoft.NETCore.App.Ref
+    version: 8.0.31
+    sha512: fe544b1d8235ba74f25859886c682faaa88f10a1f5f42c3ade9b3943ead0775667745a6dde1e3b9a915a9c290587e84efd093078464d1c44319608746667bf26
+  - id: Microsoft.NETCore.App.Runtime.linux-x64
+    version: 8.0.31
+    sha512: c7cfba2898d19040e6856781cc403bc112d2d33e019f8bafb13b3c5d9e8470b5826e91ded9ecea73cca3dbcacb93701b4daa0021a61e077e7ac7a93d1774a2f2
+  - id: Microsoft.NETCore.App.Host.linux-x64
+    version: 8.0.31
+    sha512: 3fd360aa432a402113702ee451481258ae358a43130ba7f3767f56dc7d50a4ef378553f54beca3a04b282ac64c979f8b9a80e565057588c4f2004e05aeaf72e9
+  - id: Microsoft.AspNetCore.App.Ref
+    version: 8.0.31
+    sha512: d9f3f34ed187d5ea93380dd3d802534caa6b9bc90d830a5d9ae20c0da30fc26bd951d07f91d04c39eec84bbe18cd656384fa47357da01b9925c46f85c9ffff60
+  - id: Microsoft.AspNetCore.App.Runtime.linux-x64
+    version: 8.0.31
+    sha512: 749ce986a3fcf27f7e2f0cc360b294e71dc977380f22ee3b838595e5e19377f1fa65f73d9a56f5ff9f1acc68d4ad35f7dfe48b16d0b31a6d1f99df8a9e588fd6

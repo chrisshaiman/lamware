@@ -8,6 +8,10 @@
 # the one it just built. The Containerfile reads:
 #   debs/<set>/*.deb   one directory per entry in hb_deb_sets
 #   wheels/*.whl       when hb_lock is set, with requirements.lock beside it
+#   nuget/*.nupkg      when hb_nuget is set, with nuget/nuget.config beside them:
+#                      a config that clears every other source, so a restore
+#                      pointed at it (--configfile / -p:RestoreConfigFile=) can
+#                      only see these files
 #
 # Inputs:
 #   hb_name         short name; also the fetch dir under the fetch user's home
@@ -22,6 +26,10 @@
 #                   so source-only packages build with --no-build-isolation
 #   hb_sdists       [{name, version, sha256}] packages with no usable wheel
 #   hb_python       target Python for wheels (default 3.12)
+#   hb_nuget        [{id, version, sha512}]: every NuGet package the build
+#                   restores, the whole graph, each with the sha512 (hex) of the
+#                   .nupkg. Fetched with get_url, so nothing (no MSBuild, no
+#                   restore) runs while the network is up.
 # =============================================================================
 
 - name: "{{ hb_name }}: lock files use the names the Containerfiles COPY"
@@ -45,6 +53,7 @@
     - "{{ build_fetch_home }}/{{ hb_name }}/debs"
     - "{{ build_fetch_home }}/{{ hb_name }}/keys"
     - "{{ build_fetch_home }}/{{ hb_name }}/wheels"
+    - "{{ build_fetch_home }}/{{ hb_name }}/nuget"
 
 - name: "{{ hb_name }}: fetch each base image by digest (lamware-fetch)"
   ansible.builtin.shell:
@@ -129,12 +138,68 @@
         group: "{{ build_fetch_user }}"
         mode: "0600"
 
+- name: "{{ hb_name }}: fetch NuGet packages against their pinned sha512"
+  when: hb_nuget | default([]) | length > 0
+  vars:
+    hb_nuget_dir: "{{ build_fetch_home }}/{{ hb_name }}/nuget"
+    hb_nuget_files: "{{ hb_nuget | map(attribute='id') | map('lower')
+                        | zip(hb_nuget | map(attribute='version') | map('lower'))
+                        | map('join', '.') | map('regex_replace', '$', '.nupkg') | list }}"
+  block:
+    - name: "{{ hb_name }}: get_url each .nupkg from nuget.org (lamware-fetch)"
+      # The flat-container URL is the package file itself. The sha512 is checked
+      # before the file is kept, so the build's local feed holds exactly the
+      # pinned bytes. NuGet's own signature check runs again at restore, offline.
+      ansible.builtin.get_url:
+        url: "https://api.nuget.org/v3-flatcontainer/{{ item.id | lower }}/{{ item.version | lower }}/{{ item.id | lower }}.{{ item.version | lower }}.nupkg"
+        dest: "{{ hb_nuget_dir }}/{{ item.id | lower }}.{{ item.version | lower }}.nupkg"
+        checksum: "sha512:{{ item.sha512 }}"
+        mode: "0600"
+      loop: "{{ hb_nuget }}"
+      loop_control:
+        label: "{{ item.id }} {{ item.version }}"
+      become: true
+      become_user: "{{ build_fetch_user }}"
+    - name: "{{ hb_name }}: find packages no longer pinned"
+      ansible.builtin.find:
+        paths: "{{ hb_nuget_dir }}"
+        patterns: "*.nupkg"
+      register: hb_nuget_present
+    - name: "{{ hb_name }}: remove them, so the feed is exactly the pin list"
+      # A stale version left in a folder feed is a second candidate the
+      # resolver could pick; the pin list must be the whole feed.
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ hb_nuget_present.files | rejectattr('path', 'search', '/(' ~ (hb_nuget_files | map('regex_escape') | join('|')) ~ ')$') | list }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+    - name: "{{ hb_name }}: write the nuget.config that sees only this feed"
+      # <clear/> drops nuget.org and every source from the user and machine
+      # configs; "." is the directory holding this file (NuGet resolves a
+      # relative source against its config). The build has no network anyway;
+      # this makes a missing package fail as "not found" instead of as a
+      # timeout against nuget.org.
+      ansible.builtin.copy:
+        dest: "{{ hb_nuget_dir }}/nuget.config"
+        owner: "{{ build_fetch_user }}"
+        group: "{{ build_fetch_user }}"
+        mode: "0600"
+        content: |
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="lamware-fetched" value="." />
+            </packageSources>
+          </configuration>
+
 # --- Hand the verified inputs to pipeline ------------------------------------
 - name: "{{ hb_name }}: clear the previous build inputs"
   ansible.builtin.file:
     path: "{{ hb_build_dir }}/{{ item }}"
     state: absent
-  loop: [debs, wheels, requirements.lock, build-requirements.lock, sdists.lock]
+  loop: [debs, wheels, requirements.lock, build-requirements.lock, sdists.lock, nuget]
 
 - name: "{{ hb_name }}: copy the fetched inputs into the build context"
   ansible.builtin.copy:
@@ -144,7 +209,7 @@
     owner: pipeline
     group: pipeline
     mode: u=rwX,g=rX,o=
-  loop: "{{ ['debs', 'wheels'] + hb_lock_names }}"
+  loop: "{{ ['debs', 'wheels'] + hb_lock_names + (['nuget'] if hb_nuget | default([]) | length > 0 else []) }}"
   vars:
     hb_lock_names: >-
       {{ (['requirements.lock', 'sdists.lock'] if hb_lock | default('') | length > 0 else [])
