@@ -170,7 +170,9 @@
     hb_name: triage
     hb_build_dir: "{{ triage_install_dir }}/build"
     hb_tag: localhost/triage:latest
-    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_base_images:
+      - ref: "{{ build_fetch_python_slim }}"
+        id: "{{ build_fetch_python_slim_id }}"
     hb_deb_sets:
       - name: runtime
         image: "{{ build_fetch_python_slim }}"

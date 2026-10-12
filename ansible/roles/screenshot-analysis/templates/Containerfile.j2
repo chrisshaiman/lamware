@@ -2,7 +2,9 @@
 # Processes CAPE/QEMU screenshots: removes duplicates via perceptual
 # hashing and decodes any QR codes found in screenshots.
 # Built locally by Ansible. Never pulled from a registry.
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # Hermetic (ADR-023): every input below was fetched by lamware-fetch.
 COPY debs/main/ /tmp/debs/

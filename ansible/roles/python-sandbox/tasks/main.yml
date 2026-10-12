@@ -63,7 +63,9 @@
     hb_name: python-sandbox
     hb_build_dir: "{{ python_sandbox_install_dir }}/build"
     hb_tag: localhost/python-sandbox:latest
-    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_base_images:
+      - ref: "{{ build_fetch_python_slim }}"
+        id: "{{ build_fetch_python_slim_id }}"
 
 - name: Deploy run-sandbox wrapper script
   ansible.builtin.template:

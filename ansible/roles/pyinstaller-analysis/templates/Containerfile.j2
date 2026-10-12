@@ -6,7 +6,9 @@
 # - pyinstxtractor is GPL-3.0 licensed, invoked as a subprocess only.
 # - pycdc (Decompyle++) is GPL-3.0 licensed, invoked as a subprocess only.
 # Neither is linked or imported into the Apache 2.0 project code.
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # Sources are fetched into the build context by the ROLE, not by this build.
 #

@@ -34,6 +34,10 @@ ghidra_container_timeout: "600"
 # in pipeline's store on 2026-10-11 (built 2026-05-15T21:16:07Z), the image this
 # role has run on. Moving it is a deliberate change to this line.
 ghidra_base_image: "docker.io/library/eclipse-temurin@sha256:801b7e1a9c4befaf82bf9a2a58025ef43a7694bbc84779187ad0524d84742772"
+# Its image ID (config digest): what the build uses FROM and what the hand-off
+# asserts. The registry digest above cannot survive save/load (ADR-023,
+# 2026-10-12 amendment); this can. Read from the image pulled by that digest.
+ghidra_base_image_id: "ae6f65b7c39f6b5a0ae86782024e2c821a46c65e1f90257fb2b5c355be3f3d9c"
 # The Ubuntu archive at 2026-10-10. Not the base image's build date: the running
 # image installed from the live mirror later, and an older snapshot would rebuild it
 # with older security fixes. apt still verifies the signed Release files.

@@ -1,4 +1,6 @@
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # Network isolation is enforced by podman --network=none, not by stripping
 # the stdlib. The image deliberately contains no pip-installed packages.

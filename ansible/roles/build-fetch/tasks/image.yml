@@ -13,7 +13,9 @@
 #   hb_name         short name; also the fetch dir under the fetch user's home
 #   hb_build_dir    the build context (already holding the Containerfile)
 #   hb_tag          image tag the wrappers run
-#   hb_base_images  every FROM, by digest
+#   hb_base_images  every FROM: [{ref, id}] — ref is the registry manifest digest the
+#                   fetch user pulls; id is the image ID (config digest) the build uses
+#                   FROM and the hand-off asserts (ADR-023, 2026-10-12 amendment)
 #   hb_deb_sets     [{name, image, sources: [one-line apt sources], packages,
 #                     signing_keys (optional): [host paths of checksummed repo keys]}]
 #   hb_lock         path (on the controller) of a hash-locked requirements file, or ""
@@ -49,16 +51,46 @@
 - name: "{{ hb_name }}: fetch each base image by digest (lamware-fetch)"
   ansible.builtin.shell:
     cmd: >
-      podman --cgroup-manager=cgroupfs --events-backend=file image exists {{ item }}
-      || podman --cgroup-manager=cgroupfs --events-backend=file pull {{ item }}
+      podman --cgroup-manager=cgroupfs --events-backend=file image exists {{ item.ref }}
+      || podman --cgroup-manager=cgroupfs --events-backend=file pull {{ item.ref }}
     chdir: "{{ build_fetch_home }}"
   environment:
     XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
   become: true
   become_user: "{{ build_fetch_user }}"
   loop: "{{ hb_base_images }}"
+  loop_control:
+    label: "{{ item.ref }}"
   register: hb_pull
   changed_when: "'Writing manifest' in hb_pull.stderr"
+
+- name: "{{ hb_name }}: read the image ID each pinned digest resolved to (lamware-fetch)"
+  ansible.builtin.command:
+    cmd: >
+      podman --cgroup-manager=cgroupfs --events-backend=file
+      image inspect {{ item.ref }} --format {% raw %}'{{ .Id }}'{% endraw %}
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+  become: true
+  become_user: "{{ build_fetch_user }}"
+  loop: "{{ hb_base_images }}"
+  loop_control:
+    label: "{{ item.ref }}"
+  register: hb_fetched_ids
+  changed_when: false
+
+- name: "{{ hb_name }}: the registry digest and the image ID must name the same image"
+  # The ref is the trust anchor (the registry verified it); the id is derived
+  # from it. If they disagree the pins were edited apart, and the build would
+  # use a base the registry did not vouch for.
+  ansible.builtin.assert:
+    that: item.stdout | trim == item.item.id
+    fail_msg: "{{ item.item.ref }} is image {{ item.stdout | trim }}, but the pin says {{ item.item.id }}"
+    quiet: true
+  loop: "{{ hb_fetched_ids.results }}"
+  loop_control:
+    label: "{{ item.item.ref }}"
 
 - name: "{{ hb_name }}: fetch each Debian package set (lamware-fetch, rootless)"
   ansible.builtin.include_tasks: image_debs.yml

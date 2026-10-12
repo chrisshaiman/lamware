@@ -4,7 +4,9 @@
 #
 # GoReSym is MIT licensed.
 # https://github.com/mandiant/GoReSym
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # GoReSym binary is downloaded at build time by Ansible
 # and placed in the build context
