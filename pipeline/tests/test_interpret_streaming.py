@@ -106,7 +106,12 @@ def test_forced_final_and_conclusion_stream():
     """These run against the LARGEST transcript, so they are the most timeout-prone."""
     assert TMPL.count("final_response = create_message(") == 2, \
         "both forced-final calls must stream"
-    assert "concl = create_message(" in TMPL, "phase 2a conclusion must stream"
+    # Since #761 2a streams through create_message_until_repetition, which must
+    # itself stream: it is the same long request, and it can also stop early.
+    assert "concl = create_message_until_repetition(" in TMPL, "phase 2a conclusion must stream"
+    fn = TMPL.split("def create_message_until_repetition(", 1)[1].split("\ndef ", 1)[0]
+    assert "cli.messages.stream(" in fn and "messages.create(" not in fn, \
+        "the repetition-aware 2a call must stream"
 
 
 def test_no_blocking_create_on_the_long_generation_paths():
