@@ -59,18 +59,20 @@
     group: pipeline
     mode: "0755"
 
-- name: Build java-analysis container image
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --no-cache
-      --network=host
-      -t localhost/java-analysis:latest
-      -f {{ java_analysis_install_dir }}/build/Containerfile
-      {{ java_analysis_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
+- name: Build the java-analysis image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: java-analysis
+    hb_build_dir: "{{ java_analysis_install_dir }}/build"
+    hb_tag: localhost/java-analysis:latest
+    hb_base_images: ["{{ java_analysis_base_image }}"]
+    hb_deb_sets:
+      - name: main
+        image: "{{ java_analysis_base_image }}"
+        sources: "{{ java_analysis_apt_sources }}"
+        packages: "{{ java_analysis_debs }}"
 
 - name: Deploy java-analysis wrapper script
   ansible.builtin.template:
