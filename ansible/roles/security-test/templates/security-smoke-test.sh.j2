@@ -278,10 +278,33 @@ else
             EGRESS_LEAK="${EGRESS_LEAK}${EGRESS_LEAK:+, }${dst}"
         fi
     done
+    # The same probe from a rootless container as a NON-root user with host
+    # networking: its sockets belong to a pipeline SUBUID, which the uid owner
+    # match never covered (reached 1.1.1.1:443 until 2026-10-12). Container root
+    # maps to the pipeline uid itself, so it proves nothing here.
+    SUBUID_LEAK=""
+    PROBE_IMG="localhost/interpret:latest"
+    if sudo -u "$PIPE_USER" podman image exists "$PROBE_IMG" 2>/dev/null; then
+        SUBUID_LEAK=$(cd / && sudo -u "$PIPE_USER" timeout 60 podman run --rm --network=host --user 65534 \
+            --entrypoint python3 "$PROBE_IMG" -c '
+import socket
+for h, p in (("1.1.1.1", 443), ("8.8.8.8", 53), ("9.9.9.9", 443)):
+    s = socket.socket(); s.settimeout(4)
+    try:
+        s.connect((h, p)); print(f"{h}/{p}", end=" ")
+    except OSError:
+        pass
+    finally:
+        s.close()' 2>/dev/null)
+    else
+        SUBUID_LEAK="(probe image $PROBE_IMG missing: subuid egress NOT verified)"
+    fi
     if [ -n "$EGRESS_LEAK" ]; then
         fail "pipeline user reached the internet at $EGRESS_LEAK — a compromised analysis process can exfiltrate"
+    elif [ -n "$SUBUID_LEAK" ]; then
+        fail "a pipeline container running as a subuid reached the internet: $SUBUID_LEAK"
     else
-        pass "pipeline user: internet refused (443, 53 to three destinations)"
+        pass "pipeline user and its subuids: internet refused (443, 53 to three destinations)"
     fi
 fi
 
