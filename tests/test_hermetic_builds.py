@@ -28,12 +28,14 @@ SHARED = ROLES / "build-fetch" / "tasks"
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
 PACKAGE_MIGRATION_PENDING = {
-    "dotnet-analysis", "powershell-analysis",
+    "dotnet-analysis",
 }
 
 _NETWORK_INSTALL = re.compile(
     r"apt-get\s+(update|install)|apt\s+install|pip3?\s+install(?![^\n]*--no-index)"
-    r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install")
+    r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install"
+    # PowerShell's gallery installers (powershell-analysis ran Install-Module).
+    r"|(Install|Save)-(Module|PSResource)", re.IGNORECASE)
 _DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}\Z")
 
 
