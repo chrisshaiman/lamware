@@ -6,7 +6,7 @@
 # - pyinstxtractor is GPL-3.0 licensed, invoked as a subprocess only.
 # - pycdc (Decompyle++) is GPL-3.0 licensed, invoked as a subprocess only.
 # Neither is linked or imported into the Apache 2.0 project code.
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
 # Sources are fetched into the build context by the ROLE, not by this build.
 #
@@ -19,8 +19,16 @@ FROM docker.io/library/python:3.12-slim
 COPY pycdc.tar.gz /tmp/pycdc.tar.gz
 
 # Build pycdc from source — supports Python 3.11/3.12 bytecode
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake make g++ \
+# Hermetic (ADR-023): the compiler is fetched by lamware-fetch, and purged by
+# exact package name after (dpkg -i marks everything manual; see triage).
+COPY debs/build/ /tmp/debs/
+# Purge only what this set ADDED: it can carry newer base packages (libc6 and
+# friends) from the snapshot, which are upgrades and must stay.
+RUN dpkg-query -W -f='${Package}\n' | sort -u > /tmp/pre-pkgs \
+    && for f in /tmp/debs/*.deb; do dpkg-deb -f "$f" Package; done | sort -u \
+       | comm -23 - /tmp/pre-pkgs > /tmp/build-pkgs \
+    && rm -f /tmp/pre-pkgs \
+    && dpkg -i /tmp/debs/*.deb \
     && tar -xzf /tmp/pycdc.tar.gz -C /tmp \
     && cd /tmp/pycdc-{{ pycdc_commit }} \
     && cmake . \
@@ -28,8 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && cp pycdc /usr/local/bin/pycdc \
     && cp pycdas /usr/local/bin/pycdas \
     && rm -rf /tmp/pycdc.tar.gz /tmp/pycdc-{{ pycdc_commit }} \
-    && apt-get purge -y cmake make g++ && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && dpkg -P $(cat /tmp/build-pkgs) \
+    && rm -rf /tmp/debs /tmp/build-pkgs
 
 # pyinstxtractor — also fetched by the role. It was wget'd from `master`, so it
 # was doubly unpinned: the URL had no commit AND it needed GitHub from a user with

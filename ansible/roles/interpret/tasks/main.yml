@@ -40,17 +40,6 @@
     group: pipeline
     mode: "0644"
 
-- name: Deploy requirements.txt into build context
-  ansible.builtin.template:
-    src: requirements.txt.j2
-    dest: "{{ interpret_install_dir }}/build/requirements.txt"
-    owner: pipeline
-    group: pipeline
-    mode: "0644"
-
-# COPY, not template. The script carried nine Jinja scalars and paid for them by being
-# un-importable: no test could reach 2,900 lines of logic, and a syntax error appeared at
-# container-build time rather than in CI (#205). The nine values now ship as JSON below.
 - name: Deploy interpret-ghidra.py into build context
   ansible.builtin.copy:
     src: interpret-ghidra.py
@@ -67,21 +56,16 @@
     group: pipeline
     mode: "0644"
 
-- name: Build interpret container image
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      -t localhost/interpret:latest
-      -f {{ interpret_install_dir }}/build/Containerfile
-      {{ interpret_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
-
-# -------------------------------------------------------------------------
-# Host-side wrapper script
-# -------------------------------------------------------------------------
+- name: Build the interpret image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: interpret
+    hb_build_dir: "{{ interpret_install_dir }}/build"
+    hb_tag: localhost/interpret:latest
+    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_lock: requirements.lock
 
 - name: Deploy interpret wrapper script
   ansible.builtin.template:

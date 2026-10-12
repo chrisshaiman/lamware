@@ -1,18 +1,34 @@
 # Triage analysis container — YARA, ssdeep, FLOSS, file type, entropy
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmagic1 \
-    file \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Hermetic (ADR-023): every input below was fetched by lamware-fetch. The build
+# set (a compiler) is purged after by exact package name: dpkg -i marks every
+# package manual, so `apt-get autoremove` would leave the toolchain behind, and
+# dpkg -P refuses rather than removes anything a runtime package still needs.
+COPY debs/ /tmp/debs/
+# The purge list is the build set MINUS anything already installed (the build
+# set can carry newer libc6/liblzma5/perl-base from the snapshot: upgrades,
+# not additions) and minus anything the runtime set also needs.
+RUN dpkg-query -W -f='${Package}\n' | sort -u > /tmp/pre-pkgs \
+    && for f in /tmp/debs/runtime/*.deb; do dpkg-deb -f "$f" Package; done | sort -u > /tmp/runtime-pkgs \
+    && for f in /tmp/debs/build/*.deb; do dpkg-deb -f "$f" Package; done | sort -u \
+       | comm -23 - /tmp/pre-pkgs | comm -23 - /tmp/runtime-pkgs > /tmp/build-pkgs \
+    && dpkg -i /tmp/debs/runtime/*.deb /tmp/debs/build/*.deb \
+    && rm -f /tmp/pre-pkgs /tmp/runtime-pkgs
 
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
-
-# Remove build tools after pip install (reduces image size + attack surface)
-RUN apt-get purge -y build-essential && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock build-requirements.lock sdists.lock /tmp/
+# Build tools first, so the two source-only packages build with
+# --no-build-isolation from hash-checked setuptools/pybind11, offline.
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/build-requirements.lock \
+    && pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes --no-build-isolation \
+        -r /tmp/requirements.lock -r /tmp/sdists.lock \
+    && pip uninstall -y pybind11 \
+    && dpkg -P $(cat /tmp/build-pkgs) \
+    && rm -rf /tmp/wheels /tmp/*.lock /tmp/build-pkgs /tmp/debs
 
 COPY run-triage.py /opt/triage/run-triage.py
 RUN chmod +x /opt/triage/run-triage.py

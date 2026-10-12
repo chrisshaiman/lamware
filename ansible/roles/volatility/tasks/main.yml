@@ -80,21 +80,21 @@
     group: pipeline
     mode: "0644"
 
-- name: Build volatility3 container image
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      -t localhost/volatility3:latest
-      -f {{ volatility_install_dir }}/build/Containerfile
-      {{ volatility_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
-
-# -------------------------------------------------------------------------
-# Host-side wrapper script
-# -------------------------------------------------------------------------
+- name: Build the volatility image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: volatility
+    hb_build_dir: "{{ volatility_install_dir }}/build"
+    hb_tag: localhost/volatility3:latest
+    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_deb_sets:
+      - name: main
+        image: "{{ build_fetch_python_slim }}"
+        sources: "{{ build_fetch_trixie_sources }}"
+        packages: "{{ volatility_debs }}"
+    hb_lock: requirements.lock
 
 - name: Deploy volatility wrapper script
   ansible.builtin.template:

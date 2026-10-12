@@ -55,21 +55,15 @@
     group: pipeline
     mode: "0644"
 
-- name: Build python-sandbox container image
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      -t localhost/python-sandbox:latest
-      -f {{ python_sandbox_install_dir }}/build/Containerfile
-      {{ python_sandbox_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
-
-# -------------------------------------------------------------------------
-# Host-side wrapper script
-# -------------------------------------------------------------------------
+- name: Build the python-sandbox image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: python-sandbox
+    hb_build_dir: "{{ python_sandbox_install_dir }}/build"
+    hb_tag: localhost/python-sandbox:latest
+    hb_base_images: ["{{ build_fetch_python_slim }}"]
 
 - name: Deploy run-sandbox wrapper script
   ansible.builtin.template:

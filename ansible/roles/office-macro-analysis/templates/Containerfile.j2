@@ -1,7 +1,12 @@
-FROM python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
-RUN pip install --no-cache-dir oletools && \
-    rm -rf /root/.cache
+# Hermetic (ADR-023): oletools and its dependencies are wheels lamware-fetch
+# downloaded against requirements.lock, pinned to the versions the image ran.
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/requirements.lock \
+    && rm -rf /tmp/wheels /tmp/requirements.lock
 
 COPY analyze-office.py /opt/analyze-office.py
 

@@ -28,18 +28,16 @@
     group: pipeline
     mode: "0644"
 
-- name: Build office-macro-analysis container
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      --no-cache
-      -t localhost/office-macro-analysis:latest
-      -f {{ office_macro_analysis_install_dir }}/build/Containerfile
-      {{ office_macro_analysis_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
+- name: Build the office-macro-analysis image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: office-macro-analysis
+    hb_build_dir: "{{ office_macro_analysis_install_dir }}/build"
+    hb_tag: localhost/office-macro-analysis:latest
+    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_lock: requirements.lock
 
 - name: Deploy wrapper script
   ansible.builtin.template:

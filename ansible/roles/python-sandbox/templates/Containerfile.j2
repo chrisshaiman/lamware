@@ -1,4 +1,4 @@
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
 # Network isolation is enforced by podman --network=none, not by stripping
 # the stdlib. The image deliberately contains no pip-installed packages.

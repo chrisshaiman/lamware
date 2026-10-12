@@ -6,7 +6,7 @@
 # Hermetic (ADR-023): built with --network=none. Every input below was downloaded
 # and verified by lamware-fetch before the build: the base image by digest, the
 # Debian packages from a pinned snapshot, the wheels against requirements.lock.
-FROM {{ pdf_generation_base_image }}
+FROM {{ build_fetch_python_slim }}
 
 COPY debs/main/ /tmp/debs/
 RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs

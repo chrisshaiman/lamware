@@ -18,3 +18,7 @@ volatility_container_timeout: "1800"  # 30 min — malfind with --dump on 4GB du
 # Windows ISF symbol table URL — must match the guest OS version
 # Win11 26100 symbols from Microsoft Symbol Server
 volatility_isf_url: "https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip"
+
+# ADR-023: installed from fetched, snapshot-pinned packages (build-fetch).
+volatility_debs:
+  - git
