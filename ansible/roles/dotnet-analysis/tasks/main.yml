@@ -67,7 +67,9 @@
     hb_name: dotnet-analysis
     hb_build_dir: "{{ dotnet_analysis_install_dir }}/build"
     hb_tag: localhost/dotnet-analysis:latest
-    hb_base_images: ["{{ dotnet_analysis_base_image }}"]
+    hb_base_images:
+      - ref: "{{ dotnet_analysis_base_image }}"
+        id: "{{ dotnet_analysis_base_image_id }}"
     hb_deb_sets:
       - name: main
         image: "{{ dotnet_analysis_base_image }}"

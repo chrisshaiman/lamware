@@ -12,7 +12,9 @@
 # LICENSING NOTE: de4dotEx is licensed under GPL-3.0. It is invoked as a
 # subprocess (not linked or imported) from this Apache 2.0 licensed project.
 # See: https://github.com/AerialMantis/de4dot (GPL-3.0-or-later)
-FROM {{ dotnet_analysis_base_image }}
+# {{ dotnet_analysis_base_image }}, by image ID (ADR-023 amendment)
+FROM {{ dotnet_analysis_base_image_id }}
+LABEL lamware.base="{{ dotnet_analysis_base_image }}"
 
 # No first-run network calls (telemetry, workload update checks), and NuGet's
 # signature check uses only what is in the package and the SDK's trust store:
