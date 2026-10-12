@@ -28,9 +28,7 @@ SHARED = ROLES / "build-fetch" / "tasks"
 
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
-PACKAGE_MIGRATION_PENDING = {
-    "pcap-analysis",
-}
+PACKAGE_MIGRATION_PENDING: set[str] = set()
 
 _NETWORK_INSTALL = re.compile(
     # apt-get install of the fetched /tmp/debs/ files is offline; update, or an

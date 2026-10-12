@@ -1,0 +1,4 @@
+---
+# ADR-023: build inputs are downloaded by lamware-fetch, never by pipeline.
+dependencies:
+  - role: build-fetch
