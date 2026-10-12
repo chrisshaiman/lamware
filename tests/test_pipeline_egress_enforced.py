@@ -166,3 +166,52 @@ def test_the_probe_targets_a_local_port_so_it_generates_no_egress():
     assert targets, "the probe no longer opens a connection"
     for host, _port in targets:
         assert host.startswith("127."), f"the probe dials {host}, leaving the host"
+
+
+def test_the_pipeline_subuid_range_is_dropped_in_both_families():
+    """The owner match on `pipeline` never covered a rootless container's non-root
+    users, whose sockets belong to pipeline SUBUIDS: on 2026-10-12 a
+    `--user 65534 --network=host` container reached 1.1.1.1:443. The range is
+    read from /etc/subuid at deploy time, so it is a variable here."""
+    drops = [r for r in _present(_egress_rules())
+             if r.get("jump") == "DROP" and r.get("uid_owner") == "{{ pipeline_subuid_range }}"]
+    fams = {r.get("ip_version", "ipv4") for r in drops}
+    assert fams == {"ipv4", "ipv6"}, f"subuid DROP present for: {fams}"
+    assert all(r.get("comment", "").startswith("pipeline: ") for r in drops), \
+        "the comment must start 'pipeline: ' so network-monitor's survey counts it"
+
+
+def test_the_subuid_range_comes_from_etc_subuid_and_is_asserted():
+    names = [t.get("name", "") for t in TASKS if isinstance(t, dict)]
+    slurps = [t for t in TASKS if isinstance(t, dict)
+              and (t.get("ansible.builtin.slurp") or {}).get("src") == "/etc/subuid"]
+    assert slurps, "the range is not read from /etc/subuid"
+    asserts = [t for t in TASKS if isinstance(t, dict) and "ansible.builtin.assert" in t
+               and "pipeline_subuid_range" in str(t["ansible.builtin.assert"].get("that"))]
+    assert asserts, "nothing refuses a missing range; the DROP would cover nothing"
+    first_drop = next(i for i, t in enumerate(TASKS) if isinstance(t, dict)
+                      and (t.get("ansible.builtin.iptables") or {}).get("uid_owner") == "{{ pipeline_subuid_range }}")
+    assert names.index(asserts[0]["name"]) < first_drop
+
+
+def test_the_range_parser_renders_start_dash_end():
+    """Render the set_fact expression with Jinja against real /etc/subuid shapes."""
+    import base64
+
+    import jinja2
+    fact = next(t for t in TASKS if isinstance(t, dict)
+                and "pipeline_subuid_range" in (t.get("ansible.builtin.set_fact") or {}))
+    expr = fact["ansible.builtin.set_fact"]["pipeline_subuid_range"]
+    env = jinja2.Environment()
+    env.filters["b64decode"] = lambda s: base64.b64decode(s).decode()
+    env.tests["match"] = lambda v, p: re.match(p, v) is not None
+
+    def render(subuid: str) -> str:
+        return env.from_string(expr).render(
+            pipeline_subuid_map={"content": base64.b64encode(subuid.encode()).decode()}).strip()
+
+    host = ("cape:100000:65536\nubuntu:100000:65536\ncape:165536:65536\n"
+            "pipeline:200000:65536\nconsole-recovery:265536:65536\nlamware-fetch:331072:65536\n")
+    assert render(host) == "200000-265535"
+    assert render("cape:100000:65536\n") == "", "no pipeline line must render empty, so the assert fires"
+    assert render("pipeline:200000:65536\npipeline:300000:10\n") == "", "two lines are ambiguous"

@@ -215,6 +215,69 @@
     jump: DROP
     comment: "pipeline: block all other outbound"
 
+# -------------------------------------------------------------------------
+# The pipeline user's SUBORDINATE uids. The owner match above names one uid. A
+# rootless container running as any non-root user maps to a subuid
+# (pipeline:200000:65536 -> 200000-265535), and with --network=host its sockets
+# belong to that subuid, so none of the rules above saw them: measured
+# 2026-10-12, `--user 65534 --network=host` reached 1.1.1.1:443 while
+# `--user 0` (the pipeline uid itself) was refused. Every analysis container
+# runs --network=none and, since ADR-023, no image build needs a network
+# either, so nothing legitimate uses a subuid socket: DROP the whole range.
+# Read from /etc/subuid rather than hard-coded, so a renumbered range is
+# covered and a missing one fails the deploy instead of protecting nothing.
+# -------------------------------------------------------------------------
+- name: Read the subordinate uid map
+  ansible.builtin.slurp:
+    src: /etc/subuid
+  register: pipeline_subuid_map
+
+- name: Find the pipeline user's subordinate uid range
+  ansible.builtin.set_fact:
+    pipeline_subuid_range: >-
+      {%- set f = (pipeline_subuid_map.content | b64decode).splitlines()
+                  | select('match', '^pipeline:[0-9]+:[0-9]+$') | list -%}
+      {%- if f | length == 1 -%}
+      {%- set p = f[0].split(':') -%}
+      {{ p[1] }}-{{ (p[1] | int) + (p[2] | int) - 1 }}
+      {%- endif -%}
+
+- name: Refuse to continue without exactly one pipeline subuid range
+  ansible.builtin.assert:
+    that: pipeline_subuid_range is match('^[0-9]+-[0-9]+$')
+    fail_msg: "/etc/subuid has no single pipeline:<start>:<count> line; the subuid egress DROP would cover nothing"
+    quiet: true
+
+- name: Block all outbound traffic from the pipeline user's subuids (IPv4)
+  ansible.builtin.iptables:
+    chain: OUTPUT
+    uid_owner: "{{ pipeline_subuid_range }}"
+    jump: DROP
+    comment: "pipeline: subuids block all outbound"
+
+- name: Block all outbound traffic from the pipeline user's subuids (IPv6)
+  ansible.builtin.iptables:
+    ip_version: ipv6
+    chain: OUTPUT
+    uid_owner: "{{ pipeline_subuid_range }}"
+    jump: DROP
+    comment: "pipeline: subuids block all outbound"
+
+- name: Create the firewall rollback directory
+  ansible.builtin.file:
+    path: /root/lamware-rollback/iptables
+    state: directory
+    mode: "0700"
+
+- name: Keep the previous saved rule sets before persisting (rollback, CLAUDE.md §5)
+  ansible.builtin.copy:
+    src: "/etc/iptables/{{ item }}"
+    dest: "/root/lamware-rollback/iptables/{{ item }}.before-subuid-drop"
+    remote_src: true
+    force: false
+    mode: "0600"
+  loop: [rules.v4, rules.v6]
+
 - name: Persist the pipeline egress rules across reboots (both families)
   # netfilter-persistent writes rules.v4 AND rules.v6. Without this the v6
   # allowlist survives only until the next boot — and a reboot is precisely
