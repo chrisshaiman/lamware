@@ -6,7 +6,8 @@ FROM {{ build_fetch_python_slim }}
 # set (a compiler) is purged after by exact package name: dpkg -i marks every
 # package manual, so `apt-get autoremove` would leave the toolchain behind, and
 # dpkg -P refuses rather than removes anything a runtime package still needs.
-COPY debs/ /tmp/debs/
+COPY debs/runtime/ /tmp/debs/runtime/
+COPY debs/build/ /tmp/debs/build/
 # The purge list is the build set MINUS anything already installed (the build
 # set can carry newer libc6/liblzma5/perl-base from the snapshot: upgrades,
 # not additions) and minus anything the runtime set also needs.

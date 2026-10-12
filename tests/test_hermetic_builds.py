@@ -263,7 +263,11 @@ def test_each_deb_set_is_copied_into_the_containerfile_and_nothing_else():
         text = _containerfile(role)
         copied = re.findall(r"^\s*COPY\s+debs/([^/\s]+)/", text, re.M)
         assert sorted(copied) == sorted(sets), f"{role}: sets {sets}, COPYed {copied}"
-        assert text.count("dpkg -i") >= len(sets), f"{role}: a COPYed set is never installed"
+        # Every set's COPY destination must be named by a `dpkg -i` (one command
+        # may install several sets; dpkg orders dependencies across all it is given).
+        installs = " ".join(re.findall(r"dpkg -i [^\n&]*", text))
+        for name, dest in re.findall(r"^\s*COPY\s+debs/([^/\s]+)/\s+(\S+)", text, re.M):
+            assert dest.rstrip("/") in installs, f"{role}: set {name} is COPYed to {dest} but never installed"
 
 
 def test_every_package_source_is_signed_by_a_key_the_fetch_has():
@@ -272,7 +276,10 @@ def test_every_package_source_is_signed_by_a_key_the_fetch_has():
     A signed-by naming a file the container lacks fails `apt-get update` on the
     host. Rendered from the role defaults, as Ansible would."""
     for role in MIGRATED:
-        defaults = yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text())
+        # The role's defaults over build-fetch's shared ones (python:3.12-slim's
+        # trixie sources live there), as Ansible layers them.
+        defaults = {**yaml.safe_load((ROLES / "build-fetch" / "defaults" / "main.yml").read_text()),
+                    **(yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text()) or {})}
         for s in _shared_build_use(role).get("hb_deb_sets", []):
             keys = [Path(k).name for k in _resolve(s.get("signing_keys", []), defaults)]
             sources = _resolve(s["sources"], defaults)

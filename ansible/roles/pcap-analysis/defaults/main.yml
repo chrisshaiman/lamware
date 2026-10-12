@@ -32,10 +32,11 @@ zeek_repo_key_path: "{{ pcap_analysis_install_dir }}/zeek-repo-key.asc"
 # 2026-10-11 (built 2026-04-10T06:49:18Z), the image this role has run on.
 # Moving it is a deliberate change to this line.
 pcap_analysis_base_image: "docker.io/library/ubuntu@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b"
-# The Ubuntu archive as it stood just after that image was built. Resolving
-# against a snapshot gives the same package set on every fetch; apt still
-# verifies the signed Release files. https: snapshot.ubuntu.com redirects http.
-pcap_analysis_ubuntu_snapshot: "20260410T070000Z"
+# The Ubuntu archive at 2026-10-10. Not the base image's build date: the running
+# image installed from the live mirror later, and an older snapshot would rebuild it
+# with older security fixes. apt still verifies the signed Release files.
+# https: snapshot.ubuntu.com redirects http.
+pcap_analysis_ubuntu_snapshot: "20261010T000000Z"
 pcap_analysis_snapshot_url: "https://snapshot.ubuntu.com/ubuntu/{{ pcap_analysis_ubuntu_snapshot }}"
 pcap_analysis_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 pcap_analysis_apt_components: "main restricted universe multiverse"

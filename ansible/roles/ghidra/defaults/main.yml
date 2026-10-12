@@ -34,10 +34,11 @@ ghidra_container_timeout: "600"
 # in pipeline's store on 2026-10-11 (built 2026-05-15T21:16:07Z), the image this
 # role has run on. Moving it is a deliberate change to this line.
 ghidra_base_image: "docker.io/library/eclipse-temurin@sha256:801b7e1a9c4befaf82bf9a2a58025ef43a7694bbc84779187ad0524d84742772"
-# The Ubuntu archive as it stood just after that image was built. Resolving
-# against a snapshot gives the same package set on every fetch; apt still
-# verifies the signed Release files. https: snapshot.ubuntu.com redirects http.
-ghidra_ubuntu_snapshot: "20260515T220000Z"
+# The Ubuntu archive at 2026-10-10. Not the base image's build date: the running
+# image installed from the live mirror later, and an older snapshot would rebuild it
+# with older security fixes. apt still verifies the signed Release files.
+# https: snapshot.ubuntu.com redirects http.
+ghidra_ubuntu_snapshot: "20261010T000000Z"
 ghidra_snapshot_url: "https://snapshot.ubuntu.com/ubuntu/{{ ghidra_ubuntu_snapshot }}"
 ghidra_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 ghidra_apt_components: "main restricted universe multiverse"
