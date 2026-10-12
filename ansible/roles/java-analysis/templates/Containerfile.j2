@@ -4,11 +4,18 @@
 #
 # java-deobfuscator is Apache 2.0 licensed.
 # CFR is MIT licensed.
-FROM docker.io/library/eclipse-temurin:21-jre-jammy
+#
+# Hermetic (ADR-023): built with --network=none. Every input below was downloaded
+# and verified before the build: the base image by digest, the Debian packages by
+# lamware-fetch from a pinned Ubuntu snapshot, the jars by the role (checksummed).
+FROM {{ java_analysis_base_image }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    && rm -rf /var/lib/apt/lists/*
+COPY debs/main/ /tmp/debs/
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 # CFR decompiler JAR is downloaded at build time by Ansible
 COPY cfr.jar /opt/cfr.jar

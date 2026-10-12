@@ -14,7 +14,8 @@
 #   hb_build_dir    the build context (already holding the Containerfile)
 #   hb_tag          image tag the wrappers run
 #   hb_base_images  every FROM, by digest
-#   hb_deb_sets     [{name, image, sources: [one-line apt sources], packages}]
+#   hb_deb_sets     [{name, image, sources: [one-line apt sources], packages,
+#                     signing_keys (optional): [host paths of checksummed repo keys]}]
 #   hb_lock         path (on the controller) of a hash-locked requirements file, or ""
 #                   (copied in as requirements.lock, with sdists.lock beside it)
 #   hb_build_lock   optional hash lock of build tools, installed BEFORE requirements
@@ -42,6 +43,7 @@
     - "{{ build_fetch_home }}/run"
     - "{{ build_fetch_home }}/{{ hb_name }}"
     - "{{ build_fetch_home }}/{{ hb_name }}/debs"
+    - "{{ build_fetch_home }}/{{ hb_name }}/keys"
     - "{{ build_fetch_home }}/{{ hb_name }}/wheels"
 
 - name: "{{ hb_name }}: fetch each base image by digest (lamware-fetch)"

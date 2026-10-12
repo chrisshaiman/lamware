@@ -1,13 +1,28 @@
-FROM mcr.microsoft.com/powershell:lts-debian-12
+# Hermetic (ADR-023): built with --network=none. The base image is pinned by
+# digest; python3 was fetched by lamware-fetch from the Debian snapshot the base
+# image records as its own.
+FROM {{ powershell_analysis_base_image }}
 
-# Install Python 3 for the orchestration script
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 && \
-    rm -rf /var/lib/apt/lists/*
+COPY debs/main/ /tmp/debs/
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
-# Install PSDecode module
-RUN pwsh -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; \
-    Install-Module -Name PSDecode -Scope AllUsers -Force"
+# No PSDecode module is installed. This file used to run
+#   pwsh -Command "Install-Module -Name PSDecode -Scope AllUsers -Force"
+# which reached PSGallery from inside the build. Two things were wrong with it,
+# measured 2026-10-11:
+#   - The image it built (2026-05-17) has no PSDecode at all: `Import-Module
+#     PSDecode` fails, and no module directory holds it. So analyze-powershell.py
+#     has been taking its fallback path (psdecode_error, no layer unwrapping).
+#   - PSGallery's "PSDecode" (0.9.0, Prateek Singh) is an error-code lookup
+#     module. analyze-powershell.py calls a `PSDecode <file>` command that
+#     unwraps obfuscation layers, which is R3MRUM/PSDecode on GitHub, not on
+#     PSGallery. Had the install worked, it would have installed the wrong tool.
+# The image therefore stays as it ran. Adding the deobfuscator is a separate
+# change: fetched by the role with get_url + sha256, pinned to a commit.
 
 COPY analyze-powershell.py /opt/analyze-powershell.py
 

@@ -9,12 +9,19 @@
 # Two stages, because the zip is ~486 MiB. A COPY in the final image would keep
 # it in a layer forever, `rm` or not, roughly doubling the image. Unpack here,
 # copy only the tree.
+#
+# Hermetic (ADR-023): built with --network=none. The base image is pinned by
+# digest; each stage's Debian packages were fetched by lamware-fetch from a
+# pinned Ubuntu snapshot, one set per stage (debs/unpack, debs/runtime).
 
-FROM docker.io/library/eclipse-temurin:21-jdk-jammy AS ghidra-unpack
+FROM {{ ghidra_base_image }} AS ghidra-unpack
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
+COPY debs/unpack/ /tmp/debs/
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 COPY ghidra.zip /tmp/ghidra.zip
 RUN unzip -q /tmp/ghidra.zip -d /opt \
@@ -23,15 +30,17 @@ RUN unzip -q /tmp/ghidra.zip -d /opt \
 
 # -------------------------------------------------------------------------
 
-FROM docker.io/library/eclipse-temurin:21-jdk-jammy
+FROM {{ ghidra_base_image }}
 
 # wget and unzip are deliberately NOT installed here. Nothing at runtime uses
 # them, and this container is handed malware: the fewer fetch-and-unpack tools
 # inside it, the less a sample has to work with.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+COPY debs/runtime/ /tmp/debs/
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 COPY --from=ghidra-unpack /opt/ghidra /opt/ghidra
 

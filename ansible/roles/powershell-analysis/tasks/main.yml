@@ -28,18 +28,20 @@
     group: pipeline
     mode: "0644"
 
-- name: Build powershell-analysis container
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      --no-cache
-      -t localhost/powershell-analysis:latest
-      -f {{ powershell_analysis_install_dir }}/build/Containerfile
-      {{ powershell_analysis_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
+- name: Build the powershell-analysis image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: powershell-analysis
+    hb_build_dir: "{{ powershell_analysis_install_dir }}/build"
+    hb_tag: localhost/powershell-analysis:latest
+    hb_base_images: ["{{ powershell_analysis_base_image }}"]
+    hb_deb_sets:
+      - name: main
+        image: "{{ powershell_analysis_base_image }}"
+        sources: "{{ powershell_analysis_apt_sources }}"
+        packages: "{{ powershell_analysis_debs }}"
 
 - name: Deploy wrapper script
   ansible.builtin.template:

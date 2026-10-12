@@ -21,3 +21,25 @@ cfr_sha256: "f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2"
 # runs, so it is a deliberate edit, not a silent upgrade.
 java_deobfuscator_url: "https://github.com/java-deobfuscator/deobfuscator/releases/download/latest/deobfuscator.jar"
 java_deobfuscator_sha256: "c1835bd9c9aad4cc453f8675110fc057f11cd3ca5e8f29b68c67baf086277eea"
+
+# --- ADR-023: hermetic build inputs ------------------------------------------
+# The base image, by digest: eclipse-temurin:21-jre-jammy as it sat in pipeline's
+# store on 2026-10-11 (built 2026-05-15T21:16:12Z), the image this role has run
+# on. Moving it is a deliberate change to this line, not a tag moving upstream.
+java_analysis_base_image: "docker.io/library/eclipse-temurin@sha256:199aebeb3adcde4910695cdebfe782ada38dadb6cc8013159b58d3724451befd"
+# The Ubuntu archive at 2026-10-10. Not the base image's build date: the running
+# image installed from the live mirror later, and an older snapshot would rebuild it
+# with older security fixes. apt still verifies the signed Release files.
+# https: snapshot.ubuntu.com redirects http.
+java_analysis_ubuntu_snapshot: "20261010T000000Z"
+java_analysis_snapshot_url: "https://snapshot.ubuntu.com/ubuntu/{{ java_analysis_ubuntu_snapshot }}"
+java_analysis_keyring: "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+java_analysis_apt_components: "main restricted universe multiverse"
+java_analysis_apt_sources:
+  - "deb [{{ java_analysis_keyring }}] {{ java_analysis_snapshot_url }} jammy {{ java_analysis_apt_components }}"
+  - "deb [{{ java_analysis_keyring }}] {{ java_analysis_snapshot_url }} jammy-updates {{ java_analysis_apt_components }}"
+  - "deb [{{ java_analysis_keyring }}] {{ java_analysis_snapshot_url }} jammy-backports {{ java_analysis_apt_components }}"
+  - "deb [{{ java_analysis_keyring }}] {{ java_analysis_snapshot_url }} jammy-security {{ java_analysis_apt_components }}"
+# What the image adds to the base: python3 runs analyze-java.py, the entrypoint.
+java_analysis_debs:
+  - python3

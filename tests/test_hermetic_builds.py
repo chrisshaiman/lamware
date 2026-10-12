@@ -13,9 +13,12 @@ The pdf-generation image stayed at 2026-05-17 for five months: its build ran
 `pip install weasyprint` as pipeline, which has no DNS, failed, and the old image
 kept serving PDFs.
 """
+import hashlib
 import re
+import shlex
 from pathlib import Path
 
+import jinja2
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,12 +28,17 @@ SHARED = ROLES / "build-fetch" / "tasks"
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
 PACKAGE_MIGRATION_PENDING = {
-    "dotnet-analysis", "ghidra", "java-analysis", "pcap-analysis", "powershell-analysis",
+    "dotnet-analysis", "pcap-analysis",
 }
 
 _NETWORK_INSTALL = re.compile(
-    r"apt-get\s+(update|install)|apt\s+install|pip3?\s+install(?![^\n]*--no-index)"
-    r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install")
+    # apt-get install of the fetched /tmp/debs/ files is offline; update, or an
+    # install by package name, reaches a mirror.
+    r"apt-get\s+update|apt-get\s+install(?![^\n]*/tmp/debs/)|apt\s+install"
+    r"|pip3?\s+install(?![^\n]*--no-index)"
+    r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install"
+    # PowerShell's gallery installers (powershell-analysis ran Install-Module).
+    r"|(Install|Save)-(Module|PSResource)", re.IGNORECASE)
 _DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}\Z")
 
 
@@ -167,3 +175,127 @@ def test_image_roles_depend_on_build_fetch():
     for role in MIGRATED:
         meta = yaml.safe_load((ROLES / role / "meta" / "main.yml").read_text())
         assert {"role": "build-fetch"} in meta["dependencies"], role
+
+
+# --- The package fetch: what it trusts, and what re-runs it --------------------
+
+_JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)
+_JINJA.filters["hash"] = lambda s, alg: hashlib.new(alg, s.encode()).hexdigest()
+
+
+def _resolve(value, ctx: dict):
+    """A role variable as Ansible would hand it to the shared build: a string
+    that is one whole "{{ expr }}" is evaluated natively (so `a + b` of two lists
+    stays a list, as Ansible's native types make it), and other strings are
+    rendered until no template is left."""
+    if isinstance(value, list):
+        return [_resolve(v, ctx) for v in value]
+    if not isinstance(value, str):
+        return value
+    whole = re.fullmatch(r"\{\{((?:(?!\{\{|\}\}).)+)\}\}", value.strip())
+    if whole:
+        expr = _JINJA.compile_expression(whole.group(1), undefined_to_none=False)
+        return _resolve(expr(**ctx), ctx)
+    for _ in range(8):
+        if "{{" not in value:
+            break
+        value = _JINJA.from_string(value).render(**ctx)
+    return value
+
+
+def _debs_task(fragment: str) -> dict:
+    [task] = [t for t in _tasks(SHARED / "image_debs.yml") if fragment in t["name"]]
+    return task
+
+
+def _render_debs_fetch() -> list[str]:
+    """The apt-get --download-only task, rendered, as the argv the shell sees."""
+    raw = _debs_task("apt-get --download-only")["ansible.builtin.shell"]["cmd"]
+    rendered = _JINJA.from_string(raw).render(
+        build_fetch_home="/F", hb_name="r", build_fetch_ca_bundle="/host/ca.crt",
+        hb_set={"name": "s", "image": "img@sha256:0", "packages": ["p1", "p2"]},
+        hb_set_dir="/F/r/debs/s", hb_set_keydir="/F/r/keys/s", hb_set_key="k")
+    return shlex.split(rendered.replace("\\\n", " "))
+
+
+def test_the_package_fetch_mounts_keys_and_ca_read_only_and_writes_only_its_output():
+    """The resolving container gets the set's signing keys and the host CA bundle,
+    read-only; the only thing it can write on the host is its own output dir."""
+    argv = _render_debs_fetch()
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+    assert "/F/r/keys/s:/in/keys:ro" in mounts, mounts
+    assert "/host/ca.crt:/in/ca-certificates.crt:ro" in mounts, mounts
+    assert [m for m in mounts if not m.endswith(":ro")] == ["/F/r/debs/s:/out:rw"], mounts
+
+
+def test_every_apt_call_in_the_fetch_uses_the_mounted_ca():
+    """snapshot.ubuntu.com answers http with a 301 to https (measured 2026-10-11),
+    and ubuntu:24.04 has no CA bundle: an apt call without CAInfo fails TLS there."""
+    argv = _render_debs_fetch()
+    script = argv[argv.index("-euc") + 1]
+    opts = re.search(r'^\s*A="([^"]*)"', script, re.M)
+    assert opts and "Acquire::https::CAInfo=/in/ca-certificates.crt" in opts.group(1).split()
+    calls = [ln.split() for ln in script.splitlines() if ln.strip().startswith("apt-get")]
+    assert len(calls) == 2, calls
+    assert all(c[1] == "$A" for c in calls), calls
+
+
+def test_the_fetch_is_redone_when_a_signing_key_changes_and_only_then():
+    """A rotated key changes what apt accepts, so it must invalidate the .done
+    marker. A set with no keys must keep the key it had before keys existed, or
+    every already-fetched set (pdf-generation) is fetched again for nothing."""
+    expr = _debs_task("key the fetch")["ansible.builtin.set_fact"]["hb_set_key"]
+    s = {"name": "s", "image": "img", "sources": ["deb a", "deb b"], "packages": ["p", "q"]}
+
+    def key(results: list[dict]) -> str:
+        return _JINJA.from_string(expr).render(hb_set=s, hb_set_keys={"results": results}).strip()
+
+    before = hashlib.sha256(b"imgdeb a|deb bp,q").hexdigest()
+    assert key([]) == before
+    assert key([{"checksum": "aa"}]) != key([{"checksum": "bb"}])
+    assert key([{"checksum": "aa"}]) != before
+
+
+def test_each_deb_set_is_copied_into_the_containerfile_and_nothing_else():
+    """The set names in the role's tasks and the COPY lines in its Containerfile
+    must agree: a set never COPYed is fetched for nothing, a COPY of a set that
+    does not exist fails the build on the host."""
+    for role in MIGRATED:
+        sets = [s["name"] for s in _shared_build_use(role).get("hb_deb_sets", [])]
+        assert len(sets) == len(set(sets)), f"{role}: duplicate set names {sets}"
+        text = _containerfile(role)
+        copied = re.findall(r"^\s*COPY\s+debs/([^/\s]+)/", text, re.M)
+        assert sorted(copied) == sorted(sets), f"{role}: sets {sets}, COPYed {copied}"
+        # Every set's COPY destination must be named by a `dpkg -i` or a local
+        # `apt-get install` (one command
+        # may install several sets; dpkg orders dependencies across all it is given).
+        installs = " ".join(re.findall(r"(?:dpkg -i|apt-get install)[^\n&]*", text))
+        for name, dest in re.findall(r"^\s*COPY\s+debs/([^/\s]+)/\s+(\S+)", text, re.M):
+            assert dest.rstrip("/") in installs, f"{role}: set {name} is COPYed to {dest} but never installed"
+
+
+def test_every_package_source_is_signed_by_a_key_the_fetch_has():
+    """Each source line names its signing key, and that key is either one the
+    base image ships or one the set carries in signing_keys (mounted at /in/keys).
+    A signed-by naming a file the container lacks fails `apt-get update` on the
+    host. Rendered from the role defaults, as Ansible would."""
+    for role in MIGRATED:
+        # The role's defaults over build-fetch's shared ones (python:3.12-slim's
+        # trixie sources live there), as Ansible layers them.
+        defaults = {**yaml.safe_load((ROLES / "build-fetch" / "defaults" / "main.yml").read_text()),
+                    **(yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text()) or {})}
+        for s in _shared_build_use(role).get("hb_deb_sets", []):
+            keys = [Path(k).name for k in _resolve(s.get("signing_keys", []), defaults)]
+            sources = _resolve(s["sources"], defaults)
+            assert sources, f"{role}/{s['name']}: no sources"
+            for line in sources:
+                where = f"{role}/{s['name']}: {line}"
+                assert "{{" not in line, where
+                assert "http://snapshot.ubuntu.com" not in line, f"{where}: use https"
+                m = re.search(r"\[[^\]]*signed-by=([^\s\]]+)", line)
+                assert m, f"{where}: no signed-by"
+                path = m.group(1)
+                if path.startswith("/in/keys/"):
+                    assert path.removeprefix("/in/keys/") in keys, f"{where}: key not carried"
+                else:
+                    assert path.startswith("/usr/share/keyrings/"), where

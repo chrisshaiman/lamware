@@ -5,3 +5,25 @@ powershell_analysis_install_dir: /opt/powershell-analysis
 powershell_analysis_container_memory: "512m"
 powershell_analysis_container_cpus: "1"
 powershell_analysis_container_timeout: "120"
+
+# --- ADR-023: hermetic build inputs ------------------------------------------
+# The base image, by digest: mcr.microsoft.com/powershell:lts-debian-12 as it sat
+# in pipeline's store on 2026-10-11 (pwsh 7.4.7, Debian bookworm), the image this
+# role has run on. Moving it is a deliberate change to this line.
+powershell_analysis_base_image: "mcr.microsoft.com/powershell@sha256:e75ff986fb35d9b24d6684ad50c60959e9def194756d26a2bea698608ae2e38d"
+# The Debian archive at 2026-10-10. Not the base image's own snapshot (20250113):
+# the running image installed from the live mirror later, and an older snapshot
+# would rebuild it with older security fixes. apt still verifies the signed
+# Release files.
+powershell_analysis_debian_snapshot: "20261010T000000Z"
+powershell_analysis_snapshot: "http://snapshot.debian.org/archive"
+powershell_analysis_keyring: "signed-by=/usr/share/keyrings/debian-archive-keyring.gpg"
+powershell_analysis_debian_url: "{{ powershell_analysis_snapshot }}/debian/{{ powershell_analysis_debian_snapshot }}"
+powershell_analysis_security_url: "{{ powershell_analysis_snapshot }}/debian-security/{{ powershell_analysis_debian_snapshot }}"
+powershell_analysis_apt_sources:
+  - "deb [{{ powershell_analysis_keyring }}] {{ powershell_analysis_debian_url }} bookworm main"
+  - "deb [{{ powershell_analysis_keyring }}] {{ powershell_analysis_debian_url }} bookworm-updates main"
+  - "deb [{{ powershell_analysis_keyring }}] {{ powershell_analysis_security_url }} bookworm-security main"
+# What the image adds to the base: python3 runs analyze-powershell.py, the entrypoint.
+powershell_analysis_debs:
+  - python3
