@@ -172,17 +172,21 @@ def test_every_fetched_source_is_checksum_verified():
             f"checksum verifies nothing")
 
 
+def _build_position(tasks: str) -> int:
+    """Where the role builds its image: its own `podman build`, or, once moved to
+    ADR-023's shared build, its include of build-fetch's image tasks."""
+    for marker in (r"podman build", r"^\s*tasks_from:\s*image\s*$"):
+        if m := re.search(marker, tasks, re.M):
+            return m.start()
+    raise AssertionError("the role builds no image at all")
+
+
 def test_the_fetch_happens_before_the_build():
     """get_url after podman build leaves the build COPYing a file that is not there
     yet, or worse, last deploy's copy of it."""
     for role in MIGRATED:
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
-        # Since ADR-023 a migrated role builds through build-fetch's shared image
-        # tasks; the include is where its build happens.
-        build = tasks.find("podman build")
-        if build < 0:
-            build = tasks.index("tasks_from: image")
-        assert tasks.index("ansible.builtin.get_url") < build, (
+        assert tasks.index("ansible.builtin.get_url") < _build_position(tasks), (
             f"{role}: sources must be fetched before the image is built")
 
 

@@ -4,10 +4,44 @@
 # the snapshot sources given, so the set is exactly what that stage lacks.
 # Container root is lamware-fetch on the host; --download-only runs no package
 # scripts; apt verifies the signed Release files.
+#
+# Optional per set: `signing_keys`, host paths of repo signing keys the role has already
+# fetched and checksummed (get_url + sha256). They are copied to the fetch dir and
+# mounted at /in/keys, so a source line names one as signed-by=/in/keys/<basename>.
+# For a third-party repo the base image does not already trust.
+#
+# The host's CA bundle is mounted for apt's https transport: snapshot.ubuntu.com
+# redirects http to https, and ubuntu:24.04 ships no ca-certificates. TLS is
+# transport only; what decides which packages are accepted is still the signed
+# Release file.
+- name: "{{ hb_name }}/{{ hb_set.name }}: create the key dir"
+  ansible.builtin.file:
+    path: "{{ build_fetch_home }}/{{ hb_name }}/keys/{{ hb_set.name }}"
+    state: directory
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0700"
+
+- name: "{{ hb_name }}/{{ hb_set.name }}: place the repo signing keys this set trusts"
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ build_fetch_home }}/{{ hb_name }}/keys/{{ hb_set.name }}/"
+    remote_src: true
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0600"
+  loop: "{{ hb_set.signing_keys | default([]) }}"
+  register: hb_set_keys
+
 - name: "{{ hb_name }}/{{ hb_set.name }}: key the fetch on everything that decides its result"
+  # A key's bytes decide what apt accepts, so a rotated key is a new fetch.
   ansible.builtin.set_fact:
     hb_set_dir: "{{ build_fetch_home }}/{{ hb_name }}/debs/{{ hb_set.name }}"
-    hb_set_key: "{{ (hb_set.image ~ (hb_set.sources | join('|')) ~ (hb_set.packages | join(','))) | hash('sha256') }}"
+    hb_set_keydir: "{{ build_fetch_home }}/{{ hb_name }}/keys/{{ hb_set.name }}"
+    hb_set_key: >-
+      {{ (hb_set.image ~ (hb_set.sources | join('|')) ~ (hb_set.packages | join(','))
+          ~ (hb_set_keys.results | default([]) | map(attribute='checksum') | join(',')))
+         | hash('sha256') }}
 
 - name: "{{ hb_name }}/{{ hb_set.name }}: write the snapshot sources"
   ansible.builtin.copy:
@@ -26,11 +60,14 @@
       podman --cgroup-manager=cgroupfs --events-backend=file run --rm --network=host --pull=never \
         -v "{{ hb_set_dir }}:/out:rw" \
         -v "{{ build_fetch_home }}/{{ hb_name }}/{{ hb_set.name }}.sources.list:/in/sources.list:ro" \
+        -v "{{ hb_set_keydir }}:/in/keys:ro" \
+        -v "{{ build_fetch_ca_bundle }}:/in/ca-certificates.crt:ro" \
         --entrypoint sh {{ hb_set.image }} -euc '
           rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
           cp /in/sources.list /etc/apt/sources.list
-          apt-get -o Acquire::Check-Valid-Until=false -o APT::Sandbox::User=root update
-          apt-get -o APT::Sandbox::User=root -o Dir::Cache::archives=/out \
+          A="-o APT::Sandbox::User=root -o Acquire::https::CAInfo=/in/ca-certificates.crt"
+          apt-get $A -o Acquire::Check-Valid-Until=false update
+          apt-get $A -o Dir::Cache::archives=/out \
             install -y --download-only --no-install-recommends {{ hb_set.packages | join(" ") }}
           ls /out/*.deb >/dev/null'
       touch "{{ build_fetch_home }}/{{ hb_name }}/debs-{{ hb_set.name }}-{{ hb_set_key }}.done"

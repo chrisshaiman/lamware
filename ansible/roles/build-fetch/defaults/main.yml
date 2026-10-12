@@ -28,3 +28,9 @@ build_fetch_trixie_sources:
   - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian/{{ build_fetch_trixie_snapshot }} trixie main"
   - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian/{{ build_fetch_trixie_snapshot }} trixie-updates main"
   - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian-security/{{ build_fetch_trixie_snapshot }} trixie-security main"
+
+# The host's CA bundle, mounted read-only into the package-resolving container for
+# apt's https transport (snapshot.ubuntu.com serves https only; ubuntu:24.04 has
+# no ca-certificates of its own). Packages are still accepted only on apt's
+# signed Release chain.
+build_fetch_ca_bundle: /etc/ssl/certs/ca-certificates.crt
