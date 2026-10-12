@@ -56,17 +56,26 @@
     group: pipeline
     mode: "0644"
 
-- name: Build dotnet-analysis container image
-  ansible.builtin.command:
-    cmd: >
-      podman build
-      --network=host
-      -t localhost/dotnet-analysis:latest
-      -f {{ dotnet_analysis_install_dir }}/build/Containerfile
-      {{ dotnet_analysis_install_dir }}/build
-  become: true
-  become_user: pipeline
-  changed_when: true
+# ADR-023: the ilspycmd tool and de4dotEx's restore graph are pinned .nupkg files
+# fetched by lamware-fetch; python3 is a Debian package set from the snapshot the
+# base image was built from. The build then runs with --network=none.
+- name: Build the dotnet-analysis image hermetically (ADR-023)
+  ansible.builtin.include_role:
+    name: build-fetch
+    tasks_from: image
+  vars:
+    hb_name: dotnet-analysis
+    hb_build_dir: "{{ dotnet_analysis_install_dir }}/build"
+    hb_tag: localhost/dotnet-analysis:latest
+    hb_base_images:
+      - ref: "{{ dotnet_analysis_base_image }}"
+        id: "{{ dotnet_analysis_base_image_id }}"
+    hb_deb_sets:
+      - name: main
+        image: "{{ dotnet_analysis_base_image }}"
+        sources: "{{ dotnet_analysis_apt_sources }}"
+        packages: "{{ dotnet_analysis_debs }}"
+    hb_nuget: "{{ dotnet_analysis_nuget }}"
 
 - name: Deploy dotnet-analysis wrapper script
   ansible.builtin.template:

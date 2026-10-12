@@ -16,6 +16,7 @@ kept serving PDFs.
 import hashlib
 import re
 import shlex
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import jinja2
@@ -28,7 +29,7 @@ SHARED = ROLES / "build-fetch" / "tasks"
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
 PACKAGE_MIGRATION_PENDING = {
-    "dotnet-analysis", "pcap-analysis",
+    "pcap-analysis",
 }
 
 _NETWORK_INSTALL = re.compile(
@@ -36,9 +37,13 @@ _NETWORK_INSTALL = re.compile(
     # install by package name, reaches a mirror.
     r"apt-get\s+update|apt-get\s+install(?![^\n]*/tmp/debs/)|apt\s+install"
     r"|pip3?\s+install(?![^\n]*--no-index)"
-    r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install"
+    # A dotnet restore that names no local config reaches nuget.org (dotnet-analysis).
+    r"|dotnet\s+(tool\s+install|restore|build|publish)"
+    r"(?![^\n]*(--configfile|RestoreConfigFile=|--no-restore))"
+    r"|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install"
     # PowerShell's gallery installers (powershell-analysis ran Install-Module).
     r"|(Install|Save)-(Module|PSResource)", re.IGNORECASE)
+_DOTNET_RESTORING = re.compile(r"dotnet\s+(tool\s+install|restore|build|publish)\b[^\n]*")
 _DIGEST_REF = re.compile(r"@sha256:[0-9a-f]{64}\Z")
 
 
@@ -335,3 +340,84 @@ def test_the_local_base_tag_names_the_image():
     out = jinja2.Environment().from_string(tmpl.group(0)).render(
         hb_base={"ref": "docker.io/library/eclipse-temurin@sha256:" + "a" * 64, "id": "f" * 64})
     assert out == "localhost/lamware-base/eclipse-temurin:ffffffffffff", out
+
+
+def _shared_nuget_config() -> ET.Element:
+    """The nuget.config the shared build writes beside the fetched packages."""
+    writes = [t for t in _tasks(SHARED / "image.yml")
+              if str((t.get("ansible.builtin.copy") or {}).get("dest", "")).endswith("/nuget.config")]
+    assert len(writes) == 1, [t.get("name") for t in writes]
+    return ET.fromstring(writes[0]["ansible.builtin.copy"]["content"].strip())
+
+
+def _role_nuget(role: str) -> list[dict]:
+    """The role's hb_nuget pin list, resolved from its defaults."""
+    ref = str(_shared_build_use(role).get("hb_nuget") or "")
+    m = re.fullmatch(r"\{\{\s*(\w+)\s*\}\}", ref)
+    if not m:
+        return []
+    defaults = yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text())
+    return defaults[m.group(1)]
+
+
+def test_the_fetched_nuget_feed_is_the_only_source():
+    """`<clear/>` first, then one source, and that source is a local folder.
+    Without `<clear/>`, nuget.org from the SDK's user-level default config stays
+    in the list, and a package missing from the pins is looked for upstream."""
+    sources = _shared_nuget_config().find("packageSources")
+    assert sources is not None
+    children = list(sources)
+    assert children and children[0].tag == "clear", [c.tag for c in children]
+    adds = [c for c in children if c.tag == "add"]
+    assert len(adds) == 1 and len(children) == 2, [ET.tostring(c) for c in children]
+    value = adds[0].get("value", "")
+    assert value and "://" not in value, f"the only source must be a folder: {value!r}"
+
+
+def test_every_shared_get_url_runs_as_the_fetch_user_with_a_checksum():
+    gets = [t for f in ("image.yml", "image_debs.yml", "image_base.yml")
+            for t in _tasks(SHARED / f) if "ansible.builtin.get_url" in t]
+    assert gets, "no get_url in the shared build: the NuGet fetch went missing"
+    for t in gets:
+        assert t.get("become_user") == "{{ build_fetch_user }}", t["name"]
+        assert re.match(r"sha(256|512):\{\{",
+                        str(t["ansible.builtin.get_url"].get("checksum", ""))), \
+            f"{t['name']}: downloads without a pinned checksum"
+
+
+def test_every_nuget_pin_is_complete():
+    """get_url needs all three; a malformed sha512 fails on the host mid-deploy."""
+    seen = 0
+    for role in MIGRATED:
+        pins = _role_nuget(role)
+        for p in pins:
+            seen += 1
+            assert set(p) == {"id", "version", "sha512"}, f"{role}: {p}"
+            assert re.fullmatch(r"[0-9a-f]{128}", str(p["sha512"])), f"{role}: {p['id']}"
+            assert re.fullmatch(r"\d+(\.\d+){1,3}", str(p["version"])), f"{role}: {p['id']}"
+        ids = [str(p["id"]).lower() for p in pins]
+        assert len(ids) == len(set(ids)), f"{role}: one id pinned twice: {ids}"
+    assert seen, "no role pins NuGet packages: dotnet-analysis should"
+
+
+def test_dotnet_commands_read_only_the_fetched_feed():
+    """Every restoring dotnet command in a migrated Containerfile names the
+    nuget.config at the place the build context's nuget/ directory was COPYed to,
+    and the role hands the shared build the packages that directory is made from."""
+    checked = 0
+    for role in MIGRATED:
+        text = _containerfile(role)
+        commands = [m.group(0) for m in _DOTNET_RESTORING.finditer(text)]
+        if not commands:
+            continue
+        copy = re.search(r"^COPY\s+nuget/\s+(\S+?)/?\s*$", text, re.M)
+        assert copy, f"{role} runs dotnet restores but never COPYs nuget/ in"
+        config = f"{copy.group(1)}/nuget.config"
+        assert _role_nuget(role), f"{role} restores but hands the shared build no hb_nuget"
+        for cmd in commands:
+            if "--no-restore" in cmd:
+                continue
+            named = re.findall(r"(?:--configfile\s+|RestoreConfigFile=)(\S+)", cmd)
+            assert named == [config], f"{role}: {cmd!r} does not read only {config}"
+            checked += 1
+    assert checked >= 2, "dotnet-analysis's tool install and publish were not both found"
