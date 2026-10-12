@@ -9,7 +9,7 @@
 #     (4df5db95… loaded as ea074cf5…);
 #   - a docker-archive of a local tag loads with the same image ID.
 # The ID is asserted after the load; the local tag keeps a prune from removing it.
-- name: "{{ hb_name }}: is {{ hb_base.ref | regex_replace('@.*$', '') }} (image {{ hb_base.id[:12] }}) in pipeline's store?"
+- name: "{{ hb_name }}: is {{ hb_base.ref.split('@')[0] }} (image {{ hb_base.id[:12] }}) in pipeline's store?"
   ansible.builtin.command:
     cmd: podman image exists {{ hb_base.id }}
     chdir: "{{ hb_build_dir }}"
@@ -22,7 +22,7 @@
 - name: "{{ hb_name }}: hand the base image over"
   when: hb_base_present.rc != 0
   vars:
-    hb_base_tag: "localhost/lamware-base/{{ hb_base.ref | regex_replace('^.*/([^/@]+)@.*$', '\\1') }}:{{ hb_base.id[:12] }}"
+    hb_base_tag: "localhost/lamware-base/{{ hb_base.ref.split('@')[0].split('/')[-1] }}:{{ hb_base.id[:12] }}"
   block:
     - name: "{{ hb_name }}: tag and save the base as a docker-archive (lamware-fetch)"
       ansible.builtin.shell:
@@ -71,7 +71,7 @@
   ansible.builtin.command:
     cmd: >
       podman tag {{ hb_base.id }}
-      localhost/lamware-base/{{ hb_base.ref | regex_replace('^.*/([^/@]+)@.*$', '\\1') }}:{{ hb_base.id[:12] }}
+      localhost/lamware-base/{{ hb_base.ref.split('@')[0].split('/')[-1] }}:{{ hb_base.id[:12] }}
     chdir: "{{ hb_build_dir }}"
   become: true
   become_user: pipeline

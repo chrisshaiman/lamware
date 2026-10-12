@@ -323,3 +323,15 @@ def test_every_package_source_is_signed_by_a_key_the_fetch_has():
                     assert path.removeprefix("/in/keys/") in keys, f"{where}: key not carried"
                 else:
                     assert path.startswith("/usr/share/keyrings/"), where
+
+
+def test_the_local_base_tag_names_the_image():
+    """The first version used a regex backreference that YAML escaping turned into
+    a literal "1": every base was tagged localhost/lamware-base/1:<id>."""
+    import jinja2
+    text = (SHARED / "image_base.yml").read_text()
+    tmpl = re.search(r"localhost/lamware-base/\{\{[^}]*\}\}:\{\{ hb_base\.id\[:12\] \}\}", text)
+    assert tmpl, "no local base tag in the hand-off"
+    out = jinja2.Environment().from_string(tmpl.group(0)).render(
+        hb_base={"ref": "docker.io/library/eclipse-temurin@sha256:" + "a" * 64, "id": "f" * 64})
+    assert out == "localhost/lamware-base/eclipse-temurin:ffffffffffff", out
