@@ -56,7 +56,10 @@
       "role": "positive",
       "selected_because": "CAPE task 842 recorded 8 extractable cross-process injection write(s) and 42 signatures that trip the Volatility triggers, so all five correlation rules have inputs.",
       "source_cape_task": 842,
-      "expected_injection_buffers": 8
+      "expected_injection_buffers": 8,
+      "promoted_from": "/opt/pipeline/reports/a728c623195e",
+      "promoted_at": "20261012T025158Z",
+      "agent_input_names_family": true
     },
     {
       "sha256": "179dcccf0614360e520b8c450bcda367884251d0daac46583af68a4182b855f1",
@@ -76,7 +79,10 @@
       "role": "negative-control",
       "selected_because": "Retained from the previous corpus. Produces zero correlations: no cross-process injection writes, and CAPE signatures do not trip the Volatility triggers. A corpus where every sample correlates cannot distinguish 'fires appropriately' from 'fires indiscriminately'.",
       "source_cape_task": null,
-      "expected_injection_buffers": 0
+      "expected_injection_buffers": 0,
+      "promoted_from": "/opt/pipeline/reports/abb5591b8928",
+      "promoted_at": "20261012T025158Z",
+      "agent_input_names_family": true
     }
   ]
 }
