@@ -1083,9 +1083,11 @@ never covered package managers. This decides them.
      (`apt-get install ./*.deb`). apt's signed Release chain verifies them at download.
    - **Source archives, tools, NuGet packages:** `get_url` with `checksum: sha256:…`, as
      today.
-   - **Base images:** pinned by digest (`FROM …@sha256:…`), pulled by the fetch user and
-     loaded into the pipeline user's image store. Moving a base image is a deliberate change to the
-     digest, not a side effect of a tag moving or of a cache being cleared.
+   - **Base images:** pinned twice — by the registry manifest digest the fetch user pulls,
+     and by the image ID (config digest) the build uses — and handed to the pipeline user's
+     image store, where the ID is asserted before any build. Moving a base image is a
+     deliberate change to both pins, not a side effect of a tag moving or of a cache being
+     cleared. See the 2026-10-12 amendment below.
 3. **A stale image fails the deploy.** Each image carries a label with a hash of its build
    context. After the build, the deploy compares the label of the image the wrappers will
    run against the context it just shipped, and fails on a mismatch, rather than reporting
@@ -1149,3 +1151,34 @@ running, and nothing compares what runs with what the repo says should run.
   lockfile. That is the point. The analysis toolchain decides what an analysis sees.
 - Not solved here: whether the *running* analysis containers' images are the ones the repo
   describes is what decision 3 makes checkable; it does not by itself rebuild anything.
+
+### Amendment (2026-10-12): a base image is identified by its image ID, not its registry digest
+
+**Observed.** The first base image that pipeline did not already hold (the dotnet SDK)
+could not be handed over. `podman save --format oci-archive` rewrites a Docker-format
+registry manifest as an OCI manifest, so the saved manifest's digest
+(`sha256:f80ec9a7…`) is not the registry digest that was pinned (`sha256:0eeb52c7…`), and
+`podman load` refuses to file the image under the pinned reference ("Digest of source
+image's manifest would not match destination reference"). Pinning the platform manifest
+instead of the multi-arch index did not help: the conversion changes the bytes whatever
+is pinned. Every role built so far succeeded only because pipeline already held its base
+from before ADR-023; on a fresh host, or at any base bump, all of them would fail this way.
+
+**Decision.** Each base is pinned twice:
+- `ref`: the registry manifest digest. The fetch user pulls by it; the registry's
+  content addressing is the trust anchor, exactly as before.
+- `id`: the image ID, the sha256 of the image config. The manifest the registry verified
+  names the config by this hash, so the ID is derived from what was verified, and it is
+  the one identity that survives save/load unchanged.
+
+The hand-off loads the archive into pipeline's store, tags it under a local name (so a
+prune does not treat it as dangling), and **asserts the loaded image's ID equals the pin**
+before any build. Containerfiles build `FROM` the image ID; every built image carries a
+`lamware.base` label naming the registry reference, so lineage stays readable.
+
+**Consequences.** Bumping a base changes both pins; a mismatch fails the deploy at the
+hand-off rather than building from the wrong base. All image roles change their `FROM`
+once; the bases are byte-identical, so the rebuild is expected to reuse cached layers.
+
+**Recorded under the second-fix rule (CLAUDE.md §2):** the first fix (platform digest)
+addressed the instance; this addresses the decision the original text got wrong.
