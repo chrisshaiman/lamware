@@ -80,6 +80,9 @@
       # --only-binary: no sdist, so no build backend runs here. --require-hashes:
       # every file is checked against the lock. A package that publishes no
       # usable wheel goes in hb_sdists instead (fetched below, built offline).
+      # --no-deps: the lock IS the whole graph; resolving it here demanded a
+      # wheel for an sdist-only dependency (flare-floss -> halo) and failed. The
+      # offline install still resolves the full set, so a gap fails the build.
       vars:
         hb_locks_key: "{{ hb_lock_files.results | map(attribute='checksum') | join('-') | hash('sha256') }}"
       ansible.builtin.shell:
@@ -88,7 +91,7 @@
           W="{{ build_fetch_home }}/{{ hb_name }}/wheels"
           find "$W" -mindepth 1 -delete
           python3 -m pip download --no-cache-dir --disable-pip-version-check \
-            --require-hashes --only-binary=:all: \
+            --require-hashes --only-binary=:all: --no-deps \
             --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
             --platform manylinux2014_x86_64 --platform any \
             --python-version {{ hb_python | default('3.12') }} --implementation cp \
