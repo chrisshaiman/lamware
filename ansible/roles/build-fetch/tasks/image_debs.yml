@@ -1,0 +1,42 @@
+---
+# One Debian package set for build-fetch/tasks/image.yml. Resolved in a
+# throwaway rootless container of the image it will be installed into, against
+# the snapshot sources given, so the set is exactly what that stage lacks.
+# Container root is lamware-fetch on the host; --download-only runs no package
+# scripts; apt verifies the signed Release files.
+- name: "{{ hb_name }}/{{ hb_set.name }}: key the fetch on everything that decides its result"
+  ansible.builtin.set_fact:
+    hb_set_dir: "{{ build_fetch_home }}/{{ hb_name }}/debs/{{ hb_set.name }}"
+    hb_set_key: "{{ (hb_set.image ~ (hb_set.sources | join('|')) ~ (hb_set.packages | join(','))) | hash('sha256') }}"
+
+- name: "{{ hb_name }}/{{ hb_set.name }}: write the snapshot sources"
+  ansible.builtin.copy:
+    content: "{{ hb_set.sources | join('\n') }}\n"
+    dest: "{{ build_fetch_home }}/{{ hb_name }}/{{ hb_set.name }}.sources.list"
+    owner: "{{ build_fetch_user }}"
+    group: "{{ build_fetch_user }}"
+    mode: "0600"
+
+- name: "{{ hb_name }}/{{ hb_set.name }}: apt-get --download-only (lamware-fetch, rootless)"
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      mkdir -p "{{ hb_set_dir }}"
+      find "{{ hb_set_dir }}" -mindepth 1 -delete
+      podman --cgroup-manager=cgroupfs --events-backend=file run --rm --network=host --pull=never \
+        -v "{{ hb_set_dir }}:/out:rw" \
+        -v "{{ build_fetch_home }}/{{ hb_name }}/{{ hb_set.name }}.sources.list:/in/sources.list:ro" \
+        --entrypoint sh {{ hb_set.image }} -euc '
+          rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+          cp /in/sources.list /etc/apt/sources.list
+          apt-get -o Acquire::Check-Valid-Until=false -o APT::Sandbox::User=root update
+          apt-get -o APT::Sandbox::User=root -o Dir::Cache::archives=/out \
+            install -y --download-only --no-install-recommends {{ hb_set.packages | join(" ") }}
+          ls /out/*.deb >/dev/null'
+      touch "{{ build_fetch_home }}/{{ hb_name }}/debs-{{ hb_set.name }}-{{ hb_set_key }}.done"
+    creates: "{{ build_fetch_home }}/{{ hb_name }}/debs-{{ hb_set.name }}-{{ hb_set_key }}.done"
+    chdir: "{{ build_fetch_home }}"
+  environment:
+    XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+  become: true
+  become_user: "{{ build_fetch_user }}"

@@ -15,6 +15,12 @@ pdf_generation_base_image: "docker.io/library/python@sha256:401f6e1a67dad31a1bd7
 # snapshot makes the package set the same on every fetch; apt still verifies the
 # signed Release files.
 pdf_generation_debian_snapshot: "20260505T000000Z"
+pdf_generation_snapshot: "http://snapshot.debian.org/archive"
+pdf_generation_keyring: "signed-by=/usr/share/keyrings/debian-archive-keyring.pgp"
+pdf_generation_apt_sources:
+  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian/{{ pdf_generation_debian_snapshot }} trixie main"
+  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian/{{ pdf_generation_debian_snapshot }} trixie-updates main"
+  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian-security/{{ pdf_generation_debian_snapshot }} trixie-security main"
 pdf_generation_debs:
   - libpango-1.0-0
   - libpangocairo-1.0-0

@@ -1,0 +1,50 @@
+---
+# One base image for build-fetch/tasks/image.yml: if pipeline's store lacks this
+# digest, lamware-fetch saves it and pipeline loads it. pipeline never pulls.
+- name: "{{ hb_name }}: is {{ hb_base | regex_replace('@.*$', '') }} in pipeline's store?"
+  ansible.builtin.command:
+    cmd: podman image exists {{ hb_base }}
+    chdir: "{{ hb_build_dir }}"
+  become: true
+  become_user: pipeline
+  register: hb_base_present
+  failed_when: hb_base_present.rc not in [0, 1]
+  changed_when: false
+
+- name: "{{ hb_name }}: hand the base image over"
+  when: hb_base_present.rc != 0
+  block:
+    - name: "{{ hb_name }}: save the base image (lamware-fetch)"
+      ansible.builtin.command:
+        cmd: >
+          podman --cgroup-manager=cgroupfs --events-backend=file
+          save --format oci-archive -o {{ build_fetch_home }}/{{ hb_name }}/base.oci {{ hb_base }}
+        chdir: "{{ build_fetch_home }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
+      become: true
+      become_user: "{{ build_fetch_user }}"
+      changed_when: true
+    - name: "{{ hb_name }}: copy the archive to pipeline"
+      ansible.builtin.copy:
+        src: "{{ build_fetch_home }}/{{ hb_name }}/base.oci"
+        dest: "{{ hb_build_dir }}/../base.oci"
+        remote_src: true
+        owner: pipeline
+        group: pipeline
+        mode: "0600"
+    - name: "{{ hb_name }}: load the base image (pipeline)"
+      ansible.builtin.command:
+        cmd: podman load -i {{ hb_build_dir }}/../base.oci
+        chdir: "{{ hb_build_dir }}"
+      become: true
+      become_user: pipeline
+      changed_when: true
+  always:
+    - name: "{{ hb_name }}: remove the image archives"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ build_fetch_home }}/{{ hb_name }}/base.oci"
+        - "{{ hb_build_dir }}/../base.oci"
