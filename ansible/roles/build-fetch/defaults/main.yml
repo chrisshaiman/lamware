@@ -11,3 +11,17 @@ build_fetch_home: /var/lib/lamware-fetch
 # users' container ids onto the same host ids.
 build_fetch_subid_start: 331072
 build_fetch_subid_count: 65536
+
+# --- Base images and snapshots shared by several image roles (ADR-023) ---------
+# python:3.12-slim, the base of most analysis images since 2026-05-08. Moving it
+# is a deliberate change to this line, and rebuilds every image that uses it.
+build_fetch_python_slim: "docker.io/library/python@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461"
+# The Debian archive state that image was built from (its own debian.sources
+# records it). Packages for images built FROM it are resolved against this.
+build_fetch_trixie_snapshot: "20260505T000000Z"
+build_fetch_debian_snapshot_url: "http://snapshot.debian.org/archive"
+build_fetch_debian_keyring: "signed-by=/usr/share/keyrings/debian-archive-keyring.pgp"
+build_fetch_trixie_sources:
+  - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian/{{ build_fetch_trixie_snapshot }} trixie main"
+  - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian/{{ build_fetch_trixie_snapshot }} trixie-updates main"
+  - "deb [{{ build_fetch_debian_keyring }}] {{ build_fetch_debian_snapshot_url }}/debian-security/{{ build_fetch_trixie_snapshot }} trixie-security main"

@@ -7,20 +7,8 @@ pdf_generation_container_cpus: "1"
 pdf_generation_container_timeout: "120"
 
 # --- ADR-023: hermetic build inputs -------------------------------------------
-# Base image, by digest: the python:3.12-slim this image has been built from
-# since 2026-05-08. Moving it is a deliberate change to this line.
-pdf_generation_base_image: "docker.io/library/python@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461"
-# The Debian archive state that base image was built from (its own
-# /etc/apt/sources.list.d/debian.sources records it). Resolving against the
-# snapshot makes the package set the same on every fetch; apt still verifies the
-# signed Release files.
-pdf_generation_debian_snapshot: "20260505T000000Z"
-pdf_generation_snapshot: "http://snapshot.debian.org/archive"
-pdf_generation_keyring: "signed-by=/usr/share/keyrings/debian-archive-keyring.pgp"
-pdf_generation_apt_sources:
-  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian/{{ pdf_generation_debian_snapshot }} trixie main"
-  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian/{{ pdf_generation_debian_snapshot }} trixie-updates main"
-  - "deb [{{ pdf_generation_keyring }}] {{ pdf_generation_snapshot }}/debian-security/{{ pdf_generation_debian_snapshot }} trixie-security main"
+# The base image and the Debian snapshot are build-fetch's shared python:3.12-slim
+# (build_fetch_python_slim, build_fetch_trixie_sources).
 pdf_generation_debs:
   - libpango-1.0-0
   - libpangocairo-1.0-0

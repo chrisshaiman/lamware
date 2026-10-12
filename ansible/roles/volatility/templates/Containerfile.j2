@@ -1,16 +1,17 @@
 # Volatility 3 memory forensics container
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Hermetic (ADR-023): every input below was fetched by lamware-fetch.
+# requirements.lock pins volatility3 to volatility_version ({{ volatility_version }}).
+COPY debs/main/ /tmp/debs/
+RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
 
-RUN pip install --no-cache-dir \
-    volatility3=={{ volatility_version }} \
-    pefile \
-    yara-python \
-    capstone
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/requirements.lock \
+    && rm -rf /tmp/wheels /tmp/requirements.lock
 
 # ISF symbol tables are mounted at runtime via volume at /symbols
 # Memory dump is mounted at /dump (read-only)

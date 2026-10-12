@@ -1,18 +1,27 @@
 # Triage analysis container — YARA, ssdeep, FLOSS, file type, entropy
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmagic1 \
-    file \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Hermetic (ADR-023): every input below was fetched by lamware-fetch. The build
+# set (a compiler) is purged after by exact package name: dpkg -i marks every
+# package manual, so `apt-get autoremove` would leave the toolchain behind, and
+# dpkg -P refuses rather than removes anything a runtime package still needs.
+COPY debs/ /tmp/debs/
+RUN dpkg -i /tmp/debs/runtime/*.deb /tmp/debs/build/*.deb \
+    && for f in /tmp/debs/build/*.deb; do dpkg-deb -f "$f" Package; done > /tmp/build-pkgs
 
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
-
-# Remove build tools after pip install (reduces image size + attack surface)
-RUN apt-get purge -y build-essential && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock build-requirements.lock sdists.lock /tmp/
+# Build tools first, so the two source-only packages build with
+# --no-build-isolation from hash-checked setuptools/pybind11, offline.
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/build-requirements.lock \
+    && pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes --no-build-isolation \
+        -r /tmp/requirements.lock -r /tmp/sdists.lock \
+    && pip uninstall -y pybind11 \
+    && dpkg -P $(cat /tmp/build-pkgs) \
+    && rm -rf /tmp/wheels /tmp/*.lock /tmp/build-pkgs /tmp/debs
 
 COPY run-triage.py /opt/triage/run-triage.py
 RUN chmod +x /opt/triage/run-triage.py

@@ -2,16 +2,17 @@
 # Processes CAPE/QEMU screenshots: removes duplicates via perceptual
 # hashing and decodes any QR codes found in screenshots.
 # Built locally by Ansible. Never pulled from a registry.
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libzbar0 \
-    && rm -rf /var/lib/apt/lists/*
+# Hermetic (ADR-023): every input below was fetched by lamware-fetch.
+COPY debs/main/ /tmp/debs/
+RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
 
-RUN pip install --no-cache-dir \
-    imagehash \
-    pyzbar \
-    Pillow
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels \
+        --require-hashes -r /tmp/requirements.lock \
+    && rm -rf /tmp/wheels /tmp/requirements.lock
 
 COPY analyze-screenshots.py /opt/analyze-screenshots.py
 RUN chmod +x /opt/analyze-screenshots.py

@@ -17,7 +17,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 PRECOMMIT = (ROOT / ".pre-commit-config.yaml").read_text()
-INTERPRET_REQS = ROOT / "ansible" / "roles" / "interpret" / "templates" / "requirements.txt.j2"
 
 # Live Python trees. Anything scanning "our code" should cover all of these.
 LIVE_TREES = ("api/", "shared/", "pipeline/")
@@ -38,20 +37,18 @@ def test_audit_installs_the_real_packages_before_auditing():
         "second time — a copy drifts and the audit silently covers the stale one.")
 
 
-def test_audit_covers_the_deployed_container_pin():
-    assert "pip-audit -r ansible/roles/interpret/templates/requirements.txt.j2" in CI, (
-        "the interpret container's anthropic pin is the version actually deployed; "
-        "if it is not audited, the deployed version is unchecked.")
+def test_audit_covers_every_shipped_image_lock():
+    """Each hermetic image installs exactly its hash lock (ADR-023), so the locks
+    are the deployed versions. The audit must read all of them, by glob, so a
+    newly migrated role is covered without editing CI."""
+    assert 'for lock in ansible/roles/*/files/requirements.lock' in CI
+    assert 'pip-audit --require-hashes --disable-pip -r "$lock"' in CI
 
 
-def test_interpret_requirements_stays_plain_so_pip_audit_can_read_it():
-    """It is a .j2 by convention but contains no Jinja. If that changes, pip-audit
-    would fail on a template expression — better to fail here with the reason."""
-    text = INTERPRET_REQS.read_text()
-    assert not re.search(r"\{\{.*?\}\}|\{%.*?%\}", text), (
-        f"{INTERPRET_REQS.name} gained Jinja. The CI audit reads it with `pip-audit -r`, "
-        f"which cannot render templates — either keep it plain or render it in CI first.")
-    assert "anthropic==" in text
+def test_the_interpret_lock_carries_the_deployed_anthropic_pin():
+    """The pin #211 was about: the version the container actually ships."""
+    text = (ROOT / "ansible" / "roles" / "interpret" / "files" / "requirements.lock").read_text()
+    assert re.search(r"^anthropic==0\.52\.0 ", text, re.M)
 
 
 def test_scanners_cover_every_live_tree():

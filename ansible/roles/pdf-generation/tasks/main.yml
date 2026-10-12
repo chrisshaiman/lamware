@@ -49,11 +49,11 @@
     hb_name: pdf-generation
     hb_build_dir: "{{ pdf_generation_install_dir }}/build"
     hb_tag: localhost/pdf-generation:latest
-    hb_base_images: ["{{ pdf_generation_base_image }}"]
+    hb_base_images: ["{{ build_fetch_python_slim }}"]
     hb_deb_sets:
       - name: main
-        image: "{{ pdf_generation_base_image }}"
-        sources: "{{ pdf_generation_apt_sources }}"
+        image: "{{ build_fetch_python_slim }}"
+        sources: "{{ build_fetch_trixie_sources }}"
         packages: "{{ pdf_generation_debs }}"
     hb_lock: requirements.lock
 

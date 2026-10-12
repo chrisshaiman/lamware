@@ -4,7 +4,7 @@
 #
 # GoReSym is MIT licensed.
 # https://github.com/mandiant/GoReSym
-FROM docker.io/library/python:3.12-slim
+FROM {{ build_fetch_python_slim }}
 
 # GoReSym binary is downloaded at build time by Ansible
 # and placed in the build context

@@ -20,3 +20,9 @@ pyinstxtractor_commit: 815d31cf26bc71e62f851b2e549452e7b7c9dd98
 
 # sha256 of pyinstxtractor.py at that commit
 pyinstxtractor_sha256: 94e0b6c9d5151bbeefc7e7452e96e24b396c2dbfcb0348e5f12c4c0865fefe58
+
+# ADR-023: only to compile pycdc; purged from the image after.
+pyinstaller_analysis_debs_build:
+  - cmake
+  - make
+  - g++

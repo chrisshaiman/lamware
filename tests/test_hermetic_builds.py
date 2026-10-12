@@ -25,10 +25,7 @@ SHARED = ROLES / "build-fetch" / "tasks"
 # Roles that still build with network access, each to be moved by its own PR
 # (ADR-023 Consequences). This list must only shrink.
 PACKAGE_MIGRATION_PENDING = {
-    "dotnet-analysis", "ghidra", "go-analysis", "interpret", "java-analysis",
-    "office-macro-analysis", "pcap-analysis", "powershell-analysis",
-    "pyinstaller-analysis", "python-sandbox", "screenshot-analysis", "triage",
-    "volatility",
+    "dotnet-analysis", "ghidra", "java-analysis", "pcap-analysis", "powershell-analysis",
 }
 
 _NETWORK_INSTALL = re.compile(
@@ -131,7 +128,9 @@ def test_migrated_containerfiles_install_nothing_from_the_network():
 
 def test_migrated_roles_pin_every_base_image_by_digest():
     for role in MIGRATED:
-        defaults = yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text())
+        # A role's own default, or one build-fetch shares (python:3.12-slim).
+        defaults = {**yaml.safe_load((ROLES / "build-fetch" / "defaults" / "main.yml").read_text()),
+                    **(yaml.safe_load((ROLES / role / "defaults" / "main.yml").read_text()) or {})}
         froms = [ln.split()[1:] for ln in _containerfile(role).splitlines()
                  if ln.strip().startswith("FROM")]
         assert froms, role

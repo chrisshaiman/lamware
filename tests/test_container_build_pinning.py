@@ -157,7 +157,9 @@ def test_every_fetched_source_is_checksum_verified():
                          # A repo signing key. Pinned so an upstream rotation
                          # fails the deploy instead of silently trusting new
                          # bytes that then decide what apt installs.
-                         ("pcap-analysis", "zeek_repo_key")):
+                         ("pcap-analysis", "zeek_repo_key"),
+                         # GoReSym was fetched by version alone until ADR-023.
+                         ("go-analysis", "goresym")):
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
         assert "ansible.builtin.get_url" in tasks, f"{role} fetches nothing"
         defaults = _yaml.safe_load(
@@ -175,7 +177,12 @@ def test_the_fetch_happens_before_the_build():
     yet, or worse, last deploy's copy of it."""
     for role in MIGRATED:
         tasks = (ROLES / role / "tasks" / "main.yml").read_text(encoding="utf-8")
-        assert tasks.index("ansible.builtin.get_url") < tasks.index("podman build"), (
+        # Since ADR-023 a migrated role builds through build-fetch's shared image
+        # tasks; the include is where its build happens.
+        build = tasks.find("podman build")
+        if build < 0:
+            build = tasks.index("tasks_from: image")
+        assert tasks.index("ansible.builtin.get_url") < build, (
             f"{role}: sources must be fetched before the image is built")
 
 
