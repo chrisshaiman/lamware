@@ -284,7 +284,9 @@ else
     # maps to the pipeline uid itself, so it proves nothing here.
     SUBUID_LEAK=""
     PROBE_IMG="localhost/interpret:latest"
-    if sudo -u "$PIPE_USER" podman image exists "$PROBE_IMG" 2>/dev/null; then
+    # From /: this script runs in /root, which the pipeline user cannot enter,
+    # and podman refuses to start there ("cannot chdir to /root").
+    if (cd / && sudo -u "$PIPE_USER" podman image exists "$PROBE_IMG") 2>/dev/null; then
         SUBUID_LEAK=$(cd / && sudo -u "$PIPE_USER" timeout 60 podman run --rm --network=host --user 65534 \
             --entrypoint python3 "$PROBE_IMG" -c '
 import socket
