@@ -17,7 +17,11 @@
 FROM {{ ghidra_base_image }} AS ghidra-unpack
 
 COPY debs/unpack/ /tmp/debs/
-RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 COPY ghidra.zip /tmp/ghidra.zip
 RUN unzip -q /tmp/ghidra.zip -d /opt \
@@ -32,7 +36,11 @@ FROM {{ ghidra_base_image }}
 # them, and this container is handed malware: the fewer fetch-and-unpack tools
 # inside it, the less a sample has to work with.
 COPY debs/runtime/ /tmp/debs/
-RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 COPY --from=ghidra-unpack /opt/ghidra /opt/ghidra
 

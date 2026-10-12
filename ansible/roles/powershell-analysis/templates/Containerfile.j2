@@ -4,7 +4,11 @@
 FROM {{ powershell_analysis_base_image }}
 
 COPY debs/main/ /tmp/debs/
-RUN dpkg -i /tmp/debs/*.deb && rm -rf /tmp/debs
+# apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
+# python3.10-minimal failed that way). Every dependency is a local file here,
+# so apt resolves among them with no lists and no network.
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
+    && rm -rf /tmp/debs
 
 # No PSDecode module is installed. This file used to run
 #   pwsh -Command "Install-Module -Name PSDecode -Scope AllUsers -Force"

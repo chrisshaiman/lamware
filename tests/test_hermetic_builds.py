@@ -32,7 +32,10 @@ PACKAGE_MIGRATION_PENDING = {
 }
 
 _NETWORK_INSTALL = re.compile(
-    r"apt-get\s+(update|install)|apt\s+install|pip3?\s+install(?![^\n]*--no-index)"
+    # apt-get install of the fetched /tmp/debs/ files is offline; update, or an
+    # install by package name, reaches a mirror.
+    r"apt-get\s+update|apt-get\s+install(?![^\n]*/tmp/debs/)|apt\s+install"
+    r"|pip3?\s+install(?![^\n]*--no-index)"
     r"|dotnet\s+tool\s+install|npm\s+(install|ci)|go\s+(get|mod\s+download)|gem\s+install"
     # PowerShell's gallery installers (powershell-analysis ran Install-Module).
     r"|(Install|Save)-(Module|PSResource)", re.IGNORECASE)
@@ -263,9 +266,10 @@ def test_each_deb_set_is_copied_into_the_containerfile_and_nothing_else():
         text = _containerfile(role)
         copied = re.findall(r"^\s*COPY\s+debs/([^/\s]+)/", text, re.M)
         assert sorted(copied) == sorted(sets), f"{role}: sets {sets}, COPYed {copied}"
-        # Every set's COPY destination must be named by a `dpkg -i` (one command
+        # Every set's COPY destination must be named by a `dpkg -i` or a local
+        # `apt-get install` (one command
         # may install several sets; dpkg orders dependencies across all it is given).
-        installs = " ".join(re.findall(r"dpkg -i [^\n&]*", text))
+        installs = " ".join(re.findall(r"(?:dpkg -i|apt-get install)[^\n&]*", text))
         for name, dest in re.findall(r"^\s*COPY\s+debs/([^/\s]+)/\s+(\S+)", text, re.M):
             assert dest.rstrip("/") in installs, f"{role}: set {name} is COPYed to {dest} but never installed"
 
