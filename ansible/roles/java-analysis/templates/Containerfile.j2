@@ -8,7 +8,9 @@
 # Hermetic (ADR-023): built with --network=none. Every input below was downloaded
 # and verified before the build: the base image by digest, the Debian packages by
 # lamware-fetch from a pinned Ubuntu snapshot, the jars by the role (checksummed).
-FROM {{ java_analysis_base_image }}
+# {{ java_analysis_base_image }}, by image ID (ADR-023 amendment)
+FROM {{ java_analysis_base_image_id }}
+LABEL lamware.base="{{ java_analysis_base_image }}"
 
 COPY debs/main/ /tmp/debs/
 # apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on

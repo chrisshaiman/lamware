@@ -1,9 +1,17 @@
 ---
-# One base image for build-fetch/tasks/image.yml: if pipeline's store lacks this
-# digest, lamware-fetch saves it and pipeline loads it. pipeline never pulls.
-- name: "{{ hb_name }}: is {{ hb_base | regex_replace('@.*$', '') }} in pipeline's store?"
+# One base image for build-fetch/tasks/image.yml (ADR-023, 2026-10-12 amendment).
+# hb_base is {ref, id}. pipeline never pulls: if its store lacks the image ID,
+# lamware-fetch tags the image locally and saves it as a docker-archive, and
+# pipeline loads it. Measured 2026-10-12 on the dotnet SDK base:
+#   - saving by the registry digest fails on load: the archive names that digest,
+#     and the save rewrites the manifest, so they no longer match;
+#   - an oci-archive also rewrites the config, so the image ID changes
+#     (4df5db95… loaded as ea074cf5…);
+#   - a docker-archive of a local tag loads with the same image ID.
+# The ID is asserted after the load; the local tag keeps a prune from removing it.
+- name: "{{ hb_name }}: is {{ hb_base.ref.split('@')[0] }} (image {{ hb_base.id[:12] }}) in pipeline's store?"
   ansible.builtin.command:
-    cmd: podman image exists {{ hb_base }}
+    cmd: podman image exists {{ hb_base.id }}
     chdir: "{{ hb_build_dir }}"
   become: true
   become_user: pipeline
@@ -13,12 +21,15 @@
 
 - name: "{{ hb_name }}: hand the base image over"
   when: hb_base_present.rc != 0
+  vars:
+    hb_base_tag: "localhost/lamware-base/{{ hb_base.ref.split('@')[0].split('/')[-1] }}:{{ hb_base.id[:12] }}"
   block:
-    - name: "{{ hb_name }}: save the base image (lamware-fetch)"
-      ansible.builtin.command:
+    - name: "{{ hb_name }}: tag and save the base as a docker-archive (lamware-fetch)"
+      ansible.builtin.shell:
         cmd: >
-          podman --cgroup-manager=cgroupfs --events-backend=file
-          save --format oci-archive -o {{ build_fetch_home }}/{{ hb_name }}/base.oci {{ hb_base }}
+          podman --cgroup-manager=cgroupfs --events-backend=file tag {{ hb_base.ref }} {{ hb_base_tag }}
+          && podman --cgroup-manager=cgroupfs --events-backend=file
+          save --format docker-archive -o {{ build_fetch_home }}/{{ hb_name }}/base.tar {{ hb_base_tag }}
         chdir: "{{ build_fetch_home }}"
       environment:
         XDG_RUNTIME_DIR: "{{ build_fetch_home }}/run"
@@ -27,24 +38,41 @@
       changed_when: true
     - name: "{{ hb_name }}: copy the archive to pipeline"
       ansible.builtin.copy:
-        src: "{{ build_fetch_home }}/{{ hb_name }}/base.oci"
-        dest: "{{ hb_build_dir }}/../base.oci"
+        src: "{{ build_fetch_home }}/{{ hb_name }}/base.tar"
+        dest: "{{ hb_build_dir }}/../base.tar"
         remote_src: true
         owner: pipeline
         group: pipeline
         mode: "0600"
     - name: "{{ hb_name }}: load the base image (pipeline)"
       ansible.builtin.command:
-        cmd: podman load -i {{ hb_build_dir }}/../base.oci
+        cmd: podman load -i {{ hb_build_dir }}/../base.tar
         chdir: "{{ hb_build_dir }}"
       become: true
       become_user: pipeline
       changed_when: true
+    - name: "{{ hb_name }}: the loaded image must be the pinned image ID"
+      ansible.builtin.command:
+        cmd: podman image exists {{ hb_base.id }}
+        chdir: "{{ hb_build_dir }}"
+      become: true
+      become_user: pipeline
+      changed_when: false
   always:
     - name: "{{ hb_name }}: remove the image archives"
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
       loop:
-        - "{{ build_fetch_home }}/{{ hb_name }}/base.oci"
-        - "{{ hb_build_dir }}/../base.oci"
+        - "{{ build_fetch_home }}/{{ hb_name }}/base.tar"
+        - "{{ hb_build_dir }}/../base.tar"
+
+- name: "{{ hb_name }}: tag the base locally so a prune keeps it"
+  ansible.builtin.command:
+    cmd: >
+      podman tag {{ hb_base.id }}
+      localhost/lamware-base/{{ hb_base.ref.split('@')[0].split('/')[-1] }}:{{ hb_base.id[:12] }}
+    chdir: "{{ hb_build_dir }}"
+  become: true
+  become_user: pipeline
+  changed_when: false

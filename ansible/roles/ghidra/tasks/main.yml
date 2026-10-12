@@ -99,7 +99,9 @@
     hb_name: ghidra
     hb_build_dir: "{{ ghidra_install_dir }}/build"
     hb_tag: localhost/ghidra:latest
-    hb_base_images: ["{{ ghidra_base_image }}"]
+    hb_base_images:
+      - ref: "{{ ghidra_base_image }}"
+        id: "{{ ghidra_base_image_id }}"
     hb_deb_sets:
       - name: unpack
         image: "{{ ghidra_base_image }}"

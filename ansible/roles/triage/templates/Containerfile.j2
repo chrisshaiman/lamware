@@ -1,6 +1,8 @@
 # Triage analysis container — YARA, ssdeep, FLOSS, file type, entropy
 # Built locally by Ansible. Never pulled from a registry.
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # Hermetic (ADR-023): every input below was fetched by lamware-fetch. The build
 # set (a compiler) is purged after by exact package name: dpkg -i marks every

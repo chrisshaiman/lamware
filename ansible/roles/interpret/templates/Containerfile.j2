@@ -1,7 +1,9 @@
 # LLM interpretation container
 # Holds Claude API conversation for agentic malware RE.
 # Built locally by Ansible. Never pulled from a registry.
-FROM {{ build_fetch_python_slim }}
+# {{ build_fetch_python_slim }}, by image ID (ADR-023 amendment)
+FROM {{ build_fetch_python_slim_id }}
+LABEL lamware.base="{{ build_fetch_python_slim }}"
 
 # Hermetic (ADR-023): wheels lamware-fetch downloaded against requirements.lock.
 COPY wheels/ /tmp/wheels/

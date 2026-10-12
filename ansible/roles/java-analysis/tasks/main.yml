@@ -67,7 +67,9 @@
     hb_name: java-analysis
     hb_build_dir: "{{ java_analysis_install_dir }}/build"
     hb_tag: localhost/java-analysis:latest
-    hb_base_images: ["{{ java_analysis_base_image }}"]
+    hb_base_images:
+      - ref: "{{ java_analysis_base_image }}"
+        id: "{{ java_analysis_base_image_id }}"
     hb_deb_sets:
       - name: main
         image: "{{ java_analysis_base_image }}"

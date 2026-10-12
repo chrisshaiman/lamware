@@ -134,7 +134,10 @@ def test_migrated_containerfiles_install_nothing_from_the_network():
         assert not hits, f"{role} still installs from an index or mirror: {hits}"
 
 
-def test_migrated_roles_pin_every_base_image_by_digest():
+def test_migrated_roles_pin_every_base_by_registry_digest_and_image_id():
+    """ADR-023, 2026-10-12 amendment. Each FROM is the image ID (what survives the
+    hand-off to pipeline); the shared build gets the matching registry digest
+    (what the fetch user pulls and the registry vouches for) beside it."""
     for role in MIGRATED:
         # A role's own default, or one build-fetch shares (python:3.12-slim).
         defaults = {**yaml.safe_load((ROLES / "build-fetch" / "defaults" / "main.yml").read_text()),
@@ -142,11 +145,32 @@ def test_migrated_roles_pin_every_base_image_by_digest():
         froms = [ln.split()[1:] for ln in _containerfile(role).splitlines()
                  if ln.strip().startswith("FROM")]
         assert froms, role
+        bases = _shared_build_use(role)["hb_base_images"]
+        assert all(isinstance(b, dict) and set(b) == {"ref", "id"} for b in bases), \
+            f"{role}: hb_base_images entries must be {{ref, id}}: {bases}"
         for parts in froms:
             assert parts[0] == "{{" and parts[2] == "}}", f"{role}: FROM {' '.join(parts)}"
-            assert _DIGEST_REF.search(str(defaults[parts[1]])), f"{role}: {parts[1]}"
-            assert "{{ " + parts[1] + " }}" in str(_shared_build_use(role)["hb_base_images"]), \
-                f"{role}: {parts[1]} is a FROM but not handed to the shared build"
+            id_var = parts[1]
+            assert id_var.endswith("_id"), f"{role}: FROM {id_var} is not an image-ID pin"
+            ref_var = id_var[:-3]
+            assert re.fullmatch(r"[0-9a-f]{64}", str(defaults[id_var])), f"{role}: {id_var}"
+            assert _DIGEST_REF.search(str(defaults[ref_var])), f"{role}: {ref_var}"
+            assert {"ref": "{{ " + ref_var + " }}", "id": "{{ " + id_var + " }}"} in bases, \
+                f"{role}: FROM {id_var} is not handed to the shared build with {ref_var}"
+        labels = re.findall(r'^LABEL lamware\.base="\{\{ (\w+) \}\}"', _containerfile(role), re.M)
+        assert len(labels) >= len(froms), f"{role}: each stage should label its registry base"
+
+
+def test_the_hand_off_preserves_and_asserts_the_image_id():
+    """oci-archive rewrites manifest and config (the ID changed on 2026-10-12);
+    docker-archive of a local tag keeps it. The load must be followed by an ID check."""
+    tasks = _tasks(SHARED / "image_base.yml")
+    cmds = [_cmd(t) for t in tasks]
+    save = next(c for c in cmds if " save " in f" {c} ")
+    assert "--format docker-archive" in save and "@sha256" not in save.split("save", 1)[1]
+    load_i = next(i for i, c in enumerate(cmds) if c.startswith("podman load"))
+    assert any("podman image exists {{ hb_base.id }}" in c for c in cmds[load_i + 1:]), \
+        "nothing asserts the loaded image is the pinned ID"
 
 
 def test_every_locked_requirement_carries_a_hash():
@@ -299,3 +323,15 @@ def test_every_package_source_is_signed_by_a_key_the_fetch_has():
                     assert path.removeprefix("/in/keys/") in keys, f"{where}: key not carried"
                 else:
                     assert path.startswith("/usr/share/keyrings/"), where
+
+
+def test_the_local_base_tag_names_the_image():
+    """The first version used a regex backreference that YAML escaping turned into
+    a literal "1": every base was tagged localhost/lamware-base/1:<id>."""
+    import jinja2
+    text = (SHARED / "image_base.yml").read_text()
+    tmpl = re.search(r"localhost/lamware-base/\{\{[^}]*\}\}:\{\{ hb_base\.id\[:12\] \}\}", text)
+    assert tmpl, "no local base tag in the hand-off"
+    out = jinja2.Environment().from_string(tmpl.group(0)).render(
+        hb_base={"ref": "docker.io/library/eclipse-temurin@sha256:" + "a" * 64, "id": "f" * 64})
+    assert out == "localhost/lamware-base/eclipse-temurin:ffffffffffff", out

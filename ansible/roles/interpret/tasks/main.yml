@@ -64,7 +64,9 @@
     hb_name: interpret
     hb_build_dir: "{{ interpret_install_dir }}/build"
     hb_tag: localhost/interpret:latest
-    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_base_images:
+      - ref: "{{ build_fetch_python_slim }}"
+        id: "{{ build_fetch_python_slim_id }}"
     hb_lock: requirements.lock
 
 - name: Deploy interpret wrapper script

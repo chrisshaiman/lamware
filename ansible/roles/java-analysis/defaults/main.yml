@@ -27,6 +27,10 @@ java_deobfuscator_sha256: "c1835bd9c9aad4cc453f8675110fc057f11cd3ca5e8f29b68c67b
 # store on 2026-10-11 (built 2026-05-15T21:16:12Z), the image this role has run
 # on. Moving it is a deliberate change to this line, not a tag moving upstream.
 java_analysis_base_image: "docker.io/library/eclipse-temurin@sha256:199aebeb3adcde4910695cdebfe782ada38dadb6cc8013159b58d3724451befd"
+# Its image ID (config digest): what the build uses FROM and what the hand-off
+# asserts. The registry digest above cannot survive save/load (ADR-023,
+# 2026-10-12 amendment); this can. Read from the image pulled by that digest.
+java_analysis_base_image_id: "f19d00d34e5586b1d9ee6c70928504d2771d0c6a53ad3c3917ceb8528d4dc75e"
 # The Ubuntu archive at 2026-10-10. Not the base image's build date: the running
 # image installed from the live mirror later, and an older snapshot would rebuild it
 # with older security fixes. apt still verifies the signed Release files.

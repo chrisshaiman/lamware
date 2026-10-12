@@ -1169,10 +1169,13 @@ from before ADR-023; on a fresh host, or at any base bump, all of them would fai
   content addressing is the trust anchor, exactly as before.
 - `id`: the image ID, the sha256 of the image config. The manifest the registry verified
   names the config by this hash, so the ID is derived from what was verified, and it is
-  the one identity that survives save/load unchanged.
+  the one identity that survives save/load unchanged, provided the hand-off uses a
+  docker-archive: an oci-archive rewrites the config as well (measured 4df5db95… → ea074cf5…).
 
-The hand-off loads the archive into pipeline's store, tags it under a local name (so a
-prune does not treat it as dangling), and **asserts the loaded image's ID equals the pin**
+The hand-off tags the image locally in the fetch user's store, saves it as a docker-archive
+(saving by the registry digest cannot load: the archive names a digest the save no longer
+matches), loads it into pipeline's store under that local tag (so a prune does not treat it
+as dangling), and **asserts the loaded image's ID equals the pin**
 before any build. Containerfiles build `FROM` the image ID; every built image carries a
 `lamware.base` label naming the registry reference, so lineage stays readable.
 

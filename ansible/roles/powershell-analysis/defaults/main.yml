@@ -11,6 +11,10 @@ powershell_analysis_container_timeout: "120"
 # in pipeline's store on 2026-10-11 (pwsh 7.4.7, Debian bookworm), the image this
 # role has run on. Moving it is a deliberate change to this line.
 powershell_analysis_base_image: "mcr.microsoft.com/powershell@sha256:e75ff986fb35d9b24d6684ad50c60959e9def194756d26a2bea698608ae2e38d"
+# Its image ID (config digest): what the build uses FROM and what the hand-off
+# asserts. The registry digest above cannot survive save/load (ADR-023,
+# 2026-10-12 amendment); this can. Read from the image pulled by that digest.
+powershell_analysis_base_image_id: "806a1773e115194ded95c62b5d4000287bed91160f0528384787fd72453cafe7"
 # The Debian archive at 2026-10-10. Not the base image's own snapshot (20250113):
 # the running image installed from the live mirror later, and an older snapshot
 # would rebuild it with older security fixes. apt still verifies the signed

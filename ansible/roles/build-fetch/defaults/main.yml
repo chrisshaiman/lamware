@@ -16,6 +16,10 @@ build_fetch_subid_count: 65536
 # python:3.12-slim, the base of most analysis images since 2026-05-08. Moving it
 # is a deliberate change to this line, and rebuilds every image that uses it.
 build_fetch_python_slim: "docker.io/library/python@sha256:401f6e1a67dad31a1bd78e9ad22d0ee0a3b52154e6bd30e90be696bb6a3d7461"
+# Its image ID (config digest): what the build uses FROM and what the hand-off
+# asserts. The registry digest above cannot survive save/load (ADR-023,
+# 2026-10-12 amendment); this can. Read from the image pulled by that digest.
+build_fetch_python_slim_id: "c8e887bbf3b6fec95a5ff97435d611119ac6e55491cd077db9fdc6b7637bdd47"
 # The Debian archive state packages for images built FROM it are resolved
 # against. NOT the base image's own snapshot (20260505T000000Z): the images these
 # builds replace installed from the live mirror months later, and resolving

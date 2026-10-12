@@ -14,7 +14,9 @@
 # digest; each stage's Debian packages were fetched by lamware-fetch from a
 # pinned Ubuntu snapshot, one set per stage (debs/unpack, debs/runtime).
 
-FROM {{ ghidra_base_image }} AS ghidra-unpack
+# {{ ghidra_base_image }}, by image ID (ADR-023 amendment)
+FROM {{ ghidra_base_image_id }} AS ghidra-unpack
+LABEL lamware.base="{{ ghidra_base_image }}"
 
 COPY debs/unpack/ /tmp/debs/
 # apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
@@ -30,7 +32,9 @@ RUN unzip -q /tmp/ghidra.zip -d /opt \
 
 # -------------------------------------------------------------------------
 
-FROM {{ ghidra_base_image }}
+# {{ ghidra_base_image }}, by image ID (ADR-023 amendment)
+FROM {{ ghidra_base_image_id }}
+LABEL lamware.base="{{ ghidra_base_image }}"
 
 # wget and unzip are deliberately NOT installed here. Nothing at runtime uses
 # them, and this container is handed malware: the fewer fetch-and-unpack tools

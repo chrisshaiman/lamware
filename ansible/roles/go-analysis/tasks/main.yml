@@ -64,7 +64,9 @@
     hb_name: go-analysis
     hb_build_dir: "{{ go_analysis_install_dir }}/build"
     hb_tag: localhost/go-analysis:latest
-    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_base_images:
+      - ref: "{{ build_fetch_python_slim }}"
+        id: "{{ build_fetch_python_slim_id }}"
 
 - name: Deploy go-analysis wrapper script
   ansible.builtin.template:

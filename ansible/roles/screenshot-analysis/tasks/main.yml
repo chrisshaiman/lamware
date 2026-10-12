@@ -43,7 +43,9 @@
     hb_name: screenshot-analysis
     hb_build_dir: "{{ screenshot_analysis_install_dir }}/build"
     hb_tag: localhost/screenshot-analysis:latest
-    hb_base_images: ["{{ build_fetch_python_slim }}"]
+    hb_base_images:
+      - ref: "{{ build_fetch_python_slim }}"
+        id: "{{ build_fetch_python_slim_id }}"
     hb_deb_sets:
       - name: main
         image: "{{ build_fetch_python_slim }}"

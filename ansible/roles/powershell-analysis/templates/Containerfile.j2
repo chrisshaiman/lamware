@@ -1,7 +1,9 @@
 # Hermetic (ADR-023): built with --network=none. The base image is pinned by
 # digest; python3 was fetched by lamware-fetch from the Debian snapshot the base
 # image records as its own.
-FROM {{ powershell_analysis_base_image }}
+# {{ powershell_analysis_base_image }}, by image ID (ADR-023 amendment)
+FROM {{ powershell_analysis_base_image_id }}
+LABEL lamware.base="{{ powershell_analysis_base_image }}"
 
 COPY debs/main/ /tmp/debs/
 # apt, not dpkg -i: dpkg does not order Pre-Depends (python3-minimal on
