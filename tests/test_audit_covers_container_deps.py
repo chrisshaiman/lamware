@@ -41,7 +41,7 @@ def test_audit_covers_every_shipped_image_lock():
     """Each hermetic image installs exactly its hash lock (ADR-023), so the locks
     are the deployed versions. The audit must read all of them, by glob, so a
     newly migrated role is covered without editing CI."""
-    assert 'for lock in ansible/roles/*/files/requirements.lock' in CI
+    assert 'for lock in ansible/roles/*/files/*requirements.lock' in CI
     assert 'pip-audit --require-hashes --disable-pip -r "$lock"' in CI
 
 

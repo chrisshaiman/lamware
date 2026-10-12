@@ -299,7 +299,7 @@ jobs:
           # is deployed. The deleted root requirements.txt once pinned a DIFFERENT
           # anthropic (0.102.0 vs the container's 0.52.0): the audit reported on a
           # version running nowhere. Guarded by tests/test_audit_covers_container_deps.py.
-          for lock in ansible/roles/*/files/requirements.lock; do
+          for lock in ansible/roles/*/files/*requirements.lock; do
             echo "== $lock"
             pip-audit --require-hashes --disable-pip -r "$lock"
           done
