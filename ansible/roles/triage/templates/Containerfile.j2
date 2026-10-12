@@ -7,8 +7,15 @@ FROM {{ build_fetch_python_slim }}
 # package manual, so `apt-get autoremove` would leave the toolchain behind, and
 # dpkg -P refuses rather than removes anything a runtime package still needs.
 COPY debs/ /tmp/debs/
-RUN dpkg -i /tmp/debs/runtime/*.deb /tmp/debs/build/*.deb \
-    && for f in /tmp/debs/build/*.deb; do dpkg-deb -f "$f" Package; done > /tmp/build-pkgs
+# The purge list is the build set MINUS anything already installed (the build
+# set can carry newer libc6/liblzma5/perl-base from the snapshot: upgrades,
+# not additions) and minus anything the runtime set also needs.
+RUN dpkg-query -W -f='${Package}\n' | sort -u > /tmp/pre-pkgs \
+    && for f in /tmp/debs/runtime/*.deb; do dpkg-deb -f "$f" Package; done | sort -u > /tmp/runtime-pkgs \
+    && for f in /tmp/debs/build/*.deb; do dpkg-deb -f "$f" Package; done | sort -u \
+       | comm -23 - /tmp/pre-pkgs | comm -23 - /tmp/runtime-pkgs > /tmp/build-pkgs \
+    && dpkg -i /tmp/debs/runtime/*.deb /tmp/debs/build/*.deb \
+    && rm -f /tmp/pre-pkgs /tmp/runtime-pkgs
 
 COPY wheels/ /tmp/wheels/
 COPY requirements.lock build-requirements.lock sdists.lock /tmp/

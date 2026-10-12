@@ -22,8 +22,13 @@ COPY pycdc.tar.gz /tmp/pycdc.tar.gz
 # Hermetic (ADR-023): the compiler is fetched by lamware-fetch, and purged by
 # exact package name after (dpkg -i marks everything manual; see triage).
 COPY debs/build/ /tmp/debs/
-RUN dpkg -i /tmp/debs/*.deb \
-    && for f in /tmp/debs/*.deb; do dpkg-deb -f "$f" Package; done > /tmp/build-pkgs \
+# Purge only what this set ADDED: it can carry newer base packages (libc6 and
+# friends) from the snapshot, which are upgrades and must stay.
+RUN dpkg-query -W -f='${Package}\n' | sort -u > /tmp/pre-pkgs \
+    && for f in /tmp/debs/*.deb; do dpkg-deb -f "$f" Package; done | sort -u \
+       | comm -23 - /tmp/pre-pkgs > /tmp/build-pkgs \
+    && rm -f /tmp/pre-pkgs \
+    && dpkg -i /tmp/debs/*.deb \
     && tar -xzf /tmp/pycdc.tar.gz -C /tmp \
     && cd /tmp/pycdc-{{ pycdc_commit }} \
     && cmake . \
