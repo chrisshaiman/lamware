@@ -116,7 +116,9 @@
       become_user: "{{ build_fetch_user }}"
     - name: "{{ hb_name }}: write the source-only packages as a hash-locked requirements file"
       ansible.builtin.copy:
+        # The header keeps the file non-empty: copy treats empty content as absent.
         content: |
+          # Source-only packages (hb_sdists), built offline. May list none.
           {% for s in hb_sdists | default([]) %}
           {{ s.name }}=={{ s.version }} --hash=sha256:{{ s.sha256 }}
           {% endfor %}
