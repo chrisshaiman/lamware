@@ -50,7 +50,7 @@ fail() {
 # -------------------------------------------------------------------------
 # Test 1: API health endpoint
 # -------------------------------------------------------------------------
-echo "[1/12] API health check..."
+echo "[1/13] API health check..."
 # $WG_URL, not $API_URL: #604 removed the public TLS listener, so the domain
 # resolves to an address nothing serves. Probing it measured DNS, not the API.
 HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/health")
@@ -63,7 +63,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
-echo "[2/12] Keycloak health check..."
+echo "[2/13] Keycloak health check..."
 KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
@@ -74,7 +74,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 3: Unauthenticated API access blocked
 # -------------------------------------------------------------------------
-echo "[3/12] Auth enforcement..."
+echo "[3/13] Auth enforcement..."
 UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/api/analyses")
 if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
     pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
@@ -85,7 +85,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
-echo "[4/12] Docs endpoint gated..."
+echo "[4/13] Docs endpoint gated..."
 # There are TWO gates since #529, and this checks both. Previously it checked
 # only the application one and asserted 404, so adding the network layer made a
 # correctly-hardened host fail:
@@ -120,7 +120,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
-echo "[5/12] TLS certificate check..."
+echo "[5/13] TLS certificate check..."
 # WireGuard address: TLS is no longer served publicly (#604). -servername keeps
 # the SNI as the real domain, which is what the certificate is issued for.
 CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ security_test_wg_address }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
@@ -140,7 +140,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
-echo "[6/12] HTTP redirect check..."
+echo "[6/13] HTTP redirect check..."
 REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
@@ -159,7 +159,7 @@ fi
 # Port 80 MUST stay public: certbot renews by webroot/HTTP-01, so Let's Encrypt
 # has to reach the challenge. Both halves are checked; removing the port-80
 # listener breaks renewal and would not show up for ~90 days.
-echo "[7/12] Public listener surface..."
+echo "[7/13] Public listener surface..."
 # NO `|| echo 000` here. curl's -w already prints 000 when the connection is
 # refused AND exits non-zero, so the fallback CONCATENATES: the first live run
 # of this check reported "000000", which matches neither branch and reported a
@@ -181,7 +181,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 8: Nuclei quick scan
 # -------------------------------------------------------------------------
-echo "[8/12] Nuclei misconfig scan..."
+echo "[8/13] Nuclei misconfig scan..."
 if [ -x "$NUCLEI" ]; then
     NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
     # $WG_URL, not $API_URL. After #604 the public address serves no TLS, and a
@@ -221,7 +221,7 @@ fi
 # the firewall PATH is checked rather than a live connection, and the live
 # connection is attempted only when a guest happens to be up.
 # =============================================================================
-echo "[9/12] PREREQUISITE: sandbox can reach its own guests..."
+echo "[9/13] PREREQUISITE: sandbox can reach its own guests..."
 DET_SUBNET="{{ security_test_detonation_subnet | default('192.168.100.0/24') }}"
 DET_BRIDGE="{{ security_test_detonation_bridge | default('virbr-det') }}"
 AGENT_PORT="{{ security_test_guest_agent_port | default('8000') }}"
@@ -253,6 +253,7 @@ else
     fi
 fi
 
+
 # =============================================================================
 # CONTAINMENT. Everything above either checks a service is UP or checks one
 # negative property (the public TLS listener). These check the properties the
@@ -267,7 +268,7 @@ fi
 # A negative assertion has to be made by ATTEMPTING the thing. A rule that
 # exists satisfied every structural check for the whole day it did nothing.
 # =============================================================================
-echo "[10/12] CONTAINMENT: pipeline user cannot reach the internet..."
+echo "[10/13] CONTAINMENT: pipeline user cannot reach the internet..."
 PIPE_USER="{{ security_test_pipeline_user | default('pipeline') }}"
 if ! id -u "$PIPE_USER" >/dev/null 2>&1; then
     fail "user $PIPE_USER does not exist — the egress allowlist cannot be verified"
@@ -310,7 +311,7 @@ for h, p in (("1.1.1.1", 443), ("8.8.8.8", 53), ("9.9.9.9", 443)):
     fi
 fi
 
-echo "[11/12] CONTAINMENT: pipeline user is held to its localhost allowlist..."
+echo "[11/13] CONTAINMENT: pipeline user is held to its localhost allowlist..."
 if id -u "$PIPE_USER" >/dev/null 2>&1; then
     LOCAL_LEAK=""
     # Ports the role explicitly revokes. Reaching either means the allowlist is
@@ -334,7 +335,7 @@ if id -u "$PIPE_USER" >/dev/null 2>&1; then
     fi
 fi
 
-echo "[12/12] CONTAINMENT: detonation network cannot leave the box..."
+echo "[12/13] CONTAINMENT: detonation network cannot leave the box..."
 # Guests are shut off between analyses and a host cannot originate a FORWARDed
 # packet, so this asserts the RULES and their ORDER rather than a live probe.
 # That is a weaker claim and is stated as one. network-monitor does the
@@ -370,6 +371,17 @@ if [ -n "$AIRGAP_FAIL" ]; then
 else
     pass "air gap: first matching FORWARD rule for virbr-det is DROP, both families, both paths"
 fi
+echo "[13/13] RESOLVER: the host can resolve, and the root zone validates..."
+# 2026-10-11 11:44: the root switched its KSK and every lookup on this host
+# failed with "DNSSEC validation failed: missing-key" (#769). Nothing alerted;
+# it surfaced as an unrelated build failure. Asked of the daemon, not the file.
+ROOT_Q=$(resolvectl query -t SOA . 2>&1)
+if echo "$ROOT_Q" | grep -q "authenticated: yes"; then
+    pass "resolver: root zone validates (DNSSEC authenticated)"
+else
+    fail "resolver: root zone does not validate: $(echo "$ROOT_Q" | tail -1)"
+fi
+
 
 # -------------------------------------------------------------------------
 # Summary + ntfy alert on failure

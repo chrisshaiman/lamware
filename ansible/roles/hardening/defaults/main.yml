@@ -14,3 +14,17 @@ hardening_usbguard_rulefile: /etc/usbguard/rules.conf
 # two independent.
 hardening_console_user: console-recovery
 hardening_console_user_enabled: true
+
+# Root zone DNSSEC trust anchors for systemd-resolved (#769). konstruktoid.hardening
+# sets DNSSEC=allow-downgrade, and systemd 255's BUILT-IN anchor lacks KSK-2024
+# (tag 38696): when the root switched to signing with it on 2026-10-11, every
+# lookup on the host failed with "DNSSEC validation failed: missing-key". This
+# file REPLACES the built-in anchors, so it carries both current KSKs, and the
+# next root KSK rollover must update it here.
+# Source: IANA root-anchors.xml (CMS-verified against ICANN's signature), the DS
+# digests recomputed from the live root DNSKEYs via two resolvers, and matching
+# an independent distribution's BIND initial-ds (verified 2026-10-11).
+hardening_root_trust_anchors_header: "; Root KSK trust anchors, from IANA root-anchors.xml (verified 2026-10-11)."
+hardening_root_trust_anchors:
+  - ". IN DS 20326 8 2 E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"
+  - ". IN DS 38696 8 2 683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16"
