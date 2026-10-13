@@ -13,13 +13,12 @@
     owner: root
     group: root
     mode: "0644"
-  register: hardening_trust_anchors
+  notify: Restart systemd-resolved
 
-- name: Restart systemd-resolved when the anchors changed
-  ansible.builtin.systemd_service:
-    name: systemd-resolved
-    state: restarted
-  when: hardening_trust_anchors is changed
+- name: Restart systemd-resolved now if the anchors changed, before checking them
+  # A handler, flushed here rather than at the end of the play: the validation
+  # below must see the resolver running with the file just written.
+  ansible.builtin.meta: flush_handlers
 
 - name: Ask the resolver whether the root zone validates
   # Effectiveness, not presence: the file can be right and the daemon still not
