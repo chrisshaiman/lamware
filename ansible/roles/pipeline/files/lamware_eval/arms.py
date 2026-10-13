@@ -118,6 +118,9 @@ _REGISTRY: dict[str, Arm] = {
     # Both reject forced tool use; cloud_synthesize retries once with `auto`.
     "opus55@10": Arm("opus55@10", "eval-opus55", "router", 10),
     "fable51@10": Arm("fable51@10", "eval-fable51", "router", 10),
+    # Opus 4.8, eval-only on the same spend-capped key (claude-opus-4-8 listed
+    # for that key, 2026-10-13). opus48@10+corr comes with it, as for every arm.
+    "opus48@10": Arm("opus48@10", "eval-opus48", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the
