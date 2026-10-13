@@ -1,0 +1,44 @@
+---
+# The host resolver's DNSSEC trust anchors (#769). resolved.conf itself is written
+# by konstruktoid.hardening (DNS 1.1.1.2/9.9.9.9, DNSSEC=allow-downgrade, DoT
+# opportunistic); this adds what that role does not manage.
+
+- name: Install the root zone trust anchors for systemd-resolved
+  ansible.builtin.copy:
+    dest: /etc/dnssec-trust-anchors.d/root.positive
+    # The final newline is emitted INSIDE the expression: a template's own trailing
+    # newline is dropped or kept depending on the renderer's settings, and the file
+    # must stay byte-identical to the one on the host.
+    content: "{{ (([hardening_root_trust_anchors_header] + hardening_root_trust_anchors) | join('\n')) ~ '\n' }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: hardening_trust_anchors
+
+- name: Restart systemd-resolved when the anchors changed
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: restarted
+  when: hardening_trust_anchors is changed
+
+- name: Ask the resolver whether the root zone validates
+  # Effectiveness, not presence: the file can be right and the daemon still not
+  # trust the root. A failure here is a host that cannot resolve anything.
+  ansible.builtin.command:
+    cmd: resolvectl query -t SOA .
+  register: hardening_root_validation
+  changed_when: false
+  failed_when: false
+  retries: 3
+  delay: 5
+  until: "'authenticated: yes' in hardening_root_validation.stdout"
+
+- name: Fail the deploy when the root zone does not validate
+  ansible.builtin.assert:
+    that: "'authenticated: yes' in hardening_root_validation.stdout"
+    fail_msg: >-
+      systemd-resolved does not validate the root zone
+      ({{ (hardening_root_validation.stdout ~ ' ' ~ hardening_root_validation.stderr) | trim }}).
+      Every lookup on the host is likely failing. Rollback: remove
+      /etc/dnssec-trust-anchors.d/root.positive and restart systemd-resolved.
+    quiet: true

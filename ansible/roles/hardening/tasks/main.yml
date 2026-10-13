@@ -273,3 +273,6 @@
           sshd rejected 20-lamware-console-user.conf; it has been removed and
           sshd is unchanged. Check `DenyUsers {{ hardening_console_user }}`
           against the other files in /etc/ssh/sshd_config.d/.
+
+- name: Root zone DNSSEC trust anchors (#769)
+  ansible.builtin.import_tasks: resolver.yml

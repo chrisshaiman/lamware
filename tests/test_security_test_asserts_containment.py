@@ -113,7 +113,7 @@ def test_the_totals_line_counts_every_check():
     of 12 as well, which means the summary comes after the last check.
     """
     totals = SMOKE.index('echo "  Results: $PASSED passed, $FAILED failed"')
-    trailing = [m.group(0) for m in re.finditer(r'echo "\[(\d+)/12\]', SMOKE[totals:])]
+    trailing = [m.group(0) for m in re.finditer(r'echo "\[(\d+)/\d+\]', SMOKE[totals:])]
     assert not trailing, (
         f"{len(trailing)} check(s) run after the totals line — it would report a "
         f"partial count: {trailing}")
@@ -122,8 +122,15 @@ def test_the_totals_line_counts_every_check():
 def test_every_declared_check_number_is_present_and_counted():
     """Guards the denominator itself. Renumbering checks to /12 while only
     emitting 8 of them would satisfy the test above vacuously."""
-    numbers = sorted(int(n) for n in re.findall(r'echo "\[(\d+)/12\]', SMOKE))
-    assert numbers == list(range(1, 13)), f"checks present: {numbers}"
+    # The denominator is read from the script (it grew to 13 with the resolver
+    # check, #769); every header must agree on it and 1..N must all be present.
+    found = re.findall(r'echo "\[(\d+)/(\d+)\]', SMOKE)
+    totals = {int(d) for _, d in found}
+    assert len(totals) == 1, f"check headers disagree on the total: {sorted(totals)}"
+    (n,) = totals
+    assert n >= 12, f"the suite shrank to {n} checks"
+    numbers = sorted(int(k) for k, _ in found)
+    assert numbers == list(range(1, n + 1)), f"checks present: {numbers}"
 
 
 def test_the_ntfy_summaries_are_sent_after_the_totals():
