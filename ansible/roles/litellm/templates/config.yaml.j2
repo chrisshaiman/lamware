@@ -41,7 +41,7 @@ model_list:
       model: "anthropic/claude-opus-5"
       api_key: "os.environ/ANTHROPIC_API_KEY"
 
-  # Frontier eval arms (opus55@10, fable51@10, opus48@10). Eval-only: no interpret,
+  # Frontier eval arms (opus55@10, fable51@10, opus48@10, sonnet55@10, haiku55@10). Eval-only: no interpret,
   # pipeline or vars setting may name these aliases or their models
   # (tests/test_frontier_arms_are_eval_only.py), so the automated RE stage
   # cannot drift onto them. They authenticate with the Lamware eval workspace
@@ -65,6 +65,18 @@ model_list:
   - model_name: "eval-opus48"
     litellm_params:
       model: "anthropic/claude-opus-4-8"
+      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+
+  # Sonnet 5.5 and Haiku 5.5 (sonnet55@10, haiku55@10): is a cheaper model good
+  # enough for RE? Same eval-only rules, same eval key.
+  - model_name: "eval-sonnet55"
+    litellm_params:
+      model: "anthropic/claude-sonnet-5-5"
+      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+
+  - model_name: "eval-haiku55"
+    litellm_params:
+      model: "anthropic/claude-haiku-5-5"
       api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
 
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)

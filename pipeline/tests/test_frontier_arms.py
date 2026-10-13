@@ -373,11 +373,14 @@ def test_an_arm_without_a_backend_is_refused():
 
 @pytest.mark.parametrize("arm_name,alias", [
     ("opus55@10", "eval-opus55"), ("fable51@10", "eval-fable51"), ("opus48@10", "eval-opus48"),
+    ("opus48@25", "eval-opus48"), ("sonnet55@10", "eval-sonnet55"), ("haiku55@10", "eval-haiku55"),
     ("claude-sonnet-5", "claude-sonnet-5"), ("claude-opus-5", "claude-opus-5")])
 def test_cloud_arms_run_their_own_model_on_the_router(arm_name, alias):
     cfg = runner.arm_config(resolve_arm(arm_name), HOST_CFG, "agentic")
     assert cfg["model"] == cfg["escalation_model"] == alias
-    assert cfg["max_tool_calls"] == 10
+    # The name declares the depth (`@25`); a name without one is the default 10.
+    depth = int(arm_name.split("@", 1)[1].split("+")[0]) if "@" in arm_name else 10
+    assert cfg["max_tool_calls"] == depth
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +548,10 @@ _USAGE = {"input_tokens": 1_000_000, "output_tokens": 100_000,
     ("eval-opus55", (4.0, 20.0, 5.0, 0.20), 18.0),
     # 5 + 2.5 + 12.5 + 5
     ("eval-opus48", (5.0, 25.0, 6.25, 0.50), 25.0),
+    # 2 + 1 + 5 + 1
+    ("eval-sonnet55", (2.0, 10.0, 2.5, 0.10), 9.0),
+    # 0.1 + 0.05 + 0.25 + 0.1
+    ("eval-haiku55", (0.10, 0.50, 0.125, 0.01), 0.5),
 ])
 def test_frontier_arms_are_priced_at_their_own_cache_rates(alias, rates, cost):
     """The read is NOT the 0.1x default on either (0.1x would be $1.00 / $0.40)."""

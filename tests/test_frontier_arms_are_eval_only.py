@@ -36,7 +36,9 @@ PROD_KEY = "os.environ/ANTHROPIC_API_KEY"
 # The arms this PR adds, and what they must resolve to.
 EXPECTED = {"eval-opus55": "anthropic/claude-opus-5-5",
             "eval-fable51": "anthropic/claude-fable-5-1",
-            "eval-opus48": "anthropic/claude-opus-4-8"}
+            "eval-opus48": "anthropic/claude-opus-4-8",
+            "eval-sonnet55": "anthropic/claude-sonnet-5-5",
+            "eval-haiku55": "anthropic/claude-haiku-5-5"}
 
 
 def _render(name: str, **extra) -> str:
@@ -144,7 +146,10 @@ def test_no_request_sending_code_names_an_eval_model():
 
 @pytest.mark.parametrize("arm_name,alias", [("opus55@10", "eval-opus55"),
                                             ("fable51@10", "eval-fable51"),
-                                            ("opus48@10", "eval-opus48")])
+                                            ("opus48@10", "eval-opus48"),
+                                            ("opus48@25", "eval-opus48"),
+                                            ("sonnet55@10", "eval-sonnet55"),
+                                            ("haiku55@10", "eval-haiku55")])
 def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_name, alias):
     # lamware_eval.runner imports the pipeline stages, which need lamware_shared.
     # CI's top-level test job does not install it; the pipeline job does, and
@@ -154,7 +159,9 @@ def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_na
     from lamware_eval.arms import resolve_arm
     from lamware_eval.runner import _RATES
     arm = resolve_arm(arm_name)
-    assert arm.model == alias and arm.re_backend == "router" and arm.max_tool_calls == 10
+    # The name declares the depth: opus48@25 must actually run 25 tool calls.
+    depth = int(arm_name.split("@", 1)[1].split("+")[0])
+    assert arm.model == alias and arm.re_backend == "router" and arm.max_tool_calls == depth
     assert alias in _RATES
 
 
