@@ -67,6 +67,11 @@ _RATES: dict[str, tuple[float, ...]] = {
     #   Opus 4.8:  $5 / $25, write $6.25,  read $0.50 (the standard 1.25x / 0.1x;
     #   written long-form anyway, beside the others, from the same page, 2026-10-13)
     "eval-opus48": (5.0, 25.0, 6.25, 0.50),
+    #   Sonnet 5.5: $2 / $10, write $2.50, read $0.10 (0.05x)
+    #   Haiku 5.5:  $0.10 / $0.50, write $0.125, read $0.01, for prompts up to
+    #   100,000 tokens (above that it is 5x). Every eval request is well under.
+    "eval-sonnet55": (2.0, 10.0, 2.5, 0.10),
+    "eval-haiku55": (0.10, 0.50, 0.125, 0.01),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache

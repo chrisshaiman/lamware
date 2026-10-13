@@ -121,6 +121,13 @@ _REGISTRY: dict[str, Arm] = {
     # Opus 4.8, eval-only on the same spend-capped key (claude-opus-4-8 listed
     # for that key, 2026-10-13). opus48@10+corr comes with it, as for every arm.
     "opus48@10": Arm("opus48@10", "eval-opus48", "router", 10),
+    # Depth on a model fast enough to afford it: the question qwen could never
+    # answer (qwen@30 is a measurement arm). Paired against opus48@10's cells.
+    "opus48@25": Arm("opus48@25", "eval-opus48", "router", 25),
+    # Cheaper models: if one matches Opus on these metrics, production should use
+    # it. Both listed for the research key, 2026-10-13.
+    "sonnet55@10": Arm("sonnet55@10", "eval-sonnet55", "router", 10),
+    "haiku55@10": Arm("haiku55@10", "eval-haiku55", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the
