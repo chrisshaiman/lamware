@@ -162,7 +162,11 @@ def test_the_dotnet_payload_runs_the_tool_loop_not_the_single_shot(monkeypatch):
 
 def test_the_first_message_is_a_map_of_the_assembly_not_its_source(monkeypatch):
     _, requests, _ = _drive(monkeypatch, _served())
-    text = requests[0]["messages"][0]["content"]
+    content = requests[0]["messages"][0]["content"]
+    # On the cloud path the newest message carries the transcript cache marker
+    # (#727), so a lone first message arrives as one text block. Same text.
+    text = content if isinstance(content, str) else "".join(
+        b.get("text", "") for b in content if isinstance(b, dict))
     assert shape.DECOY_MARK not in text, "the decoy body reached the first message"
     # The fixture plants a closing fence in a string of interest; inside the map
     # it must arrive defused, like any tool result.
