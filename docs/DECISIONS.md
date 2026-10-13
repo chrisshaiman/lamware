@@ -1185,3 +1185,70 @@ once; the bases are byte-identical, so the rebuild is expected to reuse cached l
 
 **Recorded under the second-fix rule (CLAUDE.md §2):** the first fix (platform digest)
 addressed the instance; this addresses the decision the original text got wrong.
+
+## ADR-024: CVP frontier models through AWS Bedrock, authenticated by IAM Roles Anywhere; no static AWS or Anthropic key
+
+**Status:** Proposed (2026-10-13). Nothing built; owner to confirm the facts marked
+*Unverified* before anything is created in AWS.
+**Relates to:** ADR-022 (Anthropic-direct WIF, #724, draft), ADR-016 (secrets),
+ADR-021 (brokered model access), #783 (pilot)
+
+### Context
+
+- The owner's Cyber Verification Program (CVP) Defense Access loosens Anthropic's
+  cyber safeguards for defensive work. Under standard safeguards the eval arms refuse
+  much of this workload. Opus 5.5 refused 10 of 16 intake cells (2026-10-08), and
+  Opus 4.8 refused a `+corr` cell, `category=cyber`, in the #783 pilot (2026-10-13).
+- The owner can reach Opus 5.5, Fable 5.1 and (possibly) Mythos 5.1 through an AWS
+  account linked to the claude.ai account that holds the grant. This route bills real
+  money, unlike the Console credits.
+- CVP requirements (support.claude.com 17202708): no static or long-lived keys;
+  credentials expire within 12 hours; workload access by federation; traffic retained
+  and monitored.
+- *Unverified:* that the CVP loosening applies to models called through Bedrock on
+  that account. To be confirmed with Anthropic/AWS before spending.
+
+### Decision
+
+- **Credentials: IAM Roles Anywhere,** not access keys and not STS web identity.
+  - Web identity (`AssumeRoleWithWebIdentity`) needs an OIDC issuer AWS can fetch over
+    HTTPS. Keycloak is deliberately not internet-reachable (#604), and reopening it for
+    AWS is the trade ADR-022 rejected.
+  - Roles Anywhere exchanges an X.509 certificate for **temporary credentials (about
+    1 h, well inside CVP's 12 h)** with `aws_signing_helper`.
+  - The trust anchor is a small private CA. The host's end-entity certificate is short
+    (days), renewed by a timer. The private key is generated on the host, root-owned,
+    mode 0400, and handed to the service by systemd `LoadCredential`. This is the same
+    exception to ADR-016 that ADR-022 makes.
+- **Least privilege:** one IAM role whose trust policy names only that trust anchor and
+  certificate subject. Its permissions are `bedrock:InvokeModel` and
+  `bedrock:InvokeModelWithResponseStream` on the specific model ARNs only.
+- **Path:** LiteLLM's Bedrock provider behind `eval-*` aliases (`eval-opus55-cvp`,
+  `eval-fable51-cvp`, `eval-mythos51-cvp`), reading credentials from a credential
+  process (the signing helper), so no key sits in `litellm.env`. Eval-only and guarded,
+  like every frontier arm: no production setting may name them.
+- **Cost:** an AWS Budget on the account with alerts and a hard stop owned by the
+  owner, plus lamware's per-cell pricing in the eval table (Bedrock's price list, not
+  assumed equal to Anthropic's). Every run starts with a probe (about 8 cells).
+
+### Alternatives considered
+
+- **A static Bedrock API key or IAM access key.** It violates CVP and ADR-016.
+- **STS web identity from Keycloak.** It needs a public issuer (above).
+- **Anthropic-direct WIF (ADR-022).** It remains the right route for the Console org.
+  This ADR is for the AWS-linked access, not a replacement, and both can coexist.
+- **Headless Claude Code on the claude.ai login.** Rejected on 2026-10-13: a
+  personal-subscription credential on the analysis host, a non-comparable harness, and
+  it cannot run network-isolated.
+
+### Consequences
+
+- **Two federation paths** (Anthropic WIF, AWS Roles Anywhere) with separate rotation:
+  the CA and certificate on one side, the Keycloak realm key on the other.
+- **Real spend,** capped by AWS Budgets and pre-registered per experiment.
+- **Rollback:** disable the role's trust (or the trust anchor) in AWS, stop the signing
+  timer, and remove the aliases. Nothing falls back to a key.
+- **Open questions for Anthropic/AWS:**
+  - does CVP apply to Bedrock calls on that account;
+  - which models it covers there;
+  - is Roles Anywhere acceptable as the "federation" CVP requires.
