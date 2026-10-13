@@ -38,3 +38,10 @@ build_fetch_trixie_sources:
 # no ca-certificates of its own). Packages are still accepted only on apt's
 # signed Release chain.
 build_fetch_ca_bundle: /etc/ssl/certs/ca-certificates.crt
+
+# Wheel platform tags a role accepts unless it sets hb_platforms (image.yml).
+build_fetch_wheel_platforms:
+  - manylinux_2_28_x86_64
+  - manylinux_2_17_x86_64
+  - manylinux2014_x86_64
+  - any

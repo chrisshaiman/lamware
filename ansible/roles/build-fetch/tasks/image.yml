@@ -28,6 +28,8 @@
 #                   so source-only packages build with --no-build-isolation
 #   hb_sdists       [{name, version, sha256}] packages with no usable wheel
 #   hb_python       target Python for wheels (default 3.12)
+#   hb_platforms    wheel platform tags to accept (default: manylinux 2_28/2_17/2014 + any);
+#                   a role whose wheels need a newer glibc names it (powershell: 2_34)
 #   hb_nuget        [{id, version, sha512}]: every NuGet package the build
 #                   restores, the whole graph, each with the sha512 (hex) of the
 #                   .nupkg. Fetched with get_url, so nothing (no MSBuild, no
@@ -135,8 +137,7 @@
           find "$W" -mindepth 1 -delete
           python3 -m pip download --no-cache-dir --disable-pip-version-check \
             --require-hashes --only-binary=:all: --no-deps \
-            --platform manylinux_2_28_x86_64 --platform manylinux_2_17_x86_64 \
-            --platform manylinux2014_x86_64 --platform any \
+            {% for p in hb_platforms | default(build_fetch_wheel_platforms) %}--platform {{ p }} {% endfor %}\
             --python-version {{ hb_python | default('3.12') }} --implementation cp \
             {% for f in hb_lock_files.results %}-r "{{ f.dest }}" {% endfor %}-d "$W"
           touch "{{ build_fetch_home }}/{{ hb_name }}/wheels-{{ hb_locks_key }}.done"

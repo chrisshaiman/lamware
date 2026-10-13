@@ -14,11 +14,12 @@
 """
 analyze-powershell.py — PowerShell deobfuscation and IOC extraction.
 
-Orchestrates PowerShell deobfuscation inside a Podman container with pwsh
-and PSDecode installed. Handles Base64-encoded PowerShell commands (UTF-16LE,
-as used with pwsh -EncodedCommand), runs PSDecode for multi-layer unpacking,
-extracts IOCs (URLs, IPs, file paths, registry keys, domains), detects
-obfuscation techniques, and surfaces behavioral strings of interest.
+Orchestrates PowerShell deobfuscation inside a Podman container (--network=none).
+Handles Base64-encoded PowerShell commands (UTF-16LE, as used with
+pwsh -EncodedCommand), unwraps obfuscation layers STATICALLY with minusone
+(airbus-cert/minusone, MIT; #766), extracts IOCs (URLs, IPs, file paths,
+registry keys, domains), detects obfuscation techniques, and surfaces
+behavioral strings of interest. Nothing from the sample is ever executed.
 
 Author: Christopher Shaiman
 """
@@ -38,7 +39,9 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 MAX_SCRIPT_LENGTH = 100_000
-PSDECODE_TIMEOUT = 30  # seconds
+DEOBFUSCATE_TIMEOUT = 30  # seconds, per layer
+MAX_LAYERS = 10  # an unwrapping loop that has not converged by then is cut
+DEOBFUSCATOR = "minusone (pyminusone 0.4.1)"
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +80,14 @@ def analyze_powershell(file_path: str) -> dict:
         },
         "obfuscation_techniques": [],
         "strings_of_interest": [],
-        "psdecode_success": False,
-        "psdecode_error": None,
+        # What unwrapped the layers, and whether it ran. Reported separately from
+        # analysis_success: a failed deobfuscation is not a failed analysis (the
+        # Base64 decode and IOC extraction still ran), but it must be visible.
+        # PSDecode was never actually installed (#766), so these replace the
+        # psdecode_* fields, which had only ever said "failed".
+        "deobfuscator": DEOBFUSCATOR,
+        "deobfuscation_success": False,
+        "deobfuscation_error": None,
     }
 
     # --- Read input file ---------------------------------------------------
@@ -101,14 +110,14 @@ def analyze_powershell(file_path: str) -> dict:
     # --- Obfuscation detection on the original layer -----------------------
     result["obfuscation_techniques"] = _detect_obfuscation(original_script)
 
-    # --- Run PSDecode for multi-layer unwrapping ---------------------------
-    layers, psdecode_err = _run_psdecode(original_script)
+    # --- Unwrap obfuscation layers (static: minusone + layer driver) --------
+    layers, deobf_err = _deobfuscate(original_script)
     if layers is not None:
-        result["psdecode_success"] = True
+        result["deobfuscation_success"] = True
         result["decoded_layers"] = [layer[:MAX_SCRIPT_LENGTH] for layer in layers]
         final_decoded = layers[-1] if layers else original_script
     else:
-        result["psdecode_error"] = psdecode_err
+        result["deobfuscation_error"] = deobf_err
         # Fall back: if we did a Base64 decode, use that as the final layer
         if result["input_mode"] == "encoded_command":
             final_decoded = original_script
@@ -165,99 +174,126 @@ def _try_decode_base64(raw_bytes: bytes) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Helper: Run PSDecode via pwsh subprocess
+# Deobfuscation: minusone for expressions, a small driver for layers (#766)
 # ---------------------------------------------------------------------------
+#
+# minusone evaluates obfuscated EXPRESSIONS statically (Base64 + encoding
+# GetString, char codes, -f format, -join/reversal, replace, compression...)
+# but stops at a layer boundary: it leaves `iex "<script>"`, `"<script>" | iex`,
+# `[ScriptBlock]::Create("<script>")` and `-EncodedCommand <b64>` as they are.
+# The driver extracts that next script, feeds it back in, and repeats until no
+# new layer appears, a layer repeats, or MAX_LAYERS is reached. Static only:
+# the sample's code is parsed, never run. Dynamic behaviour is CAPE's job.
+
+_MINUSONE_CHILD = (
+    "import sys, pyminusone\n"
+    "sys.stdout.write(pyminusone.deobfuscate_powershell(sys.stdin.read()))\n"
+)
 
 
-def _run_psdecode(script_text: str) -> tuple[list[str] | None, str | None]:
-    """
-    Write *script_text* to a temp file and run PSDecode via ``pwsh``.
-
-    Uses a 30-second timeout to avoid hanging on heavily obfuscated samples
-    that trigger infinite loops inside PSDecode.
-
-    Returns:
-        A 2-tuple ``(layers, error_message)``.  On success, *layers* is a
-        non-empty list of decoded layer strings and *error_message* is
-        ``None``.  On failure, *layers* is ``None`` and *error_message*
-        describes what went wrong.
-    """
-    input_path = "/tmp/ps_input.ps1"
-    try:
-        Path(input_path).write_text(script_text, encoding="utf-8")
-    except OSError as exc:
-        return None, f"Failed to write temp file: {exc}"
-
-    cmd = [
-        "pwsh",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        f"Import-Module PSDecode; PSDecode '{input_path}'",
-    ]
-
+def _minusone(script_text: str) -> tuple[str | None, str | None]:
+    """Run minusone in a child process, so a hang or crash on hostile input is
+    bounded by DEOBFUSCATE_TIMEOUT instead of taking the analysis with it."""
     try:
         proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=PSDECODE_TIMEOUT,
+            [sys.executable, "-c", _MINUSONE_CHILD],
+            input=script_text, capture_output=True, text=True,
+            timeout=DEOBFUSCATE_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
-        return None, f"PSDecode timed out after {PSDECODE_TIMEOUT}s"
-    except FileNotFoundError:
-        return None, "pwsh not found — is PowerShell installed in the container?"
+        return None, f"minusone timed out after {DEOBFUSCATE_TIMEOUT}s"
     except Exception as exc:
-        return None, f"Unexpected error running PSDecode: {exc}"
-
+        return None, f"minusone could not run: {exc}"
     if proc.returncode != 0:
-        stderr_snippet = (proc.stderr or "").strip()[:500]
-        return None, f"PSDecode exited {proc.returncode}: {stderr_snippet}"
+        return None, f"minusone exited {proc.returncode}: {(proc.stderr or '').strip()[:500]}"
+    return proc.stdout, None
 
-    output = (proc.stdout or "").strip()
-    if not output:
-        return None, "PSDecode produced no output"
 
-    layers = _parse_psdecode_output(output)
-    if not layers:
-        return None, "PSDecode output could not be parsed into layers"
+def _read_ps_string(text: str, i: int) -> tuple[str, int] | None:
+    """Read a PowerShell string literal starting at text[i] (a quote).
 
+    Double-quoted strings escape with a backtick or a doubled quote; single-
+    quoted ones with a doubled quote. Returns (value, index after it), or None.
+    """
+    if i >= len(text) or text[i] not in "\"'":
+        return None
+    q = text[i]
+    out, j = [], i + 1
+    while j < len(text):
+        c = text[j]
+        if q == '"' and c == "`" and j + 1 < len(text):
+            out.append({"n": "\n", "t": "\t", "r": "\r", "0": "\0"}.get(text[j + 1], text[j + 1]))
+            j += 2
+            continue
+        if c == q:
+            if j + 1 < len(text) and text[j + 1] == q:
+                out.append(q)
+                j += 2
+                continue
+            return "".join(out), j + 1
+        out.append(c)
+        j += 1
+    return None
+
+
+_IEX = re.compile(r"(?i)\b(?:iex|invoke-expression)\b[\s(]*")
+_PIPE_IEX = re.compile(r"(?i)\|\s*(?:iex|invoke-expression)\b")
+_SCRIPTBLOCK = re.compile(r"(?i)\[scriptblock\]::create\(\s*")
+_ENC = re.compile(r"(?i)\s-e(?:n(?:c(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?)?\s+([A-Za-z0-9+/=]{16,})")
+
+
+def _next_layer(text: str) -> str | None:
+    """The script the current layer would execute next, if it names one."""
+    for rx in (_IEX, _SCRIPTBLOCK):
+        for m in rx.finditer(text):
+            lit = _read_ps_string(text, m.end())
+            if lit and lit[0].strip():
+                return lit[0]
+    for m in _PIPE_IEX.finditer(text):
+        # `"<script>" | iex`: the literal ending just before the pipe.
+        head = text[:m.start()].rstrip()
+        if head and head[-1] in "\"'":
+            q = head[-1]
+            k = len(head) - 2
+            while k >= 0:
+                if head[k] == q and not (k > 0 and head[k - 1] == q):
+                    lit = _read_ps_string(head, k)
+                    if lit and lit[1] == len(head) and lit[0].strip():
+                        return lit[0]
+                    break
+                k -= 1
+    m = _ENC.search(" " + text)
+    if m:
+        decoded = _try_decode_base64(m.group(1).encode())
+        if decoded and decoded.strip():
+            return decoded
+    return None
+
+
+def _deobfuscate(script_text: str) -> tuple[list[str] | None, str | None]:
+    """Unwrap layers: minusone each one, then follow it to the next.
+
+    Returns (layers, None) — layers[0] is the deobfuscated original, the last
+    one the innermost script reached — or (None, error) if minusone could not
+    run on the first layer. A failure deeper down keeps the layers so far.
+    """
+    layers: list[str] = []
+    seen: set[str] = set()
+    current = script_text
+    for _ in range(MAX_LAYERS):
+        out, err = _minusone(current)
+        if out is None:
+            if not layers:
+                return None, err
+            break
+        out = out.strip() or current.strip()
+        layers.append(out)
+        nxt = _next_layer(out)
+        if nxt is None or nxt in seen or nxt.strip() == out:
+            break
+        seen.add(nxt)
+        current = nxt
     return layers, None
-
-
-# ---------------------------------------------------------------------------
-# Helper: Parse PSDecode layer output
-# ---------------------------------------------------------------------------
-
-
-def _parse_psdecode_output(output: str) -> list[str]:
-    """
-    Split PSDecode stdout into individual decoded layers.
-
-    PSDecode separates layers with banners like::
-
-        ###### Layer 1 ######
-        ...layer content...
-        ###### Layer 2 ######
-
-    If no such banners are present the entire output is returned as a single
-    layer — this handles older PSDecode versions that print only one layer.
-
-    Returns:
-        List of stripped layer strings (empty layers are discarded).
-    """
-    layer_header = re.compile(r"^#{4,}\s+Layer\s+\d+\s+#{4,}", re.MULTILINE | re.IGNORECASE)
-    parts = layer_header.split(output)
-
-    # parts[0] is text before the first header (usually blank or a preamble)
-    layers = [p.strip() for p in parts if p.strip()]
-
-    if not layers:
-        # No markers found — return the whole output as one layer
-        whole = output.strip()
-        return [whole] if whole else []
-
-    return layers
 
 
 # ---------------------------------------------------------------------------
