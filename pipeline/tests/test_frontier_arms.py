@@ -372,7 +372,7 @@ def test_an_arm_without_a_backend_is_refused():
 
 
 @pytest.mark.parametrize("arm_name,alias", [
-    ("opus55@10", "eval-opus55"), ("fable51@10", "eval-fable51"),
+    ("opus55@10", "eval-opus55"), ("fable51@10", "eval-fable51"), ("opus48@10", "eval-opus48"),
     ("claude-sonnet-5", "claude-sonnet-5"), ("claude-opus-5", "claude-opus-5")])
 def test_cloud_arms_run_their_own_model_on_the_router(arm_name, alias):
     cfg = runner.arm_config(resolve_arm(arm_name), HOST_CFG, "agentic")
@@ -394,7 +394,7 @@ def _arm_drive(mod, monkeypatch, arm_name, router, orchestrator, **cfg_over):
     return emitted, code
 
 
-@pytest.mark.parametrize("arm_name", ["fable51@10", "opus55@10"])
+@pytest.mark.parametrize("arm_name", ["fable51@10", "opus55@10", "opus48@10"])
 def test_the_arms_recovery_takes_the_auto_retry(mod, monkeypatch, arm_name):
     """Both models reject forced tool use. Under the HOST's config, the arm's
     unparseable final reaches cloud_synthesize on the router, the forced call
@@ -543,6 +543,8 @@ _USAGE = {"input_tokens": 1_000_000, "output_tokens": 100_000,
     ("eval-fable51", (10.0, 50.0, 12.5, 0.25), 42.5),
     # 4 + 2 + 10 + 2
     ("eval-opus55", (4.0, 20.0, 5.0, 0.20), 18.0),
+    # 5 + 2.5 + 12.5 + 5
+    ("eval-opus48", (5.0, 25.0, 6.25, 0.50), 25.0),
 ])
 def test_frontier_arms_are_priced_at_their_own_cache_rates(alias, rates, cost):
     """The read is NOT the 0.1x default on either (0.1x would be $1.00 / $0.40)."""

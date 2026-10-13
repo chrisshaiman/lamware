@@ -35,7 +35,8 @@ EVAL_KEY = "os.environ/ANTHROPIC_RESEARCH_API_KEY"
 PROD_KEY = "os.environ/ANTHROPIC_API_KEY"
 # The arms this PR adds, and what they must resolve to.
 EXPECTED = {"eval-opus55": "anthropic/claude-opus-5-5",
-            "eval-fable51": "anthropic/claude-fable-5-1"}
+            "eval-fable51": "anthropic/claude-fable-5-1",
+            "eval-opus48": "anthropic/claude-opus-4-8"}
 
 
 def _render(name: str, **extra) -> str:
@@ -142,7 +143,8 @@ def test_no_request_sending_code_names_an_eval_model():
 
 
 @pytest.mark.parametrize("arm_name,alias", [("opus55@10", "eval-opus55"),
-                                            ("fable51@10", "eval-fable51")])
+                                            ("fable51@10", "eval-fable51"),
+                                            ("opus48@10", "eval-opus48")])
 def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_name, alias):
     # lamware_eval.runner imports the pipeline stages, which need lamware_shared.
     # CI's top-level test job does not install it; the pipeline job does, and

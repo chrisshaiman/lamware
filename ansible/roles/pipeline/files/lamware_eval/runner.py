@@ -64,6 +64,9 @@ _RATES: dict[str, tuple[float, ...]] = {
     #   Fable 5.1: $10 / $50, write $12.50, read $0.25 (0.025x; 0.1x would be 1.00)
     "eval-opus55": (4.0, 20.0, 5.0, 0.20),
     "eval-fable51": (10.0, 50.0, 12.5, 0.25),
+    #   Opus 4.8:  $5 / $25, write $6.25,  read $0.50 (the standard 1.25x / 0.1x;
+    #   written long-form anyway, beside the others, from the same page, 2026-10-13)
+    "eval-opus48": (5.0, 25.0, 6.25, 0.50),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache
