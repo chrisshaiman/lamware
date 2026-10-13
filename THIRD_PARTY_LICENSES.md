@@ -18,6 +18,7 @@ open-source use.
 | [Volatility 3](https://github.com/volatilityfoundation/volatility3) | **Volatility Software License (VSL)** | Memory forensics | See note below |
 | [Ghidra](https://ghidra-sre.org/) | Apache 2.0 | Static analysis / disassembly | Containerized headless mode |
 | [ILSpy / ilspycmd](https://github.com/icsharpcode/ILSpy) | MIT | .NET decompilation to C# | Container dependency |
+| [minusone / pyminusone](https://github.com/airbus-cert/minusone) | MIT | Static PowerShell deobfuscation (with the MIT-licensed [tree-sitter-powershell](https://github.com/airbus-cert/tree-sitter-powershell) grammar) | Container dependency; licence text shipped at `/usr/share/doc/pyminusone/LICENSE` in the powershell-analysis image. Replaces PSDecode, which has no licence (#766) |
 | [de4dotEx](https://github.com/GDATAAdvancedAnalytics/de4dotEx) | **GPL-3.0** | .NET deobfuscation | See note below |
 | [GoReSym](https://github.com/mandiant/GoReSym) | MIT | Go binary metadata extraction | Container dependency |
 | [pyinstxtractor](https://github.com/extremecoders-re/pyinstxtractor) | **GPL-3.0** | PyInstaller archive extraction | See note below |

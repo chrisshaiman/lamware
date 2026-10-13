@@ -2405,9 +2405,14 @@ def build_powershell_message(ps_data: dict[str, Any], config: dict[str, Any]) ->
     parts: list[str] = []
 
     parts.append("## PowerShell Script Under Analysis")
-    parts.append("- Analysis type: PSDecode deobfuscation")
+    parts.append(f"- Analysis type: static deobfuscation ({one_line(ps_data.get('deobfuscator') or 'unknown', 80)})")
     parts.append(f"- Input mode: {one_line(ps_data.get('input_mode', '?'), 80)}")
-    parts.append(f"- PSDecode: {'success' if ps_data.get('psdecode_success') else 'failed (fallback decode)'}")
+    if ps_data.get("deobfuscation_success"):
+        parts.append("- Deobfuscation: succeeded")
+    else:
+        # Say so plainly: layers below come from the fallback Base64 decode only.
+        parts.append(f"- Deobfuscation: FAILED ({one_line(ps_data.get('deobfuscation_error') or 'no reason given', 200)});"
+                     " layers below are the fallback decode only")
     parts.append(f"- Deobfuscation layers: {ps_data.get('layer_count', 0)}")
 
     if ps_data.get("cape_extracted"):

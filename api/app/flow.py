@@ -58,7 +58,7 @@ MAX_ITEMS = 100
 # Stage 4 branches in run-pipeline.py.
 ROUTED_ANALYSERS: tuple[tuple[str, str, str, str], ...] = (
     ("office_routed", "office_analysis", "olevba", "olevba"),
-    ("powershell_routed", "powershell_analysis", "psdecode", "PSDecode"),
+    ("powershell_routed", "powershell_analysis", "minusone", "minusone"),
     ("script_routed", "script_analysis", "script_reader", "Script source"),
     ("dotnet_routed", "dotnet_analysis", "ilspy", "ILSpy"),
     ("go_routed", "go_analysis", "goresym", "GoReSym"),

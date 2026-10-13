@@ -12,19 +12,29 @@ COPY debs/main/ /tmp/debs/
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /tmp/debs/*.deb \
     && rm -rf /tmp/debs
 
-# No PSDecode module is installed. This file used to run
-#   pwsh -Command "Install-Module -Name PSDecode -Scope AllUsers -Force"
-# which reached PSGallery from inside the build. Two things were wrong with it,
-# measured 2026-10-11:
-#   - The image it built (2026-05-17) has no PSDecode at all: `Import-Module
-#     PSDecode` fails, and no module directory holds it. So analyze-powershell.py
-#     has been taking its fallback path (psdecode_error, no layer unwrapping).
-#   - PSGallery's "PSDecode" (0.9.0, Prateek Singh) is an error-code lookup
-#     module. analyze-powershell.py calls a `PSDecode <file>` command that
-#     unwraps obfuscation layers, which is R3MRUM/PSDecode on GitHub, not on
-#     PSGallery. Had the install worked, it would have installed the wrong tool.
-# The image therefore stays as it ran. Adding the deobfuscator is a separate
-# change: fetched by the role with get_url + sha256, pinned to a commit.
+# Static deobfuscation (#766): minusone (airbus-cert/minusone, MIT), as the
+# pyminusone wheel lamware-fetch downloaded against requirements.lock. It parses
+# PowerShell and evaluates obfuscated expressions; nothing from the sample runs.
+# analyze-powershell.py adds the layer driver (iex / ScriptBlock / -enc).
+#
+# Installed without pip: Debian's python3-pip would add setuptools and wheel
+# tooling to a container that parses hostile scripts, and this wheel is one
+# compiled module. Each wheel's sha256 is checked against the lock again here
+# (the fetch already checked it), then the wheel is extracted into site-packages.
+# PSDecode, which this image used to name, was never installed and has no
+# licence (#766).
+COPY wheels/ /tmp/wheels/
+COPY requirements.lock /tmp/requirements.lock
+RUN python3 -c 'import glob, hashlib, re, sys, sysconfig, zipfile; \
+ok = set(re.findall(r"sha256:([0-9a-f]{64})", open("/tmp/requirements.lock").read())); \
+whls = glob.glob("/tmp/wheels/*.whl"); \
+assert whls, "no wheels"; \
+[sys.exit("hash not in lock: " + w) for w in whls if hashlib.sha256(open(w, "rb").read()).hexdigest() not in ok]; \
+[zipfile.ZipFile(w).extractall(sysconfig.get_paths()["purelib"]) for w in whls]' \
+    && python3 -c "import pyminusone; pyminusone.deobfuscate_powershell('Write-Host 1')" \
+    && rm -rf /tmp/wheels /tmp/requirements.lock
+# MIT requires the notice to travel with the binary.
+COPY minusone-LICENSE /usr/share/doc/pyminusone/LICENSE
 
 COPY analyze-powershell.py /opt/analyze-powershell.py
 

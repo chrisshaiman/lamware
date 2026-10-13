@@ -28,6 +28,14 @@
     group: pipeline
     mode: "0644"
 
+- name: Deploy minusone's licence into the build context (MIT notice ships with it)
+  ansible.builtin.copy:
+    src: minusone-LICENSE
+    dest: "{{ powershell_analysis_install_dir }}/build/minusone-LICENSE"
+    owner: pipeline
+    group: pipeline
+    mode: "0644"
+
 - name: Build the powershell-analysis image hermetically (ADR-023)
   ansible.builtin.include_role:
     name: build-fetch
@@ -44,6 +52,11 @@
         image: "{{ powershell_analysis_base_image }}"
         sources: "{{ powershell_analysis_apt_sources }}"
         packages: "{{ powershell_analysis_debs }}"
+    # The static deobfuscator (#766): pyminusone, a cp38-abi3 wheel built for
+    # glibc 2.34+ (bookworm has 2.36), for the image's Debian python3 (3.11).
+    hb_lock: requirements.lock
+    hb_python: "3.11"
+    hb_platforms: [manylinux_2_34_x86_64, any]
 
 - name: Deploy wrapper script
   ansible.builtin.template:

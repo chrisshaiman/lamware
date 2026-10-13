@@ -783,9 +783,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             layer_count = ps_result.get("layer_count", 0)
             final_len = len(ps_result.get("final_decoded", ""))
             obfuscation = ps_result.get("obfuscation_techniques", [])
-            psdecode_ok = ps_result.get("psdecode_success", False)
+            deobf_ok = ps_result.get("deobfuscation_success", False)
             strings_count = len(ps_result.get("strings_of_interest", []))
-            log.info(f"  PSDecode: {'success' if psdecode_ok else 'failed (fallback)'}, {layer_count} layers, {final_len} chars decoded")
+            deobf = ps_result.get("deobfuscator") or "deobfuscator"
+            if deobf_ok:
+                log.info(f"  {deobf}: {layer_count} layers, {final_len} chars decoded")
+            else:
+                # Visible, not silent: this said "PSDecode: failed (fallback)" on
+                # every run for months because PSDecode was never installed (#766).
+                log.warning(f"  {deobf}: FAILED ({ps_result.get('deobfuscation_error')}); "
+                            f"{layer_count} layers from the fallback decode only")
             if obfuscation:
                 log.info(f"  Obfuscation: {', '.join(obfuscation)}")
             log.info(f"  Interesting strings: {strings_count}")
