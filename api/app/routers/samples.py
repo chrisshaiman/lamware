@@ -11,6 +11,7 @@
 # files, the pipeline (pipeline user) processes them. No sudo, no privilege
 # escalation.
 
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -23,6 +24,7 @@ from ..auth import AuthContext, require_role
 from ..database import get_session
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
+log = logging.getLogger(__name__)
 
 # Max upload size: 100 MB.
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -83,7 +85,10 @@ async def submit_sample(
     try:
         content = await file.read()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to read upload: {exc}") from exc
+        # The exception text stays in our log, not the response (#730): it can
+        # name server paths and library internals.
+        log.warning("Upload read failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Failed to read upload") from exc
 
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -95,9 +100,8 @@ async def submit_sample(
         SPOOL_DIR.mkdir(parents=True, exist_ok=True)
         _write_spool_file(tmp_path, content)
     except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save upload: {exc}"
-        ) from exc
+        log.error("Upload spool write failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to save upload") from exc
 
     log_audit(
         session, auth,

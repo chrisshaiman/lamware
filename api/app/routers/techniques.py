@@ -17,6 +17,7 @@ from ..database import get_session
 from ..models.analysis import Analysis
 from ..models.sample import Sample
 from ..models.technique import AnalysisTechnique, TechniqueValue
+from ..search import ESCAPE, contains
 
 router = APIRouter(prefix="/api/techniques", tags=["techniques"])
 
@@ -76,8 +77,8 @@ async def list_techniques(
     if q:
         # Match against both technique_id (T1055) and technique_name
         stmt = stmt.where(
-            TechniqueValue.technique_id.ilike(f"%{q}%")
-            | TechniqueValue.technique_name.ilike(f"%{q}%")
+            TechniqueValue.technique_id.ilike(contains(q), escape=ESCAPE)
+            | TechniqueValue.technique_name.ilike(contains(q), escape=ESCAPE)
         )
 
     if tactic:
@@ -88,7 +89,7 @@ async def list_techniques(
     if family:
         family_analyses = (
             select(Analysis.id)
-            .where(Analysis.malware_family_guess.ilike(f"%{family}%"))
+            .where(Analysis.malware_family_guess.ilike(contains(family), escape=ESCAPE))
         ).subquery()
         stmt = stmt.where(
             AnalysisTechnique.analysis_id.in_(select(family_analyses.c.id))

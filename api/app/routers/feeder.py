@@ -78,10 +78,9 @@ async def feeder_pause(
     try:
         _touch_nofollow(settings.pause_file)
     except OSError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not create PAUSE file: {exc}",
-        ) from exc
+        # Logged, not returned (#730): the OS error names host paths.
+        log.error("Could not create PAUSE file: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not create PAUSE file") from exc
 
     log_audit(session, auth, action="feeder_pause", resource_type="feeder")
 
@@ -106,10 +105,8 @@ async def feeder_resume(
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not remove PAUSE file: {exc}",
-        ) from exc
+        log.error("Could not remove PAUSE file: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not remove PAUSE file") from exc
 
     # Reset consecutive_failures in state.json so the feeder doesn't stay in
     # backoff mode after resuming from a deliberate pause.

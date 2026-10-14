@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from ..auth import AuthContext, require_auth
 from ..database import get_session
 from ..models.analysis import Analysis
+from ..search import ESCAPE, contains
 
 router = APIRouter(prefix="/api/families", tags=["families"])
 
@@ -57,7 +58,7 @@ async def list_families(
     )
 
     if q:
-        stmt = stmt.where(Analysis.malware_family_guess.ilike(f"%{q}%"))
+        stmt = stmt.where(Analysis.malware_family_guess.ilike(contains(q), escape=ESCAPE))
 
     rows = session.exec(stmt).all()
 

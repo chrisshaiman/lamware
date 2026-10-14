@@ -59,12 +59,22 @@ async def fetch_jwks() -> None:
         r.raise_for_status()
         jwks = r.json()
 
-    _jwks_cache.clear()
+    # Only RSA signing keys (#730). Keycloak's set can also carry `use: enc`
+    # keys, which are not verifiers, and a non-RSA key made from_jwk raise
+    # InvalidKeyError, which the refresh path did not catch: a 500 where a 401
+    # belonged. A key that will not load is skipped and logged. The new set is
+    # built before the old one is replaced, so a bad key never empties the cache.
+    loaded = {}
     for key_data in jwks.get("keys", []):
         kid = key_data.get("kid")
-        if kid:
-            public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-            _jwks_cache[kid] = public_key
+        if not kid or key_data.get("kty") != "RSA" or key_data.get("use", "sig") != "sig":
+            continue
+        try:
+            loaded[kid] = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
+        except (jwt.exceptions.InvalidKeyError, ValueError, KeyError, TypeError) as exc:
+            log.warning("JWKS key %s skipped: %s", kid, exc)
+    _jwks_cache.clear()
+    _jwks_cache.update(loaded)
 
     log.info("JWKS loaded: %d keys from %s", len(_jwks_cache), _jwks_url)
 
