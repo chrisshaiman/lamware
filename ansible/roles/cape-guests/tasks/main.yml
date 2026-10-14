@@ -122,30 +122,39 @@
               | zip(cape_guest_uuids.results | map(attribute='stdout')
                     | map('trim') | list)) }}
 
-- name: Deploy guest libvirt domain XML
-  ansible.builtin.template:
-    src: guest-domain.xml.j2
-    dest: "/tmp/cape-guest-{{ item.name }}.xml"
-    mode: "0600"
-  loop: "{{ cape_guests }}"
-  loop_control:
-    label: "{{ item.name }}"
+# Staged in a private directory, not a fixed name in the shared /tmp (M14): root
+# hands this file to `virsh define`, and a local user who created the name first
+# would have chosen the guest definition, devices and all.
+- name: Define the guest libvirt domains from a private staging directory
+  block:
+    - name: Create a private directory for the domain XML
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-guests-
+      register: cape_guests_xml_tmp
 
-- name: Define guest libvirt domains (virsh define)
-  ansible.builtin.command:
-    cmd: virsh define /tmp/cape-guest-{{ item.name }}.xml
-  loop: "{{ cape_guests }}"
-  loop_control:
-    label: "{{ item.name }}"
-  changed_when: false
+    - name: Deploy guest libvirt domain XML
+      ansible.builtin.template:
+        src: guest-domain.xml.j2
+        dest: "{{ cape_guests_xml_tmp.path }}/cape-guest-{{ item.name }}.xml"
+        mode: "0600"
+      loop: "{{ cape_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
 
-- name: Remove temporary domain XML files
-  ansible.builtin.file:
-    path: "/tmp/cape-guest-{{ item.name }}.xml"
-    state: absent
-  loop: "{{ cape_guests }}"
-  loop_control:
-    label: "{{ item.name }}"
+    - name: Define guest libvirt domains (virsh define)
+      ansible.builtin.command:
+        cmd: virsh define {{ cape_guests_xml_tmp.path }}/cape-guest-{{ item.name }}.xml
+      loop: "{{ cape_guests }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+  always:
+    - name: Remove the domain XML staging directory
+      ansible.builtin.file:
+        path: "{{ cape_guests_xml_tmp.path }}"
+        state: absent
+      when: cape_guests_xml_tmp.path is defined
 
 # -------------------------------------------------------------------------
 # Guest VM snapshots — required before Cape can start analysis
