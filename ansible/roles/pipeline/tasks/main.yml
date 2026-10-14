@@ -909,6 +909,16 @@
     dest: /usr/local/bin/generate-report
     state: link
 
+- name: Create the correlated-report keep-list directory
+  # Beside the reports, never inside one: report directories hold
+  # attacker-influenced content (see lamware_pipeline.corpus_harvest).
+  ansible.builtin.file:
+    path: "{{ pipeline_harvest_dir }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+
 - name: Deploy cleanup cron script
   ansible.builtin.template:
     src: pipeline-cleanup.sh.j2

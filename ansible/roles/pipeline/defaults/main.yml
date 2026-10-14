@@ -48,6 +48,13 @@ pipeline_cape_memory_dump: true
 # Report retention (days) — cron job purges older reports
 pipeline_report_retention_days: 7
 
+# Reports that produced correlation findings are kept this long instead, so they
+# can be promoted into the eval corpus (#420). The list of them, and the
+# candidates table to pick from, live in pipeline_harvest_dir.
+pipeline_correlated_report_keep_days: 60
+pipeline_harvest_dir: "{{ pipeline_install_dir }}/harvest"
+pipeline_python: "{{ pipeline_install_dir }}/venv/bin/python"
+
 # LLM model the pipeline REQUESTS for the summary stages (routed via LiteLLM).
 # Default local-first (llama.cpp Qwen3.6); set to a Haiku model to revert to cloud,
 # or local-qwen-llamacpp-strict for offline (no Haiku fallback). Distinct from the litellm

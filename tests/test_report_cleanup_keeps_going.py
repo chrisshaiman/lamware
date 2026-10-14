@@ -55,10 +55,25 @@ def reports(tmp_path):
     (stuck / "project").chmod(0o755)
 
 
-def _run(root: Path, tmp_path: Path) -> subprocess.CompletedProcess:
+def _render(root: Path, tmp_path: Path, harvest: str = "") -> str:
+    """The real template, with the keep-list builder replaced by a fake python
+    that writes `harvest` as keep.txt (or fails, for `harvest=None`)."""
+    hdir = tmp_path / "harvest"
+    hdir.mkdir(exist_ok=True)
+    fake = tmp_path / "fake-python"
+    if harvest is not None:
+        (hdir / "keep.txt").write_text(harvest)
+    fake.write_text(f"#!/bin/bash\nexit {1 if harvest is None else 0}\n")
+    fake.chmod(0o755)
+    return jinja2.Environment().from_string(TEMPLATE.read_text()).render(
+        pipeline_reports_dir=str(root), pipeline_report_retention_days=7,
+        pipeline_install_dir=str(tmp_path / "install"), pipeline_python=str(fake),
+        pipeline_harvest_dir=str(hdir), pipeline_correlated_report_keep_days=60)
+
+
+def _run(root: Path, tmp_path: Path, harvest: str | None = "") -> subprocess.CompletedProcess:
     script = tmp_path / "cleanup.sh"
-    script.write_text(jinja2.Environment().from_string(TEMPLATE.read_text()).render(
-        pipeline_reports_dir=str(root), pipeline_report_retention_days=7))
+    script.write_text(_render(root, tmp_path, harvest))
     # A logger that records instead of writing to the real syslog.
     shim = tmp_path / "bin"
     shim.mkdir()
@@ -94,10 +109,30 @@ def test_a_clean_run_exits_zero(tmp_path):
     assert not (root / "old").exists()
 
 
-def test_no_step_pretends_to_clean_cape_storage():
+def test_no_step_pretends_to_clean_cape_storage(tmp_path):
     """pipeline cannot write CAPE storage (SECURITY_CONSTRAINTS.md); a delete
     there could only ever fail, and `|| true` made that look like success."""
-    rendered = jinja2.Environment().from_string(TEMPLATE.read_text()).render(
-        pipeline_reports_dir="/r", pipeline_report_retention_days=7)
+    rendered = _render(Path("/r"), tmp_path)
     commands = [ln for ln in rendered.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
     assert not any("/opt/CAPEv2" in ln for ln in commands), commands
+
+
+def test_a_correlated_report_on_the_keep_list_outlives_retention(reports, tmp_path):
+    """#420: the eval corpus needs these, and re-detonating does not bring a
+    finding back (Salat: one finding on 2026-09-28, none on 2026-10-12)."""
+    root, _, old, _ = reports
+    other = root / "d_old_uncorrelated"
+    other.mkdir()
+    _age(other, 30)
+    _run(root, tmp_path, harvest=f"{old.name}\n")
+    assert old.exists(), "a report on the keep-list was deleted"
+    assert not other.exists(), "the keep-list kept a report it does not name"
+
+
+def test_no_keep_list_means_nothing_is_deleted(reports, tmp_path):
+    """Fail closed: a database outage must not cost the week's correlated report."""
+    root, _, old, _ = reports
+    proc = _run(root, tmp_path, harvest=None)
+    assert old.exists(), "reports were deleted without a keep-list"
+    assert proc.returncode != 0
+    assert "keep-list" in proc.stderr
