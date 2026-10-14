@@ -9,7 +9,7 @@ one part not exercised here (it is run on the host, see the PR).
 import datetime as dt
 
 import pytest
-from lamware_pipeline.corpus_harvest import Candidate, select, write
+from lamware_pipeline.corpus_harvest import Candidate, cap, select, write
 
 NOW = dt.datetime(2026, 10, 14, tzinfo=dt.UTC)
 
@@ -79,9 +79,28 @@ def test_write_lists_exactly_the_kept_names_and_priority_first(reports, tmp_path
     cands = select([_row("c8138c80aa17"),
                     _row("v661_5b4f596d3cf5", findings=16, rules=("injection_corroborated",))],
                    reports, 60, NOW)
-    write(cands, out)
-    assert (out / "keep.txt").read_text().split() == ["c8138c80aa17", "v661_5b4f596d3cf5"]
-    rows = (out / "candidates.tsv").read_text().splitlines()
-    assert rows[0].startswith("task_id\tpriority")
-    assert rows[1].split("\t")[:3] == ["v661_5b4f596d3cf5", "yes", "16"]
+    write(cands, cap(cands, 1), out)
+    assert (out / "keep.txt").read_text().split() == ["v661_5b4f596d3cf5"]
+    rows = [r.split("\t") for r in (out / "candidates.tsv").read_text().splitlines()]
+    assert rows[0][:3] == ["task_id", "kept", "priority"]
+    assert [r[:4] for r in rows[1:]] == [["v661_5b4f596d3cf5", "yes", "yes", "16"],
+                                         ["c8138c80aa17", "no", "no", "1"]], \
+        "what the cap drops must still be listed, so it is visible before it goes"
     assert not list(out.glob(".*")), "a temp file was left behind"
+
+
+def _cand(task_id, days_old, priority):
+    return Candidate(task_id, "", NOW - dt.timedelta(days=days_old), None, "",
+                     3 if priority else 1, ())
+
+
+def test_the_cap_keeps_priority_first_then_newest():
+    """The disk bound: a feeder finding several a day must not fill the host."""
+    cands = [_cand("old_rich", 20, True), _cand("new_thin", 1, False),
+             _cand("newer_thin", 0, False), _cand("new_rich", 2, True)]
+    assert [c.task_id for c in cap(cands, 3)] == ["new_rich", "old_rich", "newer_thin"]
+
+
+@pytest.mark.parametrize("n", [0, -1])
+def test_a_cap_of_zero_keeps_nothing(n):
+    assert cap([_cand("a", 1, True)], n) == []

@@ -37,7 +37,8 @@ set -a
 set +a
 if ! {{ pipeline_python }} -m lamware_pipeline.corpus_harvest \
       --reports-dir {{ pipeline_reports_dir }} --out-dir {{ pipeline_harvest_dir }} \
-      --keep-days {{ pipeline_correlated_report_keep_days }}; then
+      --keep-days {{ pipeline_correlated_report_keep_days }} \
+      --max-keep {{ pipeline_correlated_report_keep_max }}; then
   fail "could not build the correlated-report keep-list; deleting nothing tonight"
   exit "$status"
 fi

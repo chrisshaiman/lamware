@@ -23,7 +23,8 @@ Exit status is non-zero on any failure, and the cleanup then deletes nothing
 that night. Keeping an expired report is cheap; deleting the one correlated
 report of the week is not.
 
-    python -m lamware_pipeline.corpus_harvest --reports-dir D --out-dir H [--keep-days 60]
+    python -m lamware_pipeline.corpus_harvest --reports-dir D --out-dir H \\
+        [--keep-days 60] [--max-keep 40]
 """
 from __future__ import annotations
 
@@ -88,6 +89,18 @@ def select(rows: list[tuple], reports_dir: Path, keep_days: int,
     return out
 
 
+def cap(cands: list[Candidate], max_keep: int) -> list[Candidate]:
+    """At most `max_keep` of them, priority first, then newest.
+
+    The disk bound. The host had 69 GB free on 2026-10-14, a correlated report is
+    0.25-0.8 GB (Lumma 246 MB, 42b9c406 768 MB), and a feeder running in idle
+    time could find several a day: an age limit alone could fill the disk. What
+    falls off the end returns to the normal 7-day cleanup.
+    """
+    ranked = sorted(cands, key=lambda c: (not c.priority, -c.created_at.timestamp(), c.task_id))
+    return ranked[:max(max_keep, 0)]
+
+
 def _write_atomic(path: Path, text: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
@@ -100,17 +113,23 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
-def write(cands: list[Candidate], out_dir: Path) -> None:
-    """candidates.tsv is written before keep.txt, so a keep.txt the cleanup acts
-    on always has the rows that explain it beside it."""
-    rows = ["task_id\tpriority\tfindings\trules\tcape_task\tcreated_at\tsha256\tfamily_guess"]
-    for c in sorted(cands, key=lambda c: (not c.priority, -c.findings, c.task_id)):
+def write(cands: list[Candidate], kept: list[Candidate], out_dir: Path) -> None:
+    """candidates.tsv lists every eligible report and whether the cap kept it, so
+    what is about to be lost is visible; keep.txt names only the kept ones.
+    candidates.tsv is written first, so a keep.txt the cleanup acts on always has
+    the rows that explain it beside it."""
+    kept_ids = {c.task_id for c in kept}
+    rows = ["task_id\tkept\tpriority\tfindings\trules\tcape_task\tcreated_at\tsha256"
+            "\tfamily_guess"]
+    for c in sorted(cands, key=lambda c: (c.task_id not in kept_ids, not c.priority,
+                                          -c.findings, c.task_id)):
         rows.append("\t".join([
-            c.task_id, "yes" if c.priority else "no", str(c.findings), ",".join(c.rules),
+            c.task_id, "yes" if c.task_id in kept_ids else "no",
+            "yes" if c.priority else "no", str(c.findings), ",".join(c.rules),
             str(c.cape_task_id or ""), c.created_at.strftime("%Y-%m-%dT%H:%MZ"),
             c.sha256, c.family_guess]))
     _write_atomic(out_dir / "candidates.tsv", "\n".join(rows) + "\n")
-    _write_atomic(out_dir / "keep.txt", "".join(f"{c.task_id}\n" for c in cands))
+    _write_atomic(out_dir / "keep.txt", "".join(f"{c.task_id}\n" for c in kept))
 
 
 def fetch() -> list[tuple]:
@@ -140,17 +159,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reports-dir", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--keep-days", type=int, default=60)
+    ap.add_argument("--max-keep", type=int, default=40)
     args = ap.parse_args(argv)
     try:
         args.out_dir.mkdir(mode=0o750, exist_ok=True)
         cands = select(fetch(), args.reports_dir, args.keep_days,
                        _dt.datetime.now(_dt.UTC))
-        write(cands, args.out_dir)
+        kept = cap(cands, args.max_keep)
+        write(cands, kept, args.out_dir)
     except Exception as e:  # any failure must stop the cleanup, so say what it was
         print(f"corpus_harvest: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    print(f"corpus_harvest: keeping {len(cands)} report(s), "
-          f"{sum(c.priority for c in cands)} priority")
+    print(f"corpus_harvest: keeping {len(kept)} of {len(cands)} correlated report(s), "
+          f"{sum(c.priority for c in kept)} priority")
     return 0
 
 

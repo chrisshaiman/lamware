@@ -68,7 +68,8 @@ def _render(root: Path, tmp_path: Path, harvest: str = "") -> str:
     return jinja2.Environment().from_string(TEMPLATE.read_text()).render(
         pipeline_reports_dir=str(root), pipeline_report_retention_days=7,
         pipeline_install_dir=str(tmp_path / "install"), pipeline_python=str(fake),
-        pipeline_harvest_dir=str(hdir), pipeline_correlated_report_keep_days=60)
+        pipeline_harvest_dir=str(hdir), pipeline_correlated_report_keep_days=60,
+        pipeline_correlated_report_keep_max=40)
 
 
 def _run(root: Path, tmp_path: Path, harvest: str | None = "") -> subprocess.CompletedProcess:
