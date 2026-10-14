@@ -31,19 +31,14 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import os
-import re
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from lamware_pipeline.correlation_base_rate import KEEP_CANDIDATES
+from lamware_shared.task_ids import is_safe_task_id
 
-#: One path component. run-pipeline names a report directory after its task id:
-#: 12 hex characters by default, or a label such as `v661_5b4f596d3cf5` for a
-#: manual run (112 of the 128 analyses with correlation recorded, 2026-10-14). The first
-#: character is alphanumeric, so `.` and `..` cannot match, and no slash can.
-_TASK_ID = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\Z")
+from lamware_pipeline.correlation_base_rate import KEEP_CANDIDATES
 
 #: Rules whose findings tie behaviour to code, which is what #420 needs. A lone
 #: shellcode_self_modified on one PID is the common case and the thinnest one.
@@ -76,7 +71,10 @@ def select(rows: list[tuple], reports_dir: Path, keep_days: int,
     cutoff = now - _dt.timedelta(days=keep_days)
     out = []
     for task_id, sha256, created_at, cape_task_id, family, findings, rules in rows:
-        if not isinstance(task_id, str) or not _TASK_ID.match(task_id):
+        # The same one-path-segment rule as every other task_id path join
+        # (lamware_shared.task_ids): 12 hex characters by default, or a label
+        # such as `v661_5b4f596d3cf5` for a manual run.
+        if not is_safe_task_id(task_id):
             continue
         if created_at < cutoff:
             continue
