@@ -16,6 +16,7 @@ License: Apache 2.0
 """
 
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -266,6 +267,52 @@ def source_badge(source: str) -> str:
     return f'<span class="source-badge" style="background: {color};">{escape_html(source)}</span>'
 
 
+#: Python-Markdown patterns that turn model text into live HTML: raw HTML, links,
+#: images. See _inert_markdown.
+_LIVE_INLINE_PATTERNS = ("html", "link", "image_link", "reference", "image_reference",
+                         "short_reference", "short_image_ref", "autolink", "automail")
+
+
+def _inert_markdown():
+    """An extension under which model prose renders as text (#734).
+
+    The narrative and summary are model output, which echoes what the sample
+    contained. Python-Markdown passes raw HTML straight through, and turns
+    `[x](http://...)` and `![](...)` into live elements: a clickable link in the
+    PDF an analyst opens, and an image WeasyPrint loads from the container's
+    filesystem as it renders. With these patterns removed, all of them appear as
+    the literal text the model wrote, as the SPA's markdown-prose does.
+
+    Built on first use: markdown is a container runtime dependency, stubbed in
+    the test environment, which has no `markdown.extensions`.
+    """
+    from markdown.extensions import Extension
+
+    class _Inert(Extension):
+        def extendMarkdown(self, m):  # noqa: N802 - Python-Markdown's hook name
+            m.preprocessors.deregister("html_block")
+            for name in _LIVE_INLINE_PATTERNS:
+                if name in m.inlinePatterns:
+                    m.inlinePatterns.deregister(name)
+    return _Inert()
+
+
+#: http(s)/ftp scheme defanged, so a PDF viewer does not auto-link a URL that
+#: is now plain text.
+_URL_SCHEME = re.compile(r"\b(h)tt(ps?)://|\b(f)tp://", re.IGNORECASE)
+
+
+def _defang_schemes(text: str) -> str:
+    return _URL_SCHEME.sub(
+        lambda m: f"{m.group(1)}xx{m.group(2)}://" if m.group(1) else f"{m.group(3)}xp://",
+        text)
+
+
+def _markdown(text: str) -> str:
+    return md.markdown(_defang_schemes(text),
+                       extensions=["nl2br", "fenced_code", _inert_markdown()])
+
+
 def render_markdown(text: str) -> str:
     """Convert markdown text to HTML for PDF rendering.
 
@@ -288,7 +335,7 @@ def render_markdown(text: str) -> str:
                 parsed = json.loads(text[first_brace:last_brace + 1])
                 if isinstance(parsed, dict) and "narrative" in parsed:
                     text = parsed["narrative"]
-                    return md.markdown(text, extensions=["nl2br", "fenced_code"])
+                    return _markdown(text)
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -318,7 +365,7 @@ def render_markdown(text: str) -> str:
                     i += 1
             text = ''.join(extracted)
 
-    return md.markdown(text, extensions=["nl2br", "fenced_code"])
+    return _markdown(text)
 
 
 def severity_badge(severity: str) -> str:

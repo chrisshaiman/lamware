@@ -68,6 +68,39 @@ def is_powershell_script(report: dict, sample_path: str = "") -> bool:
     return False
 
 
+#: Every prefix PowerShell accepts for -EncodedCommand, `-e` through the full word.
+_ENCODED_FLAGS = frozenset("-" + "encodedcommand"[:n] for n in range(1, 15))
+#: The executable at the END of a token: a path or quotes may precede it.
+_PS_EXE = re.compile(r"(?:powershell|pwsh)(?:\.exe)?\Z", re.IGNORECASE)
+_B64_BLOB = re.compile(r"[A-Za-z0-9+/=]{20,}")
+
+
+def encoded_command_blob(cmdline: str) -> str | None:
+    r"""The base64 after the first `-EncodedCommand` (any prefix) that follows a
+    PowerShell executable on this command line, or None.
+
+    One pass over whitespace-separated tokens (#734). The regex it replaces,
+    `(?:powershell|pwsh)(?:\.exe)?\s+.*?-(?:e|en|…)\s+(blob)`, re-scanned the rest
+    of the line from every candidate position: 1.2 s on a 32k-character command
+    line, which the sample controls. Matches what that regex matched: the
+    executable may carry a path or quotes, the flag is any prefix of
+    `-encodedcommand` in any case, and the blob is 20+ base64 characters at the
+    start of the next token.
+    """
+    seen_ps = False
+    tokens = cmdline.split()
+    for i, tok in enumerate(tokens):
+        bare = tok.strip("\"'")
+        if not seen_ps:
+            seen_ps = bool(_PS_EXE.search(bare))
+            continue
+        if tok.lower() in _ENCODED_FLAGS and i + 1 < len(tokens):
+            blob = _B64_BLOB.match(tokens[i + 1].lstrip("\"'"))
+            if blob:
+                return blob.group(0)
+    return None
+
+
 def extract_powershell_from_cape(report: dict) -> list[dict]:
     """Extract encoded PowerShell commands from CAPE process command lines.
 
@@ -83,19 +116,11 @@ def extract_powershell_from_cape(report: dict) -> list[dict]:
         return []
 
     results = []
-    enc_pattern = re.compile(
-        r'(?:powershell|pwsh)(?:\.exe)?\s+.*?'
-        r'-(?:e|en|enc|enco|encod|encode|encoded|encodedc|encodedco|encodedcom|encodedcomm|encodedcomma|encodedcomman|encodedcommand)\s+'
-        r'([A-Za-z0-9+/=]{20,})',
-        re.IGNORECASE,
-    )
-
     for pid_str, cmdline in cmdlines.items():
         if not cmdline:
             continue
-        match = enc_pattern.search(cmdline)
-        if match:
-            b64_blob = match.group(1)
+        b64_blob = encoded_command_blob(cmdline)
+        if b64_blob:
             try:
                 decoded_bytes = base64.b64decode(b64_blob)
                 decoded_text = decoded_bytes.decode("utf-16-le", errors="replace").strip('\x00')
