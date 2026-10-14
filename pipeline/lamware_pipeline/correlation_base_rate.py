@@ -92,6 +92,26 @@ ORDER BY distinct_rules DESC, findings DESC
 LIMIT 50
 """
 
+#: Every analysis that produced a finding, newest first, for the nightly keep-list
+#: (corpus_harvest). Not CORPUS_CANDIDATES: that is the top 50 by richness, and a
+#: thin finding from last night is exactly the one the 7-day cleanup is about to
+#: delete. The age cut is applied by the caller, so this stays parameter-free.
+KEEP_CANDIDATES = """
+SELECT a.task_id,
+       s.sha256,
+       a.created_at,
+       a.cape_task_id,
+       a.malware_family_guess,
+       count(*)                 AS findings,
+       array_agg(DISTINCT c.type ORDER BY c.type) AS rules
+FROM analyses a
+JOIN samples s      ON s.id = a.sample_id
+JOIN correlations c ON c.analysis_id = a.id
+WHERE a.correlation_warnings IS NOT NULL
+GROUP BY a.id, a.task_id, s.sha256, a.created_at, a.cape_task_id, a.malware_family_guess
+ORDER BY a.created_at DESC
+"""
+
 #: Which rules are going unevaluated, and how often. Previously this needed a
 #: join and a GROUP BY over a whole table; it is now an unnest of one column.
 #:
@@ -113,4 +133,5 @@ QUERIES = {
     "blind_rate": BLIND_RATE,
     "warning_frequency": WARNING_FREQUENCY,
     "corpus_candidates": CORPUS_CANDIDATES,
+    "keep_candidates": KEEP_CANDIDATES,
 }
