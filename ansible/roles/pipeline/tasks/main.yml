@@ -312,7 +312,7 @@
   ansible.builtin.file:
     path: "{{ pipeline_install_dir }}/pkg"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0755"
 
@@ -392,7 +392,9 @@
         src: "{{ pipeline_pkg_remote_tmp.path }}/lamware-pkg-src.tar.gz"
         dest: "{{ pipeline_install_dir }}/pkg/"
         remote_src: true
-        owner: pipeline
+        # Root: root pip-installs from here (ADR-025). Source pipeline could
+        # write would be code root installs.
+        owner: root
         group: lamware
 
   always:
@@ -418,7 +420,7 @@
   ansible.builtin.file:
     path: "{{ pipeline_install_dir }}/pkg"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "u=rwX,g=rX,o="
     recurse: true
@@ -429,10 +431,12 @@
 # pipeline runtime no longer depends on --break-system-packages.
 #
 # The `pipeline` user is iptables-network-locked (cannot reach PyPI), so:
-#   * the venv is created as the pipeline user (offline — bundled ensurepip)
 #   * a wheelhouse is built as ROOT (root is not network-locked, and building
 #     on the host guarantees correct platform/python3.12 wheels)
-#   * all installs run as the pipeline user, offline, from that wheelhouse
+#   * the venv is created and installed into as ROOT, offline, from that
+#     wheelhouse, and pipeline only reads it (ADR-025). A venv the pipeline user
+#     owns is code it can rewrite: one write as pipeline would persist into
+#     every later run.
 # -------------------------------------------------------------------------
 
 - name: Ensure python3-venv is installed (for the pipeline virtualenv)
@@ -444,14 +448,12 @@
   ansible.builtin.command:
     cmd: python3 -m venv "{{ pipeline_install_dir }}/venv"
     creates: "{{ pipeline_install_dir }}/venv/bin/pip"
-  become: true
-  become_user: pipeline
 
 - name: Create the pipeline wheelhouse directory
   ansible.builtin.file:
     path: "{{ pipeline_install_dir }}/wheelhouse"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
 
@@ -476,16 +478,14 @@
   changed_when: "'Saved' in pipeline_wheelhouse.stdout"
   when: pipeline_wheelhouse_existing.matched | int == 0
 
-- name: Make the wheelhouse readable by the pipeline user
-  # The populate step runs as ROOT (the pipeline user is network-locked), and on
-  # a hardened host root's umask leaves the downloaded wheels 0600 root:root —
-  # unreadable by the become_user: pipeline installs that follow. Hand ownership
-  # to pipeline:lamware and grant traverse/read (symbolic +X = dirs only). Runs
-  # UNCONDITIONALLY (not gated on the populate `when`) so a wheelhouse left
-  # root-owned by an earlier failed run self-heals on the next converge.
+- name: Make the wheelhouse group-readable, root-owned
+  # Installs run as root now (ADR-025), so pipeline needs no access and must not
+  # be able to swap a wheel root is about to install. Runs unconditionally so a
+  # wheelhouse an earlier run left pipeline-owned is taken back on the next
+  # converge.
   ansible.builtin.file:
     path: "{{ pipeline_install_dir }}/wheelhouse"
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "u=rwX,g=rX,o="
     recurse: true
@@ -496,23 +496,19 @@
       {{ pipeline_install_dir }}/venv/bin/pip install
       --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
       --upgrade pip setuptools wheel
-  become: true
-  become_user: pipeline
   register: pipeline_venv_buildtools
   changed_when: "'Successfully installed' in pipeline_venv_buildtools.stdout"
 
-- name: Install third-party runtime deps into the venv (offline, as pipeline)
+- name: Install third-party runtime deps into the venv (offline, as root)
   ansible.builtin.command:
     cmd: >
       {{ pipeline_install_dir }}/venv/bin/pip install
       --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
       requests weasyprint markdown psycopg2-binary ppdeep==20260221
-  become: true
-  become_user: pipeline
   register: pipeline_venv_thirdparty
   changed_when: "'Successfully installed' in pipeline_venv_thirdparty.stdout"
 
-- name: Install lamware-shared + lamware-pipeline into the venv (offline, as pipeline)
+- name: Install lamware-shared + lamware-pipeline into the venv (offline, as root)
   # --no-build-isolation: use the venv's just-installed setuptools instead of
   # fetching a build backend from PyPI (which the pipeline user cannot reach).
   # --force-reinstall --no-deps: the local packages keep version 0.1.0 across code
@@ -527,16 +523,29 @@
       --force-reinstall --no-deps
       {{ pipeline_install_dir }}/pkg/shared
       {{ pipeline_install_dir }}/pkg/pipeline
-  become: true
-  become_user: pipeline
   register: pipeline_venv_local
   changed_when: "'Successfully installed' in pipeline_venv_local.stdout"
 
-- name: Create pipeline directories
+- name: Root-own the pipeline venv (ADR-025)
+  # Venvs created before ADR-025 were built as pipeline, which could then rewrite
+  # any installed package. Runs every converge, so a file pip leaves behind with
+  # another owner is taken back too. g=rX: pipeline (group lamware) reads and
+  # executes, never writes.
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/venv"
+    state: directory
+    owner: root
+    group: lamware
+    mode: "u=rwX,g=rX,o="
+    recurse: true
+
+- name: Create the pipeline code directories, root-owned (ADR-025)
+  # Root-owned DIRECTORIES as well as files: the owner of a directory can rename
+  # or replace any file in it, whoever owns the file.
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "2750"
   loop:
@@ -544,8 +553,76 @@
     - "{{ pipeline_install_dir }}/stages"
     - "{{ pipeline_install_dir }}/lamware_eval"
     - "{{ pipeline_install_dir }}/lamware_detonate"
+
+- name: Root-own everything already inside the code directories (ADR-025)
+  # Not only what this role deploys: a file it no longer ships (stages/javascript.py
+  # on 2026-10-14) stays behind with its old owner, still importable, still
+  # writable by pipeline. Owner only: the deploy tasks below set each file's
+  # group, and a group here would flip it back and forth on every converge.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    # A group-writable file would leave pipeline (its group) able to write it.
+    mode: "go-w"
+    recurse: true
+  loop:
+    - "{{ pipeline_install_dir }}/stages"
+    - "{{ pipeline_install_dir }}/lamware_eval"
+    - "{{ pipeline_install_dir }}/lamware_detonate"
+
+- name: Find Python files at the top of the install directory
+  # The role deploys several; operators have left others. Any of them is code the
+  # pipeline user (or root) may import from here.
+  ansible.builtin.find:
+    paths: "{{ pipeline_install_dir }}"
+    patterns: "*.py"
+    file_type: file
+  register: pipeline_toplevel_py
+
+- name: Root-own the top-level Python files (ADR-025)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    mode: "go-w"
+  loop: "{{ pipeline_toplevel_py.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Remove bytecode caches from the code directories (ADR-025)
+  # A cache directory someone other than root can write inside a root-owned code
+  # directory is code that someone can plant: Python loads a .pyc whose recorded
+  # source mtime and size match. These were left by earlier runs as pipeline and
+  # as cape. With the directories root-owned, only root can recreate them.
+  ansible.builtin.file:
+    path: "{{ item }}/__pycache__"
+    state: absent
+  loop:
+    - "{{ pipeline_install_dir }}"
+    - "{{ pipeline_install_dir }}/stages"
+    - "{{ pipeline_install_dir }}/lamware_eval"
+    - "{{ pipeline_install_dir }}/lamware_detonate"
+
+- name: Create the pipeline data directories (written at runtime, owned by pipeline)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "2750"
+  loop:
     - "{{ pipeline_install_dir }}/eval"
     - "{{ pipeline_reports_dir }}"
+
+- name: Create the eval corpus directory (written by lamware_eval at runtime)
+  # It used to be created on first use, under a pipeline-owned /opt/pipeline.
+  # With /opt/pipeline root-owned, a fresh host needs it made here.
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/eval-corpus"
+    state: directory
+    owner: pipeline
+    group: pipeline
+    mode: "2700"
 
 - name: Create ramdisk mount point for Volatility
   ansible.builtin.file:
@@ -569,7 +646,7 @@
   ansible.builtin.template:
     src: config.json.j2
     dest: "{{ pipeline_install_dir }}/config.json"
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0640"
 
@@ -577,7 +654,7 @@
   ansible.builtin.template:
     src: pipeline.env.j2
     dest: "{{ pipeline_install_dir }}/pipeline.env"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   no_log: true  # contains cape_api_key + db password
@@ -599,7 +676,7 @@
   ansible.builtin.copy:
     src: run-pipeline.py
     dest: "{{ pipeline_install_dir }}/run-pipeline.py"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0750"
 
@@ -610,7 +687,7 @@
   ansible.builtin.copy:
     src: "stages/{{ item }}"
     dest: "{{ pipeline_install_dir }}/stages/{{ item }}"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   loop:
@@ -640,7 +717,7 @@
   ansible.builtin.copy:
     src: ioc_extract.py
     dest: "{{ pipeline_install_dir }}/ioc_extract.py"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
 
@@ -650,7 +727,7 @@
   ansible.builtin.copy:
     src: "{{ item }}"
     dest: "{{ pipeline_install_dir }}/{{ item }}"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   loop:
@@ -677,7 +754,7 @@
   ansible.builtin.copy:
     src: "lamware_eval/{{ item }}"
     dest: "{{ pipeline_install_dir }}/lamware_eval/{{ item }}"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   # NOTE: this list is enumerated, not a glob — a new module added to
@@ -709,7 +786,7 @@
   ansible.builtin.copy:
     src: "lamware_detonate/{{ item }}"
     dest: "{{ pipeline_install_dir }}/lamware_detonate/{{ item }}"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   # Enumerated, not a glob — same contract as lamware_eval above, and
@@ -862,7 +939,7 @@
   ansible.builtin.copy:
     src: "{{ item }}"
     dest: "{{ pipeline_install_dir }}/{{ item }}"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0640"
   loop:
@@ -874,7 +951,7 @@
   ansible.builtin.template:
     src: run-pipeline-wrapper.sh.j2
     dest: "{{ pipeline_install_dir }}/run-pipeline"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0750"
 
@@ -884,7 +961,7 @@
   ansible.builtin.template:
     src: run-dotnet-tools.sh.j2
     dest: "{{ pipeline_install_dir }}/run-dotnet-tools"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0750"
 
@@ -893,7 +970,7 @@
   ansible.builtin.copy:
     src: generate-report.py
     dest: "{{ pipeline_install_dir }}/generate-report.py"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0750"
 
@@ -923,7 +1000,7 @@
   ansible.builtin.template:
     src: pipeline-cleanup.sh.j2
     dest: "{{ pipeline_install_dir }}/cleanup.sh"
-    owner: pipeline
+    owner: root
     group: pipeline
     mode: "0750"
 
