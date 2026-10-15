@@ -125,7 +125,7 @@
 # Staged in a private directory, not a fixed name in the shared /tmp (M14): root
 # hands this file to `virsh define`, and a local user who created the name first
 # would have chosen the guest definition, devices and all.
-- name: Define the guest libvirt domains from a private staging directory
+- name: Stage the guest domain XML in a private directory, then define the domains
   block:
     - name: Create a private directory for the domain XML
       ansible.builtin.tempfile:
