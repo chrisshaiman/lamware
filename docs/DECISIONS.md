@@ -29,6 +29,7 @@ these describe an AWS data plane that no longer exists.
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
 | [023](#adr-023-image-builds-are-hermetic--an-unprivileged-fetch-user-downloads-every-build-input-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: an unprivileged fetch user downloads inputs, `podman build` has no network | Accepted |
+| [025](#adr-025-code-the-pipeline-runs-is-root-owned-the-pipeline-user-owns-data-only) | Code the pipeline runs is root-owned; the pipeline user owns data only | Accepted |
 
 ### Detonation environment
 
@@ -1185,3 +1186,60 @@ once; the bases are byte-identical, so the rebuild is expected to reuse cached l
 
 **Recorded under the second-fix rule (CLAUDE.md §2):** the first fix (platform digest)
 addressed the instance; this addresses the decision the original text got wrong.
+
+---
+
+## ADR-025: Code the pipeline runs is root-owned; the pipeline user owns data only
+
+**Status:** Accepted (2026-10-15)
+**Refs:** the 2026-10-07 security review; ADR-021 (sandboxing hostile files), ADR-023 (hermetic builds)
+
+### Context
+
+The `pipeline` user reads hostile files all day, through parsers, decompilers and
+model output. The architecture assumes it can be compromised, which is why it has
+no network (ADR-020, #777) and why hostile files are opened only in containers
+(ADR-021). What it could still do was write: it owned `/opt/pipeline`, the venv it
+runs from, and the modules in it. One write as pipeline would then run again in
+every later analysis, with no further foothold needed. The same held for any
+other user that could write there.
+
+### Decision
+
+1. **Anything the pipeline executes or imports is owned by root and not writable
+   by any other user**: the install directory itself, the stage modules, the
+   eval and detonation harnesses, the venv and everything installed in it, the
+   wrappers, `config.json` and `pipeline.env`. Pipeline reads them through its
+   group.
+2. **Directories count, not just files.** The owner of a directory can rename or
+   replace any file in it, whoever owns the file.
+3. **No writable bytecode caches.** A cache directory another user can write in
+   a root-owned tree is code that user can plant. Caches are removed on deploy,
+   and only root can recreate them.
+4. **Root installs only what root controls.** The venv is installed by root,
+   offline, from a root-owned wheelhouse and root-owned package source. Moving
+   the install to root while the pipeline still owned its inputs would have
+   turned a persistence path into a privilege escalation.
+5. **The pipeline user owns data only**: reports, eval output, corpus, logs,
+   the correlated-report keep-list, the Volatility ramdisk.
+
+### Verification
+
+Security-test check 14 asks the kernel, as the pipeline user and as cape, with
+`find -writable` (access(2), nothing modified), whether any code path is
+writable: the install directory itself, every code subdirectory, the venv in
+full, and the top-level code files. It fails if anything is, and it fails if the
+pipeline user cannot write its own reports directory, so a blind probe cannot
+pass. It was run against the host before the change and failed, naming both
+users.
+
+### Consequences
+
+- A deploy of the pipeline role takes ownership back every time, including
+  files no task ships (stale modules) and files pip writes.
+- Operators running code from `/opt/pipeline` as root import root-owned files
+  only.
+- Rollback is not a plain revert: the previous role pip-installs as pipeline,
+  which fails on a root-owned venv. Give the venv, `pkg/` and `wheelhouse/` back
+  first (`chown -R pipeline:lamware` on each), then redeploy the reverted role,
+  which re-owns the rest. No data moves.
