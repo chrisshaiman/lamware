@@ -29,6 +29,7 @@ these describe an AWS data plane that no longer exists.
 | [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
 | [023](#adr-023-image-builds-are-hermetic--an-unprivileged-fetch-user-downloads-every-build-input-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: an unprivileged fetch user downloads inputs, `podman build` has no network | Accepted |
+| [025](#adr-025-code-the-pipeline-runs-is-root-owned-the-pipeline-user-owns-data-only) | Code the pipeline runs is root-owned; the pipeline user owns data only | Proposed |
 
 ### Detonation environment
 

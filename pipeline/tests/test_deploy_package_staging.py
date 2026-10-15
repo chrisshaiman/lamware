@@ -68,8 +68,12 @@ def test_the_archive_is_not_stripped_into_the_wrong_layout():
 
 
 def test_ownership_is_still_applied():
-    assert "owner: pipeline" in BLOCK and "group: lamware" in BLOCK, (
+    """Root owns the staged source (ADR-025): root pip-installs from it, so a tree the
+    pipeline user could write would turn a persistence path into an escalation."""
+    assert "owner: root" in BLOCK and "group: lamware" in BLOCK, (
         "the api venv reads this tree as group lamware; unarchive must set ownership")
+    assert "owner: pipeline" not in BLOCK, (
+        "root installs from this tree, so the pipeline user must not own any of it")
 
 
 def test_stale_staged_source_is_cleared_before_extracting():
