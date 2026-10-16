@@ -157,16 +157,56 @@
   changed_when: true
   register: frontend_build
 
-- name: Copy dist to serving directory  # noqa: no-handler
+# The build is staged whole and swapped in by rename, not copied over the
+# serving directory: copy never deletes, so that directory kept every bundle
+# and source map since June (22 of each), and turning source maps off in the
+# build changed nothing nginx served (#731).
+- name: Check whether the serving directory holds exactly what the build produced
+  # rc 0 when the file lists match, 1 when they differ or nothing is served yet.
+  # A deploy that did not rebuild still has to converge the serving directory:
+  # the first deploy of this fix rebuilt nothing and so changed nothing.
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail;
+      [ -d {{ frontend_dist_dir }} ] || exit 1;
+      diff <(cd {{ frontend_install_dir }}/src/dist && find . -type f | sort)
+      <(cd {{ frontend_dist_dir }} && find . -type f | sort) > /dev/null
+    executable: /bin/bash
+  register: frontend_dist_diff
+  failed_when: frontend_dist_diff.rc > 1
+  changed_when: false
+
+- name: Decide whether the serving directory must be replaced
+  ansible.builtin.set_fact:
+    frontend_dist_stale: "{{ (frontend_build.changed | default(false)) or frontend_dist_diff.rc != 0 }}"
+
+- name: Remove a staging directory a failed deploy left behind  # noqa: no-handler
+  ansible.builtin.file:
+    path: "{{ frontend_dist_dir }}.new"
+    state: absent
+  when: frontend_dist_stale | bool
+
+- name: Stage the new build beside the serving directory  # noqa: no-handler
   ansible.builtin.copy:
     src: "{{ frontend_install_dir }}/src/dist/"
-    dest: "{{ frontend_dist_dir }}/"
+    dest: "{{ frontend_dist_dir }}.new/"
     remote_src: true
     owner: root
     group: root
     mode: "0644"
     directory_mode: "0755"
-  when: frontend_build.changed | default(false)
+  when: frontend_dist_stale | bool
+
+- name: Replace the serving directory with the new build  # noqa: no-handler
+  ansible.builtin.shell:
+    cmd: >
+      set -e;
+      rm -rf {{ frontend_dist_dir }}.old;
+      if [ -d {{ frontend_dist_dir }} ]; then mv {{ frontend_dist_dir }} {{ frontend_dist_dir }}.old; fi;
+      mv {{ frontend_dist_dir }}.new {{ frontend_dist_dir }};
+      rm -rf {{ frontend_dist_dir }}.old
+  when: frontend_dist_stale | bool
+  changed_when: true
   notify: Reload nginx
 
 - name: Fix dist permissions for nginx (www-data needs read + traverse)
