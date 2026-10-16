@@ -1006,8 +1006,20 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
             r'encodedcommand', r'frombase64', r'downloadstring', r'invoke-expression',
             r'iex\s*\(', r'net\.webclient', r'bitstransfer', r'start-process',
             r'cmd\.exe\s*/c', r'wscript', r'cscript', r'mshta', r'regsvr32',
-            r'rundll32', r'certutil.*-decode', r'bitsadmin.*transfer',
-            r'powershell.*-e\s+[A-Za-z0-9+/=]{20,}',  # encoded powershell
+            r'rundll32',
+        ]
+        # `A ... B` later on the same line, tried after the list above. As
+        # `A.*B` regexes these rescanned the rest of the line from every A:
+        # quadratic on a command line the sample writes (#734, the shape
+        # stages/powershell.py had), 0.19 s at 88k characters for the encoded
+        # PowerShell one. The first A is found once and B searched from there,
+        # which flags the same lines. The label is the regex it replaces, since
+        # the report prints it.
+        suspicious_sequences = [
+            (r'certutil.*-decode', "certutil", re.compile(r'-decode')),
+            (r'bitsadmin.*transfer', "bitsadmin", re.compile(r'transfer')),
+            (r'powershell.*-e\s+[A-Za-z0-9+/=]{20,}', "powershell",  # encoded powershell
+             re.compile(r'-e\s+[A-Za-z0-9+/=]{20,}')),
         ]
         for entry in cmdline:
             args = entry.text("Args", "", nullable=False)
@@ -1016,15 +1028,20 @@ def extract_volatility_insights(plugins: dict, warnings: list[str] | None = None
             pid = entry.integer("PID", 0)
             name = entry.text("Process", "")
             args_lower = args.lower()
-            for pattern in suspicious_patterns:
-                if re.search(pattern, args_lower):
-                    suspicious_cmdlines.append({
-                        "pid": pid,
-                        "process": name,
-                        "cmdline": args[:500],
-                        "pattern": pattern,
-                    })
-                    break
+            hit = next((p for p in suspicious_patterns if re.search(p, args_lower)), None)
+            if hit is None:
+                for label, first, rest in suspicious_sequences:
+                    at = args_lower.find(first)
+                    if at >= 0 and rest.search(args_lower, at + len(first)):
+                        hit = label
+                        break
+            if hit is not None:
+                suspicious_cmdlines.append({
+                    "pid": pid,
+                    "process": name,
+                    "cmdline": args[:500],
+                    "pattern": hit,
+                })
         if suspicious_cmdlines:
             insights["suspicious_cmdlines"] = suspicious_cmdlines
 

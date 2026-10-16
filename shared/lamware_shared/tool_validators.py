@@ -25,6 +25,12 @@ def validate_ghidra_args(tool_name: str, args: dict) -> str | None:
     Returns an error string, or None if the args are valid OR the tool is not a
     Ghidra tool (callers layer their own generic validation on top).
     """
+    # Before anything reads it (#734): the arguments are model output, and a
+    # model emitting `"args": "..."` made `.items()` below raise AttributeError,
+    # which ended the interpret stage instead of returning a tool error the
+    # model could correct. Checked for every tool, Ghidra or not.
+    if not isinstance(args, dict):
+        return f"Invalid arguments: expected an object, got {type(args).__name__}"
     validators = GHIDRA_ARG_VALIDATORS.get(tool_name)
     if validators is None:
         return None
