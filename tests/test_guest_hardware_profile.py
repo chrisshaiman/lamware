@@ -255,9 +255,12 @@ def test_the_deploy_rechecks_the_model_against_both_layers():
         "nothing rejects a machine-type-dependent alias"
 
     # and it must run BEFORE the domains are defined
-    names = [t.get("name", "") for t in tasks]
+    # A top-level entry's names include its block's tasks: the define step runs
+    # inside a block that stages the XML privately (M14).
+    names = [" ".join([t.get("name", "")] + [c.get("name", "") for c in t.get("block", [])])
+             for t in tasks]
     guard = next(i for i, n in enumerate(names) if "libvirt does not know" in n)
-    define = next(i for i, n in enumerate(names) if n.startswith("Define guest libvirt domains"))
+    define = next(i for i, n in enumerate(names) if "Define guest libvirt domains" in n)
     assert guard < define, "the CPU model is checked after the domains are defined"
 
 

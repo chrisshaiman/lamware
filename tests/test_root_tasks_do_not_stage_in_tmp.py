@@ -34,3 +34,40 @@ def test_the_detonation_network_xml_is_not_staged_in_tmp():
         cmd = t.get("ansible.builtin.command")
         if isinstance(cmd, str) and "net-define" in cmd:
             assert "/tmp/" not in cmd, cmd
+
+
+# Module arguments that name a file a task writes, reads or runs.
+_PATH_KEYS = ("dest", "src", "path", "cmd", "chdir", "creates", "removes")
+
+
+def _tmp_references(task: dict) -> list[str]:
+    """Every fixed /tmp/... name a task stages through, read off its parsed args."""
+    out = []
+    for mod, body in task.items():
+        if not isinstance(mod, str) or not mod.startswith("ansible."):
+            continue
+        if isinstance(body, str):          # command/shell given as a string
+            if "/tmp/" in body:
+                out.append(f"{mod}: {body.strip()[:80]}")
+            continue
+        if not isinstance(body, dict):
+            continue
+        if mod.endswith(".file") and body.get("state") == "absent":
+            continue                       # removing a legacy name does not follow links
+        for k in _PATH_KEYS:
+            v = body.get(k)
+            if isinstance(v, str) and "/tmp/" in v:
+                out.append(f"{mod}.{k}: {v.strip()[:80]}")
+    return out
+
+
+def test_no_role_stages_a_file_under_a_fixed_tmp_name():
+    """The class, not the networking instance: a fixed name in the shared /tmp can
+    be created first by any local user, and root then reads, runs or defines
+    their file (M14). Use ansible.builtin.tempfile (or mktemp -d) instead."""
+    offenders = []
+    for role_dir in sorted(p for p in ROLES.iterdir() if (p / "tasks").is_dir()):
+        for t in _tasks(role_dir.name):
+            for ref in _tmp_references(t):
+                offenders.append(f"{role_dir.name}: {t.get('name', '?')}: {ref}")
+    assert not offenders, "\n".join(offenders)

@@ -23,14 +23,22 @@
   changed_when: false
   failed_when: false
 
+# Staged in a private directory, not a fixed name in the shared /tmp (M14): root
+# unpacks this archive into the directory it runs nuclei from.
 - name: Download nuclei binary
   when: nuclei_check.rc != 0
   block:
+    - name: Create a private directory for the nuclei download
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lamware-nuclei-
+      register: security_test_nuclei_tmp
+
     - name: Download nuclei release
       ansible.builtin.get_url:
         url: "{{ security_test_nuclei_release_base }}/v{{ security_test_nuclei_version }}/nuclei_{{ security_test_nuclei_version }}_linux_amd64.zip"
-        dest: /tmp/nuclei.zip
-        mode: "0644"
+        dest: "{{ security_test_nuclei_tmp.path }}/nuclei.zip"
+        mode: "0600"
 
     - name: Install unzip
       ansible.builtin.apt:
@@ -39,7 +47,7 @@
 
     - name: Extract nuclei
       ansible.builtin.unarchive:
-        src: /tmp/nuclei.zip
+        src: "{{ security_test_nuclei_tmp.path }}/nuclei.zip"
         dest: "{{ security_test_install_dir }}/"
         remote_src: true
 
@@ -48,10 +56,12 @@
         path: "{{ security_test_install_dir }}/nuclei"
         mode: "0755"
 
-    - name: Clean up zip
+  always:
+    - name: Remove the nuclei download directory
       ansible.builtin.file:
-        path: /tmp/nuclei.zip
+        path: "{{ security_test_nuclei_tmp.path }}"
         state: absent
+      when: security_test_nuclei_tmp.path is defined
 
 - name: Deploy security smoke test script
   ansible.builtin.template:

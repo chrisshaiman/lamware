@@ -205,11 +205,14 @@
 # -------------------------------------------------------------------------
 
 - name: Smoke test triage container
+  # A private mktemp directory, not fixed names in the shared /tmp (M14), which
+  # another local user could create first.
   ansible.builtin.shell: |
-    echo 'test' > /tmp/triage-test-sample.txt
-    {{ triage_install_dir }}/run-triage /tmp/triage-test-sample.txt /tmp/triage-test-output
-    rm -f /tmp/triage-test-sample.txt
-    rm -rf /tmp/triage-test-output
+    set -euo pipefail
+    d=$(mktemp -d)
+    trap 'rm -rf "$d"' EXIT
+    echo 'test' > "$d/triage-test-sample.txt"
+    {{ triage_install_dir }}/run-triage "$d/triage-test-sample.txt" "$d/triage-test-output"
   args:
     executable: /bin/bash
   become: true
