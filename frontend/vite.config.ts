@@ -30,7 +30,9 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // No source maps in the production build (#731): nginx served the .map
+    // files, which hand anyone who can load the app its original source.
+    sourcemap: false,
   },
   test: {
     environment: "jsdom",
