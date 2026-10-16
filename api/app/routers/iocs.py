@@ -19,6 +19,7 @@ from ..database import get_session
 from ..models.analysis import Analysis
 from ..models.ioc import AnalysisIoc, IocValue
 from ..models.sample import Sample
+from ..search import ESCAPE, contains
 
 router = APIRouter(prefix="/api/iocs", tags=["iocs"])
 
@@ -80,7 +81,7 @@ async def list_iocs(
 
     if q:
         # Case-insensitive substring match on the IOC value string
-        stmt = stmt.where(IocValue.value.ilike(f"%{q}%"))
+        stmt = stmt.where(IocValue.value.ilike(contains(q), escape=ESCAPE))
 
     if type:
         stmt = stmt.where(IocValue.type == type)
@@ -100,7 +101,7 @@ async def list_iocs(
     if family:
         family_analyses = (
             select(Analysis.id)
-            .where(Analysis.malware_family_guess.ilike(f"%{family}%"))
+            .where(Analysis.malware_family_guess.ilike(contains(family), escape=ESCAPE))
         ).subquery()
         stmt = stmt.where(
             AnalysisIoc.analysis_id.in_(select(family_analyses.c.id))

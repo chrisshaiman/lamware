@@ -34,6 +34,7 @@ from ..models import (
     Signature,
     TechniqueValue,
 )
+from ..search import ESCAPE, contains
 
 AUTH_RESPONSES = {401: {"description": "Authentication required"}, 403: {"description": "Insufficient role"}}
 
@@ -80,16 +81,16 @@ def list_analyses(
 
     # Filters
     if q:
-        pattern = f"%{q}%"
+        pattern = contains(q)
         stmt = stmt.where(
-            col(Sample.sha256).ilike(pattern)
-            | col(Sample.filename).ilike(pattern)
-            | col(Analysis.malware_family_guess).ilike(pattern)
+            col(Sample.sha256).ilike(pattern, escape=ESCAPE)
+            | col(Sample.filename).ilike(pattern, escape=ESCAPE)
+            | col(Analysis.malware_family_guess).ilike(pattern, escape=ESCAPE)
         )
     if severity:
         stmt = stmt.where(Analysis.severity == severity)
     if family:
-        stmt = stmt.where(col(Analysis.malware_family_guess).ilike(f"%{family}%"))
+        stmt = stmt.where(col(Analysis.malware_family_guess).ilike(contains(family), escape=ESCAPE))
 
     # Total count before pagination
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -538,6 +539,19 @@ def delete_analysis(
 # ---------------------------------------------------------------------------
 
 
+def _require_safe_task_dir(analysis: Analysis) -> None:
+    """404 unless the row's task_id is one safe path segment (#730).
+
+    The same rule DELETE uses: task_id is a free-form column joined onto
+    reports_dir, and a value like `../x` would serve a file from outside it.
+    The value comes from the database, so this guards a bad write upstream.
+    """
+    if not is_safe_task_id(analysis.task_id):
+        log.error("Refusing to serve files for analysis %s: unsafe task_id %r",
+                  analysis.id, analysis.task_id)
+        raise HTTPException(status_code=404, detail="Report files not found")
+
+
 @router.get("/{analysis_id}/pdf")
 def get_pdf(
     analysis_id: int,
@@ -546,6 +560,7 @@ def get_pdf(
 ) -> FileResponse:
     """Download the PDF report for this analysis."""
     analysis = _get_analysis_or_404(analysis_id, session)
+    _require_safe_task_dir(analysis)
 
     pdf_path = Path(settings.reports_dir) / analysis.task_id / "report.pdf"
     if not pdf_path.exists():
@@ -574,6 +589,7 @@ def get_logs(
 ) -> FileResponse:
     """Download the pipeline log for this analysis."""
     analysis = _get_analysis_or_404(analysis_id, session)
+    _require_safe_task_dir(analysis)
 
     # Check multiple naming conventions used by the pipeline
     task_dir = Path(settings.reports_dir) / analysis.task_id
