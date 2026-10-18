@@ -38,6 +38,7 @@ TASKS = yaml.safe_load((ROLE / "tasks" / "main.yml").read_text(encoding="utf-8")
 PATCHES = [
     "0001-analyzer-parent-spoofing-fallback.patch",
     "0002-office-libreoffice-fallback.patch",
+    "0003-cleaners-commit-bulk-task-deletes.patch",
 ]
 
 
@@ -57,11 +58,11 @@ def test_patch_file_exists_and_is_a_patch(name):
     assert "@@" in body, "no hunks — an empty patch applies cleanly and does nothing"
 
 
-def test_the_role_applies_both_patches():
+def test_the_role_applies_every_patch():
     task = _task("Apply CAPE local patches")
     assert task.get("ansible.posix.patch"), "not using the patch module"
     assert sorted(task.get("loop") or []) == sorted(PATCHES), \
-        "the apply loop does not cover both patches"
+        "the apply loop does not cover every patch"
 
 
 def test_apply_is_idempotent_and_anchored_to_the_install_dir():
@@ -100,6 +101,21 @@ def test_the_marker_string_matches_between_patch_and_verification():
     marker = "Parent-process spoofing unavailable"
     assert marker in patch, "the patch no longer adds the string the check greps for"
     assert marker in cmd
+
+
+def test_the_cleaner_commit_patch_is_verified_by_its_marker():
+    """0003 (#795): CAPE's safe-begin wrapper only flushes inside an open
+    transaction, so the cleaner's bulk delete was rolled back at exit. The
+    patch commits; the role greps for its marker after applying, and the
+    marker must be the one the patch adds."""
+    patch = (PATCH_DIR / PATCHES[2]).read_text(encoding="utf-8")
+    task = _task("Verify the cleaner commits")
+    cmd = str(task["ansible.builtin.command"]["cmd"])
+    marker = "lamware #795"
+    assert marker in patch, "the patch no longer adds the string the check greps for"
+    assert marker in cmd and "cleaners_utils.py" in cmd
+    assert task.get("failed_when"), "verification cannot fail, so it is not a check"
+    assert patch.count("db.session.commit()") == 3, "three delete paths, three commits"
 
 
 # --- the staging directory must exist before anything copies into it ---------

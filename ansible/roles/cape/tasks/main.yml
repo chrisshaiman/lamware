@@ -76,6 +76,7 @@
   loop:
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
+    - 0003-cleaners-commit-bulk-task-deletes.patch
 
 # 0001 fixes an upstream defect introduced by CAPEv2#3006 (2026-05-11).
 # build_parent_attribute_list() spoofs Explorer as the parent of every launched
@@ -101,6 +102,7 @@
   loop:
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
+    - 0003-cleaners-commit-bulk-task-deletes.patch
   register: cape_patch_result
   notify: Restart Cape services
 
@@ -116,6 +118,20 @@
   changed_when: false
   failed_when: cape_patch_verify.rc != 0
   register: cape_patch_verify
+
+# 0003 (#795): CAPE's _Database wraps session.begin() so that a begin() inside
+# an already-open transaction only flushes. utils/cleaners.py queries before it
+# deletes, so its bulk task delete logged "Deleted 1023 tasks" and was rolled
+# back when the process exited: 1,023 directories and Mongo reports gone, all
+# 1,300 Postgres rows still there. The patch commits after each delete path.
+- name: Verify the cleaner commits its task deletes
+  ansible.builtin.command:
+    cmd: >-
+      grep -q "lamware #795"
+      {{ cape_install_dir }}/lib/cuckoo/common/cleaners_utils.py
+  changed_when: false
+  failed_when: cape_cleaner_patch_verify.rc != 0
+  register: cape_cleaner_patch_verify
 
 - name: Fix CAPEv2 directory ownership after cape2.sh
   ansible.builtin.file:

@@ -1,0 +1,36 @@
+diff --git a/lib/cuckoo/common/cleaners_utils.py b/lib/cuckoo/common/cleaners_utils.py
+--- a/lib/cuckoo/common/cleaners_utils.py
++++ b/lib/cuckoo/common/cleaners_utils.py
+@@ -335,6 +335,10 @@
+                 db.delete_tasks(task_ids=ids_batch)
+             except Exception as e:
+                 log.error("Failed to delete tasks from DB: %s", str(e))
++        # lamware #795: commit explicitly. _Database wraps session.begin() so a
++        # begin() inside an already-open transaction only flushes, and the query
++        # above autobegan one; without this the delete is rolled back at exit.
++        db.session.commit()
+ 
+ 
+ def fail_job(tid):
+@@ -357,6 +361,10 @@
+             _sql_deleted = True
+         else:
+             log.info("failed to remove faile task %s from DB", tid)
++    # lamware #795: commit explicitly. _Database wraps session.begin() so a
++    # begin() inside an already-open transaction only flushes, and the query
++    # above autobegan one; without this the delete is rolled back at exit.
++    db.session.commit()
+     # delete_folder OUTSIDE the begin() block: an rmtree failure mid-delete must NOT roll back the (committed)
+     # SQL delete and resurrect a task pointing at a half-deleted tree, re-broken every nightly run. A folder
+     # failure is a disk orphan-by-path (logged).
+@@ -666,6 +674,10 @@
+     db.delete_tasks(added_before=added_before,
+                     category=category,
+                     tags_tasks_like=tags_tasks_like)
++    # lamware #795: commit explicitly. _Database wraps session.begin() so a
++    # begin() inside an already-open transaction only flushes, and the query
++    # above autobegan one; without this the delete is rolled back at exit.
++    db.session.commit()
+ 
+ 
+ def cuckoo_clean_sorted_pcap_dump():
