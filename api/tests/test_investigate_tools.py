@@ -616,6 +616,32 @@ def test_undetonated_sample_is_distinguished_from_empty_extraction(cape_storage)
     assert "task ID" in result["error"]
 
 
+def test_expired_task_data_is_not_reported_as_no_payloads(cape_storage):
+    """Cape's retention removes the whole task directory (#795).
+
+    Before this, a task past retention looked exactly like a task that
+    extracted nothing, and the agent was told "no payloads" about a sample
+    that may have dropped some. The directory's absence is its own answer.
+    """
+    assert not (cape_storage / "77").exists()
+
+    result = _get_cape_payloads({}, REPORT)
+
+    assert "error" in result
+    assert "no longer on disk" in result["error"], result["error"]
+    assert "extracted no payloads" not in result["error"]
+
+
+def test_a_present_task_with_no_extraction_is_still_reported_as_empty(cape_storage):
+    """Positive control for the expiry check: existing-but-empty is unchanged."""
+    (cape_storage / "77").mkdir(parents=True)
+
+    result = _get_cape_payloads({}, REPORT)
+
+    assert "no longer on disk" not in result["error"]
+    assert "extracted no payloads" in result["error"]
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores mode bits")
 def test_unreadable_storage_is_not_reported_as_no_payloads(cape_storage):
     """The agent must not conclude the sample dropped nothing (#385).

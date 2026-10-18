@@ -21,6 +21,7 @@ from lamware_shared.cape_payloads import (
     find_payloads,
     payload_dirs,
 )
+from lamware_shared.task_ids import is_safe_task_id
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -757,6 +758,35 @@ def _cape_task_id(report: dict) -> str | None:
     return str(tid) if tid else None
 
 
+def _cape_task_expired(task_id: str) -> bool:
+    """True when Cape no longer has a directory for the task at all.
+
+    Cape's retention cron (roles/cape, #795) removes a task's directory, row
+    and report together once it is older than the configured period. After
+    that, ``find_payloads`` returns ``[]`` for the task exactly as it does for
+    one that extracted nothing, and the agent would be told "no payloads" about
+    a sample that may well have dropped some. "The data is gone" has to be its
+    own answer, for the same reason an unreadable tree is (#385).
+
+    Only the task directory's absence is checked here; the shared helpers keep
+    their "absent task is empty" contract for callers that run while the
+    directory is being written.
+    """
+    if not is_safe_task_id(task_id):
+        return False
+    try:
+        return not (CAPE_STORAGE / task_id).exists()
+    except OSError:
+        return False
+
+
+_EXPIRED_ERROR = (
+    "Cape's data for task {task_id} is no longer on disk: Cape keeps an analysis "
+    "for a limited time and this one is past it, so whether this sample extracted "
+    "payloads is unknown. Do not treat it as evidence of nothing being dropped."
+)
+
+
 def _resolve_payloads(report: dict) -> tuple[list[Payload] | None, dict | None]:
     """Return (payloads, None) on success, (None, error_dict) on failure.
 
@@ -768,6 +798,8 @@ def _resolve_payloads(report: dict) -> tuple[list[Payload] | None, dict | None]:
     task_id = _cape_task_id(report)
     if not task_id:
         return None, {"error": "No Cape task ID in report — sample may not have been detonated"}
+    if _cape_task_expired(task_id):
+        return None, {"error": _EXPIRED_ERROR.format(task_id=task_id)}
     try:
         payloads = find_payloads(task_id, storage=CAPE_STORAGE)
     except PayloadAccessError as exc:
@@ -1011,7 +1043,11 @@ def _run_python(args: dict, report: dict) -> dict:
     # the whole tool, since the sandbox is still useful without a data mount.
     task_id = _cape_task_id(report)
     try:
-        data_dirs = payload_dirs(task_id, storage=CAPE_STORAGE) if task_id else []
+        if task_id and _cape_task_expired(task_id):
+            log.info("Cape task %s is past retention; sandbox runs without a data mount", task_id)
+            data_dirs = []
+        else:
+            data_dirs = payload_dirs(task_id, storage=CAPE_STORAGE) if task_id else []
     except (PayloadAccessError, OSError) as exc:
         log.warning("Cannot read Cape payload dirs for task %s: %s", task_id, exc)
         data_dirs = []
