@@ -46,6 +46,9 @@ from lamware_pipeline.report_depth import describe as describe_depth_cut
 from lamware_shared import safe_write
 from pipeline_status import complete_pipeline, create_analysis_row, update_stage
 from stages.cape import (
+    CAPE_FREESPACE_FLOOR_MB,
+    CapeNotScheduling,
+    cape_storage_shortfall_mb,
     derive_filename,
     extract_cape_intel,
     get_cape_signatures,
@@ -493,6 +496,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                  f"memory_dump={CAPE_MEMORY_DUMP}")
         update_stage(analysis_id_early, "cape", "started")
         try:
+            # CAPE's scheduler will not start a task while its storage is below
+            # cuckoo.conf's free-space floor, and says nothing to the submitter
+            # (#795). Refuse here, with the reason, rather than queue a task that
+            # sits pending for the whole wait and comes back as a timeout.
+            shortfall = cape_storage_shortfall_mb()
+            if shortfall is not None:
+                raise CapeNotScheduling(
+                    f"CAPE's storage is {shortfall} MB below its "
+                    f"{CAPE_FREESPACE_FLOOR_MB} MB free-space floor; the scheduler "
+                    f"would not start the task (#795)")
             cape_task_id = submit_to_cape(
                 sample_path,
                 tags=cape_tags,
@@ -517,6 +530,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 "machine_ran_on": ran_on,
                 "memory_dump_requested": CAPE_MEMORY_DUMP,
             }
+            if cape_data.get("status") in ("timeout", "never_started"):
+                report["cape"]["last_cape_status"] = cape_data.get("last_cape_status")
+                report["cape"]["waited_seconds"] = cape_data.get("waited_seconds")
             if cape_data.get("status") == "reported":
                 mismatch = verify_ran_on(cape_data, cape_machine)
                 if mismatch:
@@ -543,6 +559,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                     for inj in injection_bufs:
                         log.info(f"    {inj['source_process']} (pid {inj['source_pid']}) → pid {inj['target_pid']} at {inj['injection_address']} ({inj['size']} bytes)")
 
+        except CapeNotScheduling as e:
+            log.error(f"  [!] Cape not submitted: {e}")
+            report["cape"] = {"task_id": None, "status": "never_started", "reason": str(e),
+                              "machine_requested": cape_machine,
+                              "memory_dump_requested": CAPE_MEMORY_DUMP}
+            cape_data = {}
         except Exception as e:
             log.error(f"  [!] Cape submission failed: {e}")
             report["cape"] = {"task_id": None, "status": "error", "error": str(e)}

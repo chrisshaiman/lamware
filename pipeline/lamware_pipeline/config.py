@@ -129,6 +129,11 @@ class PipelineConfig(BaseModel):
     reports_dir: str
     cape_poll_interval: int
     cape_timeout: int
+    # cuckoo.conf `freespace`, in MB: CAPE's scheduler starts nothing below it
+    # and says nothing to the submitter (#795). The pipeline checks the same
+    # number before submitting. Defaulted to CAPE's shipped value so an older
+    # config.json still loads.
+    cape_freespace_floor_mb: int = Field(default=50000, ge=0)
     # Which guest a submission is pinned to. Defaulted so an older config.json
     # still loads. Both guests are tagged x64 in kvm.conf, so tags alone do not
     # select one and an unpinned submission lands on whichever is free.

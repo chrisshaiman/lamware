@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,44 @@ CAPE_API_URL = _CFG.cape_api_url
 CAPE_API_KEY = os.environ.get("CAPE_API_KEY", "")
 CAPE_POLL_INTERVAL = _CFG.cape_poll_interval
 CAPE_TIMEOUT = _CFG.cape_timeout
+CAPE_FREESPACE_FLOOR_MB = _CFG.cape_freespace_floor_mb
+#: CAPE's scheduler measures free space here (cuckoo.conf `freespace`) before
+#: it starts a task, and below the floor it loops without starting anything and
+#: without telling the submitter (#795).
+CAPE_STORAGE_PATH = Path("/opt/CAPEv2/storage")
+
+#: CAPE task statuses that mean the scheduler has handed the task to a guest.
+#: `pending` is the only pre-start state; anything else means it started.
+CAPE_STARTED_STATUSES = frozenset({"running", "completed", "reported", "distributed",
+                                   "failed_analysis", "failed_processing",
+                                   "failed_reporting", "recovered"})
+CAPE_TERMINAL_FAILED_STATUSES = frozenset({"failed_analysis", "failed_processing",
+                                           "failed_reporting"})
+
+
+class CapeNotScheduling(RuntimeError):
+    """CAPE's storage is below the floor its scheduler refuses to start under."""
+
+
+def cape_storage_shortfall_mb(path: Path = CAPE_STORAGE_PATH,
+                              floor_mb: int = CAPE_FREESPACE_FLOOR_MB) -> int | None:
+    """How far CAPE's storage is below its scheduler's free-space floor, or None.
+
+    CAPE checks this number before starting a task and, below it, loops without
+    starting anything and without telling the submitter (#795). A submission
+    made then sits `pending` for the whole poll window and used to come back as
+    a `timeout` with nothing in it, indistinguishable from a sample that hung.
+
+    Returns the shortfall in MB when the volume is below the floor, None when
+    it is not. Storage the pipeline user cannot stat is treated as not blocked:
+    a wrong refusal to detonate is the worse failure, and the poll then reports
+    `never_started` honestly anyway.
+    """
+    try:
+        free_mb = shutil.disk_usage(path).free >> 20
+    except OSError:
+        return None
+    return floor_mb - free_mb if free_mb < floor_mb else None
 
 #: Emitted by the guest analyzer's complete() for every pid still in INJECT_LIST
 #: — injected, never reported LOADED. Matched against debug.log, which carries
@@ -205,10 +244,19 @@ def submit_to_cape(sample_path: Path, tags: list[str], package: str = "",
 
 
 def poll_cape_task(task_id: int) -> dict:
-    """Poll Cape API until task is reported or timeout."""
+    """Poll Cape API until the task is reported, fails, or the wait runs out.
+
+    The wait running out is two different facts, and they are reported apart
+    (#795): `timeout` when CAPE started the task and it did not finish in time,
+    `never_started` when the task was still `pending` throughout, which is what
+    a scheduler blocked on its free-space floor looks like from here. A
+    terminal CAPE failure status is returned as soon as it is seen rather than
+    waited out.
+    """
     url = f"{CAPE_API_URL}/tasks/view/{task_id}/"
     start = time.time()
     last_status = ""
+    started = False
 
     while time.time() - start < CAPE_TIMEOUT:
         try:
@@ -221,8 +269,13 @@ def poll_cape_task(task_id: int) -> dict:
                 elapsed = int(time.time() - start)
                 print(f"  Cape task {task_id}: {status} ({elapsed}s)")
                 last_status = status
+            if status in CAPE_STARTED_STATUSES:
+                started = True
 
             if status == "reported":
+                return data
+            if status in CAPE_TERMINAL_FAILED_STATUSES:
+                print(f"  [!] Cape task {task_id} ended as {status}", file=sys.stderr)
                 return data
 
         except requests.RequestException as e:
@@ -230,8 +283,17 @@ def poll_cape_task(task_id: int) -> dict:
 
         time.sleep(CAPE_POLL_INTERVAL)
 
-    print(f"  [!] Cape timeout after {CAPE_TIMEOUT}s", file=sys.stderr)
-    return {"status": "timeout", "id": task_id}
+    outcome = "timeout" if started else "never_started"
+    if started:
+        print(f"  [!] Cape timeout after {CAPE_TIMEOUT}s (last status: {last_status})",
+              file=sys.stderr)
+    else:
+        print(f"  [!] Cape never started task {task_id} in {CAPE_TIMEOUT}s "
+              f"(last status: {last_status or 'no answer'}); the scheduler is not "
+              f"taking work — check free space against cuckoo.conf freespace (#795)",
+              file=sys.stderr)
+    return {"status": outcome, "id": task_id, "last_cape_status": last_status,
+            "waited_seconds": CAPE_TIMEOUT}
 
 
 def get_cape_signatures(cape_data: dict) -> list[str]:

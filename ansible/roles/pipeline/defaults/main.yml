@@ -20,6 +20,10 @@ pipeline_dotnet_tools_max_output: 1048576    # must equal dotnet_agentic.MAX_RES
 # Cape API polling
 pipeline_cape_poll_interval: 30   # seconds between status checks
 pipeline_cape_timeout: 1200       # 20 minutes max wait for Cape
+# Must match cuckoo.conf `freespace` (MB). CAPE's scheduler starts nothing
+# below it and does not tell the submitter (#795); the pipeline refuses to
+# submit under it and records `never_started` with the shortfall instead.
+pipeline_cape_freespace_floor_mb: 50000
 
 # Which CAPE guest a submission is pinned to. kvm.conf tags BOTH guests x64, so
 # tags alone do not select one: unpinned, a sample lands on whichever is free
