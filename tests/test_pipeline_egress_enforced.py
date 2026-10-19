@@ -105,9 +105,12 @@ def test_the_revoked_ports_stay_revoked():
 def test_the_rules_are_persisted():
     """Without this the allowlist survives only until the next reboot, and a
     reboot is precisely when nobody is watching the rule set."""
+    # Through lamware-persist-firewall (#580): `netfilter-persistent save`
+    # also persisted podman's port chains, and the reboot restored them ahead
+    # of the live ones.
     saves = [t for t in TASKS
              if isinstance(t, dict)
-             and "netfilter-persistent save" in str(t.get("ansible.builtin.command", ""))]
+             and "lamware-persist-firewall" in str(t.get("ansible.builtin.command", ""))]
     assert saves, "nothing persists the pipeline egress rules"
 
 

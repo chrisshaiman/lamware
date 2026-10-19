@@ -90,9 +90,12 @@ def test_iptables_persistent_is_the_persistence_mechanism():
                 and "iptables-persistent" in str(t.get("ansible.builtin.apt", ""))]
     assert installs, "nothing installs iptables-persistent"
 
+    # Persisted through lamware-persist-firewall, not `netfilter-persistent
+    # save`: the latter also saved podman's port chains, which a reboot then
+    # restored ahead of the live ones (#580, ADR-020 amendment 2026-10-18).
     saves = [t for t in NETWORKING
              if isinstance(t, dict)
-             and "netfilter-persistent save" in str(t.get("ansible.builtin.command", ""))]
+             and "lamware-persist-firewall" in str(t.get("ansible.builtin.command", ""))]
     assert saves, (
         "the raw INPUT/OUTPUT/FORWARD rules are never saved, so the air-gap "
         "does not survive a reboot")
