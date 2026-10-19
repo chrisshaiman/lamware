@@ -44,7 +44,12 @@ from lamware_pipeline.correlation import (
 from lamware_pipeline.report_depth import bound_report_depth
 from lamware_pipeline.report_depth import describe as describe_depth_cut
 from lamware_shared import safe_write
-from pipeline_status import complete_pipeline, create_analysis_row, update_stage
+from pipeline_status import (
+    complete_pipeline,
+    create_analysis_row,
+    reconcile_stale_running,
+    update_stage,
+)
 from stages.cape import (
     CAPE_FREESPACE_FLOOR_MB,
     CapeNotScheduling,
@@ -385,6 +390,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     stage_timings = {}
     if bazaar_family:
         log.info(f"  MalwareBazaar family: {bazaar_family}")
+
+    # A run killed between its row's creation and its completion (reboot, OOM,
+    # the intake runner's timeout) leaves the row 'running' forever (#802).
+    # Reconcile those before creating this run's row.
+    reconcile_stale_running()
 
     # Create DB row at pipeline start for real-time status tracking
     analysis_id_early = create_analysis_row(task_id, str(sample_path),

@@ -45,6 +45,53 @@ def _get_conn():
         return None
 
 
+#: The intake runner wraps every run in `timeout 5400` (scripts/lib/intake_run.sh),
+#: so a row still `running` after this many seconds cannot be running: the process
+#: was killed (reboot, OOM, the timeout itself) between create_analysis_row and
+#: complete_pipeline, and nothing else ever writes its terminal status (#802).
+#: tests/test_stale_running_rows_reconciled.py keeps this equal to the shell.
+PIPELINE_HARD_TIMEOUT_SECONDS = 5400
+
+
+def reconcile_stale_running(max_age_seconds: int = PIPELINE_HARD_TIMEOUT_SECONDS) -> int:
+    """Mark every analysis row that is `running` but older than the hard timeout as failed.
+
+    Called at pipeline start, before the new row is created, so a killed run's
+    row is corrected by the next run rather than staying `running` forever
+    (two such rows were months old when #802 was filed). The last stage seen is
+    kept in current_stage, which is the only record of where it died.
+    Returns the number of rows reconciled; 0 when the DB is unavailable.
+    """
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE analyses
+            SET pipeline_status = 'failed',
+                completed_at = NOW()
+            WHERE pipeline_status = 'running'
+              AND started_at < NOW() - make_interval(secs => %s)
+            RETURNING id
+        """, (max_age_seconds,))
+        ids = [row[0] for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        if ids:
+            print(f"  [!] {len(ids)} analysis row(s) were 'running' for over "
+                  f"{max_age_seconds}s with no process behind them; marked failed: {ids}")
+        return len(ids)
+    except Exception as e:
+        print(f"  [!] Failed to reconcile stale running rows: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return 0
+
+
 def create_analysis_row(task_id: str, sample_path: str,
                         filename: str = "") -> int | None:
     """Create analysis + sample rows at pipeline START.
