@@ -42,6 +42,7 @@
   "reports_dir": {{ pipeline_reports_dir | to_json }},
   "cape_poll_interval": {{ pipeline_cape_poll_interval }},
   "cape_timeout": {{ pipeline_cape_timeout }},
+  "cape_freespace_floor_mb": {{ pipeline_cape_freespace_floor_mb | default(50000) }},
   "cape_machine": {{ pipeline_cape_machine | to_json }},
   "cape_office_machine": {{ pipeline_cape_office_machine | to_json }},
   "cape_memory_dump": {{ pipeline_cape_memory_dump | to_json }},
