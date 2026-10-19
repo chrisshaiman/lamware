@@ -165,6 +165,58 @@
       }}
 
 # =============================================================================
+# vhost: kernel-side virtio backends this deployment never uses.
+#
+# Both detonation guests are defined with emulated e1000 NICs and the qemu
+# (userspace) disk driver, and neither has a vsock device, so vhost_net,
+# vhost_vsock and the vhost core never load in normal operation (lsmod on the
+# host: none present). What they offer instead is attack surface: /dev/vhost-*
+# are 0660 root:kvm, and the kvm group includes the cape service account,
+# whose job is to run hostile code one layer away. A vhost bug reachable from
+# that device is a host-kernel bug reachable by the user most exposed to
+# compromise, for a feature nothing here needs.
+#
+# `install <module> /bin/false` refuses autoload and manual load alike;
+# `blacklist` alone only stops alias-driven autoload. Both are written.
+# =============================================================================
+
+- name: Disable the unused vhost kernel modules
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/99-lamware-no-vhost.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/kvm). Guests use emulated e1000 and the qemu
+      # disk driver; no vsock. See roles/kvm/tasks/main.yml for the rationale.
+      blacklist vhost
+      blacklist vhost_net
+      blacklist vhost_vsock
+      install vhost /bin/false
+      install vhost_net /bin/false
+      install vhost_vsock /bin/false
+
+# As with nested virt: a modprobe.d file cannot unload a module that is already
+# resident. Report the live state rather than assume the file took effect.
+- name: Read which vhost modules are loaded
+  ansible.builtin.shell:
+    cmd: set -o pipefail; lsmod | awk '$1 ~ /^vhost/ {print $1}'
+    executable: /bin/bash
+  register: kvm_vhost_live
+  changed_when: false
+  failed_when: false
+
+- name: Report whether the vhost modules are actually absent
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'no vhost module is loaded — the modprobe.d refusal is in effect'
+        if (kvm_vhost_live.stdout | default('') | trim) == ''
+        else 'WARNING: vhost modules STILL LOADED (' ~ (kvm_vhost_live.stdout_lines | default([]) | join(', ')) ~
+             '). The modprobe.d file refuses future loads only; `modprobe -r` them with the guests stopped, or reboot.'
+      }}
+
+# =============================================================================
 # AppArmor: let libvirtd execute its own helper.
 #
 # The shipped libvirtd profile permits /usr/libexec/* but libvirt-daemon installs
