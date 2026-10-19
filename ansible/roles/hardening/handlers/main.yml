@@ -14,3 +14,10 @@
   ansible.builtin.systemd_service:
     name: systemd-resolved
     state: restarted
+
+# Merge only. auditd runs with the rules locked (-e 2), so a load is refused
+# until the next boot; the merged /etc/audit/audit.rules is what that boot
+# loads, and `augenrules --check` shows the difference until then.
+- name: Merge audit rules
+  ansible.builtin.command: augenrules
+  changed_when: true

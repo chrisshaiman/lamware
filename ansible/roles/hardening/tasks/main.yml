@@ -276,3 +276,48 @@
 
 - name: Root zone DNSSEC trust anchors (#769)
   ansible.builtin.import_tasks: resolver.yml
+
+# =============================================================================
+# auditd: exempt the scheduled filesystem walkers from the /home rule (#797)
+#
+# konstruktoid's rule set carries
+#
+#   -a always,exit -S all -F dir=/home/ -F uid=0 -C auid!=obj_uid -F key=admin-user-home
+#
+# and its auditd configuration turns on the audisp syslog plugin, so every
+# audit record is also a syslog line. On this host /home/pipeline holds the
+# pipeline user's container store (23 GB, hundreds of thousands of files), and
+# two root jobs walk all of it: the nightly AIDE check and plocate's updatedb.
+# Measured 2026-10-18: one week of syslog was 48 GB before compression, 79% of
+# its audit records from aide, and the kernel had stalled callers for 22
+# minutes in total waiting on the audit backlog (auditctl -s
+# backlog_wait_time_actual). The rule exists to notice an administrator reading
+# someone else's home; a scheduled walker is not that.
+#
+# The exemptions are `never` rules in a file that sorts before hardening.rules.
+# augenrules merges rules.d in name order and hoists the -D to the top, so they
+# are evaluated first, and the kernel stops at the first matching rule.
+#
+# They take effect at the next boot: auditd_enable_flag is 2 (rules locked).
+# `augenrules --check` reports the pending difference until then.
+# =============================================================================
+
+- name: Exempt the scheduled filesystem walkers from the /home audit rule
+  ansible.builtin.copy:
+    src: 00-lamware-audit-exclusions.rules
+    dest: /etc/audit/rules.d/00-lamware-audit-exclusions.rules
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Merge audit rules
+
+# Ubuntu's aide-common ships dailyaidecheck.timer (01:50 + up to 2h), and
+# konstruktoid installs its own aidecheck.timer (00:00) because it looks for
+# /etc/cron.daily/aide, which 24.04 no longer has. Both were enabled, so the
+# check ran twice a night. Keep the role-managed one.
+- name: Stop the distribution's duplicate AIDE timer
+  ansible.builtin.systemd_service:
+    name: dailyaidecheck.timer
+    enabled: false
+    state: stopped
+    masked: true
