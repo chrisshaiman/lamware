@@ -1,0 +1,14 @@
+# Managed by Ansible (roles/hardening). See tasks/main.yml for why.
+#
+# Loaded ahead of konstruktoid's hardening.rules (augenrules merges rules.d in
+# name order and hoists its -D to the top), so these `never` rules are matched
+# before the `always` rules they exempt. The kernel stops at the first match.
+#
+# Exempt the two scheduled filesystem walkers from syscall auditing. They run
+# as root over every file on the host, including the pipeline user's container
+# store, and each file they touch under /home matched
+#   -a always,exit -S all -F dir=/home/ -F uid=0 -C auid!=obj_uid -F key=admin-user-home
+# That rule is for an administrator reading someone else's home; the walkers
+# are not that, and their records were 79% of a 48 GB week of syslog.
+-a never,exit -F arch=b64 -S all -F exe=/usr/bin/aide
+-a never,exit -F arch=b64 -S all -F exe=/usr/sbin/updatedb.plocate
