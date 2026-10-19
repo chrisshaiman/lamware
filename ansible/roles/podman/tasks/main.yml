@@ -178,4 +178,6 @@
     name: "podman-port-health"
     user: root
     minute: "17"
-    job: "/usr/local/sbin/check-podman-ports.sh >/dev/null"
+    # Output to syslog, not /dev/null: on 2026-10-18 the check saw a dead
+    # published port at 19:17 and nobody could know (#580).
+    job: "/usr/local/sbin/check-podman-ports.sh 2>&1 | logger -t podman-port-health"
