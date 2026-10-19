@@ -1,0 +1,15 @@
+---
+# The MongoDB release the role installs, pinned (#528). 8.0.21 refuses kernels
+# 6.19+ unless rseq is forced on (the drop-in in tasks/main.yml); 8.0.30 fixed
+# the allocator for kernels 7.0.14+ (SERVER-125742). A patch release within 8.0
+# keeps featureCompatibilityVersion 8.0, so a downgrade back to the previous pin
+# is `mongodb_version: "8.0.21"` and a redeploy; the dump the role takes before
+# any version change is the backstop beyond that.
+mongodb_version: "8.0.34"
+
+# CAPE's installer ships its own unit, mongodb.service, running mongod with no
+# config file (data in /data/db). The package's mongod.service, if it ever came
+# back with an upgrade, would start a second instance on the same port against
+# an empty /var/lib/mongodb. It is masked.
+mongodb_unit: mongodb
+mongodb_rollback_dir: /root/lamware-rollback/mongodb
