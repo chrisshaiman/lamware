@@ -8,6 +8,7 @@ import { useAnalysisDetail, useDeleteAnalysis } from "#hooks/use-analyses";
 import { SeverityBadge } from "#components/shared/severity-badge";
 import { formatTimestamp, formatCost, formatDuration } from "#lib/utils";
 import { PIPELINE_STAGES, STAGE_LABELS } from "#lib/constants";
+import { stageFlagsFor } from "#lib/stage-flags";
 import { SampleInfoCard } from "./sample-info-card";
 import { RequireRole } from "#components/require-role";
 import { NarrativeSection } from "./narrative-section";
@@ -54,16 +55,8 @@ export function AnalysisDetailPage() {
     navigate("/analyses");
   };
 
-  // Stage completion for the progress bar
-  const stageFlags: Record<string, boolean | null> = {
-    triage: analysis.triage_completed,
-    cape: analysis.cape_completed,
-    volatility: analysis.volatility_completed,
-    ghidra: analysis.ghidra_completed,
-    interpret: analysis.interpret_completed,
-    summary: analysis.summary_completed,
-    pdf: analysis.pdf_generated,
-  };
+  // Stage completion for the progress bar (pcap comes from stage_timings, #804)
+  const stageFlags = stageFlagsFor(analysis);
 
   // Total duration
   const totalDuration =
