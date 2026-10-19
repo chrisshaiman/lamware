@@ -26,7 +26,7 @@ these describe an AWS data plane that no longer exists.
 | [004](#adr-004-wireguard-scope-limited-to-admin-access-only) | WireGuard scope limited to admin access | Live (revised 2026-04-18) |
 | [011](#adr-011-guest-network-simulation--inetsim-on-host) | Guest network simulation — INetSim on host | Live |
 | [012](#adr-012-guest-vm-anti-evasion-hardening) | Guest VM anti-evasion hardening | Live |
-| [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05) |
+| [020](#adr-020-one-firewall-mechanism--iptables-persistent-not-ufw) | One firewall mechanism — iptables-persistent, not UFW | Live (amended 2026-10-05, 2026-10-18) |
 | [021](#adr-021-hostile-files-are-interpreted-only-inside-a-sandbox-agent-tools-are-brokered-by-the-orchestrator-and-executed-in-one) | Hostile files are interpreted only in a sandbox; agent tools are brokered and sandboxed | Live |
 | [023](#adr-023-image-builds-are-hermetic--an-unprivileged-fetch-user-downloads-every-build-input-pinned-and-checksummed-podman-build-runs-with-no-network) | Image builds are hermetic: an unprivileged fetch user downloads inputs, `podman build` has no network | Accepted |
 | [025](#adr-025-code-the-pipeline-runs-is-root-owned-the-pipeline-user-owns-data-only) | Code the pipeline runs is root-owned; the pipeline user owns data only | Accepted |
@@ -784,7 +784,7 @@ ID" claim is wrong, is in [FAMILY_ATTRIBUTION.md](FAMILY_ATTRIBUTION.md).
 
 ## ADR-020: One firewall mechanism — iptables-persistent, not UFW
 
-**Status:** Live (2026-09-19; amended 2026-10-05)
+**Status:** Live (2026-09-19; amended 2026-10-05 and 2026-10-18)
 **Supersedes:** the implicit arrangement where both were installed
 **Closes:** #563 (filed 2026-09-03, which recommended exactly this)
 
@@ -987,6 +987,47 @@ introduced this amendment. They restore the `INPUT` the host ran until 2026-10-0
 Reverting the code and redeploying does **not** do this: the earlier role never
 removes the chain.
 
+
+### Amendment (2026-10-18): persisted rules exclude chains other agents own
+
+Refs: #580, #576.
+
+ADR-020 made iptables-persistent the single firewall mechanism: the rule set is
+written to `/etc/iptables/rules.v4` and `.v6` and restored at boot. Two roles
+persisted it with `netfilter-persistent save`, which is `iptables-save` of the
+*live* tables. The live tables are not only ours. Podman writes port-publish
+chains (`CNI-HOSTPORT-DNAT`, `CNI-DN-*`; `NETAVARK-*` on newer versions) whose
+DNAT names the container IP of the moment; libvirt, fail2ban and CAPE's rooter
+keep chains of their own too.
+
+Persisting podman's chains looked harmless and was not. Restored at boot, the
+saved DNAT sits ahead of the one podman creates for the new container, and the
+first match wins: every connection to the published port goes to an address
+nothing holds. The container says `Up`, `ss` says `LISTEN`, `systemctl` says
+`active`, the pipeline exits 0. That was #580 (six days in September) and again
+on 2026-10-18, when a pipeline deploy saved `--to-destination 10.88.0.12` at
+18:00, the host rebooted at 18:49, the new container came up at 10.88.0.2, and
+the post-reboot detonation's summary stage failed on a 500 from LiteLLM.
+
+**Decision.** The firewall is persisted through one helper, `lamware-persist-firewall`
+(roles/networking/files, installed by every role that persists), which saves
+the live tables **without** container-managed chains (`CNI-*`, `NETAVARK*`)
+and refuses to write a set that `iptables-restore --test` rejects. No role calls
+`netfilter-persistent save` directly. Podman recreates its chains when a
+container starts; nothing of ours is lost by not restoring them.
+
+Chains owned by libvirt, fail2ban and CAPE are left in the saved set for now:
+each of those agents rebuilds its own at start and no harm from restoring them
+has been observed. If one is, it joins the filter here, not in a role.
+
+**Consequences.**
+- A reboot cannot resurrect a dead container address. The health check in
+  `check-podman-ports.sh` stays as the detector for anything else of that shape.
+- `rules.v4` no longer mirrors `iptables-save` byte for byte; anyone comparing
+  the two must expect the container chains to differ.
+- A new agent that writes its own chains needs a conscious decision about
+  whether they belong in the persisted set, which is the question this ADR
+  exists to ask.
 
 ## ADR-021: Hostile files are interpreted only inside a sandbox; agent tools are brokered by the orchestrator and executed in one
 
