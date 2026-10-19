@@ -41,6 +41,33 @@
     state: present
     update_cache: true
 
+# CAPE's installer ships its own unit (/lib/systemd/system/mongodb.service,
+# not the package's mongod.service) and sets GLIBC_TUNABLES=glibc.pthread.rseq=0
+# in it. MongoDB 8.0.21's vendored TCMalloc then refuses to start on kernels
+# 6.19 and newer (SERVER-121912): rseq=0 -> failed, rseq=1 -> active, measured
+# on the 2026-09-02 reboot (#528). This drop-in restores glibc's default. It
+# lived only on the host for six weeks; a rebuilt host would have lost it on
+# the first reboot into a current kernel.
+- name: Create the MongoDB unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/mongodb.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Keep rseq enabled for MongoDB despite CAPE's unit disabling it (#528)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mongodb.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/mongodb). See tasks/main.yml for why (#528).
+      [Service]
+      Environment="GLIBC_TUNABLES=glibc.pthread.rseq=1"
+  notify: Reload systemd and restart MongoDB
+
 - name: Enable and start MongoDB
   ansible.builtin.systemd:
     name: "{{ item }}"
