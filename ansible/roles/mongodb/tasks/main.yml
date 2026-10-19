@@ -35,11 +35,51 @@
     dest: /etc/apt/sources.list.d/mongodb-org-8.0.list
     mode: "0644"
 
-- name: Install MongoDB
+# The package ships mongod.service; CAPE's installer removed it and runs its own
+# mongodb.service instead. A package upgrade re-extracts the file, and the role
+# used to enable and start BOTH names. Masked, so neither an upgrade nor a boot
+# can bring up a second mongod against an empty /var/lib/mongodb on 27017.
+- name: Mask the package's mongod.service (CAPE's mongodb.service is the instance)
+  ansible.builtin.systemd:
+    name: mongod
+    masked: true
+
+- name: Read the installed MongoDB server version
+  ansible.builtin.command: dpkg-query -W -f='${Version}' mongodb-org-server
+  register: mongodb_installed
+  changed_when: false
+  failed_when: false
+
+# CLAUDE.md §5: a database change states its way back before it happens. A
+# patch release within 8.0 keeps FCV 8.0, so the way back is the previous pin
+# and a redeploy; this archive is the backstop if the data ever moved anyway.
+- name: Dump the cuckoo database before a version change
+  ansible.builtin.shell:
+    cmd: >
+      set -o pipefail;
+      mkdir -p {{ mongodb_rollback_dir }} && chmod 700 {{ mongodb_rollback_dir }} &&
+      mongodump --quiet --gzip --db cuckoo
+      --archive={{ mongodb_rollback_dir }}/cuckoo-{{ mongodb_installed.stdout | default('unknown') }}-{{ ansible_date_time.date }}.archive.gz
+    executable: /bin/bash
+    creates: "{{ mongodb_rollback_dir }}/cuckoo-{{ mongodb_installed.stdout | default('unknown') }}-{{ ansible_date_time.date }}.archive.gz"
+  when:
+    - mongodb_installed.rc == 0
+    - mongodb_installed.stdout != mongodb_version
+
+- name: Install MongoDB at the pinned version
   ansible.builtin.apt:
-    name: mongodb-org
+    name:
+      - "mongodb-org={{ mongodb_version }}"
+      - "mongodb-org-server={{ mongodb_version }}"
+      - "mongodb-org-mongos={{ mongodb_version }}"
+      - "mongodb-org-shell={{ mongodb_version }}"
+      - "mongodb-org-tools={{ mongodb_version }}"
+      - "mongodb-org-database={{ mongodb_version }}"
+      - "mongodb-org-database-tools-extra={{ mongodb_version }}"
     state: present
+    allow_downgrade: true
     update_cache: true
+  notify: Reload systemd and restart MongoDB
 
 # CAPE's installer ships its own unit (/lib/systemd/system/mongodb.service,
 # not the package's mongod.service) and sets GLIBC_TUNABLES=glibc.pthread.rseq=0
@@ -70,10 +110,22 @@
 
 - name: Enable and start MongoDB
   ansible.builtin.systemd:
-    name: "{{ item }}"
+    name: "{{ mongodb_unit }}"
     state: started
     enabled: true
-  loop:
-    - mongod
-    - mongodb
-  failed_when: false
+
+# The running binary is the old one until the handler restarts the unit, and a
+# deploy that reports ok with the old server still serving is the failure this
+# repo keeps finding. Flush the handler here and read the version from the
+# server itself, not from dpkg.
+- name: Flush handlers so the restart happens before the version check
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the running server is the pinned version
+  ansible.builtin.command: mongosh --quiet --eval "db.version()"
+  register: mongodb_running
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: mongodb_running.rc == 0
+  failed_when: mongodb_running.rc != 0 or mongodb_running.stdout | trim != mongodb_version
