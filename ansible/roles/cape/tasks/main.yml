@@ -76,6 +76,7 @@
   loop:
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
+    - 0003-cleaners-commit-bulk-task-deletes.patch
 
 # 0001 fixes an upstream defect introduced by CAPEv2#3006 (2026-05-11).
 # build_parent_attribute_list() spoofs Explorer as the parent of every launched
@@ -101,6 +102,7 @@
   loop:
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
+    - 0003-cleaners-commit-bulk-task-deletes.patch
   register: cape_patch_result
   notify: Restart Cape services
 
@@ -116,6 +118,20 @@
   changed_when: false
   failed_when: cape_patch_verify.rc != 0
   register: cape_patch_verify
+
+# 0003 (#795): CAPE's _Database wraps session.begin() so that a begin() inside
+# an already-open transaction only flushes. utils/cleaners.py queries before it
+# deletes, so its bulk task delete logged "Deleted 1023 tasks" and was rolled
+# back when the process exited: 1,023 directories and Mongo reports gone, all
+# 1,300 Postgres rows still there. The patch commits after each delete path.
+- name: Verify the cleaner commits its task deletes
+  ansible.builtin.command:
+    cmd: >-
+      grep -q "lamware #795"
+      {{ cape_install_dir }}/lib/cuckoo/common/cleaners_utils.py
+  changed_when: false
+  failed_when: cape_cleaner_patch_verify.rc != 0
+  register: cape_cleaner_patch_verify
 
 - name: Fix CAPEv2 directory ownership after cape2.sh
   ansible.builtin.file:
@@ -819,4 +835,47 @@
     job: >-
       find {{ cape_install_dir }}/storage/analyses -name 'memory.dmp' -mmin +60 -delete;
       find {{ cape_install_dir }}/storage/analyses -maxdepth 2 -name 'memory' -type d -mmin +60 -exec rm -rf {} +
+  tags: [cape-storage-perms]
+
+# Retention (#795). storage/analyses held every task since the host was built
+# (1295 directories, 53 GB, 29 GB of it older than 60 days), and the
+# scheduler refuses to start a task below cuckoo.conf's 50 GB free-space floor,
+# so an unbounded store turns into detonations that silently time out.
+#
+# CAPE's own cleaner, not `find -delete`: `--delete-older-than` removes the
+# analysis directory, the Postgres task row and (with --delete-mongo) the Mongo
+# report for the same task set, so the web UI never lists a task whose data is
+# gone. Pending tasks are skipped by default.
+#
+# NOT `--delete-tmp-items-older-than` or `--delete-binaries-items-older-than`:
+# in the installed CAPE both compare `ctime > cutoff` and so delete the items
+# NEWER than the range (lib/cuckoo/common/cleaners_utils.py, tmp_clean_before
+# and binaries_clean_before). Keep those out until upstream fixes the sign.
+- name: Schedule CAPE analysis retention (nightly)
+  ansible.builtin.cron:
+    name: "cape-analysis-retention"
+    user: "{{ cape_user }}"
+    minute: "30"
+    hour: "4"
+    job: >-
+      cd {{ cape_install_dir }} &&
+      /etc/poetry/bin/poetry run python utils/cleaners.py
+      --delete-older-than {{ cape_analysis_retention_days }}d --delete-mongo
+      >> {{ cape_install_dir }}/log/retention.log 2>&1
+  tags: [cape-storage-perms]
+
+- name: Read cape's crontab after the retention entry
+  ansible.builtin.command: crontab -l -u {{ cape_user }}
+  register: _cape_crontab_after
+  changed_when: false
+  tags: [cape-storage-perms]
+
+- name: Assert the retention entry is in cape's crontab
+  ansible.builtin.assert:
+    that:
+      - "'#Ansible: cape-analysis-retention' in _cape_crontab_after.stdout"
+      - "'--delete-older-than {{ cape_analysis_retention_days }}d' in _cape_crontab_after.stdout"
+    fail_msg: >-
+      The retention cron entry is not in cape's crontab. If the read above
+      worked, the add did not; check /etc/cron.allow.
   tags: [cape-storage-perms]

@@ -38,3 +38,10 @@ cape_db_user: cape
 cape_db_default_password: SuperPuperSecret
 # Root-only copies of anything the credential change overwrites (CLAUDE.md §5).
 cape_rollback_dir: /root/lamware-rollback/cape
+
+# How long CAPE keeps a task's analysis directory, its Postgres row and its
+# Mongo report (#795). CAPE's own cleaner removes all three together, nightly;
+# the pipeline copied what the report needs into /opt/pipeline/reports at run
+# time, and the lamware analysis row keeps cape_task_id. Investigate tools that
+# read Cape's directory report the expiry rather than "no payloads".
+cape_analysis_retention_days: 60
