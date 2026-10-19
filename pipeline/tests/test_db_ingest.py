@@ -4,9 +4,23 @@
 import db_ingest
 
 
-def test_calculate_llm_cost_fallback_without_usage():
-    # No usage data anywhere in the report -> documented $0.50 fallback estimate.
-    assert db_ingest._calculate_llm_cost({}) == 0.50
+def test_calculate_llm_cost_is_zero_without_usage():
+    # No usage anywhere -> nothing was priced -> $0 (#803). The old $0.50
+    # "estimate" booked a run whose every model call had failed as spend.
+    assert db_ingest._calculate_llm_cost({}) == 0.0
+
+
+def test_a_run_whose_model_calls_all_failed_costs_nothing():
+    """Analysis 1195 (2026-10-18): every stage reached LiteLLM, got a 500, and
+    stored an error with no usage block. That is $0, not a guess."""
+    report = {
+        "llm_interpretation": {"model_used": "local-qwen-llamacpp-re",
+                               "error": "HTTPStatusError: 500"},
+        "executive_summary": {"model": "local-qwen-llamacpp",
+                              "error": "HTTPStatusError: 500"},
+        "visual_analysis": {"error": "HTTPStatusError: 500"},
+    }
+    assert db_ingest._calculate_llm_cost(report) == 0.0
 
 
 def test_calculate_llm_cost_computes_from_usage():
