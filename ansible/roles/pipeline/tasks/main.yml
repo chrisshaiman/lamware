@@ -278,11 +278,21 @@
     mode: "0600"
   loop: [rules.v4, rules.v6]
 
+- name: "Install the firewall persistence helper (drops container-managed chains, #580)"
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../networking/files/lamware-persist-firewall.sh"
+    dest: /usr/local/sbin/lamware-persist-firewall
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Persist the pipeline egress rules across reboots (both families)
-  # netfilter-persistent writes rules.v4 AND rules.v6. Without this the v6
-  # allowlist survives only until the next boot — and a reboot is precisely
-  # when nobody is watching the rule set.
-  ansible.builtin.command: netfilter-persistent save
+  # The helper writes rules.v4 AND rules.v6. Without this the v6 allowlist
+  # survives only until the next boot — and a reboot is precisely when nobody
+  # is watching the rule set. Not `netfilter-persistent save`: on 2026-10-18 a
+  # pipeline deploy persisted podman's CNI DNAT for the llama-server container,
+  # and the reboot restored it ahead of the live one (#580).
+  ansible.builtin.command: /usr/local/sbin/lamware-persist-firewall
   changed_when: true
 
 - name: Create lamware-api system user

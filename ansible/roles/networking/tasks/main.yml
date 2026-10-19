@@ -277,6 +277,17 @@
 # and FORWARD with nothing in front of them, which is what the air-gap needs and
 # what ufw could not offer without placing it below LIBVIRT_FWO.
 # -------------------------------------------------------------------------
-- name: Save iptables rules (persist across reboots)
-  ansible.builtin.command: netfilter-persistent save
+- name: "Install the firewall persistence helper (drops container-managed chains, #580)"
+  ansible.builtin.copy:
+    src: "lamware-persist-firewall.sh"
+    dest: /usr/local/sbin/lamware-persist-firewall
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Save iptables rules (persist across reboots, without container chains)
+  # Not `netfilter-persistent save`: that persists podman's CNI/NETAVARK port
+  # chains with the container IP of the moment, and the restore at boot then
+  # shadows the live one (#580). The helper filters them out.
+  ansible.builtin.command: /usr/local/sbin/lamware-persist-firewall
   changed_when: true
