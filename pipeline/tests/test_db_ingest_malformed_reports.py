@@ -653,7 +653,8 @@ def test_a_superscript_port_does_not_raise():
 def test_llm_cost_survives_wrong_typed_usage():
     report = {"llm_interpretation": {"model_used": ["x"], "usage": {"input_tokens": "9"}},
               "plain_english_usage": "lots"}
-    assert db_ingest._calculate_llm_cost(report) == 0.50
+    # Wrong-typed usage is "no usage" and prices at $0 (#803), not the old guess.
+    assert db_ingest._calculate_llm_cost(report) == 0.0
 
 
 def test_a_null_correlation_type_takes_the_default():

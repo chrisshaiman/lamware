@@ -649,7 +649,14 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
 
     Reads usage data from llm_interpretation, executive_summary,
     evasion_analysis, and visual_analysis sections of the report.
-    Falls back to $0.50 estimate if no usage data available.
+
+    No usage anywhere prices at $0, not an estimate (#803). Every path that
+    calls a model records its usage block (CLAUDE.md §10), so a report with
+    none is a run in which no priced call happened: interpretation disabled,
+    or every call failed, as on 2026-10-18 when the llama-server port was dead
+    and analysis 1195 was booked at the old $0.50 guess while the identical
+    successful run before it cost $0.00. A guess that reads as spend is worse
+    than a zero that reads as "nothing was priced".
 
     `root` is the ingest's shape-checked view of the same report, so wrong-typed
     usage fields are named in its warnings; called on its own, they are skipped.
@@ -657,7 +664,6 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
     if root is None:
         root = _read_report(report, [])
     total_cost = 0.0
-    has_usage = False
 
     # Each section stores usage at the top level of its result dict
     llm_sections = [
@@ -683,7 +689,6 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
                 break
         had_tokens, cost = _usage_cost(usage, model)
         if had_tokens:
-            has_usage = True
             total_cost += cost
 
     # Plain English summary usage (stored separately at report root)
@@ -694,10 +699,9 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
         pe_model = root.text("plain_english_model", None) or "claude-haiku-4-5"
         had_tokens, cost = _usage_cost(pe_usage, pe_model)
         if had_tokens:
-            has_usage = True
             total_cost += cost
 
-    return total_cost if has_usage else 0.50
+    return total_cost
 
 
 def network_events_has_attempts(cur) -> bool:
