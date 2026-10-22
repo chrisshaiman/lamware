@@ -7,7 +7,16 @@ litellm_enabled: true
 litellm_install_dir: /opt/litellm
 litellm_port: 4000
 litellm_listen_address: "127.0.0.1"
-litellm_image: "ghcr.io/berriai/litellm:main-latest"
+# Pinned by DIGEST, not by tag. `main-latest` moved on every upstream build and
+# the role re-pulls on every deploy, so a deploy installed whatever was newest
+# that day into the one container that holds the Anthropic API keys and has
+# outbound access. On 2026-10-21 a malicious LiteLLM 1.107.0 was published to
+# PyPI and Docker (credential stealer, dormant C2); by then `main-latest` already
+# pointed at a newer image than this host ran. This is the amd64 manifest of the
+# image the host has run since 2026-10-11 (multi-arch index de5b050c…). Bump it
+# deliberately: new digest, release notes read, deployed from a PR.
+litellm_image: >-
+  ghcr.io/berriai/litellm@sha256:94668d7de26c93a29a8ab01a464228badcd314b98a3f262ad6f8a2a14bd7a0a5
 litellm_db_user: "litellm"
 litellm_db_name: "litellm"
 
