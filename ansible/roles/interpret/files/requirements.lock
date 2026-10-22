@@ -4,55 +4,55 @@ annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   pydantic
 anthropic==0.52.0 \
     --hash=sha256:c026daa164f0e3bde36ce9cbdd27f5f1419fff03306be1e138726f42e6a7810f \
     --hash=sha256:f06bc924d7eb85f8a43fe587b875ff58b410d60251b7dc5f1387b322a35bd67b
-    # via -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    # via -r interpret.in
 anyio==4.14.2 \
     --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
     --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
     #   httpx
-certifi==2026.4.22 \
-    --hash=sha256:3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a \
-    --hash=sha256:8d455352a37b71bf76a79caa83a3d6c25afee4a385d632127b6afb3963f1c580
+certifi==2026.10.19 \
+    --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
+    --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   httpcore
     #   httpx
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   httpcore
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   httpx
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
 idna==3.15 \
     --hash=sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8 \
     --hash=sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anyio
     #   httpx
 jiter==0.14.0 \
@@ -166,13 +166,13 @@ jiter==0.14.0 \
     --hash=sha256:ff3a6465b3a0f54b1a430f45c3c0ba7d61ceb45cbc3e33f9e1a7f638d690baf3 \
     --hash=sha256:ffb2a08a406465bb076b7cc1df41d833106d3cf7905076cc73f0cb90078c7d10
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
 pydantic==2.13.4 \
     --hash=sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba \
     --hash=sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
@@ -296,19 +296,19 @@ pydantic-core==2.46.4 \
     --hash=sha256:fc3e9034a63de20e15e8ade85358bc6efc614008cab72898b4b4952bea0509ff \
     --hash=sha256:fd8b3d9fd264be37976686c7f65cd52a83f5e84f4bfd2adf9c1d469676bbb6ae
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   pydantic
 sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
 typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   anthropic
     #   anyio
     #   pydantic
@@ -318,5 +318,5 @@ typing-inspection==0.4.2 \
     --hash=sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7 \
     --hash=sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464
     # via
-    #   -r /tmp/claude-1000/-home-chris-projects-lamware/740e646e-2820-4294-b4b6-6ce71f6472f1/scratchpad/locks/interpret.in
+    #   -r interpret.in
     #   pydantic
