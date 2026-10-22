@@ -9,7 +9,7 @@ brotli==1.2.0
 cffi==2.0.0
 cssselect2==0.9.0
 fonttools==4.63.0
-pillow==12.3.0
+pillow==13.0.0
 pydyf==0.12.1
 pyphen==0.17.2
 tinycss2==1.5.1
