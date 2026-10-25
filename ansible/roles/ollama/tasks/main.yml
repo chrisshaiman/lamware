@@ -34,12 +34,12 @@
   ansible.builtin.file:
     path: /etc/systemd/system/ollama.service
     state: absent
-  register: _ollama_unit
 
+# Unconditional: a reload is cheap, and it keeps the role free of handlers.
 - name: Reload systemd after removing the unit
   ansible.builtin.systemd:
     daemon_reload: true
-  when: _ollama_unit.changed
+  changed_when: false
 
 - name: Check whether the ollama container image is present
   ansible.builtin.command: podman image exists {{ ollama_retired_image }}
