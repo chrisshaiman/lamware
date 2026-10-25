@@ -37,7 +37,7 @@ def _image_vars():
 
 def test_the_scan_finds_the_images_it_is_meant_to_guard():
     names = {k for _, k, _ in _image_vars()}
-    assert {"litellm_image", "ollama_image", "llamacpp_image", "keycloak_image"} <= names, names
+    assert {"litellm_image", "llamacpp_image", "keycloak_image"} <= names, names
 
 
 @pytest.mark.parametrize("role,var,value", _image_vars(), ids=lambda x: str(x)[:40])

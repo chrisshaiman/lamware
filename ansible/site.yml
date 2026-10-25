@@ -212,12 +212,12 @@
     - role: podman
       tags: [podman]
 
-    # 10a. Ollama — local LLM serving for the summary stages (LiteLLM routes to it)
+    # 10a. Ollama — REMOVED. This role now tears it down (#431 answered, 2026-10-25).
     - role: ollama
       tags: [ollama]
 
     # 10a-2. llama.cpp — local LLM serving for the agentic RE and vision stages.
-    #        Separate from ollama: llama.cpp splits reasoning into
+    #        Chosen over ollama: llama.cpp splits reasoning into
     #        `reasoning_content` and grammar-constrains forced-tool args, which is
     #        what makes structured RE output reliable (2026-07-23 spike, PR #180).
     - role: llama-cpp

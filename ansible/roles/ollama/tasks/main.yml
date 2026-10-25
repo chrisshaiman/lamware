@@ -1,82 +1,73 @@
 ---
 # =============================================================================
 # roles/ollama/tasks/main.yml
-# Deploys Ollama as a root Podman container managed by systemd, serving a local
-# LLM for the pipeline's summary stages. The serve container runs on the host
-# network bound to loopback only (OLLAMA_HOST=127.0.0.1), so the host-networked
-# LiteLLM proxy reaches it at 127.0.0.1 while it stays unreachable from wg0/eth0.
-# The model is pulled once at provision time (with egress) into a persistent
-# volume. Network-level egress blocking is a follow-up (iptables owner-match).
+# TEARDOWN. Ollama is no longer part of lamware; this role removes it.
+#
+# Ollama served the summary stages until 2026-08-19 (9847731 moved them to the
+# llama.cpp server). Its LiteLLM routes went on 2026-09-27 (#643, a live OOM
+# route, #407). The container was kept only for #431, which asked why Ollama's
+# summaries were 2-4x shorter. Answered 2026-10-25: Ollama ran with its default
+# 4,096-token context, so every summary stopped when the window filled (all six
+# surviving runs sum input + output to exactly 4096), and today's ~7.5k-token
+# prompts were silently cut to 2,050. Nothing on the Ollama side was worth
+# keeping, and an idle server holding a 23 GB model is cost and surface with no
+# caller.
+#
+# Idempotent: every task is a no-op once Ollama is gone.
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
 # =============================================================================
 
-- name: Create ollama dirs
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0750"
-  loop:
-    - "{{ ollama_install_dir }}"
-    - "{{ ollama_models_dir }}"
-
-# One-shot pull WITH egress (default network) into the persistent models volume.
-# The image entrypoint is `ollama`, so override it with `sh` to run a small
-# script: start the server, wait until it answers, then pull. --rm reaps the
-# transient server when the pull returns.
-- name: Pull the model into the volume (needs egress; one-shot)
-  ansible.builtin.command:
-    argv:
-      - podman
-      - run
-      - --rm
-      - --entrypoint
-      - sh
-      - -v
-      - "{{ ollama_models_dir }}:/root/.ollama:Z"
-      - "{{ ollama_image }}"
-      - -lc
-      - "ollama serve & for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done; ollama pull {{ ollama_model }}"
-    creates: "{{ ollama_models_dir }}/models/manifests"
-
-- name: Install ollama serve unit
-  ansible.builtin.template:
-    src: ollama.service.j2
-    dest: /etc/systemd/system/ollama.service
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart ollama
-
-- name: Enable + start ollama
+- name: Stop and disable the ollama unit
   ansible.builtin.systemd:
     name: ollama
-    enabled: true
-    state: started
+    state: stopped
+    enabled: false
+  register: _ollama_stop
+  # Absent on a host that never ran it, or after the unit file is removed below.
+  failed_when: >-
+    _ollama_stop.failed
+    and 'Could not find the requested service' not in (_ollama_stop.msg | default(''))
+
+- name: Remove the ollama unit file
+  ansible.builtin.file:
+    path: /etc/systemd/system/ollama.service
+    state: absent
+  register: _ollama_unit
+
+- name: Reload systemd after removing the unit
+  ansible.builtin.systemd:
     daemon_reload: true
+  when: _ollama_unit.changed
 
-- name: Wait for ollama API
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ ollama_port }}/api/version"
-    status_code: 200
-  register: _ollama_up
-  retries: 30
-  delay: 2
-  until: _ollama_up.status == 200
+- name: Check whether the ollama container image is present
+  ansible.builtin.command: podman image exists {{ ollama_retired_image }}
+  register: _ollama_image
+  changed_when: false
+  failed_when: _ollama_image.rc not in [0, 1]
 
-# Exposure assertion: ollama must listen on host loopback only, so it is reachable
-# by the host-networked LiteLLM proxy but NOT from wg0/eth0. ss lists listeners;
-# fail if 127.0.0.1:<port> is absent or a wildcard bind (0.0.0.0 / [::] / *) is
-# present. (This checks INBOUND exposure; network-level EGRESS blocking is a
-# tracked follow-up — iptables owner-match on the ollama uid.)
-- name: Assert ollama listens on host loopback only (not externally exposed)
+- name: Remove the ollama container image
+  ansible.builtin.command: podman rmi {{ ollama_retired_image }}
+  when: _ollama_image.rc == 0
+  changed_when: true
+
+# The model store: ~23 GB (qwen3.6:35b-a3b-q4_K_M, Ollama's own GGUF conversion).
+- name: Remove the ollama install and model directories
+  ansible.builtin.file:
+    path: "{{ ollama_install_dir }}"
+    state: absent
+
+- name: Read listeners after the teardown
   ansible.builtin.command: ss -tlnH
   register: _ollama_listeners
   changed_when: false
-  failed_when: >
-    ('127.0.0.1:' ~ (ollama_port | string)) not in _ollama_listeners.stdout
-    or ('0.0.0.0:' ~ (ollama_port | string)) in _ollama_listeners.stdout
-    or ('*:' ~ (ollama_port | string)) in _ollama_listeners.stdout
+
+- name: Assert nothing listens on ollama's port any more
+  ansible.builtin.assert:
+    that:
+      - (':' ~ (ollama_port | string) ~ ' ') not in _ollama_listeners.stdout
+    fail_msg: >-
+      something still listens on {{ ollama_port }} after the ollama teardown:
+      check `ss -tlnp | grep {{ ollama_port }}` and `podman ps -a`.
+    success_msg: "ollama removed; nothing listens on {{ ollama_port }}"
