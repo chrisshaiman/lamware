@@ -84,8 +84,8 @@ model_list:
   # plain_english and visual all run on llama.cpp — but they kept a live route to
   # a second copy of the same qwen3.6 weights, so any research script run with its
   # old defaults loaded ~14GB alongside llama-server's ~23GB: the #403 OOM, one
-  # command away (#407). The ollama CONTAINER is kept for now because #431 compares
-  # the two backends; reach it directly on 127.0.0.1:11434, not through LiteLLM.
+  # command away (#407). The ollama container itself was removed 2026-10-25, once
+  # #431 was answered (its short summaries were its 4,096-token default context).
   #
   # `local-qwen-strict` was the documented OFFLINE summary mode (no cloud
   # fallback). Its llama.cpp replacement is `local-qwen-llamacpp-strict` below.

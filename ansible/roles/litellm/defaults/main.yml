@@ -26,7 +26,7 @@ litellm_db_name: "litellm"
 # and shipped a shared credential published in a public repo (#238). It comes
 # from vars/secrets.yml (vault) only — see vars/secrets.yml.example.
 
-# Local LLM (Ollama) routing for the summary stages.
+# Cloud fallback for the local summary aliases.
 litellm_fallback_backend: "claude-haiku-4-5"
 
 # llama.cpp (agentic RE) routing.
