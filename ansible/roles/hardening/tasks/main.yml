@@ -321,3 +321,109 @@
     enabled: false
     state: stopped
     masked: true
+
+# ---------------------------------------------------------------------------
+# AIDE: a baseline that stays current, and a nightly result that reaches someone.
+#
+# Until this, the baseline dated from 2026-04-25; the nightly check found about a
+# million differences, exited 7 and was read by nobody. Three parts:
+#   1. exclusions for data and storage that churn by design (99_lamware_exclusions);
+#   2. the nightly aidecheck runs lamware-aide check, which sends an ntfy alert on
+#      any difference or error;
+#   3. lamware-aide rebaseline after every deploy (site.yml post_tasks) and every
+#      dpkg run (apt hook), reporting what it absorbs before replacing the baseline.
+# So a difference at night is a change that neither a deploy nor apt made.
+# ---------------------------------------------------------------------------
+- name: Install the lamware AIDE rules (log rotation, exclusions)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/aide/aide.conf.d/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - 98_lamware_logs
+    - 99_lamware_exclusions
+
+- name: Validate the AIDE configuration with the exclusions
+  ansible.builtin.command: aide --config-check --config /etc/aide/aide.conf
+  changed_when: false
+
+- name: Install lamware-aide
+  ansible.builtin.copy:
+    src: lamware-aide.py
+    dest: /usr/local/sbin/lamware-aide
+    owner: root
+    group: root
+    mode: "0750"
+
+# Created here, not by the script: the post-deploy rebaseline scans before it
+# writes its first report, so a directory the script made would be the next
+# night's "added" entry. The reports inside are excluded (99_lamware_exclusions).
+- name: Create the lamware-aide report directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /var/lib/lamware-aide
+    - /var/lib/lamware-aide/reports
+
+- name: Create the aidecheck drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/aidecheck.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# aidecheck.service belongs to konstruktoid; a drop-in replaces its command
+# without editing the file that role owns.
+- name: Run the nightly AIDE check through lamware-aide
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/aidecheck.service.d/lamware.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening): report the result instead of only exiting 7.
+      [Service]
+      ExecStart=
+      ExecStart=/usr/local/sbin/lamware-aide check
+  notify: Reload systemd
+
+- name: Install the AIDE rebaseline unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/lamware-aide-rebaseline.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/hardening). Started, never enabled: by the deploy's
+      # post_tasks and by the apt hook. Idle priority; a full AIDE pass takes ~10 min.
+      [Unit]
+      Description=Renew the AIDE baseline after a deploy or a package change
+      [Service]
+      Type=oneshot
+      Nice=10
+      IOSchedulingClass=idle
+      ExecStart=/usr/local/sbin/lamware-aide rebaseline --reason "a deploy or package change"
+  notify: Reload systemd
+
+# Post-Invoke runs after every dpkg run, unattended-upgrades included. `start
+# --no-block` on a unit already running is a no-op, so an apt run with several
+# dpkg calls queues one rebaseline.
+- name: Renew the AIDE baseline after package changes
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99lamware-aide-rebaseline
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Ansible (roles/hardening): a package change is not an intrusion.
+      DPkg::Post-Invoke { "if [ -x /usr/local/sbin/lamware-aide ]; then systemctl start --no-block lamware-aide-rebaseline.service || true; fi"; };
+
+- name: Load the AIDE units before the post-deploy rebaseline
+  ansible.builtin.meta: flush_handlers

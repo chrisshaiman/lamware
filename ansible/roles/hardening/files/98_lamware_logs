@@ -1,0 +1,41 @@
+# Managed by Ansible (roles/hardening). AIDE rules for logs lamware adds to the host.
+#
+# Without these, the logs below fall to `/ 0 Full` (99_aide_root): every append
+# is a change and every rotation is a set of adds, removes and changes, so the
+# nightly check would alert every night. These follow the pattern of the
+# package rules in 31_aide_*: the active log may grow (but not shrink or change
+# owner), and each rotated copy must keep its content as it moves down the chain.
+# Measured on the sandbox 2026-10-25 against a check 7 minutes after a rebaseline.
+
+# Process accounting (acct): /etc/cron.daily/acct runs `savelog -c 30` at 06:25:
+# pacct -> pacct.0 -> pacct.1.gz -> ... -> pacct.29.gz (dropped next day).
+/var/log/account$ d VarDir
+/var/log/account/pacct$ f ActLog
+/var/log/account/pacct\.0$ f RotLog
+/var/log/account/pacct\.1\.@@{LOGEXT}$ f CompSerLog
+/var/log/account/pacct\.([2-9]|1[0-9]|2[0-8])\.@@{LOGEXT}$ f MidlSerLog
+/var/log/account/pacct\.29\.@@{LOGEXT}$ f LastSerLog
+
+# sudo's log (Defaults logfile, sudoers.d/012_logfile): appended, not rotated.
+/var/log/sudo\.log$ f ActLog
+
+# PostgreSQL: weekly copytruncate (so the active file shrinks in place), dateext,
+# delaycompress with xz: main.log-YYYYMMDD for a week, then main.log-YYYYMMDD.xz.
+/var/log/postgresql$ d VarDir
+/var/log/postgresql/postgresql-[0-9]+-main\.log$ f FreqRotLog
+/var/log/postgresql/postgresql-[0-9]+-main\.log-[0-9]{8}(\.xz)?$ f LowDELog
+
+# Not a log, but the same kind of rule: nuclei (security-test) creates and removes
+# entries in /root on every run, which changes the directory's mtime. VarDir
+# drops the times and keeps owner, mode and inode; everything inside /root stays
+# on Full (an added or changed file there is still reported).
+/root$ d VarDir
+
+# Every logrotate-managed log on this host rotates with `dateext` and xz
+# (/etc/logrotate.conf), so a rotated copy is name-YYYYMMDD, then
+# name-YYYYMMDD.xz a cycle later (delaycompress). Ubuntu's package rules
+# (31_aide_*) expect `.1` / `.2.gz` names, which this host never writes, so
+# rotated copies fell to Full and every rotation was a set of adds and removes.
+# Measured 2026-10-26 00:00 (the first real night): nginx's rotation. A rotated
+# copy may appear and disappear; once written, its content must not change.
+/var/log/.+-[0-9]{8}(\.xz)?$ f LowDELog
