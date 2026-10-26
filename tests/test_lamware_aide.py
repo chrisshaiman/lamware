@@ -56,7 +56,7 @@ f   ...    .C... : /usr/bin/sudo
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """Fake aide (rc and output per test), a captured alert queue, temp databases."""
-    state = {"rc": 0, "out": "", "alerts": [], "argv": [], "writes_new": True}
+    state = {"rc": 0, "out": "", "alerts": [], "argv": [], "writes_new": True, "chown": []}
     db, new, prev = tmp_path / "aide.db", tmp_path / "aide.db.new", tmp_path / "aide.db.prev"
     db.write_text("OLD")
     monkeypatch.setattr(aide, "DB", str(db))
@@ -64,6 +64,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(aide, "DB_PREV", str(prev))
     monkeypatch.setattr(aide, "LOCK", str(tmp_path / "lock"))
     monkeypatch.setattr(aide, "REPORT_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(aide.os, "chown", lambda path, uid, gid: state["chown"].append((path, uid, gid)))
 
     def fake_run(argv, **kw):
         if argv[1] == aide.ENQUEUE:
@@ -114,6 +115,8 @@ def test_rebaseline_reports_what_it_absorbs_then_swaps(env):
     assert env["argv"][0][:2] == [aide.AIDE, "--update"]
     assert env["db"].read_text() == "NEW" and env["prev"].read_text() == "OLD"
     assert not env["new"].exists()
+    assert env["chown"] == [(str(env["db"]), 0, 0)]   # the owner AIDE records next time
+    assert env["db"].stat().st_mode & 0o777 == 0o600
     [a] = env["alerts"]
     assert a["priority"] == "low" and "3 added" in a["message"]
 

@@ -131,6 +131,11 @@ def rebaseline(reason: str) -> int:
     if os.path.exists(DB):
         os.replace(DB, DB_PREV)
     os.replace(DB_NEW, DB)
+    # AIDE writes into an existing aide.db.new as whoever owns it (_aide, left by
+    # the package's own runs) and creates a new one as root. The next rebaseline
+    # records aide.db's owner before the swap, so an owner that varies is a
+    # difference every check reports. Pin it.
+    os.chown(DB, 0, 0)
     os.chmod(DB, 0o600)
     print(f"lamware-aide: baseline renewed after {reason}", flush=True)
     return 0
