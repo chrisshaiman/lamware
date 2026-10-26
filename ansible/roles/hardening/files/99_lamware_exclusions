@@ -1,0 +1,23 @@
+# Managed by Ansible (roles/hardening). AIDE exclusions for lamware.
+#
+# Only DATA and STORAGE that churn by design: container image storage, sample and
+# analysis data, databases, and caches. Code, configuration and every venv stay
+# monitored. Measured 2026-10-25: these paths were ~760k of the 1.07M differences
+# between the April baseline and October, which made the nightly report unreadable.
+#
+# Container images: rebuilt hermetically from hash-locked inputs on deploy (ADR-023).
+!/home/pipeline/\.local/share/containers
+!/var/lib/containers
+# Sample and analysis data (malware artefacts, reports, the eval corpus).
+!/opt/CAPEv2/storage
+!/opt/pipeline/reports
+!/opt/pipeline/eval-corpus
+!/opt/pipeline/harvest
+!/dev/shm
+# Databases.
+!/var/lib/postgresql
+!/data/db
+# Caches and fetched build inputs (each input is hash-checked where it is used).
+!/home/cape/\.cache
+!/home/cape/\.npm
+!/var/lib/lamware-fetch

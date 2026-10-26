@@ -331,6 +331,22 @@
   # leaving the started marker without a partner — which is exactly the state
   # `make provenance` must be able to see (#515).
   post_tasks:
+    # Every deploy changes files AIDE watches; renew its baseline so the nightly
+    # check reports only changes a deploy did not make. --no-block: the pass
+    # takes ~10 min and must not hold the deploy. Absent before the hardening
+    # role has installed the unit, so check first.
+    - name: Check for the AIDE rebaseline unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/lamware-aide-rebaseline.service
+      register: _aide_rebaseline_unit
+      tags: [always]
+
+    - name: Renew the AIDE baseline after this deploy
+      ansible.builtin.command: systemctl start --no-block lamware-aide-rebaseline.service
+      when: _aide_rebaseline_unit.stat.exists
+      changed_when: true
+      tags: [always]
+
     - name: Write the deploy COMPLETED marker
       ansible.builtin.copy:
         dest: /opt/lamware/deploy-provenance.json
