@@ -10,6 +10,7 @@ databases only when AIDE produced a new one. The host evidence (a rebaseline and
 a check on the sandbox) is in the PR; this is what CI can observe.
 """
 import importlib.util
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -62,6 +63,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(aide, "DB_NEW", str(new))
     monkeypatch.setattr(aide, "DB_PREV", str(prev))
     monkeypatch.setattr(aide, "LOCK", str(tmp_path / "lock"))
+    monkeypatch.setattr(aide, "REPORT_DIR", str(tmp_path / "reports"))
 
     def fake_run(argv, **kw):
         if argv[1] == aide.ENQUEUE:
@@ -73,7 +75,7 @@ def env(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(argv, state["rc"], state["out"], "")
 
     monkeypatch.setattr(aide.subprocess, "run", fake_run)
-    state.update(db=db, new=new, prev=prev)
+    state.update(db=db, new=new, prev=prev, reports=tmp_path / "reports")
     return state
 
 
@@ -123,6 +125,38 @@ def test_rebaseline_keeps_the_old_baseline_when_aide_wrote_nothing(env):
     assert env["alerts"][0]["title"] == "AIDE baseline NOT renewed"
 
 
+def test_the_full_report_goes_to_a_file_and_the_journal_gets_the_summary(env, capsys):
+    env["rc"], env["out"] = 7, REPORT
+    aide.main(["check"])
+    [report] = env["reports"].iterdir()
+    assert report.read_text() == REPORT
+    assert report.stat().st_mode & 0o777 == 0o600
+    journal = capsys.readouterr().out
+    assert "3 added, 1 removed, 1 changed" in journal and str(report) in journal
+    assert "/usr/local/bin/implant2" not in journal   # entries are not journalled
+    assert str(report) in env["alerts"][0]["message"]
+
+
+def test_rebaseline_alert_names_the_report_file(env):
+    env["rc"], env["out"] = 4, REPORT
+    aide.main(["rebaseline"])
+    [report] = env["reports"].iterdir()
+    assert str(report) in env["alerts"][0]["message"]
+
+
+def test_old_reports_are_pruned_to_the_newest(env, monkeypatch):
+    env["reports"].mkdir(mode=0o700)
+    for i in range(aide.REPORTS_KEPT + 5):
+        f = env["reports"] / f"check-old{i:02d}.txt"
+        f.write_text("x")
+        os.utime(f, (1000 + i, 1000 + i))
+    aide.main(["check"])
+    names = sorted(p.name for p in env["reports"].iterdir())
+    assert len(names) == aide.REPORTS_KEPT
+    assert "check-old00.txt" not in names and "check-old34.txt" in names
+    assert any(not n.startswith("check-old") for n in names)   # tonight's survived
+
+
 # --- exclusions: data out, code in ------------------------------------------------
 RULES = [re.compile(line[1:]) for line in
          (FILES / "99_lamware_exclusions").read_text().splitlines()
@@ -139,6 +173,13 @@ def _excluded(path: str) -> bool:
     "/var/lib/containers/storage/x", "/opt/CAPEv2/storage/analyses/1/binary",
     "/opt/pipeline/reports/abc/report.json", "/data/db/collection-1.wt",
     "/home/cape/.cache/pip/x", "/var/lib/postgresql/16/main/base/1",
+    "/var/lib/lamware-aide/reports", "/var/lib/lamware-aide/reports/check-20261026T070000Z.txt",
+    # runtime churn measured in a check 7 minutes after a rebaseline
+    "/run/user/1000/gnupg/S.keyboxd", "/run/systemd/journal/streams/10:5071847",
+    "/tmp/user/0/nuclei906522728/LOG", "/home/ubuntu/.ansible/tmp/ansible-tmp-1/AnsiballZ_command.py",
+    "/var/lib/nginx/proxy/7/01", "/var/spool/lamware-notify", "/var/lib/aide/aide.db.new",
+    "/var/lib/aide/aide.db.prev", "/etc/suricata/rules/suricata.rules",
+    "/opt/network-monitor/status.json", "/var/log/inetsim/service.log",
 ])
 def test_churning_data_is_excluded(path):
     assert _excluded(path)
@@ -149,6 +190,9 @@ def test_churning_data_is_excluded(path):
     "/etc/passwd", "/etc/sudoers.d/x", "/home/cape/.ssh/authorized_keys",
     "/home/pipeline/.bashrc", "/home/pipeline/.local/bin/x", "/opt/CAPEv2/conf/cuckoo.conf",
     "/usr/local/sbin/lamware-aide", "/var/lib/aide/aide.db", "/root/.ssh/authorized_keys",
+    "/etc/suricata/suricata.yaml", "/etc/suricata/update.yaml", "/opt/network-monitor/monitor.sh",
+    "/run/systemd/system/x.service", "/tmp/implant", "/var/lib/lamware-aide",
+    "/var/log/sudo.log", "/var/log/account/pacct",
 ])
 def test_code_and_configuration_stay_monitored(path):
     assert not _excluded(path)

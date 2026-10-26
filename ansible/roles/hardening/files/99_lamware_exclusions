@@ -21,3 +21,25 @@
 !/home/cape/\.cache
 !/home/cape/\.npm
 !/var/lib/lamware-fetch
+# lamware-aide's own reports: tonight's file would be tomorrow's "added" entry.
+!/var/lib/lamware-aide/reports
+# Runtime and temporary state. Measured 2026-10-25 in a check 7 minutes after a
+# rebaseline: these were the differences left that no deploy or package made.
+!/run/user
+!/run/systemd/journal/streams
+!/run/lamware-aide\.lock$
+!/tmp/user
+!/home/[^/]+/\.ansible/tmp
+!/root/\.ansible/tmp
+!/var/lib/nginx/(body|proxy|fastcgi|uwsgi|scgi)
+!/var/spool/lamware-notify
+!/var/lib/aide/aide\.db\.(new|prev)$
+# Generated every hour by root's suricata-update cron from the downloaded feeds.
+# Its configuration (/etc/suricata/*.yaml, *.conf) stays monitored.
+!/etc/suricata/rules
+!/var/lib/suricata/update/cache
+# Rewritten by the network monitor on every pass, so AIDE cannot tell an edit
+# from the monitor's own write; the monitor's code and configuration stay monitored.
+!/opt/network-monitor/(baseline|status)\.json$
+# Detonation traffic logs and reports (inetsim): analysis data, like CAPE storage.
+!/var/log/inetsim

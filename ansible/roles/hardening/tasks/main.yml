@@ -334,13 +334,16 @@
 #      dpkg run (apt hook), reporting what it absorbs before replacing the baseline.
 # So a difference at night is a change that neither a deploy nor apt made.
 # ---------------------------------------------------------------------------
-- name: Install the lamware AIDE exclusions
+- name: Install the lamware AIDE rules (log rotation, exclusions)
   ansible.builtin.copy:
-    src: 99_lamware_exclusions
-    dest: /etc/aide/aide.conf.d/99_lamware_exclusions
+    src: "{{ item }}"
+    dest: "/etc/aide/aide.conf.d/{{ item }}"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - 98_lamware_logs
+    - 99_lamware_exclusions
 
 - name: Validate the AIDE configuration with the exclusions
   ansible.builtin.command: aide --config-check --config /etc/aide/aide.conf
@@ -353,6 +356,20 @@
     owner: root
     group: root
     mode: "0750"
+
+# Created here, not by the script: the post-deploy rebaseline scans before it
+# writes its first report, so a directory the script made would be the next
+# night's "added" entry. The reports inside are excluded (99_lamware_exclusions).
+- name: Create the lamware-aide report directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /var/lib/lamware-aide
+    - /var/lib/lamware-aide/reports
 
 - name: Create the aidecheck drop-in directory
   ansible.builtin.file:

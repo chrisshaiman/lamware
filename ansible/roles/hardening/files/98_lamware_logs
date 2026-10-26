@@ -1,0 +1,26 @@
+# Managed by Ansible (roles/hardening). AIDE rules for logs lamware adds to the host.
+#
+# Without these, the logs below fall to `/ 0 Full` (99_aide_root): every append
+# is a change and every rotation is a set of adds, removes and changes, so the
+# nightly check would alert every night. These follow the pattern of the
+# package rules in 31_aide_*: the active log may grow (but not shrink or change
+# owner), and each rotated copy must keep its content as it moves down the chain.
+# Measured on the sandbox 2026-10-25 against a check 7 minutes after a rebaseline.
+
+# Process accounting (acct): /etc/cron.daily/acct runs `savelog -c 30` at 06:25:
+# pacct -> pacct.0 -> pacct.1.gz -> ... -> pacct.29.gz (dropped next day).
+/var/log/account$ d VarDir
+/var/log/account/pacct$ f ActLog
+/var/log/account/pacct\.0$ f RotLog
+/var/log/account/pacct\.1\.@@{LOGEXT}$ f CompSerLog
+/var/log/account/pacct\.([2-9]|1[0-9]|2[0-8])\.@@{LOGEXT}$ f MidlSerLog
+/var/log/account/pacct\.29\.@@{LOGEXT}$ f LastSerLog
+
+# sudo's log (Defaults logfile, sudoers.d/012_logfile): appended, not rotated.
+/var/log/sudo\.log$ f ActLog
+
+# PostgreSQL: weekly copytruncate (so the active file shrinks in place), dateext,
+# delaycompress with xz: main.log-YYYYMMDD for a week, then main.log-YYYYMMDD.xz.
+/var/log/postgresql$ d VarDir
+/var/log/postgresql/postgresql-[0-9]+-main\.log$ f FreqRotLog
+/var/log/postgresql/postgresql-[0-9]+-main\.log-[0-9]{8}(\.xz)?$ f LowDELog
