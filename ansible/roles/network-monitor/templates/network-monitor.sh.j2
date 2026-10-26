@@ -485,7 +485,6 @@ pipeline_patterns=(
     # Cron jobs. (The daily digest moved to the notify user, #729.)
     '/opt/pipeline/cleanup.sh*'
     '/bin/sh -c *pipeline*'
-    '/opt/pipeline/venv/bin/python* /opt/pipeline/generate-report.py*'
     # Analysis stage wrappers. Every stage shells out to /opt/<role>/run-<name>
     # (run-ghidra, run-volatility, run-interpret, run-triage, run-pcap-analysis
     # and a dozen more), and NONE of them was listed — so every pipeline run
