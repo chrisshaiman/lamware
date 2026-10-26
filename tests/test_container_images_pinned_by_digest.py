@@ -9,8 +9,9 @@ next deploy would have installed whatever upstream had published, into the
 container that holds the API keys. Ollama floated on `:latest` the same way.
 
 Parses every role's defaults and asserts each `*_image` value is
-`<registry>/<repo>@sha256:<64 hex>`. The one named exception is Keycloak (#812),
-which needs its own PR with a rollback plan. Only a deploy observes what the
+`<registry>/<repo>@sha256:<64 hex>`. Keycloak was the one exception until #812
+pinned it too; KNOWN_UNPINNED stays, empty, for the next image that needs its own
+PR and rollback plan before it can be pinned. Only a deploy observes what the
 host actually runs; this keeps the repo from asking for a moving target.
 """
 import re
@@ -22,7 +23,7 @@ yaml = pytest.importorskip("yaml")
 
 ROLES = Path(__file__).resolve().parents[1] / "ansible" / "roles"
 DIGEST = re.compile(r"\A[a-z0-9.\-]+(:[0-9]+)?/[a-z0-9._/\-]+@sha256:[0-9a-f]{64}\Z")
-KNOWN_UNPINNED = {"keycloak_image": "#812"}
+KNOWN_UNPINNED: dict[str, str] = {}
 
 
 def _image_vars():
@@ -48,7 +49,7 @@ def test_image_is_pinned_by_digest(role, var, value):
 
 
 def test_the_exception_list_does_not_outlive_its_reason():
-    """When Keycloak is pinned, the exception must go, or it hides a regression."""
+    """An image pinned since it was listed must leave the list, or it hides a regression."""
     values = {k: v for _, k, v in _image_vars()}
     for var in KNOWN_UNPINNED:
         assert not DIGEST.match(values[var]), f"{var} is pinned now; remove it from KNOWN_UNPINNED"
