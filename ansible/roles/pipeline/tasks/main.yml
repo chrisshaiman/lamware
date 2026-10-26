@@ -436,8 +436,8 @@
     recurse: true
 
 # -------------------------------------------------------------------------
-# Pipeline virtualenv — the host-side orchestrator (run-pipeline.py), report
-# generator, and wrapper DB-failure handler run from this venv, so the
+# Pipeline virtualenv — the host-side orchestrator (run-pipeline.py), the eval and
+# detonation harnesses, and the wrapper DB-failure handler run from this venv, so the
 # pipeline runtime no longer depends on --break-system-packages.
 #
 # The `pipeline` user is iptables-network-locked (cannot reach PyPI), so:
@@ -454,18 +454,19 @@
     name: python3-venv
     state: present
 
-- name: Create the pipeline virtualenv (offline; bundled ensurepip)
-  ansible.builtin.command:
-    cmd: python3 -m venv "{{ pipeline_install_dir }}/venv"
-    creates: "{{ pipeline_install_dir }}/venv/bin/pip"
-
-- name: Create the pipeline wheelhouse directory
-  ansible.builtin.file:
-    path: "{{ pipeline_install_dir }}/wheelhouse"
-    state: directory
+# The venv's third-party packages come from a hashed lock (#815), audited in CI
+# with the image locks (its name matches `ansible/roles/*/files/*requirements.lock`).
+# Before #815 the list was unpinned and the wheelhouse was only filled when empty,
+# so the venv kept whatever PyPI served on 2026-06-23: certifi with the compromised
+# CA bundle, Pillow 12.2.0 and brotli 1.2.0, none of which CI could see.
+- name: Deploy the pipeline venv lock
+  ansible.builtin.copy:
+    src: venv-requirements.lock
+    dest: "{{ pipeline_install_dir }}/venv-requirements.lock"
     owner: root
     group: lamware
-    mode: "0750"
+    mode: "0640"
+  register: pipeline_venv_lock
 
 - name: Check whether the wheelhouse already holds wheels
   ansible.builtin.find:
@@ -473,20 +474,44 @@
     patterns: "*.whl"
   register: pipeline_wheelhouse_existing
 
-- name: Populate the wheelhouse as root (reaches PyPI; the pipeline user cannot)
+# A changed lock rebuilds the wheelhouse AND the venv from nothing: `pip install`
+# never uninstalls, so a package dropped from the lock (weasyprint and its Pillow,
+# here) would otherwise stay importable in the venv forever. Not a handler: it must
+# run before the install below, not at the end of the play.
+- name: Empty the wheelhouse and remove the venv when the lock changed  # noqa: no-handler
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ pipeline_install_dir }}/wheelhouse"
+    - "{{ pipeline_install_dir }}/venv"
+  when: pipeline_venv_lock.changed
+
+- name: Recreate the wheelhouse directory
+  ansible.builtin.file:
+    path: "{{ pipeline_install_dir }}/wheelhouse"
+    state: directory
+    owner: root
+    group: lamware
+    mode: "0750"
+
+- name: Recreate the pipeline virtualenv (offline; bundled ensurepip)
+  ansible.builtin.command:
+    cmd: python3 -m venv "{{ pipeline_install_dir }}/venv"
+    creates: "{{ pipeline_install_dir }}/venv/bin/pip"
+
+- name: Populate the wheelhouse from the lock as root (reaches PyPI; the pipeline user cannot)
   # Building on the host guarantees wheels match the host platform + python3.12.
-  # Includes pip/setuptools/wheel because py3.12 venvs omit setuptools, and the
-  # offline source-builds of the lamware packages need a build backend.
+  # --require-hashes: every wheel must match the lock's digest, or nothing installs.
   ansible.builtin.command:
     cmd: >
       python3 -m pip download
       --dest {{ pipeline_install_dir }}/wheelhouse
-      pip setuptools wheel
-      requests weasyprint markdown psycopg2-binary pydantic
-      ppdeep==20260221
+      --require-hashes --only-binary :all: --no-deps
+      -r {{ pipeline_install_dir }}/venv-requirements.lock
   register: pipeline_wheelhouse
   changed_when: "'Saved' in pipeline_wheelhouse.stdout"
-  when: pipeline_wheelhouse_existing.matched | int == 0
+  when: pipeline_venv_lock.changed or pipeline_wheelhouse_existing.matched | int == 0
 
 - name: Make the wheelhouse group-readable, root-owned
   # Installs run as root now (ADR-025), so pipeline needs no access and must not
@@ -500,21 +525,15 @@
     mode: "u=rwX,g=rX,o="
     recurse: true
 
-- name: Bootstrap build tools into the venv (offline)
+- name: Install the locked third-party packages into the venv (offline, as root)
+  # pip, setuptools and wheel are in the lock too: setuptools is the build backend
+  # for the --no-build-isolation install of the two local packages below.
   ansible.builtin.command:
     cmd: >
       {{ pipeline_install_dir }}/venv/bin/pip install
       --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
-      --upgrade pip setuptools wheel
-  register: pipeline_venv_buildtools
-  changed_when: "'Successfully installed' in pipeline_venv_buildtools.stdout"
-
-- name: Install third-party runtime deps into the venv (offline, as root)
-  ansible.builtin.command:
-    cmd: >
-      {{ pipeline_install_dir }}/venv/bin/pip install
-      --no-index --find-links {{ pipeline_install_dir }}/wheelhouse
-      requests weasyprint markdown psycopg2-binary ppdeep==20260221
+      --require-hashes --no-deps
+      -r {{ pipeline_install_dir }}/venv-requirements.lock
   register: pipeline_venv_thirdparty
   changed_when: "'Successfully installed' in pipeline_venv_thirdparty.stdout"
 
@@ -675,10 +694,36 @@
   ansible.builtin.command:
     cmd: >
       {{ pipeline_install_dir }}/venv/bin/python -c
-      "import lamware_shared, lamware_pipeline, psycopg2, weasyprint, requests, markdown;
+      "import lamware_shared, lamware_pipeline, psycopg2, requests, pydantic, ppdeep;
       from lamware_pipeline.config import PipelineConfig;
       from lamware_shared.tool_validators import validate_ghidra_args;
       from lamware_shared.cape_payloads import find_pe_payloads"
+  changed_when: false
+
+# The venv must hold exactly the lock plus the two local packages: nothing older,
+# nothing extra. This reads what is installed, not what the tasks above meant to
+# install, so a stale wheelhouse or a leftover package fails the deploy (#815).
+- name: Verify the pipeline venv matches its lock exactly
+  ansible.builtin.command:
+    argv:
+      - "{{ pipeline_install_dir }}/venv/bin/python"
+      - -c
+      - |
+        import importlib.metadata as m, re, sys
+        lock = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", open(sys.argv[1]).read(), re.M))
+        norm = lambda n: re.sub(r"[-_.]+", "-", n).lower()
+        want = {norm(k): v for k, v in lock.items()}
+        have = {norm(d.metadata["Name"]): d.version for d in m.distributions()}
+        for local in ("lamware-shared", "lamware-pipeline"):
+            have.pop(local, None)
+        if have != want:
+            extra = sorted(set(have) - set(want))
+            missing = sorted(set(want) - set(have))
+            moved = sorted(k for k in set(have) & set(want) if have[k] != want[k])
+            sys.exit(f"venv != lock: extra={extra} missing={missing} "
+                     f"moved={[(k, have[k], want[k]) for k in moved]}")
+        print(f"venv matches the lock: {len(want)} packages")
+      - "{{ pipeline_install_dir }}/venv-requirements.lock"
   changed_when: false
 
 - name: Deploy run-pipeline.py
@@ -975,26 +1020,22 @@
     group: pipeline
     mode: "0750"
 
-- name: Deploy generate-report.py
-  # Plain Python now (static shebang, no Jinja) — copy: from the role's files/.
-  ansible.builtin.copy:
-    src: generate-report.py
-    dest: "{{ pipeline_install_dir }}/generate-report.py"
-    owner: root
-    group: pipeline
-    mode: "0750"
-
 - name: Create convenience symlink for pipeline
   ansible.builtin.file:
     src: "{{ pipeline_install_dir }}/run-pipeline"
     dest: /usr/local/bin/run-pipeline
     state: link
 
-- name: Create convenience symlink for report generator
+# PDFs render only in the pdf-generation container (pdf_cmd -> run-pdf-generation),
+# which ships its own copy of generate-report.py. The host copy and its symlink ran
+# on the pipeline venv's WeasyPrint, which #815 removed with its Pillow.
+- name: Remove the host-side report generator and its symlink
   ansible.builtin.file:
-    src: "{{ pipeline_install_dir }}/generate-report.py"
-    dest: /usr/local/bin/generate-report
-    state: link
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/generate-report
+    - "{{ pipeline_install_dir }}/generate-report.py"
 
 - name: Create the correlated-report keep-list directory
   # Beside the reports, never inside one: report directories hold

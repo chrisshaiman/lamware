@@ -1,0 +1,12 @@
+# Third-party packages of the pipeline venv (/opt/pipeline/venv), installed as
+# root, offline, from a wheelhouse built against venv-requirements.lock (#815).
+# Runtime deps of lamware-pipeline (its pyproject.toml):
+pydantic
+psycopg2-binary
+requests
+ppdeep==20260221
+# Build backend for the offline --no-build-isolation install of the two local
+# packages, and the venv's own installer:
+setuptools
+wheel
+pip
