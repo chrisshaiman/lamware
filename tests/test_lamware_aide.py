@@ -183,6 +183,9 @@ def _excluded(path: str) -> bool:
     "/var/lib/nginx/proxy/7/01", "/var/spool/lamware-notify", "/var/lib/aide/aide.db.new",
     "/var/lib/aide/aide.db.prev", "/etc/suricata/rules/suricata.rules",
     "/opt/network-monitor/status.json", "/var/log/inetsim/service.log",
+    # what merge-check's security-test leaves behind
+    "/opt/security-test/results/nuclei-20261025-220229.txt", "/root/.cache/nuclei/index.gob",
+    "/root/.config/nuclei/.templates-config.json",
 ])
 def test_churning_data_is_excluded(path):
     assert _excluded(path)
@@ -196,6 +199,7 @@ def test_churning_data_is_excluded(path):
     "/etc/suricata/suricata.yaml", "/etc/suricata/update.yaml", "/opt/network-monitor/monitor.sh",
     "/run/systemd/system/x.service", "/tmp/implant", "/var/lib/lamware-aide",
     "/var/log/sudo.log", "/var/log/account/pacct",
+    "/root", "/root/.config/nuclei/config.yaml", "/opt/security-test/run.sh",
 ])
 def test_code_and_configuration_stay_monitored(path):
     assert not _excluded(path)

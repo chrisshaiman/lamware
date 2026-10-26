@@ -24,3 +24,9 @@
 /var/log/postgresql$ d VarDir
 /var/log/postgresql/postgresql-[0-9]+-main\.log$ f FreqRotLog
 /var/log/postgresql/postgresql-[0-9]+-main\.log-[0-9]{8}(\.xz)?$ f LowDELog
+
+# Not a log, but the same kind of rule: nuclei (security-test) creates and removes
+# entries in /root on every run, which changes the directory's mtime. VarDir
+# drops the times and keeps owner, mode and inode; everything inside /root stays
+# on Full (an added or changed file there is still reported).
+/root$ d VarDir

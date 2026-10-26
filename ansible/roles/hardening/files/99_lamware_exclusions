@@ -43,3 +43,8 @@
 !/opt/network-monitor/(baseline|status)\.json$
 # Detonation traffic logs and reports (inetsim): analysis data, like CAPE storage.
 !/var/log/inetsim
+# security-test's output and nuclei's cache. merge-check runs security-test after
+# the deploy's rebaseline, so without these every PR is the next night's alert.
+!/opt/security-test/results
+!/root/\.cache/nuclei
+!/root/\.config/nuclei/\.templates-config\.json$
