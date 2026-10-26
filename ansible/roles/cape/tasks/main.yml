@@ -346,6 +346,114 @@
   vars:
     cape_web_bind: "{{ wireguard_address | ansible.utils.ipaddr('address') }}:{{ cape_api_port }}"
 
+# -------------------------------------------------------------------------
+# cape-rooter: root runs only root-owned code
+# -------------------------------------------------------------------------
+# ADR-025 for CAPE: the rooter runs as root, so everything it executes must be
+# root-owned. cape2.sh runs it from the cape-owned checkout through its
+# virtualenv. The copy below is staged root-only, verified against pinned hashes, then put
+# in place; `python3 -I` keeps the script directory, PYTHON* variables and user
+# site-packages off sys.path, so the six files and the stdlib are all it runs.
+- name: Create the rooter staging and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ ['/root/cape-rooter-staging', cape_rooter_dir]
+            | product(['', '/utils', '/lib', '/lib/cuckoo', '/lib/cuckoo/common'])
+            | map('join') | list }}"
+
+# Copied into a root-only directory FIRST and hashed there: hashing the cape-
+# owned source and then copying it would let cape swap the file in between.
+- name: Stage the rooter's files root-only
+  ansible.builtin.copy:
+    src: "{{ cape_install_dir }}/{{ item.key }}"
+    dest: "/root/cape-rooter-staging/{{ item.key }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ cape_rooter_files | dict2items }}"
+
+- name: Hash the staged rooter files
+  ansible.builtin.stat:
+    path: "/root/cape-rooter-staging/{{ item.key }}"
+    checksum_algorithm: sha256
+  loop: "{{ cape_rooter_files | dict2items }}"
+  register: cape_rooter_staged
+
+- name: Refuse rooter files that do not match the pinned CAPE commit
+  ansible.builtin.assert:
+    that: item.stat.checksum == item.item.value
+    fail_msg: >-
+      {{ cape_install_dir }}/{{ item.item.key }} does not match the pinned hash.
+      Either it was modified (it is writable by cape) or CAPE was upgraded:
+      read the diff of the rooter's code, then re-pin cape_rooter_files.
+    quiet: true
+  loop: "{{ cape_rooter_staged.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+
+- name: Install the verified rooter files
+  ansible.builtin.copy:
+    src: "/root/cape-rooter-staging/{{ item.key }}"
+    dest: "{{ cape_rooter_dir }}/{{ item.key }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ cape_rooter_files | dict2items }}"
+  notify: Restart cape-rooter
+
+- name: Create the cape-rooter drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/cape-rooter.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ExecStartPre= clears cape2.sh's `poetry config cache-dir` step, which also ran
+# cape's poetry as root. The socket path and -g cape are cape2.sh's.
+- name: Run cape-rooter from the root-owned copy
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cape-rooter.service.d/10-lamware-root-owned.conf
+    content: |
+      # Managed by Ansible (roles/cape). Root runs only root-owned code.
+      [Service]
+      WorkingDirectory={{ cape_rooter_dir }}/utils
+      ExecStartPre=
+      ExecStart=
+      ExecStart=/usr/bin/python3 -I -B {{ cape_rooter_dir }}/utils/rooter.py -g {{ cape_user }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart cape-rooter
+
+- name: Restart cape-rooter now if its code or unit changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the running rooter's command line
+  ansible.builtin.shell: |
+    set -euo pipefail
+    pid=$(systemctl show cape-rooter -p MainPID --value)
+    [ "$pid" != 0 ]
+    tr '\0' ' ' < /proc/$pid/cmdline
+  args:
+    executable: /bin/bash
+  register: cape_rooter_cmdline
+  changed_when: false
+
+- name: Assert cape-rooter runs the root-owned copy
+  ansible.builtin.assert:
+    that:
+      - (cape_rooter_dir ~ '/utils/rooter.py') in cape_rooter_cmdline.stdout
+      - "'poetry' not in cape_rooter_cmdline.stdout"
+      - "' -I ' in (' ' ~ cape_rooter_cmdline.stdout)"
+    fail_msg: "cape-rooter is not running the root-owned copy: {{ cape_rooter_cmdline.stdout }}"
+
 # Django error pages with DEBUG on print settings and stack frames. local_settings.py
 # is imported at the END of settings.py, so this overrides DEBUG for the running
 # app. It deliberately does NOT reach settings.py's own

@@ -11,3 +11,9 @@
     - cape-web
     - cape-processor
   failed_when: false  # services may not be running yet on first provision
+
+- name: Restart cape-rooter
+  ansible.builtin.systemd:
+    name: cape-rooter
+    state: restarted
+    daemon_reload: true
