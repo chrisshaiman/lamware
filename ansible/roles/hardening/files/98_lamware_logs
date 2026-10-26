@@ -30,3 +30,12 @@
 # drops the times and keeps owner, mode and inode; everything inside /root stays
 # on Full (an added or changed file there is still reported).
 /root$ d VarDir
+
+# Every logrotate-managed log on this host rotates with `dateext` and xz
+# (/etc/logrotate.conf), so a rotated copy is name-YYYYMMDD, then
+# name-YYYYMMDD.xz a cycle later (delaycompress). Ubuntu's package rules
+# (31_aide_*) expect `.1` / `.2.gz` names, which this host never writes, so
+# rotated copies fell to Full and every rotation was a set of adds and removes.
+# Measured 2026-10-26 00:00 (the first real night): nginx's rotation. A rotated
+# copy may appear and disappear; once written, its content must not change.
+/var/log/.+-[0-9]{8}(\.xz)?$ f LowDELog

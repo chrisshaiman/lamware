@@ -48,3 +48,7 @@
 !/opt/security-test/results
 !/root/\.cache/nuclei
 !/root/\.config/nuclei/\.templates-config\.json$
+# Daily housekeeping, measured in the 2026-10-26 00:00 check: apt-show-versions'
+# package cache and systemd's persistent-timer stamp files (mtime only).
+!/var/cache/apt-show-versions
+!/var/lib/systemd/timers/stamp-

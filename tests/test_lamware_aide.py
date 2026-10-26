@@ -186,6 +186,9 @@ def _excluded(path: str) -> bool:
     # what merge-check's security-test leaves behind
     "/opt/security-test/results/nuclei-20261025-220229.txt", "/root/.cache/nuclei/index.gob",
     "/root/.config/nuclei/.templates-config.json",
+    # daily housekeeping, measured in the first real night's check
+    "/var/cache/apt-show-versions/apackages-multiarch",
+    "/var/lib/systemd/timers/stamp-fwupd-refresh.timer",
 ])
 def test_churning_data_is_excluded(path):
     assert _excluded(path)
@@ -203,3 +206,25 @@ def test_churning_data_is_excluded(path):
 ])
 def test_code_and_configuration_stay_monitored(path):
     assert not _excluded(path)
+
+
+# --- rotated logs: this host rotates with dateext + xz -------------------------
+LOG_RULES = [line.split()[0] for line in
+             (FILES / "98_lamware_logs").read_text().splitlines()
+             if line.startswith("/var/log/.+")]
+
+
+@pytest.mark.parametrize("path", [
+    "/var/log/nginx/access.log-20261025", "/var/log/nginx/access.log-20261025.xz",
+    "/var/log/syslog-20261018.xz", "/var/log/nginx/error.log-20261022.xz",
+])
+def test_dated_rotated_logs_get_the_rotation_rule(path):
+    assert any(re.match(r + "$" if not r.endswith("$") else r, path) for r in LOG_RULES), LOG_RULES
+
+
+@pytest.mark.parametrize("path", [
+    "/var/log/nginx/access.log", "/var/log/syslog", "/var/log/sudo.log",
+    "/var/log/foo-2026.log", "/var/log/x-20261025.sh",
+])
+def test_live_logs_and_other_files_do_not(path):
+    assert not any(re.match(r, path) for r in LOG_RULES), path
