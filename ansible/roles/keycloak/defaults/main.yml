@@ -26,7 +26,15 @@ keycloak_install_dir: /opt/keycloak
 # CVE-2026-18963 is NOT unmitigated meanwhile: reset-credentials is refused
 # server-side because both realms have resetPasswordAllowed=false, verified from
 # the 26.1 source and confirmed live. See #457.
-keycloak_image: "quay.io/keycloak/keycloak:26.1"
+#
+# Pinned by DIGEST, not the moving minor tag `26.1` (#812): the amd64 manifest of
+# the image the host has run since the revert, Keycloak 26.1.5, built 2025-04-11
+# (index be6a8621..., which `26.1` still resolves to on 2026-10-25). A tag that
+# moves would put a new Keycloak, and a one-way schema migration, on the next
+# deploy unannounced. Changing this digest IS a Keycloak upgrade: follow
+# docs/KEYCLOAK_RECOVERY.md first.
+keycloak_image: >-
+  quay.io/keycloak/keycloak@sha256:dc23dd938a5dc5dfaabc71e44d014928284fafff9122e0395659f1cdcf534da8
 keycloak_port: 8080
 keycloak_listen_address: "127.0.0.1"
 keycloak_db_user: "keycloak"
