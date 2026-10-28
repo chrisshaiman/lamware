@@ -69,6 +69,12 @@
     enabled: true
     daemon_reload: true
 
+- name: Flush handlers (apply the Keycloak restart now)
+  # A changed unit queues a restart until end-of-play. Without this flush the
+  # wait below passes against the OLD container, and the restart lands while
+  # security-test is probing (2026-10-27: test at +6s, Keycloak ready at +10s).
+  ansible.builtin.meta: flush_handlers
+
 - name: Wait for Keycloak to be ready
   ansible.builtin.uri:
     url: "http://{{ keycloak_listen_address }}:9000/auth/health/ready"
