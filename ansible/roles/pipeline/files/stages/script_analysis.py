@@ -165,9 +165,7 @@ def read_script_source(sample_path: Path, report: dict) -> dict:
                 total += len(more)
             else:
                 if text.read(1):
-                    log.warning(f"  script source {sample_path.name}: longer than the "
-                                f"{peek.SCAN_CAP:#x}-byte scan cap; file_size counts "
-                                f"the characters before it only")
+                    log.warning("  script source %s: longer than the %#x-byte scan cap; file_size counts the characters before it only", sample_path.name, peek.SCAN_CAP)
     except (OSError, ValueError) as e:
         result["error"] = f"Failed to read file: {e}"
         return result

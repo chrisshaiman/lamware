@@ -54,10 +54,7 @@ def is_pyinstaller_binary(report: dict, sample_path: Path = None) -> bool:
     if sample_path:
         found, capped = peek.contains(sample_path, PYINSTALLER_MAGIC, tail=PYINSTALLER_TAIL)
         if capped:
-            log.warning(f"  PyInstaller cookie scan of {Path(sample_path).name}: file is "
-                        f"longer than the {peek.SCAN_CAP:#x}-byte scan cap; scanned the head "
-                        f"and the last {PYINSTALLER_TAIL:#x} bytes only "
-                        f"({'found' if found else 'not found'})")
+            log.warning("  PyInstaller cookie scan of %s: file is longer than the %#x-byte scan cap; scanned the head and the last %#x bytes only (%s)", Path(sample_path).name, peek.SCAN_CAP, PYINSTALLER_TAIL, 'found' if found else 'not found')
         if found:
             return True
 

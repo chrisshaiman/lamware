@@ -238,7 +238,7 @@ def bound_and_log_depth(report: dict) -> None:
     anything (#702; see lamware_pipeline.report_depth)."""
     line = describe_depth_cut(bound_report_depth(report))
     if line:
-        log.warning(f"[!] {line}")
+        log.warning("[!] %s", line)
 
 
 def write_json_atomic(path: Path, data: dict) -> None:
@@ -301,7 +301,7 @@ def _scan_candidate_artifacts(path: Path, candidate: dict) -> dict:
     artifacts, error = scan_shellcode_artifacts(path)
     if error:
         candidate["shellcode_artifacts_error"] = error
-        log.warning(f"    [!] artifact scan failed on {path.name}: {error}")
+        log.warning("    [!] artifact scan failed on %s: %s", path.name, error)
     return artifacts
 
 
@@ -316,7 +316,7 @@ def build_cape_injection_candidates(report: dict) -> list[dict]:
     cape_injection_candidates = []
     injection_bufs = report.get("cape", {}).get("injection_buffers", [])
     if injection_bufs:
-        log.info(f"\n[Stage 2.5] Processing {len(injection_bufs)} Cape injection buffer(s)...")
+        log.info("\n[Stage 2.5] Processing %s Cape injection buffer(s)...", len(injection_bufs))
         for inj in injection_bufs:
             buf_path = Path(inj["path"])
             if not buf_path.exists():
@@ -338,22 +338,22 @@ def build_cape_injection_candidates(report: dict) -> list[dict]:
             candidate["shellcode_artifacts"] = artifacts
             api_count = len(artifacts.get("resolved_apis", []))
             path_count = len(artifacts.get("file_paths", []))
-            log.info(f"    {inj['source_process']} → pid {inj['target_pid']} at {inj['injection_address']}: {size} bytes, {api_count} APIs, {path_count} paths")
+            log.info("    %s → pid %s at %s: %s bytes, %s APIs, %s paths", inj['source_process'], inj['target_pid'], inj['injection_address'], size, api_count, path_count)
 
             # >= 1KB: send to Ghidra + LLM for decompilation
             if size >= 1024:
                 candidate["analyze_with_ghidra"] = True
-                log.info(f"      → Queued for Ghidra + LLM analysis ({size} bytes)")
+                log.info("      → Queued for Ghidra + LLM analysis (%s bytes)", size)
             else:
                 candidate["analyze_with_ghidra"] = False
-                log.info(f"      → Artifact extraction only ({size} bytes, < 1KB)")
+                log.info("      → Artifact extraction only (%s bytes, < 1KB)", size)
 
             cape_injection_candidates.append(candidate)
 
     # Also process Cape's large extracted payloads (unpacked shellcode, > 1KB)
     large_payloads = report.get("cape", {}).get("large_payloads", [])
     if large_payloads:
-        log.info(f"  Cape large payloads: {len(large_payloads)} (>= 1KB, queued for Ghidra + LLM)")
+        log.info("  Cape large payloads: %s (>= 1KB, queued for Ghidra + LLM)", len(large_payloads))
         for lp in large_payloads:
             lp_path = Path(lp["path"])
             if not lp_path.exists():
@@ -374,7 +374,7 @@ def build_cape_injection_candidates(report: dict) -> list[dict]:
             candidate["shellcode_artifacts"] = artifacts
             cape_injection_candidates.append(candidate)
             api_count = len(artifacts.get("resolved_apis", []))
-            log.info(f"    {lp.get('cape_type', '?')} ({lp['size']} bytes, sha={lp['sha256'][:12]}...): {api_count} APIs")
+            log.info("    %s (%s bytes, sha=%s...): %s APIs", lp.get('cape_type', '?'), lp['size'], lp['sha256'][:12], api_count)
     return cape_injection_candidates
 
 
@@ -389,7 +389,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     pipeline_start = _time.time()
     stage_timings = {}
     if bazaar_family:
-        log.info(f"  MalwareBazaar family: {bazaar_family}")
+        log.info("  MalwareBazaar family: %s", bazaar_family)
 
     # A run killed between its row's creation and its completion (reboot, OOM,
     # the intake runner's timeout) leaves the row 'running' forever (#802).
@@ -413,11 +413,11 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 if exc_type:
                     update_stage(analysis_id_early, name, "failed",
                                 detail=str(exc_val)[:200])
-                    log.info(f"  [{name} FAILED in {elapsed:.0f}s]")
+                    log.info("  [%s FAILED in %.0fs]", name, elapsed)
                 else:
                     update_stage(analysis_id_early, name, "completed",
                                 detail=f"{elapsed:.0f}s")
-                    log.info(f"  [{name} completed in {elapsed:.0f}s]")
+                    log.info("  [%s completed in %.0fs]", name, elapsed)
         return Timer()
 
     report = {
@@ -433,7 +433,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     add_file_logging(output_dir)
 
     # Stage 1: Triage (always)
-    log.info(f"\n[Stage 1] Triage: {report['sample_name']}")
+    log.info("\n[Stage 1] Triage: %s", report['sample_name'])
     with stage_timer("triage"):
         triage_result = run_triage(sample_path, output_dir, triage_cmd=TRIAGE_CMD)
         report.update(triage_result)
@@ -445,21 +445,21 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             # An analysis produced this way is not comparable to one where triage
             # ran, and for five days nothing said so (#576).
             report.setdefault("stage_failures", []).append("triage")
-            log.error(f"  [!!] TRIAGE DID NOT RUN: {_triage_err}")
+            log.error("  [!!] TRIAGE DID NOT RUN: %s", _triage_err)
             log.error("       Cape gets no package and no guest clock. This "
                       "analysis is NOT comparable to one with triage working.")
         cape_tags = derive_tags_from_triage(triage_result)
         cape_package = derive_package_from_triage(triage_result, filename=original_name or sample_path.name)
         cape_filename = derive_filename(sample_path, cape_package, original_name)
-        log.info(f"  Tags: {cape_tags}")
+        log.info("  Tags: %s", cape_tags)
         if cape_package:
-            log.info(f"  Package: {cape_package}")
+            log.info("  Package: %s", cape_package)
         # BOTH names, because they now differ: the guest sees a sha256 stem so
         # our curation label cannot reach the behavioural evidence (#634), while
         # the analyst-facing name stays in report["sample_name"].
         _shown = original_name or sample_path.name
-        log.info(f"  Filename (analyst): {_shown}")
-        log.info(f"  Filename (guest)  : {cape_filename}")
+        log.info("  Filename (analyst): %s", _shown)
+        log.info("  Filename (guest)  : %s", cape_filename)
 
     # Stage 2: Cape — skip for non-Windows binaries (ELF, Mach-O)
     _triage_mime = report.get("triage", {}).get("file_mime", "")
@@ -474,7 +474,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     _cape_start = _time.time()
     if _skip_cape:
-        log.info(f"\n[Stage 2] Cape: skipped — non-Windows binary ({_triage_mime or _triage_ftype})")
+        log.info("\n[Stage 2] Cape: skipped — non-Windows binary (%s)", _triage_mime or _triage_ftype)
         report["cape"] = {"status": "skipped", "reason": f"non-Windows binary: {_triage_mime or _triage_ftype}"}
         cape_data = {}
     else:
@@ -492,18 +492,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 if guest_dt > now:
                     guest_dt = now - timedelta(days=random.randint(1, 7))  # nosec B311 — jitter for sandbox guest-clock anti-evasion, not security/crypto
                 cape_clock = guest_dt.strftime("%m/%d/%Y %H:%M:%S")
-                log.info(f"  Guest clock: {cape_clock} (PE compiled {pe_timestamp[:10]}, +{offset_days}d)")
+                log.info("  Guest clock: %s (PE compiled %s, +%sd)", cape_clock, pe_timestamp[:10], offset_days)
             except Exception as e:
-                log.warning(f"  Could not calculate guest clock: {e}")
+                log.warning("  Could not calculate guest clock: %s", e)
 
         # Pin the guest. kvm.conf tags BOTH guests x64, so tags alone select
         # neither: unpinned, CAPE used whichever machine was free and the report
         # recorded nowhere which one ran the sample. Two runs of one sample could
         # differ for a reason that left no trace.
         cape_machine = derive_machine(cape_tags, CAPE_MACHINE, CAPE_OFFICE_MACHINE)
-        log.info(f"\n[Stage 2] Cape: submitting with tags={cape_tags}, "
-                 f"package={cape_package or 'auto'}, machine={cape_machine}, "
-                 f"memory_dump={CAPE_MEMORY_DUMP}")
+        log.info("\n[Stage 2] Cape: submitting with tags=%s, package=%s, machine=%s, memory_dump=%s", cape_tags, cape_package or 'auto', cape_machine, CAPE_MEMORY_DUMP)
         update_stage(analysis_id_early, "cape", "started")
         try:
             # CAPE's scheduler will not start a task while its storage is below
@@ -526,7 +524,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 machine=cape_machine,
                 memory_dump=CAPE_MEMORY_DUMP,
             )
-            log.info(f"  Cape task ID: {cape_task_id}")
+            log.info("  Cape task ID: %s", cape_task_id)
             cape_data = poll_cape_task(cape_task_id)
             # Which guest ACTUALLY ran it, read back from CAPE rather than
             # assumed from what we asked for. A pinned parameter that silently
@@ -546,7 +544,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             if cape_data.get("status") == "reported":
                 mismatch = verify_ran_on(cape_data, cape_machine)
                 if mismatch:
-                    log.warning(f"  [!] guest pin not honoured: {mismatch}")
+                    log.warning("  [!] guest pin not honoured: %s", mismatch)
                     report["cape"]["machine_pin_warning"] = mismatch
 
             # Extract rich intelligence from Cape's full report
@@ -560,28 +558,28 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 payloads = cape_intel.get("payloads_extracted", 0)
                 injection_bufs = cape_intel.get("injection_buffers", [])
                 mutex_count = len(cape_intel.get("mutex_iocs", []))
-                log.info(f"  Signatures: {sig_count}, TTPs: {ttp_count}, Network: {net_keys}, Payloads: {payloads}, Mutexes: {mutex_count}")
+                log.info("  Signatures: %s, TTPs: %s, Network: %s, Payloads: %s, Mutexes: %s", sig_count, ttp_count, net_keys, payloads, mutex_count)
                 if mutex_count:
                     for m in cape_intel["mutex_iocs"][:5]:
-                        log.info(f"    Mutex: {m['name'][:60]} ({m['action']} by {m['process']})")
+                        log.info("    Mutex: %s (%s by %s)", m['name'][:60], m['action'], m['process'])
                 if injection_bufs:
-                    log.info(f"  Injection buffers captured: {len(injection_bufs)}")
+                    log.info("  Injection buffers captured: %s", len(injection_bufs))
                     for inj in injection_bufs:
-                        log.info(f"    {inj['source_process']} (pid {inj['source_pid']}) → pid {inj['target_pid']} at {inj['injection_address']} ({inj['size']} bytes)")
+                        log.info("    %s (pid %s) → pid %s at %s (%s bytes)", inj['source_process'], inj['source_pid'], inj['target_pid'], inj['injection_address'], inj['size'])
 
         except CapeNotScheduling as e:
-            log.error(f"  [!] Cape not submitted: {e}")
+            log.error("  [!] Cape not submitted: %s", e)
             report["cape"] = {"task_id": None, "status": "never_started", "reason": str(e),
                               "machine_requested": cape_machine,
                               "memory_dump_requested": CAPE_MEMORY_DUMP}
             cape_data = {}
         except Exception as e:
-            log.error(f"  [!] Cape submission failed: {e}")
+            log.error("  [!] Cape submission failed: %s", e)
             report["cape"] = {"task_id": None, "status": "error", "error": str(e)}
             cape_data = {}
     stage_timings["cape"] = round(_time.time() - _cape_start, 1)
     update_stage(analysis_id_early, "cape", "completed", f"{stage_timings['cape']:.0f}s")
-    log.info(f"  [cape completed in {stage_timings['cape']:.0f}s]")
+    log.info("  [cape completed in %.0fs]", stage_timings['cape'])
 
     # Stage 2.5: Process Cape injection buffers
     cape_injection_candidates = build_cape_injection_candidates(report)
@@ -599,19 +597,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         )
         report["pcap_analysis"] = pcap_result
         if pcap_result.get("error"):
-            log.warning(f"{pcap_result['error']}")
+            log.warning("%s", pcap_result['error'])
         else:
             zeek_summary = pcap_result.get("zeek", {}).get("summary", {})
             suricata_summary = pcap_result.get("suricata", {}).get("summary", {})
-            log.info(f"  Zeek: {zeek_summary.get('total_connections', 0)} connections, "
-                     f"{zeek_summary.get('dns_queries', 0)} DNS, "
-                     f"{zeek_summary.get('http_transactions', 0)} HTTP, "
-                     f"{zeek_summary.get('tls_sessions', 0)} TLS")
+            log.info("  Zeek: %s connections, %s DNS, %s HTTP, %s TLS", zeek_summary.get('total_connections', 0), zeek_summary.get('dns_queries', 0), zeek_summary.get('http_transactions', 0), zeek_summary.get('tls_sessions', 0))
             alerts = suricata_summary.get('unique_alerts', 0)
             if alerts:
-                log.info(f"  Suricata: {alerts} unique alerts")
+                log.info("  Suricata: %s unique alerts", alerts)
                 for alert in pcap_result.get("suricata", {}).get("alerts", [])[:5]:
-                    log.info(f"    [{alert.get('severity', '?')}] {alert.get('signature', '?')}")
+                    log.info("    [%s] %s", alert.get('severity', '?'), alert.get('signature', '?'))
     elif PCAP_ENABLED:
         report["pcap_analysis"] = {"skipped": True, "reason": "no PCAP available"}
     else:
@@ -644,10 +639,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             b.get("target_pid") for b in (report.get("cape", {}).get("injection_buffers") or [])
             if b.get("target_pid")})
         if cape_injection_pids:
-            log.info(f"  Cape identified injection PIDs: {cape_injection_pids}")
+            log.info("  Cape identified injection PIDs: %s", cape_injection_pids)
         if set(cape_buffer_pids) - set(cape_injection_pids):
-            log.info(f"  Injection-buffer target PIDs not in that list: "
-                     f"{sorted(set(cape_buffer_pids) - set(cape_injection_pids))}")
+            log.info("  Injection-buffer target PIDs not in that list: %s", sorted(set(cape_buffer_pids) - set(cape_injection_pids)))
 
         import signal
 
@@ -703,7 +697,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             reason = (f"Cape signatures ({len(cape_sigs)}) did not match "
                       f"Volatility triggers. Triggers require: injection, "
                       f"hollowing, rootkit, persistence, or packing signatures")
-        log.info(f"  Not triggered — {reason}")
+        log.info("  Not triggered — %s", reason)
         report["volatility"] = {"triggered": False, "reason": reason}
     stage_timings["volatility"] = round(_time.time() - _vol_start, 1)
     update_stage(analysis_id_early, "volatility", "completed", f"{stage_timings['volatility']:.0f}s")
@@ -727,7 +721,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     malfind_dump_dir = Path(malfind_dump_dir_str) if malfind_dump_dir_str else output_dir / "malfind_dumps"
 
     if selected_regions:
-        log.info(f"\n[Stage 3.5] Shellcode analysis: {len(selected_regions)} candidates from malfind")
+        log.info("\n[Stage 3.5] Shellcode analysis: %s candidates from malfind", len(selected_regions))
 
         # Match selected regions to their dump files for Ghidra analysis
         for region in selected_regions:
@@ -746,13 +740,13 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         shellcode_candidates = [r for r in selected_regions if "path" in r]
         if len(shellcode_candidates) < len(selected_regions):
             missing = len(selected_regions) - len(shellcode_candidates)
-            log.info(f"    [!] {missing} selected regions have no dump file")
+            log.info("    [!] %s selected regions have no dump file", missing)
 
     # Merge Cape injection candidates with malfind candidates
     # Cape buffers are ground truth — they go first
     if cape_injection_candidates:
         all_candidates = cape_injection_candidates + shellcode_candidates
-        log.info(f"\n  Total shellcode candidates: {len(cape_injection_candidates)} from Cape + {len(shellcode_candidates)} from malfind")
+        log.info("\n  Total shellcode candidates: %s from Cape + %s from malfind", len(cape_injection_candidates), len(shellcode_candidates))
     else:
         all_candidates = shellcode_candidates
     shellcode_candidates = all_candidates
@@ -792,18 +786,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             suspicious = len(office_result.get("suspicious_keywords", []))
             mraptor = office_result.get("mraptor_flags", {})
             if has_macros:
-                log.info(f"  Macros: {module_count} modules, {source_len} chars VBA source")
-                log.info(f"  Auto-exec: {', '.join(auto_exec) if auto_exec else 'none'}")
-                log.info(f"  Suspicious keywords: {suspicious}")
-                log.info(f"  mraptor: A={'Y' if mraptor.get('auto_exec') else 'N'} "
-                         f"W={'Y' if mraptor.get('write') else 'N'} "
-                         f"X={'Y' if mraptor.get('execute') else 'N'}")
+                log.info("  Macros: %s modules, %s chars VBA source", module_count, source_len)
+                log.info("  Auto-exec: %s", ', '.join(auto_exec) if auto_exec else 'none')
+                log.info("  Suspicious keywords: %s", suspicious)
+                log.info("  mraptor: A=%s W=%s X=%s", 'Y' if mraptor.get('auto_exec') else 'N', 'Y' if mraptor.get('write') else 'N', 'Y' if mraptor.get('execute') else 'N')
                 if office_result.get("xlm_detected"):
                     log.info("  XLM/Excel 4.0 macros detected (no deobfuscation)")
             else:
                 log.info("  Valid Office document but no macros found")
         else:
-            log.warning(f"olevba failed: {office_result.get('error', 'unknown')}")
+            log.warning("olevba failed: %s", office_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "office_routed": True,
                             "analyzed_files": []}
@@ -819,34 +811,33 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             strings_count = len(ps_result.get("strings_of_interest", []))
             deobf = ps_result.get("deobfuscator") or "deobfuscator"
             if deobf_ok:
-                log.info(f"  {deobf}: {layer_count} layers, {final_len} chars decoded")
+                log.info("  %s: %s layers, %s chars decoded", deobf, layer_count, final_len)
             else:
                 # Visible, not silent: this said "PSDecode: failed (fallback)" on
                 # every run for months because PSDecode was never installed (#766).
-                log.warning(f"  {deobf}: FAILED ({ps_result.get('deobfuscation_error')}); "
-                            f"{layer_count} layers from the fallback decode only")
+                log.warning("  %s: FAILED (%s); %s layers from the fallback decode only", deobf, ps_result.get('deobfuscation_error'), layer_count)
             if obfuscation:
-                log.info(f"  Obfuscation: {', '.join(obfuscation)}")
-            log.info(f"  Interesting strings: {strings_count}")
+                log.info("  Obfuscation: %s", ', '.join(obfuscation))
+            log.info("  Interesting strings: %s", strings_count)
         else:
-            log.warning(f"PowerShell analysis failed: {ps_result.get('error', 'unknown')}")
+            log.warning("PowerShell analysis failed: %s", ps_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "powershell_routed": True,
                             "analyzed_files": []}
     elif is_text_script(report, sample_path):
         script_result = read_script_source(sample_path, report)
         lang = script_result.get("source_language", "unknown")
-        log.info(f"\n[Stage 4] Script file detected ({lang}) — extracting source...")
+        log.info("\n[Stage 4] Script file detected (%s) — extracting source...", lang)
         report["script_analysis"] = script_result
         if script_result.get("analysis_success"):
             patterns = script_result.get("detected_patterns", [])
-            log.info(f"  Source: {script_result['file_size']} chars, language: {lang}")
+            log.info("  Source: %s chars, language: %s", script_result['file_size'], lang)
             if patterns:
-                log.info(f"  Detected patterns: {', '.join(patterns)}")
+                log.info("  Detected patterns: %s", ', '.join(patterns))
             if script_result.get("truncated"):
-                log.info(f"  Truncated at {script_result['truncated_at']} chars")
+                log.info("  Truncated at %s chars", script_result['truncated_at'])
         else:
-            log.warning(f"Script source read failed: {script_result.get('error', 'unknown')}")
+            log.warning("Script source read failed: %s", script_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "script_routed": True,
                             "analyzed_files": []}
@@ -860,9 +851,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             source_len = dotnet_result.get("decompilation", {}).get("source_length", 0)
             class_count = dotnet_result.get("class_count", 0)
             strings_count = len(dotnet_result.get("strings_of_interest", []))
-            log.info(f"  Decompiled: {source_len} chars C# source, {class_count} classes, {strings_count} interesting strings")
+            log.info("  Decompiled: %s chars C# source, %s classes, %s interesting strings", source_len, class_count, strings_count)
         else:
-            log.warning(f"ILSpy failed: {dotnet_result.get('error', 'unknown')}")
+            log.warning("ILSpy failed: %s", dotnet_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "dotnet_routed": True,
                             "analyzed_files": []}
@@ -875,13 +866,13 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             func_count = go_result.get("functions", {}).get("user_count", 0)
             pkg_count = len(go_result.get("packages", []))
             strings_count = len(go_result.get("strings_of_interest", []))
-            log.info(f"  Go {build.get('go_version', '?')}, {func_count} user functions, {pkg_count} packages, {strings_count} interesting strings")
+            log.info("  Go %s, %s user functions, %s packages, %s interesting strings", build.get('go_version', '?'), func_count, pkg_count, strings_count)
             report["ghidra"] = {"triggered": True, "go_routed": True,
                                 "analyzed_files": []}
         else:
             # GoReSym failed — likely garble-obfuscated. Fall back to Ghidra
             # for raw pseudocode analysis without function name metadata.
-            log.warning(f"GoReSym failed: {go_result.get('error', 'unknown')}")
+            log.warning("GoReSym failed: %s", go_result.get('error', 'unknown'))
             log.info("  Falling back to Ghidra for obfuscated Go binary...")
             if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
                                  get_cape_signatures_fn=get_cape_signatures):
@@ -912,9 +903,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             bundled = pyinstaller_result.get("bundled_count", 0)
             strings_count = len(pyinstaller_result.get("strings_of_interest", []))
             py_ver = pyinstaller_result.get("python_version", "?")
-            log.info(f"  Python {py_ver}, {source_len} chars source, {bundled} bundled files, {strings_count} interesting strings")
+            log.info("  Python %s, %s chars source, %s bundled files, %s interesting strings", py_ver, source_len, bundled, strings_count)
         else:
-            log.warning(f"PyInstaller analysis failed: {pyinstaller_result.get('error', 'unknown')}")
+            log.warning("PyInstaller analysis failed: %s", pyinstaller_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "pyinstaller_routed": True,
                             "analyzed_files": []}
@@ -927,9 +918,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             class_count = java_result.get("class_summary_count", 0)
             strings_count = len(java_result.get("strings_of_interest", []))
             main_class = java_result.get("main_class", "?")
-            log.info(f"  Main-Class: {main_class}, {source_len} chars source, {class_count} classes, {strings_count} interesting strings")
+            log.info("  Main-Class: %s, %s chars source, %s classes, %s interesting strings", main_class, source_len, class_count, strings_count)
         else:
-            log.warning(f"CFR failed: {java_result.get('error', 'unknown')}")
+            log.warning("CFR failed: %s", java_result.get('error', 'unknown'))
 
         report["ghidra"] = {"triggered": True, "java_routed": True,
                             "analyzed_files": []}
@@ -940,7 +931,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                                                       report_dir=output_dir)
 
         if dotnet_extractions:
-            log.info(f"\n[Stage 4] .NET payload(s) found in Cape extractions ({len(dotnet_extractions)}):")
+            log.info("\n[Stage 4] .NET payload(s) found in Cape extractions (%s):", len(dotnet_extractions))
             # Analyse the largest; every carve is deleted afterwards, even if
             # the analysis raised (#537). extraction_source records where.
             dotnet_result = analyse_dotnet_extractions(
@@ -950,9 +941,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 source_len = dotnet_result.get("decompilation", {}).get("source_length", 0)
                 class_count = dotnet_result.get("class_count", 0)
                 strings_count = len(dotnet_result.get("strings_of_interest", []))
-                log.info(f"  Decompiled: {source_len} chars C# source, {class_count} classes, {strings_count} interesting strings")
+                log.info("  Decompiled: %s chars C# source, %s classes, %s interesting strings", source_len, class_count, strings_count)
             else:
-                log.warning(f"ILSpy failed: {dotnet_result.get('error', 'unknown')}")
+                log.warning("ILSpy failed: %s", dotnet_result.get('error', 'unknown'))
 
             # Still run Ghidra on the original native PE sample
             if should_run_ghidra(cape_data, sample_path, ghidra_cmd=GHIDRA_CMD,
@@ -990,7 +981,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     # its analyser; the payloads go to Ghidra.
     _routed = [k for k in ROUTED_FLAGS if report.get("ghidra", {}).get(k)]
     if _routed:
-        log.info(f"\n[Stage 4] {_routed[0]}: running Ghidra on CAPE payloads (not the wrapper)...")
+        log.info("\n[Stage 4] %s: running Ghidra on CAPE payloads (not the wrapper)...", _routed[0])
         payload_ghidra = run_ghidra(
             cape_data, output_dir, sample_path,
             ghidra_cmd=GHIDRA_CMD,
@@ -1002,16 +993,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         report["ghidra"] = {**payload_ghidra, **{k: True for k in _routed}}
         n_ok = sum(1 for f in payload_ghidra.get("analyzed_files", [])
                    if f.get("analysis_success"))
-        log.info(f"  Payloads analysed: {len(payload_ghidra.get('analyzed_files', []))}, "
-                 f"{n_ok} with a loaded program")
+        log.info("  Payloads analysed: %s, %s with a loaded program", len(payload_ghidra.get('analyzed_files', [])), n_ok)
 
     # Check CAPE logs for encoded PowerShell commands (any sample type)
     if not report.get("powershell_analysis"):
         ps_commands = extract_powershell_from_cape(report)
         if ps_commands:
-            log.info(f"\n[Stage 4] Found {len(ps_commands)} encoded PowerShell command(s) in CAPE logs")
+            log.info("\n[Stage 4] Found %s encoded PowerShell command(s) in CAPE logs", len(ps_commands))
             best = max(ps_commands, key=lambda x: len(x.get("decoded", "")))
-            log.info(f"  Largest: {len(best['decoded'])} chars from PID {best['pid']}")
+            log.info("  Largest: %s chars from PID %s", len(best['decoded']), best['pid'])
             # Write decoded script to temp file for container analysis
             import os
             import tempfile
@@ -1028,9 +1018,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                 report["powershell_analysis"] = ps_result
                 if ps_result.get("analysis_success"):
                     layer_count = ps_result.get("layer_count", 0)
-                    log.info(f"  PSDecode: {layer_count} layers decoded")
+                    log.info("  PSDecode: %s layers decoded", layer_count)
                 else:
-                    log.warning(f"  PowerShell analysis failed: {ps_result.get('error', 'unknown')}")
+                    log.warning("  PowerShell analysis failed: %s", ps_result.get('error', 'unknown'))
             finally:
                 os.unlink(tmp.name)
 
@@ -1048,17 +1038,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         severity = finding.get("severity", "info")
         title = finding.get("title", "?")
         sources = " + ".join(finding.get("sources", []))
-        log.info(f"  [{severity.upper()}] {title} ({sources})")
+        log.info("  [%s] %s (%s)", severity.upper(), title, sources)
     # An empty finding list means "nothing correlated" ONLY if every rule had its
     # input. correlation_warnings names the rules that could not run; without it
     # a timed-out malfind read as a sample with no injection.
     corr_warnings = report.get("correlation_warnings") or []
     for warning in corr_warnings:
-        log.warning(f"  [DEGRADED] {warning}")
+        log.warning("  [DEGRADED] %s", warning)
     if not report["cross_correlations"]:
         if corr_warnings:
-            log.info(f"  No cross-tool findings — but {len(corr_warnings)} rule input(s) "
-                     f"were unavailable, so this is not a clean result")
+            log.info("  No cross-tool findings — but %s rule input(s) were unavailable, so this is not a clean result", len(corr_warnings))
         else:
             log.info("  No cross-tool findings detected")
 
@@ -1108,10 +1097,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             calls = interp.get("tool_calls_used", 0)
             influenced = interp.get("possible_prompt_influence", False)
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {calls}, Influence flag: {influenced}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s, Influence flag: %s", calls, influenced)
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
         return interp
 
     # Option (c) of #646: a routed sample whose unpacked payload Ghidra loaded
@@ -1123,11 +1112,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if _routed_by else (None, None))
 
     if payload_target is not None and INTERPRET_ENABLED:
-        log.info(f"\n[Stage 4.5] LLM Interpretation: {_routed_by[0]} sample, "
-                 f"reading unpacked payload {payload_target.get('program_name', '?')[:16]} "
-                 f"({payload_target.get('functions_count')} functions, "
-                 f"{payload_target.get('cape_type') or 'unlabelled'}, {payload_reason}) "
-                 f"instead of the wrapper...")
+        log.info("\n[Stage 4.5] LLM Interpretation: %s sample, reading unpacked payload %s (%s functions, %s, %s) instead of the wrapper...", _routed_by[0], payload_target.get('program_name', '?')[:16], payload_target.get('functions_count'), payload_target.get('cape_type') or 'unlabelled', payload_reason)
         report["llm_interpretation"] = _interpret_ghidra_program(payload_target)
         # Say what was read. Without this a .NET sample's interpretation would
         # look like an interpretation of its C#, and the eval could not tell.
@@ -1146,8 +1131,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         # read the C# on demand, served by run_interpret from the stored
         # source. "single_shot": the whole stored source in one request (#646).
         _dotnet_mode = INTERPRET_CONFIG.get("dotnet_mode", "agentic")
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation "
-                 f"({_dotnet_mode})...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing .NET decompilation (%s)...", _dotnet_mode)
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         # Never raises for "agentic": a map the tool sandbox cannot build falls
         # back to the single-shot payload, marked with why.
@@ -1155,8 +1139,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             dotnet_data, _llm_context, cape_sigs, _dotnet_mode,
             INTERPRET_CONFIG)
         if dotnet_init.get("dotnet_agentic_failed"):
-            log.warning(f"  agentic .NET map failed, running single-shot instead: "
-                        f"{dotnet_init['dotnet_agentic_failed']}")
+            log.warning("  agentic .NET map failed, running single-shot instead: %s", dotnet_init['dotnet_agentic_failed'])
         # Decided on the init actually sent, AFTER any fallback: a map that
         # could not be built goes single-shot, which never reads the evidence.
         dotnet_evidence, dotnet_evidence_record = evidence_for_interpret(
@@ -1182,10 +1165,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif java_data.get("analysis_success") and INTERPRET_ENABLED:
         # Java path — send decompiled Java source directly to LLM
@@ -1226,10 +1209,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif office_data.get("analysis_success") and office_data.get("has_macros") and INTERPRET_ENABLED:
         # Office macro path — send VBA source to LLM for deobfuscation + analysis
@@ -1265,10 +1248,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif ps_data.get("analysis_success") and INTERPRET_ENABLED:
         # PowerShell path — send decoded script to LLM
@@ -1288,15 +1271,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif script_data.get("analysis_success") and INTERPRET_ENABLED:
         # Generic script path — send source directly to LLM for analysis + deobfuscation
         script_lang = script_data.get("source_language", "unknown")
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing {script_lang} source...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing %s source...", script_lang)
         cape_sigs = [s.get("name", "") for s in report.get("cape", {}).get("signatures", [])]
         script_init = {
             **_llm_context,
@@ -1322,10 +1305,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif pyinstaller_data.get("analysis_success") and INTERPRET_ENABLED:
         # PyInstaller path — send Python source directly to LLM (no tools needed)
@@ -1358,10 +1341,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif go_data.get("analysis_success") and INTERPRET_ENABLED:
         # Go path — send GoReSym metadata directly to LLM (no tools needed)
@@ -1380,10 +1363,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         interp = report["llm_interpretation"]
         if interp.get("enabled") and interp.get("analysis"):
             family = interp.get("analysis", {}).get("malware_family_guess", "?")
-            log.info(f"  Family guess: {family}")
-            log.info(f"  Tool calls: {interp.get('tool_calls_used', 0)}")
+            log.info("  Family guess: %s", family)
+            log.info("  Tool calls: %s", interp.get('tool_calls_used', 0))
         elif interp.get("error"):
-            log.warning(f"Error: {interp['error']}")
+            log.warning("Error: %s", interp['error'])
 
     elif successful:
         # Native PE path — agentic Ghidra investigation of the CANONICAL
@@ -1392,8 +1375,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         # avoids it (#667's survey). The eval imports select_native_target and
         # sends the agent the same entry (#697).
         native_target, native_reason = select_native_target(ghidra_data)
-        log.info(f"\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output "
-                 f"({native_reason}: {str(native_target.get('program_name', '?'))[:16]})...")
+        log.info("\n[Stage 4.5] LLM Interpretation: analyzing Ghidra output (%s: %s)...", native_reason, str(native_target.get('program_name', '?'))[:16])
         report["llm_interpretation"] = _interpret_ghidra_program(native_target)
         # Say what was read, in the shape the routed branch writes, so reports
         # and the flow view can tell canonical from a fallback.
@@ -1419,13 +1401,13 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if af.get("shellcode_artifacts") and not af.get("analysis_success")
     ]
     if shellcode_with_artifacts and INTERPRET_ENABLED:
-        log.info(f"\n[Stage 4.6] LLM Shellcode Analysis: {len(shellcode_with_artifacts)} artifact-only candidates")
+        log.info("\n[Stage 4.6] LLM Shellcode Analysis: %s artifact-only candidates", len(shellcode_with_artifacts))
         for sc in shellcode_with_artifacts:
             arts = sc.get("shellcode_artifacts", {})
             apis = arts.get("resolved_apis", [])
             paths = arts.get("file_paths", [])
             if apis or paths:
-                log.info(f"    {sc.get('source_process', '?')} → pid {sc.get('pid')}: {len(apis)} APIs, {len(paths)} paths")
+                log.info("    %s → pid %s: %s APIs, %s paths", sc.get('source_process', '?'), sc.get('pid'), len(apis), len(paths))
 
     # Stage 4.7: Evasion hunter — when CAPE produces suspiciously low activity,
     # run a focused LLM analysis to identify sandbox evasion techniques.
@@ -1437,8 +1419,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             and cape_status == "reported"
             and cape_sig_count < EVASION_MAX_SIGNATURES
             and sample_size > EVASION_MIN_BINARY_SIZE):
-        log.info(f"\n[Stage 4.7] Evasion Hunter: {cape_sig_count} signatures on a "
-                 f"{sample_size // 1024}KB binary — investigating sandbox evasion...")
+        log.info("\n[Stage 4.7] Evasion Hunter: %s signatures on a %sKB binary — investigating sandbox evasion...", cape_sig_count, sample_size // 1024)
 
         # Build behavioral data for the evasion prompt
         cape_data_local = report.get("cape", {})
@@ -1485,16 +1466,16 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             confidence = ea.get("confidence", "?")
             techniques = ea.get("evasion_techniques", [])
             recommendations = ea.get("sandbox_recommendations", [])
-            log.info(f"  Confidence: {confidence}")
-            log.info(f"  Evasion techniques: {len(techniques)}")
+            log.info("  Confidence: %s", confidence)
+            log.info("  Evasion techniques: %s", len(techniques))
             for t in techniques[:5]:
-                log.info(f"    {t.get('mitre_id', '?')}: {t.get('technique', '?')}")
+                log.info("    %s: %s", t.get('mitre_id', '?'), t.get('technique', '?'))
             if recommendations:
-                log.info(f"  Recommendations: {len(recommendations)}")
+                log.info("  Recommendations: %s", len(recommendations))
                 for r in recommendations[:3]:
-                    log.info(f"    - {r[:100]}")
+                    log.info("    - %s", r[:100])
         elif evasion.get("error"):
-            log.warning(f"Evasion hunter error: {evasion['error']}")
+            log.warning("Evasion hunter error: %s", evasion['error'])
     else:
         report["evasion_analysis"] = {"enabled": False, "reason": "not_triggered"}
 
@@ -1521,15 +1502,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                         unique = screenshot_data.get("unique_count", 0)
                         qr_count = len(screenshot_data.get("qr_codes", []))
                         evasion = screenshot_data.get("evasion_signal", False)
-                        log.info(f"  {total} total → {unique} unique frames, {qr_count} QR codes")
+                        log.info("  %s total → %s unique frames, %s QR codes", total, unique, qr_count)
                         if evasion:
                             log.info("  Evasion signal: all screenshots identical — no visual activity")
                         for qr in screenshot_data.get("qr_codes", []):
-                            log.info(f"  QR [{qr.get('type')}]: {qr.get('value', '')[:80]}")
+                            log.info("  QR [%s]: %s", qr.get('type'), qr.get('value', '')[:80])
                     except json.JSONDecodeError:
                         log.warning("Screenshot analysis returned invalid JSON")
                 else:
-                    log.warning(f"Screenshot analysis failed: {screenshot_result.stderr[:200]}")
+                    log.warning("Screenshot analysis failed: %s", screenshot_result.stderr[:200])
             except subprocess.TimeoutExpired:
                 log.warning("Screenshot analysis timed out (60s)")
             except FileNotFoundError:
@@ -1543,9 +1524,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     report["family"] = determine_family(report)
     report["severity"] = calculate_severity(report)
     report["mitre_mapping"] = build_mitre_mapping(report)
-    log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
-    log.info(f"  Severity: {report['severity']} (score: {report.get('_severity_score', '?')})")
-    log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
+    log.info("  Family: %s (source: %s)", report['family'], report.get('_family_source', '?'))
+    log.info("  Severity: %s (score: %s)", report['severity'], report.get('_severity_score', '?'))
+    log.info("  MITRE techniques: %s", len(report['mitre_mapping']))
 
     # IOC extraction — pull actionable indicators from all stages
     log.info("\n[IOC Extraction] Scanning all stages for indicators...")
@@ -1555,12 +1536,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     for ioc in report["extracted_iocs"]:
         t = ioc["type"]
         ioc_types[t] = ioc_types.get(t, 0) + 1
-    log.info(f"  Found {ioc_count} IOCs: {ioc_types}")
+    log.info("  Found %s IOCs: %s", ioc_count, ioc_types)
 
     # IOC-to-MITRE technique mapping (programmatic rules)
     report["ioc_technique_mappings"] = map_iocs_to_techniques(report, report["extracted_iocs"])
     if report["ioc_technique_mappings"]:
-        log.info(f"  Mapped {len(report['ioc_technique_mappings'])} IOCs to MITRE techniques")
+        log.info("  Mapped %s IOCs to MITRE techniques", len(report['ioc_technique_mappings']))
 
     # Clean internal keys with non-serializable objects (Path) before summary/report
     vol_data = report.get("volatility", {})
@@ -1575,7 +1556,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             and screenshot_data.get("analysis_success")
             and screenshot_data.get("unique_count", 0) > 0
             and screenshot_data.get("frames_base64")):
-        log.info(f"\n[Stage 5.7] Visual Analysis: analyzing {screenshot_data['unique_count']} unique screenshots...")
+        log.info("\n[Stage 5.7] Visual Analysis: analyzing %s unique screenshots...", screenshot_data['unique_count'])
         visual_init = {
             **_llm_context,
             "analysis_type": "visual_analysis",
@@ -1600,18 +1581,18 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             ransom = va.get("ransom_note_detected", False)
             events = len(va.get("notable_events", []))
             evasion = va.get("evasion_signal", False)
-            log.info(f"  Notable events: {events}, Ransom note: {ransom}, Evasion signal: {evasion}")
+            log.info("  Notable events: %s, Ransom note: %s, Evasion signal: %s", events, ransom, evasion)
             if va.get("payment_info"):
                 for p in va["payment_info"]:
-                    log.info(f"  Payment [{p.get('type')}]: {p.get('value', '')[:60]}")
+                    log.info("  Payment [%s]: %s", p.get('type'), p.get('value', '')[:60])
         elif visual.get("error"):
-            log.warning(f"Visual analysis error: {visual['error']}")
+            log.warning("Visual analysis error: %s", visual['error'])
 
     _summary_start = _time.time()
     update_stage(analysis_id_early, "summary", "started")
     if INTERPRET_ENABLED:
         summary_model = INTERPRET_CONFIG.get("summary_model", INTERPRET_CONFIG.get("model", "?"))
-        log.info(f"\n[Stage 5] Executive Summary: generating with {summary_model}...")
+        log.info("\n[Stage 5] Executive Summary: generating with %s...", summary_model)
         report["executive_summary"] = run_summarize(
             report,
             interpret_cmd=INTERPRET_CMD,
@@ -1622,9 +1603,9 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         if summary.get("executive_summary"):
             severity = summary.get("severity", "?")
             findings = len(summary.get("key_findings", []))
-            log.info(f"  Severity: {severity}, Key findings: {findings}")
+            log.info("  Severity: %s, Key findings: %s", severity, findings)
         elif summary.get("error"):
-            log.warning(f"Error: {summary['error']}")
+            log.warning("Error: %s", summary['error'])
     else:
         report["executive_summary"] = {"enabled": False, "reason": "disabled_by_config"}
     stage_timings["summary"] = round(_time.time() - _summary_start, 1)
@@ -1645,7 +1626,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             report["plain_english_usage"] = plain_result.get("usage", {}) if isinstance(plain_result, dict) else {}
             # Store the model so cost tracking prices it correctly (it may be local = $0).
             report["plain_english_model"] = plain_result.get("model", "") if isinstance(plain_result, dict) else ""
-            log.info(f"  {plain_text[:100]}...")
+            log.info("  %s...", plain_text[:100])
         else:
             report["plain_english_summary"] = ""
     else:
@@ -1674,7 +1655,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
                     "confidence": "medium",
                 })
                 existing_keys.add(key)
-        log.info(f"  LLM added {len(llm_links)} IOC-technique links")
+        log.info("  LLM added %s IOC-technique links", len(llm_links))
 
     # Timing summary
     total_elapsed = round(_time.time() - pipeline_start, 1)
@@ -1682,12 +1663,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     report["timing"] = stage_timings
     stage_breakdown = " | ".join(
         f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total")
-    log.info(f"[Timing] Total: {total_elapsed:.0f}s | {stage_breakdown}")
+    log.info("[Timing] Total: %.0fs | %s", total_elapsed, stage_breakdown)
 
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(UTC).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
-    log.info(f"\n[Done] JSON report: {report_path}")
+    log.info("\n[Done] JSON report: %s", report_path)
 
     # Database ingestion — write structured data to PostgreSQL
     log.info("\n[DB Ingestion] Writing to database...")
@@ -1710,15 +1691,15 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             cwd="/tmp",
         )
         if result.returncode == 0:
-            log.info(f"  PDF written to: {pdf_path}")
+            log.info("  PDF written to: %s", pdf_path)
             if analysis_id:
                 mark_pdf_generated(analysis_id)
         else:
-            log.error(f"  [!] PDF generation failed: {result.stderr[:500]}")
+            log.error("  [!] PDF generation failed: %s", result.stderr[:500])
     except subprocess.TimeoutExpired:
         log.error("  [!] PDF generation timed out (120s)")
     except Exception as e:
-        log.error(f"  [!] PDF generation error: {e}")
+        log.error("  [!] PDF generation error: %s", e)
     stage_timings["pdf"] = round(_time.time() - _pdf_start, 1)
     update_stage(analysis_id_early, "pdf", "completed", f"{stage_timings['pdf']:.0f}s")
 
@@ -1760,7 +1741,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
                      API serves <task_id>/report.pdf for every row with that
                      task_id, which is the original's PDF, not this one.
     """
-    log.info(f"Replay] Loading {report_path}")
+    log.info("Replay] Loading %s", report_path)
     original_bytes = report_path.read_bytes()
     report = json.loads(original_bytes)
     replayed_at = datetime.now(UTC)
@@ -1774,8 +1755,8 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
     all_stages = ["correlate", "analysis", "iocs", "summary", "db", "pdf"]
     run_stages = stages if stages else all_stages
 
-    log.info(f"Replay] Task: {task_id}")
-    log.info(f"Replay] Stages: {', '.join(run_stages)}")
+    log.info("Replay] Task: %s", task_id)
+    log.info("Replay] Stages: %s", ', '.join(run_stages))
 
     if "correlate" in run_stages:
         log.info("\n[Cross-Correlation] Comparing Cape and Volatility data...")
@@ -1784,7 +1765,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             sev = finding.get("severity", "info")
             title = finding.get("title", "?")
             sources = " + ".join(finding.get("sources", []))
-            log.info(f"  [{sev.upper()}] {title} ({sources})")
+            log.info("  [%s] %s (%s)", sev.upper(), title, sources)
         if not report["cross_correlations"]:
             log.info("  No cross-tool findings detected")
 
@@ -1793,9 +1774,9 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         report["family"] = determine_family(report)
         report["severity"] = calculate_severity(report)
         report["mitre_mapping"] = build_mitre_mapping(report)
-        log.info(f"  Family: {report['family']} (source: {report.get('_family_source', '?')})")
-        log.info(f"  Severity: {report['severity']} (score: {report.get('_severity_score', '?')})")
-        log.info(f"  MITRE techniques: {len(report['mitre_mapping'])}")
+        log.info("  Family: %s (source: %s)", report['family'], report.get('_family_source', '?'))
+        log.info("  Severity: %s (score: %s)", report['severity'], report.get('_severity_score', '?'))
+        log.info("  MITRE techniques: %s", len(report['mitre_mapping']))
 
     if "iocs" in run_stages:
         log.info("\n[IOC Extraction] Scanning all stages for indicators...")
@@ -1805,7 +1786,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         for ioc in report["extracted_iocs"]:
             t = ioc["type"]
             ioc_types[t] = ioc_types.get(t, 0) + 1
-        log.info(f"  Found {ioc_count} IOCs: {ioc_types}")
+        log.info("  Found %s IOCs: %s", ioc_count, ioc_types)
 
     if "summary" in run_stages:
         if INTERPRET_ENABLED:
@@ -1818,9 +1799,9 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             )
             summary = report["executive_summary"]
             if summary.get("executive_summary"):
-                log.info(f"  Key findings: {len(summary.get('key_findings', []))}")
+                log.info("  Key findings: %s", len(summary.get('key_findings', [])))
             elif summary.get("error"):
-                log.warning(f"Error: {summary['error']}")
+                log.warning("Error: %s", summary['error'])
 
     # Write the replay BESIDE the original, never over it (#405). The stamp on
     # the file and in the body are the same instant so they can be matched.
@@ -1832,8 +1813,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
     }
     new_report_path = write_report(task_id, report, REPORTS_DIR,
                                    name=replay_json_name)
-    log.info(f"\n[Done] Replay report: {new_report_path} "
-             f"(original left unchanged: {report_path})")
+    log.info("\n[Done] Replay report: %s (original left unchanged: %s)", new_report_path, report_path)
 
     if "db" in run_stages:
         log.info("\n[DB Ingestion] Writing to database as a new analyses row...")
@@ -1856,13 +1836,13 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
             )
             if result.returncode == 0:
                 # Deliberately no mark_pdf_generated: see the docstring.
-                log.info(f"  PDF written to: {pdf_path}")
+                log.info("  PDF written to: %s", pdf_path)
             else:
-                log.error(f"  [!] PDF generation failed: {result.stderr[:500]}")
+                log.error("  [!] PDF generation failed: %s", result.stderr[:500])
         except subprocess.TimeoutExpired:
             log.error("  [!] PDF generation timed out (120s)")
         except Exception as e:
-            log.error(f"  [!] PDF generation error: {e}")
+            log.error("  [!] PDF generation error: %s", e)
 
     return report
 
@@ -1892,7 +1872,7 @@ def main():
     setup_logging(verbose=args.verbose)
 
     if not args.sample.exists():
-        log.error(f"Error: file not found: {args.sample}")
+        log.error("Error: file not found: %s", args.sample)
         sys.exit(1)
 
     if args.replay:
@@ -1924,23 +1904,22 @@ def main():
         if "triage" in failures:
             # "0 YARA matches" is what this printed while triage was dead — a
             # sentence that reads as a finding rather than an outage.
-            log.info(f"  Triage:     FAILED — {report.get('error', 'unknown')}")
+            log.info("  Triage:     FAILED — %s", report.get('error', 'unknown'))
         else:
             ys = triage.get("yara_status") or {}
             if ys and not ys.get("compiled"):
                 # "0 YARA matches" from zero loaded rules read as a finding for
                 # five months (#736). Say that YARA did not run.
-                log.warning(f"  Triage:     YARA DID NOT RUN — {ys.get('error') or 'no rules compiled'}")
+                log.warning("  Triage:     YARA DID NOT RUN — %s", ys.get('error') or 'no rules compiled')
             elif ys.get("error"):
-                log.warning(f"  Triage:     {yara_count} YARA matches from a PARTIAL rule set "
-                            f"({ys['compiled']} rules) — {ys['error']}")
+                log.warning("  Triage:     %s YARA matches from a PARTIAL rule set (%s rules) — %s", yara_count, ys['compiled'], ys['error'])
             else:
                 rules = f" ({ys['compiled']} rules)" if ys.get("compiled") else ""
-                log.info(f"  Triage:     {yara_count} YARA matches{rules}")
-        log.info(f"  Cape:       {cape_status}")
-        log.info(f"  Volatility: {'triggered' if vol_triggered else 'not triggered'}")
-        log.info(f"  Ghidra:     {'triggered' if ghidra_triggered else 'not triggered'}")
-        log.info(f"  LLM:        {llm_family if llm_enabled else 'disabled'}")
+                log.info("  Triage:     %s YARA matches%s", yara_count, rules)
+        log.info("  Cape:       %s", cape_status)
+        log.info("  Volatility: %s", 'triggered' if vol_triggered else 'not triggered')
+        log.info("  Ghidra:     %s", 'triggered' if ghidra_triggered else 'not triggered')
+        log.info("  LLM:        %s", llm_family if llm_enabled else 'disabled')
 
         if failures:
             # Exit non-zero so the outage is visible to whatever ran us.
@@ -1950,7 +1929,7 @@ def main():
             # re-queued once it is fixed, rather than being silently spent on a
             # degraded analysis — and it no longer sits in the spool being
             # re-run in a loop (#534).
-            log.error(f"\nFAILED STAGES: {', '.join(failures)}")
+            log.error("\nFAILED STAGES: %s", ', '.join(failures))
             log.error("The report was still written, but do not compare it with "
                       "one produced by a healthy pipeline.")
             sys.exit(1)

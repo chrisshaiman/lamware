@@ -1,6 +1,6 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""#206: ansible/ must stay inside the lint and SAST gates, and the G004 deferral must expire.
+"""#206: ansible/ must stay inside the lint and SAST gates, with no rule exempted.
 
 Before #206, `ruff check` and `semgrep scan` both ran against `api/ shared/ pipeline/`
 only, and pre-commit was scoped `^(api|shared|pipeline)/`. That left 12,162 lines of
@@ -14,7 +14,6 @@ from "untestable and unlinted" to "testable and still unlinted".
 These tests exist because a scope regression is invisible. Nothing fails, nothing warns —
 findings simply stop being reported, exactly as they silently were for a year.
 """
-import datetime as dt
 import importlib.util
 import re
 import subprocess
@@ -28,11 +27,6 @@ ROOT = Path(__file__).resolve().parents[2]
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 PRECOMMIT = (ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-
-# The date the G004 deferral stops being acceptable. Kept here AND in the pyproject
-# comment; the test below fails if they disagree, so neither can drift unnoticed.
-G004_EXPIRY = dt.date(2026, 10, 31)
-
 
 def test_ruff_covers_ansible():
     assert re.search(r"ruff check .*\bansible/", CI), (
@@ -49,29 +43,15 @@ def test_precommit_covers_ansible():
         "pre-commit no longer matches ansible/, so findings only appear in CI")
 
 
-def test_the_g004_deferral_has_not_silently_become_permanent():
-    """An ignore with no deadline is just a permanently lower standard.
+def test_ansible_has_no_rule_exemption():
+    """#206 deferred G004 for ansible/ until 2026-10-31; it was retired by fixing all 174.
 
-    Mirrors frontend/audit-exceptions.json, which fails the build when its reviewBy
-    passes rather than trusting anyone to remember.
+    An ignore with no deadline is just a permanently lower standard, so a new one for
+    ansible/ should arrive with its own dated guard, not slip in as a config line.
     """
-    ignores = PYPROJECT["tool"]["ruff"]["lint"]["per-file-ignores"]
-    if "ansible/**" not in ignores:
-        return  # already retired — nothing to police
-    assert ignores["ansible/**"] == ["G004"], (
-        "the ansible/ deferral must stay limited to G004; widening it turns a dated "
-        "exception into a general exemption")
-    assert dt.date.today() <= G004_EXPIRY, (
-        f"the G004 deferral for ansible/ expired on {G004_EXPIRY}. Fix the remaining "
-        f"logging f-strings, then delete both the per-file-ignore in pyproject.toml and "
-        f"this test. Do NOT extend the date without deciding the work is not worth doing.")
-
-
-def test_the_expiry_date_is_documented_where_the_ignore_lives():
-    """A deadline only a test knows about is a deadline nobody sees while editing config."""
-    raw = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert G004_EXPIRY.isoformat() in raw, (
-        "pyproject.toml must state the same expiry date this test enforces")
+    ignores = PYPROJECT["tool"]["ruff"]["lint"].get("per-file-ignores", {})
+    exempt = {k: v for k, v in ignores.items() if k.startswith("ansible")}
+    assert not exempt, f"ansible/ is exempted from ruff rules again: {exempt}"
 
 
 @pytest.mark.skipif(not (ROOT / "ansible").is_dir(), reason="ansible/ not present")
