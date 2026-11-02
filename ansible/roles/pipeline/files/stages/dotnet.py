@@ -125,7 +125,7 @@ def _has_clr_header(file_path: Path) -> bool:
         return False
     rva, why = _clr_rva(head)
     if not rva:
-        log.debug(f"  {file_path}: not .NET ({why})")
+        log.debug("  %s: not .NET (%s)", file_path, why)
     return rva > 0
 
 
@@ -226,13 +226,13 @@ def _remove_carve(carved_path: Path) -> bool:
     """
     carve_dir = carved_path.parent
     if not carve_dir.name.startswith(_CARVE_PREFIX):
-        log.warning(f"  not removing {carved_path}: not in a {_CARVE_PREFIX}* directory")
+        log.warning("  not removing %s: not in a %s* directory", carved_path, _CARVE_PREFIX)
         return False
     # rmtree does not follow symlinks inside the tree; the directory is 0700
     # and ours, so nothing else should be in it, but nothing in it survives.
     shutil.rmtree(carve_dir, ignore_errors=True)
     if os.path.lexists(carve_dir):
-        log.warning(f"  could not remove the .NET carve directory {carve_dir}")
+        log.warning("  could not remove the .NET carve directory %s", carve_dir)
         return False
     return True
 
@@ -255,13 +255,12 @@ def _find_embedded_dotnet(file_path: Path, carve_parent: Path | None = None) -> 
             pos, stopped = _embedded_clr_offset(fh, size)
             if pos is None:
                 if stopped:
-                    log.warning(f"  embedded .NET scan of {file_path.name}: {stopped}; "
-                                f"the rest of the file was not searched")
+                    log.warning("  embedded .NET scan of %s: %s; the rest of the file was not searched", file_path.name, stopped)
                 return None
             parent = carve_parent if carve_parent is not None else CARVE_DIR
             return _write_carve(fh, pos, file_path.name, parent)
     except OSError as e:
-        log.warning(f"  embedded .NET scan of {file_path.name} failed: {e}")
+        log.warning("  embedded .NET scan of %s failed: %s", file_path.name, e)
         return None
 
 
@@ -275,7 +274,7 @@ def _regular_entries(subdir: Path) -> list[tuple[Path, int]]:
     try:
         names = sorted(subdir.iterdir())
     except OSError as e:
-        log.warning(f"  cannot list {subdir}: {e}; not scanning it for .NET")
+        log.warning("  cannot list %s: %s; not scanning it for .NET", subdir, e)
         return []
     out = []
     for entry in names:
@@ -394,7 +393,7 @@ def analyse_dotnet_extractions(extractions: list[dict], output_dir: Path,
     was removed.
     """
     best = max(extractions, key=lambda x: x["size"])
-    log.info(f"  Analyzing: {best['source_dir']}/{best['sha256'][:16]}... ({best['size']} bytes)")
+    log.info("  Analyzing: %s/%s... (%s bytes)", best['source_dir'], best['sha256'][:16], best['size'])
     try:
         result = run_dotnet_analysis(Path(best["path"]), output_dir, dotnet_cmd=dotnet_cmd)
     finally:

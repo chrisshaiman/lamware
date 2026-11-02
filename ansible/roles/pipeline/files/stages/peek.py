@@ -58,18 +58,18 @@ def open_regular(path: Path | str):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except (OSError, ValueError, TypeError) as e:
-        log.info(f"  peek: cannot open {path}: {e}")
+        log.info("  peek: cannot open %s: %s", path, e)
         return None
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            log.info(f"  peek: {path} is not a regular file (mode {stat.filemode(st.st_mode)}); not reading it")
+            log.info("  peek: %s is not a regular file (mode %s); not reading it", path, stat.filemode(st.st_mode))
             os.close(fd)
             return None
         return os.fdopen(fd, "rb")
     except OSError as e:
         os.close(fd)
-        log.info(f"  peek: cannot stat {path}: {e}")
+        log.info("  peek: cannot stat %s: %s", path, e)
         return None
 
 
@@ -83,7 +83,7 @@ def read_head(path: Path | str, n: int) -> bytes | None:
         with fh:
             return fh.read(n)
     except OSError as e:
-        log.info(f"  peek: read of {path} failed: {e}")
+        log.info("  peek: read of %s failed: %s", path, e)
         return None
 
 
@@ -92,7 +92,7 @@ def regular_size(path: Path | str) -> int | None:
     try:
         st = os.stat(path)
     except (OSError, ValueError) as e:
-        log.info(f"  peek: cannot stat {path}: {e}")
+        log.info("  peek: cannot stat %s: %s", path, e)
         return None
     return st.st_size if stat.S_ISREG(st.st_mode) else None
 
@@ -149,5 +149,5 @@ def contains(path: Path | str, pattern: bytes, cap: int | None = None,
                     return True, True
             return False, True
     except OSError as e:
-        log.info(f"  peek: read of {path} failed: {e}")
+        log.info("  peek: read of %s failed: %s", path, e)
         return None, False
