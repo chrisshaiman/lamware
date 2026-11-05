@@ -52,3 +52,22 @@
 # package cache and systemd's persistent-timer stamp files (mtime only).
 !/var/cache/apt-show-versions
 !/var/lib/systemd/timers/stamp-
+# State that scheduled jobs rewrite, enumerated from the host's timers and cron
+# jobs (2026-11-04) and confirmed in the nightly checks of 10-27 to 11-04:
+# apt-daily / unattended-upgrades (package lists, the package cache and its
+# downloads, run stamps, PackageKit, update-notifier, the software catalog),
+# fwupd-refresh (firmware metadata and its motd line), certbot's work state,
+# and man-db's cache. Packages themselves stay monitored where they install
+# (/usr, /etc, /boot), and an install rebaselines through the apt hook.
+!/var/lib/apt/lists
+!/var/cache/apt
+!/var/lib/apt/periodic
+!/var/lib/PackageKit
+!/var/lib/update-notifier
+!/var/cache/swcatalog
+!/var/lib/swcatalog
+!/var/cache/fwupd
+!/var/lib/fwupd/metadata
+!/run/motd\.d
+!/var/lib/letsencrypt
+!/var/cache/man

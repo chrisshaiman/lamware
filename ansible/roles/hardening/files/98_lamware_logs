@@ -1,20 +1,24 @@
-# Managed by Ansible (roles/hardening). AIDE rules for logs lamware adds to the host.
+# Managed by Ansible (roles/hardening). AIDE rules for logs lamware adds to the host,
+# and for rotated copies.
 #
 # Without these, the logs below fall to `/ 0 Full` (99_aide_root): every append
-# is a change and every rotation is a set of adds, removes and changes, so the
-# nightly check would alert every night. These follow the pattern of the
-# package rules in 31_aide_*: the active log may grow (but not shrink or change
-# owner), and each rotated copy must keep its content as it moves down the chain.
-# Measured on the sandbox 2026-10-25 against a check 7 minutes after a rebaseline.
+# is a change and every rotation is a set of adds, removes and changes. The active
+# logs that logrotate rotates are in 30_lamware_rotated_logs, which must sort
+# before Ubuntu's 31_aide_* (AIDE uses the earliest file's rule).
+#
+# Every rule here must hold against a baseline of any age: lamware-aide refreshes
+# the database only after a deploy or a package install, not nightly.
 
 # Process accounting (acct): /etc/cron.daily/acct runs `savelog -c 30` at 06:25:
 # pacct -> pacct.0 -> pacct.1.gz -> ... -> pacct.29.gz (dropped next day).
+# Ubuntu's chain rules (ActLog/RotLog/...SerLog) assume AIDE's database is
+# refreshed every night, so each copy is compared with its own yesterday. Ours
+# is refreshed only after a deploy or a package install, often days earlier, so
+# the live file had shrunk and the numbered copies had shifted names (checks of
+# 2026-11-01 and 11-04). Only owner and mode hold against a baseline of any age.
 /var/log/account$ d VarDir
-/var/log/account/pacct$ f ActLog
-/var/log/account/pacct\.0$ f RotLog
-/var/log/account/pacct\.1\.@@{LOGEXT}$ f CompSerLog
-/var/log/account/pacct\.([2-9]|1[0-9]|2[0-8])\.@@{LOGEXT}$ f MidlSerLog
-/var/log/account/pacct\.29\.@@{LOGEXT}$ f LastSerLog
+/var/log/account/pacct(\.0)?$ f FreqRotLog
+/var/log/account/pacct\.[0-9]+\.@@{LOGEXT}$ f LowLog+ANF+ARF
 
 # sudo's log (Defaults logfile, sudoers.d/012_logfile): appended, not rotated.
 /var/log/sudo\.log$ f ActLog
@@ -39,3 +43,18 @@
 # Measured 2026-10-26 00:00 (the first real night): nginx's rotation. A rotated
 # copy may appear and disappear; once written, its content must not change.
 /var/log/.+-[0-9]{8}(\.xz)?$ f LowDELog
+
+# A rotation creates and removes entries, which changes each log directory's times.
+/var/log(/.+)?$ d VarDir
+
+# lamware's own append-only logs, never rotated: they may grow, not shrink or change
+# owner. Appended nightly (digest, retention) or every 5 minutes (network monitor).
+/opt/ntfy-alerts/digest\.log$ f ActLog
+/opt/CAPEv2/log/retention\.log$ f ActLog
+/opt/network-monitor/network-monitor\.log$ f ActLog
+
+# certbot runs twice a day and touches /etc/letsencrypt's own times each run.
+# Only the directory: a renewal that changes a certificate or key under it is
+# still reported (about every 60 days).
+/etc/letsencrypt$ d VarDir
+

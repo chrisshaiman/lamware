@@ -342,6 +342,7 @@
     group: root
     mode: "0644"
   loop:
+    - 30_lamware_rotated_logs
     - 98_lamware_logs
     - 99_lamware_exclusions
 
