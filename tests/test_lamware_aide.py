@@ -189,6 +189,17 @@ def _excluded(path: str) -> bool:
     # daily housekeeping, measured in the first real night's check
     "/var/cache/apt-show-versions/apackages-multiarch",
     "/var/lib/systemd/timers/stamp-fwupd-refresh.timer",
+    # scheduled jobs' state, from the nightly checks of 2026-10-27 to 11-04
+    "/var/lib/apt/lists/security.ubuntu.com_ubuntu_dists_noble-security_InRelease",
+    "/var/cache/apt/pkgcache.bin", "/var/cache/apt/archives/linux-image-7.0.0-42-generic.deb",
+    "/var/lib/apt/periodic/upgrade-stamp", "/var/lib/PackageKit/transactions.db",
+    "/var/lib/update-notifier/updates-available", "/var/cache/swcatalog/cache/en-US-os-catalog.xb",
+    "/var/lib/swcatalog/yaml", "/var/cache/fwupd/devices.json",
+    "/var/lib/fwupd/metadata/lvfs/firmware.xml.zst", "/run/motd.d/85-fwupd",
+    "/var/lib/letsencrypt/.certbot.lock", "/var/cache/man/oldlocal/CACHEDIR.TAG",
+    # the first week after that deploy (2026-11-07, 11-08)
+    "/var/lib/ubuntu-release-upgrader/release-upgrade-available",
+    "/var/lib/rkhunter/db/rkhunter_prop_list.dat",
 ])
 def test_churning_data_is_excluded(path):
     assert _excluded(path)
@@ -203,6 +214,11 @@ def test_churning_data_is_excluded(path):
     "/run/systemd/system/x.service", "/tmp/implant", "/var/lib/lamware-aide",
     "/var/log/sudo.log", "/var/log/account/pacct",
     "/root", "/root/.config/nuclei/config.yaml", "/opt/security-test/run.sh",
+    # beside the scheduled jobs' state: what they install or are configured by
+    "/etc/apt/sources.list", "/etc/apt/apt.conf.d/50unattended-upgrades",
+    "/var/lib/fwupd/pki/x", "/etc/letsencrypt/live/x/privkey.pem",
+    "/etc/letsencrypt/renewal/x.conf", "/var/lib/dpkg/status", "/run/motd",
+    "/etc/rkhunter.conf", "/usr/bin/rkhunter", "/var/lib/rkhunter/db/rkhunter.dat",
 ])
 def test_code_and_configuration_stay_monitored(path):
     assert not _excluded(path)
@@ -228,3 +244,46 @@ def test_dated_rotated_logs_get_the_rotation_rule(path):
 ])
 def test_live_logs_and_other_files_do_not(path):
     assert not any(re.match(r, path) for r in LOG_RULES), path
+
+
+# --- logs that logrotate rotates: owner and mode only, and first in line -----------
+ROTATED = FILES / "30_lamware_rotated_logs"
+ROTATED_RULES = [line.split() for line in ROTATED.read_text().splitlines()
+                 if line.startswith("/")]
+
+
+def test_rotated_log_rules_sort_before_ubuntus_package_rules():
+    """AIDE applies the rule from the earliest file. Ubuntu's 31_aide_* give these logs
+    ActLog (`growing`); in 98_ these rules never applied (`aide -p`, 2026-11-04)."""
+    assert ROTATED.name < "31_aide_"
+    tasks = (FILES.parent / "tasks" / "main.yml").read_text()
+    assert f"- {ROTATED.name}" in tasks, "the deploy does not install the file"
+
+
+@pytest.mark.parametrize("path", [
+    # every active log in the host's /etc/logrotate.d, enumerated 2026-11-04
+    "/var/log/nginx/access.log", "/var/log/nginx/error.log", "/var/log/btmp", "/var/log/wtmp",
+    "/var/log/syslog", "/var/log/auth.log", "/var/log/kern.log", "/var/log/mail.log",
+    "/var/log/cron.log", "/var/log/user.log", "/var/log/dpkg.log", "/var/log/alternatives.log",
+    "/var/log/fail2ban.log", "/var/log/numad.log", "/var/log/rkhunter.log", "/var/log/boot.log",
+    "/var/log/aptitude", "/var/log/apt/history.log", "/var/log/apt/term.log",
+    "/var/log/cloud-init.log", "/var/log/cloud-init-output.log", "/var/log/ubuntu-advantage.log",
+    "/var/log/letsencrypt/letsencrypt.log", "/var/log/libvirt/libvirtd.log",
+    "/var/log/libvirt/qemu/clean.log", "/var/log/privoxy/logfile",
+    "/var/log/unattended-upgrades/unattended-upgrades.log",
+    "/var/log/unattended-upgrades/unattended-upgrades-dpkg.log",
+    "/var/log/usbguard/usbguard-audit.log",
+])
+def test_every_rotated_active_log_gets_freqrotlog(path):
+    hits = [(r, g) for r, _, g in ROTATED_RULES if re.match(r, path)]
+    assert hits and all(g == "FreqRotLog" for _, g in hits), (path, hits)
+
+
+@pytest.mark.parametrize("path", [
+    # rotated copies keep their content (98_), and what is not a rotated log stays out
+    "/var/log/nginx/access.log-20261025.xz", "/var/log/syslog-20261018.xz",
+    "/var/log/sudo.log", "/var/log/account/pacct", "/var/log/auth.log.bak", "/var/log/nginx/x.log.sh",
+])
+def test_freqrotlog_does_not_reach_rotated_copies_or_other_files(path):
+    assert not any(re.match(r, path) for r, _, _ in ROTATED_RULES), path
+

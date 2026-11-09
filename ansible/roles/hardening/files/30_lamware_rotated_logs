@@ -1,0 +1,28 @@
+# Managed by Ansible (roles/hardening). AIDE rules for the active logs that
+# logrotate rotates on this host: every path in /etc/logrotate.d (enumerated
+# 2026-11-04).
+#
+# Why this file is numbered 30: when several rules match a path, AIDE uses the one
+# from the earliest file. Ubuntu's package rules (31_aide_nginx, 31_aide_btmp,
+# 31_aide_rsyslog, 31_aide_apt, ...) give these logs ActLog or Log, which require
+# the file to keep growing. Checked on the host with `aide -p` on 2026-11-04: the
+# same rules placed in 98_lamware_logs never applied to those paths.
+#
+# Why not `growing`: a rotation shrinks the file and replaces its inode. Ubuntu's
+# rules assume AIDE's database is refreshed every night, as its dailyaidecheck
+# does, so each check compares against the previous day. lamware-aide refreshes
+# it only after a deploy or a package install, often days before. Against that
+# baseline every rotation (daily, weekly or monthly) was an alert: nginx on 3 of 9
+# nights; btmp, apt and rkhunter on the 2026-11-01 monthly. FreqRotLog keeps owner,
+# mode and name. Rotated copies keep their content under the dated rule in
+# 98_lamware_logs.
+/var/log/(alternatives|auth|boot|cron|dpkg|fail2ban|kern|mail|numad|rkhunter|user)\.log$ f FreqRotLog
+/var/log/(syslog|btmp|wtmp|aptitude)$ f FreqRotLog
+/var/log/(cloud-init(-output)?|ubuntu-advantage)\.log$ f FreqRotLog
+/var/log/apt/(history|term)\.log$ f FreqRotLog
+/var/log/letsencrypt/[^/]+\.log$ f FreqRotLog
+/var/log/libvirt/(libvirtd|(libxl|lxc|qemu)/[^/]+)\.log$ f FreqRotLog
+/var/log/nginx/[^/]+\.log$ f FreqRotLog
+/var/log/privoxy/(errorfile|jarfile|logfile)$ f FreqRotLog
+/var/log/unattended-upgrades/unattended-upgrades(-dpkg|-shutdown)?\.log$ f FreqRotLog
+/var/log/usbguard/usbguard-audit\.log$ f FreqRotLog
