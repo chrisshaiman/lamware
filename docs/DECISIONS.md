@@ -47,6 +47,7 @@ these describe an AWS data plane that no longer exists.
 | [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
+| [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Proposed — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1284,3 +1285,117 @@ users.
   which fails on a root-owned venv. Give the venv, `pkg/` and `wheelhouse/` back
   first (`chown -R pipeline:lamware` on each), then redeploy the reverted role,
   which re-owns the rest. No data moves.
+
+---
+
+## ADR-026: CVP frontier models are reached through Claude Platform on AWS, with SigV4 from IAM Roles Anywhere; no static key
+
+**Status:** Proposed (2026-11-09)
+**Supersedes:** the proposals ADR-022 (#724, Anthropic-direct WIF from Keycloak) and
+ADR-024 (#784, Amazon Bedrock with IAM Roles Anywhere). Neither merged; their numbers
+stay retired.
+**Refs:** ADR-016 (secrets), ADR-021 (brokered model access), CLAUDE.md §10 (usage tracking)
+
+### Context
+
+The owner's Cyber Verification Program (CVP) access is what makes Claude Mythos 5.1
+callable. The program forbids static or long-lived keys, requires credentials that
+expire within 12 hours, and requires federation for workload access.
+
+Both earlier proposals assumed the wrong place for that access. Measured on
+2026-11-09, read-only except one call:
+
+- **Not the Anthropic API organization.** lamware's existing keys belong to a separate
+  API organization. #724 built Keycloak federation into that organization.
+- **Not Amazon Bedrock.** The AWS account with Bedrock lists Opus 5.5, Fable 5.1 and the
+  5.5 family in every region, but no Mythos model or inference profile, and rejects the
+  Mythos model id. #784 planned Bedrock.
+- **Claude Platform on AWS.** The Anthropic-operated service reached through AWS, in the
+  owner's other AWS account, has a workspace bound to us-west-2 whose `GET /v1/models`
+  lists `claude-mythos-5-1` alongside Fable 5.1 and Opus/Sonnet/Haiku 5.5.
+- **One test call** to `claude-mythos-5-1` through that endpoint, SigV4-signed with the
+  owner's temporary SSO credentials, returned `end_turn` with a complete `usage` block
+  (18 input and 4 output tokens). No static key was involved anywhere.
+
+The service authenticates with AWS IAM. Requests are SigV4-signed for the service
+`aws-external-anthropic` at `https://aws-external-anthropic.{region}.api.aws`, carry an
+`anthropic-workspace-id` header, and use bare first-party model ids, with API parity
+with first-party. It bills through AWS Marketplace in Claude Consumption Units, shown in
+Cost Explorer as the service `Claude Platform`.
+
+### Decision
+
+1. **Route.** Frontier eval arms that need CVP access (Mythos 5.1; Fable 5.1 and Opus 5.5
+   where the standard safeguards refuse the workload) call Claude Platform on AWS in the
+   workspace's region. Production keeps its current route. Eval-only, guarded like every
+   frontier arm: no interpret, pipeline or vars setting may name these aliases or models.
+2. **Credentials: IAM Roles Anywhere, own CA.**
+   - The trust anchor is a small private CA kept off the host, uploaded as a
+     certificate bundle. AWS Private CA is not used; it costs about $400 a month for
+     nothing this needs.
+   - The host holds a short-lived end-entity certificate (days), renewed by a timer. Its
+     private key is generated on the host, root-owned, mode 0400, and reaches the signing
+     service only through systemd `LoadCredential`. This is the same exception to
+     ADR-016 that #724 proposed.
+   - `aws_signing_helper` exchanges the certificate for temporary credentials of about
+     1 hour, well inside the 12-hour limit.
+3. **Least-privilege role.**
+   - Its trust policy names only that trust anchor and the certificate's subject.
+   - Its permissions:
+     - `aws-external-anthropic:CreateInference` and `CountTokens` on the one workspace
+       ARN;
+     - the two STS actions the gateway needs: `sts:TagGetWebIdentityToken`, and
+       `sts:GetWebIdentityToken` conditioned on Anthropic's audiences and
+       `aws:CalledViaLast = aws-external-anthropic.amazonaws.com`.
+   - No `CallWithBearerToken`: short-term bearer keys are not minted at all.
+4. **Signing on loopback, not in LiteLLM.** A forwarder on 127.0.0.1 signs each request
+   with SigV4 and forwards it unchanged. It reuses #724's forwarder:
+   - the model allowlist, enforced before anything is signed;
+   - the check on which local uid is calling;
+   - the header allowlist;
+   - unbuffered streaming, so `usage` still reaches LiteLLM.
+
+   Only the credential step changes, from a Keycloak token exchange to SigV4. LiteLLM
+   points an `eval-*` alias at it with a placeholder key, so nothing in `litellm.env`
+   changes.
+5. **Spend.** Four layers, from a hard stop down:
+   - the workspace spend limit ($50 a month, set in the console): requests fail until
+     the 1st of the next month;
+   - an AWS Budget on `Claude Platform` ($50 a month; alerts at 50, 80 and 100% of
+     actual spend and 100% of forecast);
+   - a budget action, added with the role, that attaches a deny policy to the role at
+     100%;
+   - lamware's own per-run cost caps.
+
+   Spend limits lag by about 2 hours, and the overshoot is billed.
+
+### Alternatives considered
+
+- **#724, Anthropic-direct WIF from Keycloak:** the organization it federates into has
+  no CVP access.
+- **#784, Amazon Bedrock:** Mythos is not offered there.
+- **Short-term API keys** (minted from IAM credentials, at most 12 hours): compliant,
+  but a bearer token on disk is replayable until it expires. SigV4 signs each request.
+  Kept as the fallback if the forwarder cannot stream through.
+- **Static IAM access keys or long-lived keys:** forbidden by CVP and ADR-016.
+
+### Consequences
+
+- One federation path to maintain: the CA, and certificate renewal on the host. The
+  Keycloak client, audience mapper and JWKS upload from #724 are not needed.
+- lamware gains a dependency on the owner's AWS Organization for frontier evals only.
+  Production analysis does not use this path.
+- **Rollback:** disable the role's trust (or the trust anchor) in AWS, stop the
+  forwarder and the renewal timer, and remove the aliases. Nothing falls back to a key.
+  No data moves.
+
+### Not verified
+
+- **Roles Anywhere end to end** (CA, certificate, signing helper, assumed role): not yet
+  built. The test call used the owner's SSO session.
+- **Streaming through the forwarder:** SigV4 signs the request, not the response, but
+  not yet exercised.
+- **Refusal behaviour under CVP** on this route: the test prompt was benign.
+- **Pricing:** whether Mythos 5.1 is metered at the first-party list rate ($10 / $50 per
+  million tokens) in Claude Consumption Units is not yet confirmed.
+
