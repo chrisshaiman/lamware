@@ -1358,16 +1358,12 @@ Cost Explorer as the service `Claude Platform`.
    Only the credential step changes, from a Keycloak token exchange to SigV4. LiteLLM
    points an `eval-*` alias at it with a placeholder key, so nothing in `litellm.env`
    changes.
-5. **Spend.** Four layers, from a hard stop down:
-   - the workspace spend limit ($50 a month, set in the console): requests fail until
-     the 1st of the next month;
-   - an AWS Budget on `Claude Platform` ($50 a month; alerts at 50, 80 and 100% of
-     actual spend and 100% of forecast);
-   - a budget action, added with the role, that attaches a deny policy to the role at
-     100%;
-   - lamware's own per-run cost caps.
-
-   Spend limits lag by about 2 hours, and the overshoot is billed.
+5. **Spend.** Bounded outside lamware by the workspace spend limit (a hard stop;
+   requests fail until the 1st of the next month) and an AWS Budget on the
+   `Claude Platform` service that alerts the owner. A budget action can attach a deny
+   policy to the role. Inside lamware, the per-run cost caps apply as for every arm.
+   The amounts are the owner's to set and are not recorded here. Spend limits lag by
+   about 2 hours, and the overshoot is billed.
 
 ### Alternatives considered
 
