@@ -1,0 +1,272 @@
+---
+# =============================================================================
+# roles/claude-platform-aws/tasks/main.yml
+# Localhost SigV4 forwarder for frontier eval arms under CVP (ADR-026).
+#
+# Its own role: it runs as its own user with its own key, certificate and unit,
+# is enabled independently of LiteLLM, and its rollback
+# (claude_platform_aws_enabled: false) needs neither a LiteLLM restart nor any
+# console-gated role.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create the claude-aws group
+  ansible.builtin.group:
+    name: "{{ claude_platform_aws_user }}"
+    system: true
+
+# A dedicated user, not root and not LiteLLM's (root) container. Egress: the
+# host's OUTPUT policy is ACCEPT and the only uid-scoped DROP is the pipeline
+# user's (pipeline role), so this uid reaches AWS over 443 with no firewall change.
+- name: Create the claude-aws system user
+  ansible.builtin.user:
+    name: "{{ claude_platform_aws_user }}"
+    group: "{{ claude_platform_aws_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Create the install directory (root-owned code, ADR-025)
+  ansible.builtin.file:
+    path: "{{ claude_platform_aws_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ claude_platform_aws_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ claude_platform_aws_user }}"
+    mode: "0750"
+
+- name: Install AWS's credential helper (pinned version and checksum)
+  ansible.builtin.get_url:
+    url: "{{ claude_platform_aws_helper_url }}"
+    dest: "{{ claude_platform_aws_install_dir }}/aws_signing_helper"
+    checksum: "sha256:{{ claude_platform_aws_helper_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart claude-platform-aws
+
+- name: Deploy the forwarder
+  ansible.builtin.copy:
+    src: claude_platform_aws.py
+    dest: "{{ claude_platform_aws_install_dir }}/claude_platform_aws.py"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart claude-platform-aws
+
+- name: Deploy the forwarder config
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ claude_platform_aws_config_dir }}/config.json"
+    owner: root
+    group: "{{ claude_platform_aws_user }}"
+    mode: "0640"
+  notify: Restart claude-platform-aws
+
+- name: Deploy the systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - claude-platform-aws.service
+    - claude-platform-aws-check.service
+    - claude-platform-aws-check.timer
+    - claude-platform-aws-alert.service
+  notify:
+    - Reload systemd for claude-platform-aws units
+    - Restart claude-platform-aws
+
+# ---------------------------------------------------------------- disabled path
+# The rollback: stop the forwarder and the check. Files, key and certificate
+# stay; the certificate simply expires within claude_platform_aws_cert_days.
+- name: Stop and disable the forwarder and the daily check (claude_platform_aws_enabled is false)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  loop:
+    - claude-platform-aws.service
+    - claude-platform-aws-check.timer
+  when: not (claude_platform_aws_enabled | bool)
+
+# ----------------------------------------------------------------- enabled path
+- name: Refuse to enable without the AWS resource ids (ADR-026)
+  ansible.builtin.assert:
+    that:
+      - claude_platform_aws_workspace_id is match('wrkspc_')
+      - claude_platform_aws_trust_anchor_arn is match('arn:aws:rolesanywhere:')
+      - claude_platform_aws_profile_arn is match('arn:aws:rolesanywhere:')
+      - claude_platform_aws_role_arn is match('arn:aws:iam::')
+    fail_msg: >-
+      claude_platform_aws_enabled is true but the workspace id or the Roles
+      Anywhere trust anchor, profile or role ARN is empty. Set them in
+      ansible/vars/main.yml (ADR-026).
+  when: claude_platform_aws_enabled | bool
+
+- name: Host certificate (enabled only; the CA lives on the controller)
+  when: claude_platform_aws_enabled | bool
+  block:
+    # community.crypto's modules run on the host and need it; the forwarder
+    # itself is stdlib only.
+    - name: Install python3-cryptography for the certificate tasks
+      ansible.builtin.apt:
+        name: python3-cryptography
+        state: present
+
+    # Generated ON the host and never read back: the key is not a vault secret
+    # (ADR-026's exception to ADR-016) because it never leaves here.
+    - name: Generate the host key (once, on the host)
+      community.crypto.openssl_privatekey:
+        path: "{{ claude_platform_aws_config_dir }}/host.key"
+        type: ECC
+        curve: secp256r1
+        owner: root
+        group: root
+        mode: "0400"
+        regenerate: never
+      register: claude_platform_aws_key
+      notify: Restart claude-platform-aws
+
+    - name: Build the certificate request on the host
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ claude_platform_aws_config_dir }}/host.key"
+        common_name: "{{ claude_platform_aws_cert_cn }}"
+        organization_name: lamware
+        basic_constraints: ["CA:FALSE"]
+        basic_constraints_critical: true
+        key_usage: [digitalSignature]
+        key_usage_critical: true
+        extended_key_usage: [clientAuth]
+      register: claude_platform_aws_csr
+      changed_when: false
+
+    - name: Is there a current certificate?
+      ansible.builtin.stat:
+        path: "{{ claude_platform_aws_config_dir }}/host.pem"
+      register: claude_platform_aws_cert_stat
+
+    - name: Read the current certificate
+      community.crypto.x509_certificate_info:
+        path: "{{ claude_platform_aws_config_dir }}/host.pem"
+        valid_at:
+          renew: "+{{ claude_platform_aws_cert_renew_days }}d"
+      register: claude_platform_aws_cert_info
+      when: claude_platform_aws_cert_stat.stat.exists
+
+    - name: Read the host key's public half
+      community.crypto.openssl_privatekey_info:
+        path: "{{ claude_platform_aws_config_dir }}/host.key"
+      register: claude_platform_aws_key_info
+
+    # Renew when there is no certificate, it is for another key, or it ends
+    # within claude_platform_aws_cert_renew_days.
+    - name: Decide whether to issue a certificate
+      ansible.builtin.set_fact:
+        claude_platform_aws_issue: >-
+          {{ not claude_platform_aws_cert_stat.stat.exists
+             or claude_platform_aws_cert_info.public_key != claude_platform_aws_key_info.public_key
+             or not claude_platform_aws_cert_info.valid_at.renew }}
+
+    - name: Require the CA on the controller before issuing
+      ansible.builtin.stat:
+        path: "{{ claude_platform_aws_ca_dir }}/{{ item }}"
+      loop: [ca.pem, ca.key]
+      register: claude_platform_aws_ca
+      delegate_to: localhost
+      become: false
+      when: claude_platform_aws_issue | bool
+
+    - name: Fail clearly when the CA is not on this controller
+      ansible.builtin.assert:
+        that: claude_platform_aws_ca.results | map(attribute='stat.exists') | min
+        fail_msg: >-
+          The host certificate needs issuing but {{ claude_platform_aws_ca_dir }}
+          has no ca.pem / ca.key on this machine. Deploy from the controller that
+          holds the lamware Roles Anywhere CA (ADR-026).
+      when: claude_platform_aws_issue | bool
+
+    # Signed on the controller: the CA key never reaches the host.
+    - name: Sign the host certificate with the controller's CA
+      community.crypto.x509_certificate_pipe:
+        csr_content: "{{ claude_platform_aws_csr.csr }}"
+        provider: ownca
+        ownca_path: "{{ claude_platform_aws_ca_dir }}/ca.pem"
+        ownca_privatekey_path: "{{ claude_platform_aws_ca_dir }}/ca.key"
+        ownca_not_before: "-5m"
+        ownca_not_after: "+{{ claude_platform_aws_cert_days }}d"
+        ownca_digest: sha256
+      register: claude_platform_aws_signed
+      delegate_to: localhost
+      become: false
+      when: claude_platform_aws_issue | bool
+
+    - name: Install the host certificate
+      ansible.builtin.copy:
+        content: "{{ claude_platform_aws_signed.certificate }}"
+        dest: "{{ claude_platform_aws_config_dir }}/host.pem"
+        owner: root
+        group: root
+        mode: "0444"
+      when: claude_platform_aws_issue | bool
+      notify: Restart claude-platform-aws
+
+- name: Enable and start the forwarder and the daily check
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - claude-platform-aws.service
+    - claude-platform-aws-check.timer
+  when: claude_platform_aws_enabled | bool
+
+- name: Apply a pending restart now, so the probes below see this config
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the forwarder to listen
+  ansible.builtin.wait_for:
+    host: "{{ claude_platform_aws_listen_host }}"
+    port: "{{ claude_platform_aws_listen_port }}"
+    timeout: 30
+  when: claude_platform_aws_enabled | bool
+
+# Behavioural probe that spends nothing: a model outside the allowlist must be
+# refused before any credential is used. A 403 that names the MODEL proves the
+# process is up, accepted root (the peer-uid check passed) and enforces the
+# allowlist. A peer-uid 403 names the uid instead and fails this check.
+- name: Probe the forwarder refuses a model outside the allowlist
+  ansible.builtin.uri:
+    url: "http://{{ claude_platform_aws_listen_host }}:{{ claude_platform_aws_listen_port }}/v1/messages"
+    method: POST
+    body_format: json
+    body: {model: "claude-platform-aws-probe-not-allowed", max_tokens: 1, messages: []}
+    status_code: 403
+    return_content: true
+  register: claude_platform_aws_probe
+  failed_when: >-
+    claude_platform_aws_probe.status != 403
+    or 'allowed_models' not in claude_platform_aws_probe.content
+  when: claude_platform_aws_enabled | bool
+
+# The real check once now (certificate days, credentials, a free count_tokens
+# in the workspace). Fails the deploy if any AWS piece is wrong.
+- name: Run the health check once
+  ansible.builtin.systemd:
+    name: claude-platform-aws-check.service
+    state: started
+  when: claude_platform_aws_enabled | bool

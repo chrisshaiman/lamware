@@ -1,0 +1,15 @@
+{{ {
+  "listen_host": claude_platform_aws_listen_host,
+  "listen_port": claude_platform_aws_listen_port | int,
+  "allowed_peer_uids": claude_platform_aws_allowed_peer_uids | map('int') | list,
+  "allowed_models": claude_platform_aws_allowed_models,
+  "region": claude_platform_aws_region,
+  "workspace_id": claude_platform_aws_workspace_id,
+  "signing_helper": claude_platform_aws_install_dir ~ "/aws_signing_helper",
+  "certificate_file": claude_platform_aws_config_dir ~ "/host.pem",
+  "private_key_file": claude_platform_aws_config_dir ~ "/host.key",
+  "trust_anchor_arn": claude_platform_aws_trust_anchor_arn,
+  "profile_arn": claude_platform_aws_profile_arn,
+  "role_arn": claude_platform_aws_role_arn,
+  "cert_warn_days": claude_platform_aws_cert_warn_days | int
+} | to_nice_json }}

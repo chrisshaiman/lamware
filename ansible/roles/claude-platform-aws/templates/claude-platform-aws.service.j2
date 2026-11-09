@@ -1,0 +1,53 @@
+# /etc/systemd/system/claude-platform-aws.service — managed by Ansible (claude-platform-aws role)
+# Localhost SigV4 forwarder for Claude Platform on AWS (ADR-026). Holds no static key.
+
+[Unit]
+Description=Claude Platform on AWS SigV4 forwarder (ADR-026)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ claude_platform_aws_user }}
+Group={{ claude_platform_aws_user }}
+# -I: isolated mode. No PYTHON* environment, no user site, no script dir on sys.path.
+ExecStart=/usr/bin/python3 -I {{ claude_platform_aws_install_dir }}/claude_platform_aws.py serve --config {{ claude_platform_aws_config_dir }}/config.json
+# The key stays root-owned 0400; systemd hands this unit a private copy under
+# $CREDENTIALS_DIRECTORY that only the service user can read.
+LoadCredential=host.key:{{ claude_platform_aws_config_dir }}/host.key
+LoadCredential=host.pem:{{ claude_platform_aws_config_dir }}/host.pem
+# A configuration error exits 2: stop with one clear journal line instead of
+# restarting every 5 s and burying it.
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+UMask=0077
+
+# Hardening. Network stays on: it needs Roles Anywhere and the Claude Platform
+# endpoint over 443. No ProcSubset=pid: the peer-uid check reads /proc/net/tcp.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

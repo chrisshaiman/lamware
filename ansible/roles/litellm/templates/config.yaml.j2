@@ -49,8 +49,6 @@ model_list:
   # the eval key. Empty until the vault defines it: a call then fails with an
   # auth error rather than billing production. Both models run with Anthropic's
   # standard cyber safeguards; refusals are measured, not hidden.
-  # A Mythos alias is NOT here: it must not use a static API key, and comes back
-  # with its own token forwarder.
   - model_name: "eval-opus55"
     litellm_params:
       model: "anthropic/claude-opus-5-5"
@@ -78,6 +76,19 @@ model_list:
     litellm_params:
       model: "anthropic/claude-haiku-5-5"
       api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+
+  # Mythos 5.1 under the owner's CVP access, through Claude Platform on AWS
+  # (ADR-026). Eval-only: no production setting may name the alias or its model.
+  # NO static key, by program rule: the entry points at the claude-platform-aws
+  # forwarder on loopback, which drops this placeholder and signs each request
+  # with short-lived IAM Roles Anywhere credentials. With the forwarder off,
+  # calls fail to connect instead of falling back to any key.
+  # tests/test_mythos_is_eval_only.py fails if this ever names os.environ/.
+  - model_name: "eval-mythos"
+    litellm_params:
+      model: "anthropic/{{ litellm_eval_mythos_model }}"
+      api_base: "{{ litellm_claude_platform_aws_base }}"
+      api_key: "sk-claude-platform-aws-placeholder"
 
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
   # were removed 2026-09-27. No production stage called them — summary,

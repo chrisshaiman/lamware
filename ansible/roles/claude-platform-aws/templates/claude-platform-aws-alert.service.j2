@@ -1,0 +1,17 @@
+# /etc/systemd/system/claude-platform-aws-alert.service — managed by Ansible (claude-platform-aws role)
+# OnFailure target of the daily check. Runs as root because the forwarder's user
+# cannot write the ntfy dropbox; it only queues a fixed message (no check output,
+# which could quote an AWS error) and points at the journal.
+
+[Unit]
+Description=Alert: Claude Platform on AWS forwarder check failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_enqueue.py "Claude Platform forwarder check failed" "Mythos eval arms will fail. Certificate near expiry (deploy claude-platform-aws to renew) or AWS access changed. journalctl -u claude-platform-aws-check" --priority high --tags warning
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ ntfy_dropbox_dir | default('/var/spool/lamware-notify') }}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes

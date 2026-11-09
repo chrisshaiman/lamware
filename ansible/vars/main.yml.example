@@ -162,3 +162,17 @@ cape_guests:
 # Put the HASH here (or better, in vars/secrets.yml). Never the plaintext.
 # =============================================================================
 console_recovery_password_hash: "CHANGEME"
+
+# =============================================================================
+# Claude Platform on AWS forwarder (ADR-026) — CVP frontier eval arms, no static key
+#
+# Account identifiers, not secrets: keep the real values only in the gitignored
+# ansible/vars/main.yml. The CA that signs the host certificate stays on the
+# controller (claude_platform_aws_ca_dir, default ~/.config/lamware-ca).
+# =============================================================================
+claude_platform_aws_enabled: false
+claude_platform_aws_region: "us-west-2"
+claude_platform_aws_workspace_id: ""        # wrkspc_...
+claude_platform_aws_trust_anchor_arn: ""    # arn:aws:rolesanywhere:<region>:<account>:trust-anchor/...
+claude_platform_aws_profile_arn: ""         # arn:aws:rolesanywhere:<region>:<account>:profile/...
+claude_platform_aws_role_arn: ""            # arn:aws:iam::<account>:role/...

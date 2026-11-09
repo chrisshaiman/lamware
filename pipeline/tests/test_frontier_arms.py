@@ -374,6 +374,7 @@ def test_an_arm_without_a_backend_is_refused():
 @pytest.mark.parametrize("arm_name,alias", [
     ("opus55@10", "eval-opus55"), ("fable51@10", "eval-fable51"), ("opus48@10", "eval-opus48"),
     ("opus48@25", "eval-opus48"), ("sonnet55@10", "eval-sonnet55"), ("haiku55@10", "eval-haiku55"),
+    ("mythos@10", "eval-mythos"),
     ("claude-sonnet-5", "claude-sonnet-5"), ("claude-opus-5", "claude-opus-5")])
 def test_cloud_arms_run_their_own_model_on_the_router(arm_name, alias):
     cfg = runner.arm_config(resolve_arm(arm_name), HOST_CFG, "agentic")
@@ -552,6 +553,8 @@ _USAGE = {"input_tokens": 1_000_000, "output_tokens": 100_000,
     ("eval-sonnet55", (2.0, 10.0, 2.5, 0.10), 9.0),
     # 0.1 + 0.05 + 0.25 + 0.1
     ("eval-haiku55", (0.10, 0.50, 0.125, 0.01), 0.5),
+    # Mythos 5.1, first-party list price: 10 + 5 + 25 + 2.5
+    ("eval-mythos", (10.0, 50.0, 12.5, 0.25), 42.5),
 ])
 def test_frontier_arms_are_priced_at_their_own_cache_rates(alias, rates, cost):
     """The read is NOT the 0.1x default on either (0.1x would be $1.00 / $0.40)."""

@@ -1,0 +1,12 @@
+# /etc/systemd/system/claude-platform-aws-check.timer — managed by Ansible (claude-platform-aws role)
+
+[Unit]
+Description=Daily Claude Platform on AWS forwarder health check (ADR-026)
+
+[Timer]
+OnCalendar={{ claude_platform_aws_check_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
