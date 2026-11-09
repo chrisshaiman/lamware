@@ -1,0 +1,62 @@
+---
+# =============================================================================
+# claude-platform-aws defaults: the localhost SigV4 forwarder for frontier eval
+# arms under CVP (ADR-026). No static Anthropic or AWS key: the host's
+# certificate becomes ~1 h IAM Roles Anywhere credentials, and each request is
+# signed for Claude Platform on AWS.
+# =============================================================================
+
+# Off by default. While off, the role still installs the files, the helper and
+# the host key and certificate, but the forwarder and its daily check are
+# stopped and disabled. Turning it off again is the rollback.
+claude_platform_aws_enabled: false
+
+claude_platform_aws_user: claude-aws
+claude_platform_aws_install_dir: /opt/claude-platform-aws
+claude_platform_aws_config_dir: /etc/claude-platform-aws
+
+# Loopback only; the forwarder refuses any other address. LiteLLM's eval-mythos
+# entry points here (litellm_claude_platform_aws_base in the litellm role must
+# carry the same port; tests/test_mythos_is_eval_only.py checks they agree).
+claude_platform_aws_listen_host: "127.0.0.1"
+claude_platform_aws_listen_port: 4010
+
+# Local uids allowed to call the forwarder. It signs with CVP access, so whoever
+# can reach it spends that access without LiteLLM's master key: callers are
+# checked against the kernel's socket table, not a header. 0 = LiteLLM, a rootful
+# podman container on the host network.
+claude_platform_aws_allowed_peer_uids: [0]
+
+# Models it will sign for. Anything else is refused before credentials are used.
+claude_platform_aws_allowed_models: ["claude-mythos-5-1"]
+
+# --- AWS side (ADR-026). Not secrets, but account identifiers: set them in the
+# gitignored ansible/vars/main.yml, never here. Empty -> an enabled deploy fails
+# its assert, and the service itself refuses to start.
+claude_platform_aws_region: "us-west-2"
+claude_platform_aws_workspace_id: ""
+claude_platform_aws_trust_anchor_arn: ""
+claude_platform_aws_profile_arn: ""
+claude_platform_aws_role_arn: ""
+
+# --- Host certificate. The CA's private key stays on the controller (the
+# owner's machine) and never reaches the host, so a compromised host cannot
+# issue itself a new identity. Each deploy signs the host's CSR there when the
+# current certificate has fewer than claude_platform_aws_cert_renew_days left.
+# The subject CN is what the IAM role's trust policy requires.
+claude_platform_aws_ca_dir: "{{ lookup('env', 'HOME') }}/.config/lamware-ca"
+claude_platform_aws_cert_cn: "lamware-sandbox"
+claude_platform_aws_cert_days: 14
+claude_platform_aws_cert_renew_days: 10
+# The daily check fails (and alerts) below this many days left.
+claude_platform_aws_cert_warn_days: 4
+
+# AWS's credential helper, pinned by version and checksum
+# (docs.aws.amazon.com/rolesanywhere/latest/userguide/credential-helper.html).
+claude_platform_aws_helper_version: "1.8.6"
+claude_platform_aws_helper_url: "https://rolesanywhere.amazonaws.com/releases/{{ claude_platform_aws_helper_version }}/X86_64/Linux/Amzn2023/aws_signing_helper"
+claude_platform_aws_helper_sha256: "3553fdc515e5682541a9ebdd37031ec7f461169aa13ccbb6fbd5b7259644113d"
+
+# Daily: certificate still valid for long enough, credentials still issued, and
+# a (free) count_tokens call still authorised in the workspace.
+claude_platform_aws_check_oncalendar: "*-*-* 06:20:00"

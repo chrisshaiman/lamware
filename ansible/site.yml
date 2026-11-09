@@ -227,6 +227,11 @@
     - role: litellm
       tags: [litellm]
 
+    # 10b-2. Claude Platform on AWS forwarder — SigV4 from IAM Roles Anywhere for
+    #        the CVP frontier eval arms; no static key (ADR-026). Off by default.
+    - role: claude-platform-aws
+      tags: [claude-platform-aws]
+
     # 10c. Keycloak — identity broker for enterprise SSO
     - role: keycloak
       tags: [keycloak]

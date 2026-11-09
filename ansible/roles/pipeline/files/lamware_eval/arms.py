@@ -128,6 +128,11 @@ _REGISTRY: dict[str, Arm] = {
     # it. Both listed for the research key, 2026-10-13.
     "sonnet55@10": Arm("sonnet55@10", "eval-sonnet55", "router", 10),
     "haiku55@10": Arm("haiku55@10", "eval-haiku55", "router", 10),
+    # Mythos 5.1 under the owner's CVP access. Routes to the `eval-mythos` LiteLLM
+    # alias, which reaches Claude Platform on AWS only through the claude-platform-aws
+    # forwarder (ADR-026: SigV4 from short-lived Roles Anywhere credentials, no static
+    # key). "router": only the router resolves an alias to its model_list entry.
+    "mythos@10": Arm("mythos@10", "eval-mythos", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the

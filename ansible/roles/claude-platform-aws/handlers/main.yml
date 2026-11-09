@@ -1,0 +1,11 @@
+---
+- name: Restart claude-platform-aws
+  ansible.builtin.systemd:
+    name: claude-platform-aws
+    state: restarted
+    daemon_reload: true
+  when: claude_platform_aws_enabled | bool
+
+- name: Reload systemd for claude-platform-aws units
+  ansible.builtin.systemd:
+    daemon_reload: true

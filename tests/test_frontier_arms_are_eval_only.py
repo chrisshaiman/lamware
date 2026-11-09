@@ -4,9 +4,11 @@
 
 Renders the real LiteLLM templates with the role's defaults (as
 test_requested_models_exist.py does) and asserts on the parsed config:
-  - every `eval-*` alias authenticates with ANTHROPIC_RESEARCH_API_KEY (the
+  - every keyed `eval-*` alias authenticates with ANTHROPIC_RESEARCH_API_KEY (the
     spend-capped Lamware eval workspace), never the production ANTHROPIC_API_KEY,
-    and NO other entry uses the eval key, so production traffic cannot bill it;
+    and NO other entry uses the eval key, so production traffic cannot bill it.
+    The Mythos alias carries no key at all and goes through the loopback SigV4
+    forwarder (ADR-026);
   - the env file renders that key EMPTY until the vault defines it (a call then
     fails with an auth error instead of falling back to production's key);
   - no production setting (interpret, pipeline, vars, their config templates, or
@@ -39,6 +41,10 @@ EXPECTED = {"eval-opus55": "anthropic/claude-opus-5-5",
             "eval-opus48": "anthropic/claude-opus-4-8",
             "eval-sonnet55": "anthropic/claude-sonnet-5-5",
             "eval-haiku55": "anthropic/claude-haiku-5-5"}
+# Eval aliases that carry NO key: they reach Claude Platform on AWS through the
+# loopback SigV4 forwarder (ADR-026). CVP access forbids static keys.
+FORWARDED = {"eval-mythos": "anthropic/claude-mythos-5-1"}
+FORWARDER_KEY = "sk-claude-platform-aws-placeholder"
 
 
 def _render(name: str, **extra) -> str:
@@ -67,7 +73,7 @@ def _forbidden() -> set[str]:
 
 def test_the_eval_aliases_exist_and_resolve_to_their_models():
     got = {m["model_name"]: m["litellm_params"]["model"] for m in _eval_entries()}
-    assert got == EXPECTED
+    assert got == {**EXPECTED, **FORWARDED}
 
 
 def test_eval_aliases_use_the_eval_key_and_nothing_else_does():
@@ -77,7 +83,10 @@ def test_eval_aliases_use_the_eval_key_and_nothing_else_does():
     assert len(entries) > len(EXPECTED), "rendered model_list lost its production entries"
     for m in entries:
         key = m["litellm_params"].get("api_key")
-        if m["model_name"].startswith("eval-"):
+        if m["model_name"] in FORWARDED:
+            assert key == FORWARDER_KEY, f"{m['model_name']} must carry no key, has {key}"
+            assert m["litellm_params"]["api_base"] == DEFAULTS["litellm_claude_platform_aws_base"]
+        elif m["model_name"].startswith("eval-"):
             assert key == EVAL_KEY, f"{m['model_name']} authenticates with {key}"
         else:
             assert key != EVAL_KEY, f"{m['model_name']} (not an eval alias) uses the eval key"
@@ -149,7 +158,8 @@ def test_no_request_sending_code_names_an_eval_model():
                                             ("opus48@10", "eval-opus48"),
                                             ("opus48@25", "eval-opus48"),
                                             ("sonnet55@10", "eval-sonnet55"),
-                                            ("haiku55@10", "eval-haiku55")])
+                                            ("haiku55@10", "eval-haiku55"),
+                                            ("mythos@10", "eval-mythos")])
 def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_name, alias):
     # lamware_eval.runner imports the pipeline stages, which need lamware_shared.
     # CI's top-level test job does not install it; the pipeline job does, and
@@ -165,8 +175,14 @@ def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_na
     assert alias in _RATES
 
 
-def test_no_mythos_alias_is_configured():
-    """Mythos access must not use a static API key; it returns with its own
-    token forwarder (ADR-022), not as a model_list entry on a key."""
-    for m in _model_list():
-        assert "mythos" not in m["model_name"] and "mythos" not in m["litellm_params"]["model"]
+def test_the_only_mythos_entry_goes_through_the_forwarder():
+    """Mythos access must not use a static key: it returns only through its own
+    forwarder (ADR-026), never as a model_list entry on a key. Exactly one entry
+    names Mythos, and it is the forwarded eval alias."""
+    hits = [m for m in _model_list()
+            if "mythos" in m["model_name"] or "mythos" in m["litellm_params"]["model"]]
+    assert [m["model_name"] for m in hits] == list(FORWARDED)
+    for m in hits:
+        p = m["litellm_params"]
+        assert not str(p.get("api_key", "")).startswith("os.environ/"), m
+        assert p.get("api_base") == DEFAULTS["litellm_claude_platform_aws_base"], m

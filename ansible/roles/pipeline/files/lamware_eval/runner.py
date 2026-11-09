@@ -72,6 +72,10 @@ _RATES: dict[str, tuple[float, ...]] = {
     #   100,000 tokens (above that it is 5x). Every eval request is well under.
     "eval-sonnet55": (2.0, 10.0, 2.5, 0.10),
     "eval-haiku55": (0.10, 0.50, 0.125, 0.01),
+    #   Mythos 5.1: $10 / $50, write $12.50, read $0.25 (0.025x; 0.1x would be 1.00),
+    #   the first-party list price. Claude Platform on AWS meters CCUs at list
+    #   prices; that Mythos is billed at this rate there is not yet confirmed (ADR-026).
+    "eval-mythos": (10.0, 50.0, 12.5, 0.25),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache
