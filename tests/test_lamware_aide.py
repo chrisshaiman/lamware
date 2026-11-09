@@ -197,6 +197,9 @@ def _excluded(path: str) -> bool:
     "/var/lib/swcatalog/yaml", "/var/cache/fwupd/devices.json",
     "/var/lib/fwupd/metadata/lvfs/firmware.xml.zst", "/run/motd.d/85-fwupd",
     "/var/lib/letsencrypt/.certbot.lock", "/var/cache/man/oldlocal/CACHEDIR.TAG",
+    # the first week after that deploy (2026-11-07, 11-08)
+    "/var/lib/ubuntu-release-upgrader/release-upgrade-available",
+    "/var/lib/rkhunter/db/rkhunter_prop_list.dat",
 ])
 def test_churning_data_is_excluded(path):
     assert _excluded(path)
@@ -215,6 +218,7 @@ def test_churning_data_is_excluded(path):
     "/etc/apt/sources.list", "/etc/apt/apt.conf.d/50unattended-upgrades",
     "/var/lib/fwupd/pki/x", "/etc/letsencrypt/live/x/privkey.pem",
     "/etc/letsencrypt/renewal/x.conf", "/var/lib/dpkg/status", "/run/motd",
+    "/etc/rkhunter.conf", "/usr/bin/rkhunter", "/var/lib/rkhunter/db/rkhunter.dat",
 ])
 def test_code_and_configuration_stay_monitored(path):
     assert not _excluded(path)

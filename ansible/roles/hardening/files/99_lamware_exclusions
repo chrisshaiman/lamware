@@ -71,3 +71,10 @@
 !/run/motd\.d
 !/var/lib/letsencrypt
 !/var/cache/man
+# Two more, from the checks of 2026-11-07 and 11-08 after the rules above deployed:
+# update-notifier-motd (Sundays 06:00) rewrites the release-upgrade stamp, and
+# rkhunter regenerates its own file-properties database after apt runs
+# (APT_AUTOGEN="yes" in /etc/default/rkhunter). rkhunter's code and configuration
+# stay monitored.
+!/var/lib/ubuntu-release-upgrader
+!/var/lib/rkhunter/db/rkhunter_prop_list\.dat$
