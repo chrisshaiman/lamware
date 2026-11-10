@@ -425,6 +425,13 @@ class ForwarderHandler(BaseHTTPRequestHandler):
     server_version = "claude-platform-aws"
     sys_version = ""
 
+    def version_string(self) -> str:
+        # The default is server_version + " " + sys_version. With sys_version empty
+        # that leaves a trailing space, and LiteLLM's h11 refuses to relay
+        # "Server: claude-platform-aws " (2026-11-10: every eval cell failed with
+        # "Connection error" after the upstream call had started).
+        return self.server_version
+
     def log_message(self, format: str, *args: Any) -> None:
         log.info("event=http %s", format % args)
 
