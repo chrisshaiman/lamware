@@ -90,6 +90,19 @@ model_list:
       api_base: "{{ litellm_claude_platform_aws_base }}"
       api_key: "sk-claude-platform-aws-placeholder"
 
+  # Mythos 5.2 and Fable 5.2 on the same route and rules: no key, forwarder only.
+  - model_name: "eval-mythos52"
+    litellm_params:
+      model: "anthropic/{{ litellm_eval_mythos52_model }}"
+      api_base: "{{ litellm_claude_platform_aws_base }}"
+      api_key: "sk-claude-platform-aws-placeholder"
+
+  - model_name: "eval-fable52"
+    litellm_params:
+      model: "anthropic/{{ litellm_eval_fable52_model }}"
+      api_base: "{{ litellm_claude_platform_aws_base }}"
+      api_key: "sk-claude-platform-aws-placeholder"
+
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
   # were removed 2026-09-27. No production stage called them — summary,
   # plain_english and visual all run on llama.cpp — but they kept a live route to

@@ -76,6 +76,10 @@ _RATES: dict[str, tuple[float, ...]] = {
     #   the first-party list price. Claude Platform on AWS meters CCUs at list
     #   prices; that Mythos is billed at this rate there is not yet confirmed (ADR-026).
     "eval-mythos": (10.0, 50.0, 12.5, 0.25),
+    #   Mythos 5.2 and Fable 5.2: $8 / $40, write $10, read $0.20 (0.025x), the
+    #   first-party list price (pricing page, read 2026-11-09).
+    "eval-mythos52": (8.0, 40.0, 10.0, 0.20),
+    "eval-fable52": (8.0, 40.0, 10.0, 0.20),
 }
 
 # Anthropic's standard prompt-cache multipliers on the base input rate: a cache

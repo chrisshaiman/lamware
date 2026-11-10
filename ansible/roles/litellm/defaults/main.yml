@@ -58,3 +58,7 @@ litellm_claude_platform_aws_base: "http://127.0.0.1:4010"
 # (2026-11-09). It must also be in claude_platform_aws_allowed_models, or the
 # forwarder refuses it.
 litellm_eval_mythos_model: "claude-mythos-5-1"
+# The 5.2 pair (released 2026-11-09), both through the forwarder on the CVP route.
+# eval-mythos stays on 5.1 so the two versions can be compared.
+litellm_eval_mythos52_model: "claude-mythos-5-2"
+litellm_eval_fable52_model: "claude-fable-5-2"

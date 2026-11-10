@@ -43,7 +43,9 @@ EXPECTED = {"eval-opus55": "anthropic/claude-opus-5-5",
             "eval-haiku55": "anthropic/claude-haiku-5-5"}
 # Eval aliases that carry NO key: they reach Claude Platform on AWS through the
 # loopback SigV4 forwarder (ADR-026). CVP access forbids static keys.
-FORWARDED = {"eval-mythos": "anthropic/claude-mythos-5-1"}
+FORWARDED = {"eval-mythos": "anthropic/claude-mythos-5-1",
+             "eval-mythos52": "anthropic/claude-mythos-5-2",
+             "eval-fable52": "anthropic/claude-fable-5-2"}
 FORWARDER_KEY = "sk-claude-platform-aws-placeholder"
 
 
@@ -159,7 +161,9 @@ def test_no_request_sending_code_names_an_eval_model():
                                             ("opus48@25", "eval-opus48"),
                                             ("sonnet55@10", "eval-sonnet55"),
                                             ("haiku55@10", "eval-haiku55"),
-                                            ("mythos@10", "eval-mythos")])
+                                            ("mythos@10", "eval-mythos"),
+                                            ("mythos52@10", "eval-mythos52"),
+                                            ("fable52@10", "eval-fable52")])
 def test_the_eval_arms_route_to_their_aliases_and_are_priced(monkeypatch, arm_name, alias):
     # lamware_eval.runner imports the pipeline stages, which need lamware_shared.
     # CI's top-level test job does not install it; the pipeline job does, and
@@ -181,7 +185,7 @@ def test_the_only_mythos_entry_goes_through_the_forwarder():
     names Mythos, and it is the forwarded eval alias."""
     hits = [m for m in _model_list()
             if "mythos" in m["model_name"] or "mythos" in m["litellm_params"]["model"]]
-    assert [m["model_name"] for m in hits] == list(FORWARDED)
+    assert [m["model_name"] for m in hits] == [a for a in FORWARDED if "mythos" in a]
     for m in hits:
         p = m["litellm_params"]
         assert not str(p.get("api_key", "")).startswith("os.environ/"), m
