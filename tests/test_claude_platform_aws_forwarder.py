@@ -175,6 +175,7 @@ class _Upstream(BaseHTTPRequestHandler):
         type(self).received.append((self.path, dict(self.headers), body))
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
+        self.send_header("request-id", "req_011TEST\tforged=1")
         self.end_headers()
         for i in range(3):
             self.wfile.write(f"data: chunk{i}\n\n".encode())
@@ -254,6 +255,17 @@ def test_every_response_header_value_is_legal_for_h11(stack, body):
         name, _, value = line.partition(b":")
         value = value[1:] if value.startswith(b" ") else value
         assert value == value.strip(), f"illegal header value {line!r}"
+
+
+def test_each_forwarded_call_logs_its_request_id_and_model(stack, caplog):
+    """The id a false-positive report or support case needs. Characters outside
+    [A-Za-z0-9_-] are dropped, so a hostile header cannot add log fields."""
+    port, _ = stack
+    with caplog.at_level("INFO", logger="claude-platform-aws"):
+        assert _post(port, "/v1/messages", MSG)[0] == 200
+    lines = [r.getMessage() for r in caplog.records if "event=forwarded" in r.getMessage()]
+    assert lines and "request_id=req_011TESTforged1" in lines[0], lines
+    assert "model=claude-mythos-5-1" in lines[0] and "\t" not in lines[0]
 
 
 @pytest.mark.parametrize("path,body,uid,status,needle", [
