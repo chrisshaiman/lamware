@@ -413,6 +413,18 @@ class ForwarderServer(ThreadingHTTPServer):
         super().__init__((cfg.listen_host, cfg.listen_port), ForwarderHandler)
 
 
+def _request_id(resp: http.client.HTTPResponse) -> str:
+    """Anthropic's per-request id (``request-id``), logged for every forwarded call.
+
+    Not a secret, and what a support or false-positive report needs: on 2026-11-10 a
+    Mythos 5.2 cell was refused despite Defense Access and nothing on the host could
+    name the request. Header characters are limited so a hostile value cannot forge
+    extra log fields.
+    """
+    rid = resp.getheader("request-id") or resp.getheader("x-amzn-requestid") or "-"
+    return "".join(c for c in rid if c.isalnum() or c in "_-")[:80] or "-"
+
+
 def _error_json(kind: str, message: str) -> bytes:
     return json.dumps({"type": "error", "error": {"type": kind, "message": message}}).encode()
 
@@ -490,9 +502,10 @@ class ForwarderHandler(BaseHTTPRequestHandler):
         except CredentialError as exc:
             self._reply(503, "api_error", f"claude-platform-aws: no credentials: {exc}")
             return
-        self._forward(path, raw, creds)
+        self._forward(path, raw, creds, model)
 
-    def _forward(self, path: urllib.parse.SplitResult, raw: bytes, creds: AwsCredentials) -> None:
+    def _forward(self, path: urllib.parse.SplitResult, raw: bytes, creds: AwsCredentials,
+                 model: str) -> None:
         cfg = self.server.cfg
         caller = {h: self.headers[h] for h in FORWARDED_REQUEST_HEADERS if self.headers.get(h)}
         try:
@@ -510,9 +523,11 @@ class ForwarderHandler(BaseHTTPRequestHandler):
             while chunk := resp.read1(65536):
                 self.wfile.write(chunk)
                 self.wfile.flush()
-            log.info("event=forwarded path=%s status=%d", path.path, resp.status)
+            log.info("event=forwarded path=%s model=%s status=%d request_id=%s",
+                     path.path, model, resp.status, _request_id(resp))
         except OSError as exc:
-            log.warning("event=client_or_upstream_dropped path=%s error=%s", path.path, exc)
+            log.warning("event=client_or_upstream_dropped path=%s model=%s request_id=%s error=%s",
+                        path.path, model, _request_id(resp), exc)
         finally:
             conn.close()
 
@@ -565,7 +580,8 @@ def check(cfg: Config, cert: str, key: str,
     finally:
         conn.close()
     if resp.status != 200:
-        problems.append(f"count_tokens returned {resp.status}: {_error_summary(payload)}")
+        problems.append(f"count_tokens returned {resp.status} (request_id={_request_id(resp)}): "
+                        f"{_error_summary(payload)}")
     return problems
 
 
