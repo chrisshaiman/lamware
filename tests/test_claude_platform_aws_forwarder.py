@@ -13,6 +13,7 @@ import datetime as dt
 import http.client
 import importlib.util
 import json
+import socket
 import subprocess
 import sys
 import threading
@@ -228,6 +229,31 @@ def test_an_allowed_request_is_signed_and_streamed_through(stack):
     assert lower["x-amz-security-token"] == "testsessiontoken"
     assert "x-api-key" not in lower and "cookie" not in lower
     assert "caller" not in lower["authorization"]
+
+
+def _header_lines(port, path, body):
+    raw = json.dumps(body).encode()
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+        s.sendall(f"POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                  f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
+        data = b""
+        while chunk := s.recv(65536):
+            data += chunk
+    return data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+
+
+@pytest.mark.parametrize("body", [MSG, {**MSG, "model": "claude-opus-5-5"}])
+def test_every_response_header_value_is_legal_for_h11(stack, body):
+    """LiteLLM relays the forwarder's response headers through h11, which rejects a
+    value with leading or trailing whitespace. Read off the wire, not via
+    http.client (which strips whitespace and would hide it)."""
+    port, _ = stack
+    lines = _header_lines(port, "/v1/messages", body)
+    assert lines, "no headers read"
+    for line in lines:
+        name, _, value = line.partition(b":")
+        value = value[1:] if value.startswith(b" ") else value
+        assert value == value.strip(), f"illegal header value {line!r}"
 
 
 @pytest.mark.parametrize("path,body,uid,status,needle", [
