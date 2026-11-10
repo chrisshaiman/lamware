@@ -133,6 +133,10 @@ _REGISTRY: dict[str, Arm] = {
     # forwarder (ADR-026: SigV4 from short-lived Roles Anywhere credentials, no static
     # key). "router": only the router resolves an alias to its model_list entry.
     "mythos@10": Arm("mythos@10", "eval-mythos", "router", 10),
+    # The 5.2 pair, same route (2026-11-09). fable52@10 runs Fable 5.2 on the CVP
+    # route; fable51@10 stays on the eval key, so the routes can be compared.
+    "mythos52@10": Arm("mythos52@10", "eval-mythos52", "router", 10),
+    "fable52@10": Arm("fable52@10", "eval-fable52", "router", 10),
 }
 
 # Seed-pinned variants of every local arm: `qwen@30:s42` routes to the

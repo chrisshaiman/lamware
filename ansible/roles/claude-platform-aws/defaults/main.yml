@@ -28,7 +28,9 @@ claude_platform_aws_listen_port: 4010
 claude_platform_aws_allowed_peer_uids: [0]
 
 # Models it will sign for. Anything else is refused before credentials are used.
-claude_platform_aws_allowed_models: ["claude-mythos-5-1"]
+# Each needs an eval-only LiteLLM alias pointing at this forwarder
+# (tests/test_mythos_is_eval_only.py). 5.2 listed in the workspace 2026-11-09.
+claude_platform_aws_allowed_models: ["claude-mythos-5-1", "claude-mythos-5-2", "claude-fable-5-2"]
 
 # --- AWS side (ADR-026). Not secrets, but account identifiers: set them in the
 # gitignored ansible/vars/main.yml, never here. Empty -> an enabled deploy fails

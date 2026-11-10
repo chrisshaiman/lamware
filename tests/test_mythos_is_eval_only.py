@@ -64,7 +64,8 @@ def _violations(model_list: list[dict]) -> list[str]:
 
 def test_the_only_forwarded_entry_carries_no_key():
     cfg = _render_config()
-    assert [m["model_name"] for m in _signed_entries(cfg["model_list"])] == ["eval-mythos"]
+    assert [m["model_name"] for m in _signed_entries(cfg["model_list"])] == [
+        "eval-mythos", "eval-mythos52", "eval-fable52"]
     assert _violations(cfg["model_list"]) == []
 
 
@@ -90,9 +91,13 @@ def test_litellm_points_at_the_port_the_forwarder_listens_on():
                          f"{ROLE_DEFAULTS['claude_platform_aws_listen_port']}")
 
 
-def test_the_alias_model_is_one_the_forwarder_signs_for():
-    assert (DEFAULTS["litellm_eval_mythos_model"]
-            in ROLE_DEFAULTS["claude_platform_aws_allowed_models"])
+def test_every_forwarded_alias_model_is_one_the_forwarder_signs_for():
+    """Both directions: an alias whose model the forwarder refuses fails at run time;
+    an allowlisted model with no forwarded alias is CVP access nothing should use."""
+    forwarded = {m["litellm_params"]["model"].removeprefix("anthropic/")
+                 for m in _render_config()["model_list"]
+                 if m["litellm_params"].get("api_base") == DEFAULTS["litellm_claude_platform_aws_base"]}
+    assert forwarded == set(ROLE_DEFAULTS["claude_platform_aws_allowed_models"])
 
 
 def test_the_role_is_off_by_default_and_in_site_yml():
