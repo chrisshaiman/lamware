@@ -30,6 +30,18 @@
   when: not cape_service_file.stat.exists
   changed_when: true
 
+# Subordinate id ranges must not overlap between users (security-test check
+# 16): a rootless container maps onto its owner's range, so two users with
+# overlapping ranges share host uids. cape was given ranges outside Ansible
+# that overlapped other users'. cape runs no rootless containers, so it holds
+# no range at all.
+- name: Remove every subordinate id range assigned to cape
+  ansible.builtin.lineinfile:
+    path: "/etc/{{ item }}"
+    regexp: "^{{ cape_user }}:"
+    state: absent
+  loop: [subuid, subgid]
+
 # cape2.sh's apt-get can put stock QEMU back at the distro path, which the
 # `office` guest (domain AND snapshot) still boots. Restore it from the
 # root-owned preserved copy (#308, qemu-patched role) -- never from /tmp, which
