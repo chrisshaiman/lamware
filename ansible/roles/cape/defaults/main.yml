@@ -45,3 +45,22 @@ cape_rollback_dir: /root/lamware-rollback/cape
 # time, and the lamware analysis row keeps cape_task_id. Investigate tools that
 # read Cape's directory report the expiry rather than "no payloads".
 cape_analysis_retention_days: 60
+
+# cape-rooter runs as root. cape2.sh starts it as `poetry run python rooter.py`
+# with its working directory, interpreter, venv and imports all under
+# /opt/CAPEv2, which cape owns: any write as cape ran as root on the next
+# rooter start, and cape may restart it through sudo. The role runs a
+# root-owned copy of the rooter's whole import closure (stdlib plus these six
+# files) under the system python in isolated mode instead.
+cape_rooter_dir: /opt/cape-rooter
+# sha256 of each file at the pinned CAPE commit (ebf1b1df), checked against
+# GitHub's copy at that commit, not only the host's (2026-10-25). A mismatch
+# fails the deploy: either cape changed the file, or CAPE was upgraded and these
+# need re-pinning after reading the rooter's diff. None of files/patches touches them.
+cape_rooter_files:
+  utils/rooter.py: e28b8c26d70b77ba26fcd8a241843f58c80dedc0b1c45bb4df06ff464a1f12d6
+  lib/__init__.py: 0bdff8b3756588dcade7d93175a1c851bf18fe5298e16860089b61b9d0519e94
+  lib/cuckoo/__init__.py: 0bdff8b3756588dcade7d93175a1c851bf18fe5298e16860089b61b9d0519e94
+  lib/cuckoo/common/__init__.py: 0bdff8b3756588dcade7d93175a1c851bf18fe5298e16860089b61b9d0519e94
+  lib/cuckoo/common/path_utils.py: 71382988ff808160c0bcc8126a04da10b52048898bfd912657d946c96a7673a7
+  lib/cuckoo/common/constants.py: 486cb5324f2aa3d78cbb5968100a50a50bcf16c54b36d1adeed04137200c5ad3
