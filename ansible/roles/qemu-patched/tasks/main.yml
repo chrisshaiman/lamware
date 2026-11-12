@@ -77,6 +77,9 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 # -------------------------------------------------------------------------
 # kvm-qemu.sh — builds DSDT-patched QEMU binary (slow; runs once)

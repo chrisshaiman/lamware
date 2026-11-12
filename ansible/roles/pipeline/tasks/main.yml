@@ -434,6 +434,9 @@
     group: lamware
     mode: "u=rwX,g=rX,o="
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 # -------------------------------------------------------------------------
 # Pipeline virtualenv — the host-side orchestrator (run-pipeline.py), the eval and
@@ -524,6 +527,9 @@
     group: lamware
     mode: "u=rwX,g=rX,o="
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 - name: Install the locked third-party packages into the venv (offline, as root)
   # pip, setuptools and wheel are in the lock too: setuptools is the build backend
@@ -567,6 +573,9 @@
     group: lamware
     mode: "u=rwX,g=rX,o="
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 - name: Create the pipeline code directories, root-owned (ADR-025)
   # Root-owned DIRECTORIES as well as files: the owner of a directory can rename
@@ -595,6 +604,9 @@
     # A group-writable file would leave pipeline (its group) able to write it.
     mode: "go-w"
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
   loop:
     - "{{ pipeline_install_dir }}/stages"
     - "{{ pipeline_install_dir }}/lamware_eval"

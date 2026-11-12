@@ -125,6 +125,9 @@
     path: "{{ triage_rules_dir }}"
     state: directory
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
     mode: "u=rwX,g=rX,o=rX"
   become: true
   become_user: pipeline
