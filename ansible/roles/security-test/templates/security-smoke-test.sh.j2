@@ -382,7 +382,7 @@ else
     fail "resolver: root zone does not validate: $(echo "$ROOT_Q" | tail -1)"
 fi
 
-echo "[14/17] CONTAINMENT: the pipeline and cape users cannot rewrite the pipeline's code..."
+echo "[14/17] CONTAINMENT: the pipeline and cape users cannot rewrite the pipeline's or the analysis tools' code..."
 # ADR-025: code the pipeline runs is root-owned; pipeline owns data only. A
 # writable code path is persistence: one write as pipeline (or cape, which left
 # bytecode caches in /opt/pipeline) runs again in every later analysis. Asked of
@@ -394,6 +394,15 @@ for f in "$PIPE_DIR"/*.py "$PIPE_DIR"/run-pipeline "$PIPE_DIR"/run-dotnet-tools 
          "$PIPE_DIR"/cleanup.sh "$PIPE_DIR"/config.json "$PIPE_DIR"/pipeline.env; do
     [ -e "$f" ] && CODE_PATHS="$CODE_PATHS $f"
 done
+# The analysis tools (ADR-025 phase 2): each install directory, its build
+# context, wrappers and rules are code; only the listed data subdirectories are
+# the pipeline's. "dir:data1,data2" -- data paths are relative to dir.
+TOOL_DIRS="{{ security_test_analysis_tools | default([
+    '/opt/ghidra:output,projects', '/opt/volatility3:output,cache', '/opt/triage:output',
+    '/opt/interpret:ab-results', '/opt/pcap-analysis:output', '/opt/go-analysis:output',
+    '/opt/java-analysis:output', '/opt/dotnet-analysis:output', '/opt/office-macro-analysis:',
+    '/opt/pdf-generation:output', '/opt/powershell-analysis:', '/opt/pyinstaller-analysis:output',
+    '/opt/screenshot-analysis:output', '/opt/python-sandbox:']) | join(' ') }}"
 CODE_WRITABLE=""
 for u in "$PIPE_USER" cape; do
     id -u "$u" >/dev/null 2>&1 || continue
@@ -401,7 +410,15 @@ for u in "$PIPE_USER" cape; do
     # writable; the directory itself is not (its owner could replace any file).
     w=$(cd / && sudo -u "$u" find "$PIPE_DIR" -maxdepth 0 -writable 2>/dev/null; \
         cd / && sudo -u "$u" find $CODE_PATHS -writable 2>/dev/null | head -5)
-    [ -n "$w" ] && CODE_WRITABLE="${CODE_WRITABLE}${u}: $(echo $w) "
+    for spec in $TOOL_DIRS; do
+        d=${spec%%:*}; data=${spec#*:}
+        [ -d "$d" ] || continue
+        prune=""
+        for s in $(echo "$data" | tr ',' ' '); do prune="$prune -path $d/$s -prune -o"; done
+        w="$w $(cd / && sudo -u "$u" find "$d" $prune -writable -print 2>/dev/null | head -3)"
+    done
+    w=$(echo $w)
+    [ -n "$w" ] && CODE_WRITABLE="${CODE_WRITABLE}${u}: $w "
 done
 # The control: the probe must see pipeline's own data as writable, or a broken
 # probe (wrong user, wrong path, sudo refused) would pass by finding nothing.
@@ -411,7 +428,7 @@ if ! (cd / && sudo -u "$PIPE_USER" test -w "$REPORTS") 2>/dev/null; then
 elif [ -n "$CODE_WRITABLE" ]; then
     fail "pipeline code is writable by a non-root user (persistence): $CODE_WRITABLE"
 else
-    pass "pipeline code, venv and caches: not writable by $PIPE_USER or cape (its reports dir is)"
+    pass "pipeline and analysis-tool code: not writable by $PIPE_USER or cape (its data dirs are)"
 fi
 
 echo "[15/17] CONTAINMENT: the CAPE rooter runs as root, so it must run only root-owned code..."

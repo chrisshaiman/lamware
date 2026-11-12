@@ -15,20 +15,46 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ pdf_generation_install_dir }}"
     - "{{ pdf_generation_install_dir }}/build"
+
+- name: Create the data directories (pipeline's; ADR-025)
+  # Runtime output only. Everything else under the install directory is
+  # root-owned code the pipeline reads and runs but cannot change.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+  loop:
     - "{{ pdf_generation_install_dir }}/output"
+
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ pdf_generation_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
 
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ pdf_generation_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy generate-report.py
@@ -37,8 +63,8 @@
   ansible.builtin.copy:
     src: "../../pipeline/files/generate-report.py"
     dest: "{{ pdf_generation_install_dir }}/build/generate-report.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0755"
 
 - name: Build the pdf-generation image hermetically (ADR-023)
@@ -63,8 +89,8 @@
   ansible.builtin.template:
     src: run-pdf-generation-wrapper.sh.j2
     dest: "{{ pdf_generation_install_dir }}/run-pdf-generation"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
 
 - name: Create convenience symlink

@@ -21,12 +21,35 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ interpret_install_dir }}"
     - "{{ interpret_install_dir }}/build"
+
+- name: Create the prompt A/B results directory (pipeline's data; ADR-025)
+  ansible.builtin.file:
+    path: "{{ interpret_install_dir }}/ab-results"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ interpret_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
 
 # -------------------------------------------------------------------------
 # Container image build
@@ -36,24 +59,24 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ interpret_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy interpret-ghidra.py into build context
   ansible.builtin.copy:
     src: interpret-ghidra.py
     dest: "{{ interpret_install_dir }}/build/interpret-ghidra.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0755"
 
 - name: Deploy interpret-config.json into build context
   ansible.builtin.template:
     src: interpret-config.json.j2
     dest: "{{ interpret_install_dir }}/build/interpret-config.json"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Build the interpret image hermetically (ADR-023)
@@ -73,8 +96,8 @@
   ansible.builtin.template:
     src: run-interpret-wrapper.sh.j2
     dest: "{{ interpret_install_dir }}/run-interpret"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
   # litellm_master_key. NOT no_log: that also censors failure messages, so a
@@ -92,8 +115,8 @@
   ansible.builtin.copy:
     src: netcheck.py
     dest: "{{ interpret_install_dir }}/netcheck.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy prompt A/B probe
@@ -103,16 +126,16 @@
   ansible.builtin.copy:
     src: prompt_ab.py
     dest: "{{ interpret_install_dir }}/prompt_ab.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy prompt A/B wrapper
   ansible.builtin.template:
     src: run-prompt-ab.sh.j2
     dest: "{{ interpret_install_dir }}/run-prompt-ab"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
   # litellm_master_key. NOT no_log: that also censors failure messages, so a

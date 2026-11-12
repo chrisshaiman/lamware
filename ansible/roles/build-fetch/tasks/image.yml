@@ -239,9 +239,28 @@
     src: "{{ build_fetch_home }}/{{ hb_name }}/{{ item }}"
     dest: "{{ hb_build_dir }}/"
     remote_src: true
-    owner: pipeline
-    group: pipeline
+    # Root-owned, group-readable (ADR-025): `podman build` runs as pipeline and
+    # only reads the context; pipeline must not be able to change what it bakes in.
+    owner: root
+    group: lamware
     mode: u=rwX,g=rX,o=
+  loop: "{{ ['debs', 'wheels'] + hb_lock_names + (['nuget'] if hb_nuget | default([]) | length > 0 else []) }}"
+  vars:
+    hb_lock_names: >-
+      {{ (['requirements.lock', 'sdists.lock'] if hb_lock | default('') | length > 0 else [])
+         + ([hb_build_lock | basename] if hb_build_lock | default('') | length > 0 else []) }}
+
+- name: "{{ hb_name }}: make the copied inputs root-owned and group-readable"
+  # copy keeps each fetched file's own mode, and some arrive owner-only (an sdist
+  # get_url wrote 0600). Owned by pipeline that was readable; owned by root
+  # (ADR-025) the build, which runs as pipeline, could not open it.
+  ansible.builtin.file:
+    path: "{{ hb_build_dir }}/{{ item }}"
+    owner: root
+    group: lamware
+    mode: u=rwX,g=rX,o=
+    recurse: "{{ item in ['debs', 'wheels', 'nuget'] }}"
+    follow: false
   loop: "{{ ['debs', 'wheels'] + hb_lock_names + (['nuget'] if hb_nuget | default([]) | length > 0 else []) }}"
   vars:
     hb_lock_names: >-
@@ -260,6 +279,21 @@
     loop_var: hb_base
 
 # --- Build with no network, then prove the image is this build ----------------
+- name: "{{ hb_name }}: the whole build context is root-owned and group-readable"
+  # Last word before the hash and the build, whatever wrote the files: unarchive
+  # applies the archive's own modes (GoReSym arrives 0600), and directories left
+  # by deploys from before ADR-025 can be 0700. The build runs as pipeline (group
+  # lamware) and only reads; the pipeline must not be able to change what it bakes
+  # in. Symbolic mode keeps existing 0644/0755, so an unchanged context hashes the same.
+  ansible.builtin.file:
+    path: "{{ hb_build_dir }}"
+    state: directory
+    owner: root
+    group: lamware
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
+
 - name: "{{ hb_name }}: hash the build context"
   ansible.builtin.shell:
     cmd: >

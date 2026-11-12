@@ -41,9 +41,10 @@
         src: "{{ build_fetch_home }}/{{ hb_name }}/base.tar"
         dest: "{{ hb_build_dir }}/../base.tar"
         remote_src: true
-        owner: pipeline
-        group: pipeline
-        mode: "0600"
+        # Root-owned, group-readable (ADR-025): pipeline only loads it.
+        owner: root
+        group: lamware
+        mode: "0640"
     - name: "{{ hb_name }}: load the base image (pipeline)"
       ansible.builtin.command:
         cmd: podman load -i {{ hb_build_dir }}/../base.tar

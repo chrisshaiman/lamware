@@ -5,35 +5,50 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ powershell_analysis_install_dir }}"
     - "{{ powershell_analysis_install_dir }}/build"
 
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ powershell_analysis_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
+
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ powershell_analysis_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy analysis script
   ansible.builtin.template:
     src: analyze-powershell.py.j2
     dest: "{{ powershell_analysis_install_dir }}/build/analyze-powershell.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy minusone's licence into the build context (MIT notice ships with it)
   ansible.builtin.copy:
     src: minusone-LICENSE
     dest: "{{ powershell_analysis_install_dir }}/build/minusone-LICENSE"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Build the powershell-analysis image hermetically (ADR-023)
@@ -62,8 +77,8 @@
   ansible.builtin.template:
     src: run-powershell-analysis-wrapper.sh.j2
     dest: "{{ powershell_analysis_install_dir }}/run-powershell-analysis"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
 
 - name: Symlink wrapper to PATH

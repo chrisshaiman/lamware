@@ -21,12 +21,38 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ triage_install_dir }}"
+
+- name: Create the data directories (pipeline's; ADR-025)
+  # Runtime output only. Everything else under the install directory is
+  # root-owned code the pipeline reads and runs but cannot change.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+  loop:
     - "{{ triage_output_dir }}"
+
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ triage_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
 
 # The rules are bind-mounted into a container running as --user 65534, which is
 # host uid 265533: neither pipeline nor in lamware. At 0750 the container got
@@ -37,7 +63,7 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0755"
   loop:
@@ -78,7 +104,7 @@
   ansible.builtin.file:
     path: "{{ triage_rules_dir }}/{{ item.dest }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0755"
   loop: "{{ triage_yara_repos }}"
@@ -86,8 +112,9 @@
     label: "{{ item.name }}"
 
 - name: Unpack YARA rules
-  # As pipeline, not root: the rules dir is pipeline's, and root writing into a
-  # tree another user owns follows whatever symlinks that user left there.
+  # As root, into a root-owned rules tree (ADR-025): the pipeline reads the
+  # rules and cannot change them. Earlier deploys unpacked as pipeline into a
+  # pipeline-owned tree; the take-back task above makes it root's first.
   # The marker names the archive's checksum, so a moved pin unpacks again and an
   # unchanged one is a no-op.
   ansible.builtin.unarchive:
@@ -96,8 +123,6 @@
     remote_src: true
     extra_opts: [--strip-components=1]
     creates: "{{ triage_rules_dir }}/{{ item.dest }}/.lamware-archive-{{ item.sha256[:16] }}"
-  become: true
-  become_user: pipeline
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
@@ -111,8 +136,6 @@
     mode: "0640"
     modification_time: preserve
     access_time: preserve
-  become: true
-  become_user: pipeline
   loop: "{{ triage_yara_repos }}"
   loop_control:
     label: "{{ item.name }}"
@@ -124,13 +147,13 @@
   ansible.builtin.file:
     path: "{{ triage_rules_dir }}"
     state: directory
+    owner: root
+    group: lamware
     recurse: true
     # Never follow links: a link another user planted in this tree
     # would point root's chown/chmod at a file outside it.
     follow: false
     mode: "u=rwX,g=rX,o=rX"
-  become: true
-  become_user: pipeline
 
 - name: Remove the YARA rule archives
   ansible.builtin.file:
@@ -145,7 +168,7 @@
   ansible.builtin.file:
     path: "{{ triage_install_dir }}/build"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
 
@@ -153,16 +176,16 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ triage_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy run-triage.py into build context
   ansible.builtin.template:
     src: run-triage.py.j2
     dest: "{{ triage_install_dir }}/build/run-triage.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0755"
 
 - name: Build the triage image hermetically (ADR-023)
@@ -193,8 +216,8 @@
   ansible.builtin.template:
     src: run-triage-wrapper.sh.j2
     dest: "{{ triage_install_dir }}/run-triage"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
 
 - name: Create convenience symlink

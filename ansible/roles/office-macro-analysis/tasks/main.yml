@@ -5,27 +5,42 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ office_macro_analysis_install_dir }}"
     - "{{ office_macro_analysis_install_dir }}/build"
 
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ office_macro_analysis_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
+
 - name: Deploy Containerfile
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ office_macro_analysis_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Deploy analysis script
   ansible.builtin.template:
     src: analyze-office.py.j2
     dest: "{{ office_macro_analysis_install_dir }}/build/analyze-office.py"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Build the office-macro-analysis image hermetically (ADR-023)
@@ -45,8 +60,8 @@
   ansible.builtin.template:
     src: run-office-analysis-wrapper.sh.j2
     dest: "{{ office_macro_analysis_install_dir }}/run-office-analysis"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
 
 - name: Symlink wrapper to PATH
