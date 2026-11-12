@@ -75,7 +75,7 @@ def test_the_role_checks_the_running_process_not_only_the_unit():
 
 
 def _check15() -> str:
-    start = SMOKE.index('echo "[15/16]')
+    start = SMOKE.index('echo "[15/17]')
     return SMOKE[start:SMOKE.index("# Summary + ntfy alert on failure", start)]
 
 

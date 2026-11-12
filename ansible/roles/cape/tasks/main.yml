@@ -151,12 +151,18 @@
     owner: "{{ cape_user }}"
     group: "{{ cape_user }}"
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 - name: Fix Cape poetry directory permissions (cape2.sh sets 700)
   ansible.builtin.file:
     path: /etc/poetry
     mode: "0755"
     recurse: true
+    # Never follow links: a link another user planted in this tree
+    # would point root's chown/chmod at a file outside it.
+    follow: false
 
 - name: Install Cape Python dependencies as cape user
   ansible.builtin.shell: |

@@ -30,7 +30,7 @@ carol:1250:100
 
 
 def _awk_program() -> str:
-    block = SMOKE[SMOKE.index('echo "[16/16]'):]
+    block = SMOKE[SMOKE.index('echo "[16/17]'):]
     m = re.search(r"awk -F: '(.*?)' \"\$f\"", block, re.S)
     assert m, "check 16's awk program not found in the template"
     return m.group(1)
