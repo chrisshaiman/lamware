@@ -20,13 +20,39 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
   loop:
     - "{{ volatility_install_dir }}"
-    - "{{ volatility_output_dir }}"
     - "{{ volatility_symbols_dir }}"
+
+- name: Create the data directories (pipeline's; ADR-025)
+  # Runtime output only. Everything else under the install directory is
+  # root-owned code the pipeline reads and runs but cannot change.
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: pipeline
+    group: lamware
+    mode: "0750"
+  loop:
+    - "{{ volatility_output_dir }}"
+
+- name: Root-own what is already in the build context (ADR-025)
+  # Earlier deploys left these pipeline-owned, and a file this role no longer
+  # ships would keep its old owner. follow: false: never chown a link's target.
+  ansible.builtin.file:
+    path: "{{ volatility_install_dir }}/build"
+    state: directory
+    owner: root
+    group: lamware
+    # g+rX: the pipeline (group lamware) must read the context it builds;
+    # go-w: and must not write it. Symbolic, so existing 0644/0755 files keep
+    # their modes and a deploy does not change the context for nothing.
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
 
 # -------------------------------------------------------------------------
 # ISF symbol tables — required for Windows memory analysis
@@ -41,8 +67,8 @@
   ansible.builtin.get_url:
     url: "{{ volatility_isf_url }}"
     dest: "{{ volatility_install_dir }}/windows-symbols.zip"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
   when: not volatility_symbols_check.stat.exists
 
@@ -51,8 +77,8 @@
     src: "{{ volatility_install_dir }}/windows-symbols.zip"
     dest: "{{ volatility_symbols_dir }}/"
     remote_src: true
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
   when: not volatility_symbols_check.stat.exists
 
 - name: Remove symbol zip after extraction
@@ -64,11 +90,30 @@
 # Container image build
 # -------------------------------------------------------------------------
 
+- name: Root-own the symbol tables, writable by no one else (ADR-025)
+  # The symbol tables are code-like inputs: root-owned, no group/other write.
+  # The container keeps group lamware (--group-add keep-groups), so group read
+  # is enough. follow: false: never chmod a link's target.
+  ansible.builtin.file:
+    path: "{{ volatility_symbols_dir }}"
+    state: directory
+    owner: root
+    group: lamware
+    mode: "u+rwX,g+rX,go-w"
+    recurse: true
+    follow: false
+
+- name: Remove the unused plugin_cache directory
+  # Referenced nowhere; Volatility's cache is cache/.
+  ansible.builtin.file:
+    path: "{{ volatility_install_dir }}/plugin_cache"
+    state: absent
+
 - name: Create container build directory
   ansible.builtin.file:
     path: "{{ volatility_install_dir }}/build"
     state: directory
-    owner: pipeline
+    owner: root
     group: lamware
     mode: "0750"
 
@@ -76,8 +121,8 @@
   ansible.builtin.template:
     src: Containerfile.j2
     dest: "{{ volatility_install_dir }}/build/Containerfile"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0644"
 
 - name: Build the volatility image hermetically (ADR-023)
@@ -102,8 +147,8 @@
   ansible.builtin.template:
     src: run-volatility-wrapper.sh.j2
     dest: "{{ volatility_install_dir }}/run-volatility"
-    owner: pipeline
-    group: pipeline
+    owner: root
+    group: lamware
     mode: "0750"
 
 - name: Create convenience symlink
@@ -118,6 +163,8 @@
 # -------------------------------------------------------------------------
 
 - name: Create Volatility cache directory
+  # Data, not code: written at runtime by the container (ADR-025 keeps it the
+  # pipeline's).
   ansible.builtin.file:
     path: "{{ volatility_install_dir }}/cache"
     state: directory
