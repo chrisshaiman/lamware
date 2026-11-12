@@ -11,11 +11,15 @@
 # License: Apache 2.0
 # =============================================================================
 
-- name: Create sample-feeder install directory
+# ADR-025: code and configuration are root's. The feeder runs as
+# sample_feeder_user and the auto-feeder (another user) reads the same config
+# and seen-hash file, so neither may be able to change what the other runs or
+# where the other writes.
+- name: Create sample-feeder install directory (root-owned; ADR-025)
   ansible.builtin.file:
     path: "{{ sample_feeder_dir }}"
     state: directory
-    owner: "{{ sample_feeder_user }}"
+    owner: root
     group: lamware
     mode: "0750"
 
@@ -39,7 +43,7 @@
   ansible.builtin.template:
     src: sample_feeder.py.j2
     dest: "{{ sample_feeder_dir }}/sample_feeder.py"
-    owner: "{{ sample_feeder_user }}"
+    owner: root
     group: "{{ sample_feeder_user }}"
     mode: "0750"
 
@@ -47,13 +51,42 @@
   ansible.builtin.template:
     src: sample-feeder.conf.j2
     dest: "{{ sample_feeder_dir }}/config.json"
-    owner: "{{ sample_feeder_user }}"
+    owner: root
     # It holds the CAPE API token and the MalwareBazaar key. Group lamware made
     # them readable by cape and lamware-api too; the only other reader is the
-    # auto-feeder.
+    # auto-feeder. Root-owned (ADR-025): the auto-feeder acts on this file, so
+    # the feeder user must not be able to change it.
     group: "{{ auto_feeder_user | default('auto-feeder') }}"
     mode: "0640"
   no_log: true
+
+# The CLI runs as sample_feeder_user and needs the keys too. An ACL, not group
+# lamware: that group also holds cape and lamware-api.
+- name: Let the feeder user read the config (ACL)
+  ansible.posix.acl:
+    path: "{{ sample_feeder_dir }}/config.json"
+    entity: "{{ sample_feeder_user }}"
+    etype: user
+    permissions: r
+    state: present
+
+# Shared state both feeders rewrite in place, so it must exist before either
+# runs (the root-owned directory refuses to create it for them).
+- name: Create the shared seen-hash file if missing
+  ansible.builtin.copy:
+    content: "[]\n"
+    dest: "{{ sample_feeder_state_file }}"
+    force: false
+    owner: root
+    group: lamware
+    mode: "0660"
+
+- name: Keep the shared seen-hash file root-owned and group-writable
+  ansible.builtin.file:
+    path: "{{ sample_feeder_state_file }}"
+    owner: root
+    group: lamware
+    mode: "0660"
 
 - name: Create convenience symlink
   ansible.builtin.file:

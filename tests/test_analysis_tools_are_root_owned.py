@@ -72,3 +72,16 @@ def test_build_inputs_are_copied_root_owned():
                 assert p.get("owner") == "root", f"{f}: {t.get('name')}"
                 seen.append(f)
     assert sorted(set(seen)) == ["image.yml", "image_base.yml"], seen
+
+
+def test_sample_feeder_gives_its_user_nothing_but_read_on_the_config():
+    """The auto-feeder (another user) acts on the feeder's config and seen-hash
+    file, so the feeder user may own neither, nor the script or directory."""
+    tasks = list(_walk(yaml.safe_load((ROOT / "ansible/roles/sample-feeder/tasks/main.yml").read_text())))
+    for t in tasks:
+        for mod, p in t.items():
+            if isinstance(p, dict) and "owner" in p:
+                assert p["owner"] == "root", f"{t.get('name')!r} owner {p['owner']}"
+    acl = [t["ansible.posix.acl"] for t in tasks if "ansible.posix.acl" in t]
+    assert len(acl) == 1 and acl[0]["permissions"] == "r" and acl[0]["path"].endswith("config.json")
+
