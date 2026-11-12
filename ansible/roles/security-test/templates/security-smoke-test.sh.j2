@@ -402,7 +402,8 @@ TOOL_DIRS="{{ security_test_analysis_tools | default([
     '/opt/interpret:ab-results', '/opt/pcap-analysis:output', '/opt/go-analysis:output',
     '/opt/java-analysis:output', '/opt/dotnet-analysis:output', '/opt/office-macro-analysis:',
     '/opt/pdf-generation:output', '/opt/powershell-analysis:', '/opt/pyinstaller-analysis:output',
-    '/opt/screenshot-analysis:output', '/opt/python-sandbox:']) | join(' ') }}"
+    '/opt/screenshot-analysis:output', '/opt/python-sandbox:',
+    '/opt/sample-feeder:seen_hashes.json']) | join(' ') }}"
 CODE_WRITABLE=""
 for u in "$PIPE_USER" cape; do
     id -u "$u" >/dev/null 2>&1 || continue
