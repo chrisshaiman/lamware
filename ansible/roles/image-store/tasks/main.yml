@@ -14,6 +14,15 @@
   ansible.builtin.set_fact:
     image_store_ro_unit: "{{ image_store_ro_unit_name.stdout }}"
 
+- name: Look up the pipeline user's uid (its systemd user manager is user@<uid>)
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ image_store_user }}"
+
+- name: Remember the user manager's unit name
+  ansible.builtin.set_fact:
+    image_store_user_manager: "user@{{ ansible_facts.getent_passwd[image_store_user][1] }}.service"
+
 - name: Create the image store directories
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -72,6 +81,28 @@
   loop:
     - {src: image-store.mount.j2, dest: "{{ image_store_ro_unit }}"}
     - {src: lamware-image-store-seal.service.j2, dest: lamware-image-store-seal.service}
+  notify: Reload systemd for the image store
+
+# Boot order. A podman namespace started before the read-only mount keeps a
+# writable view of it (the 2026-11-13 spike), and the pipeline user's manager
+# (lingering, so it starts at boot) is what starts podman. So the manager
+# itself waits for the mount. A daemon-reload applies this; the running
+# manager is not restarted (that would end the user's processes).
+- name: Create the pipeline user manager's drop-in directory
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ image_store_user_manager }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Order the pipeline user's manager after the read-only mount
+  ansible.builtin.template:
+    src: user-manager-after-mount.conf.j2
+    dest: "/etc/systemd/system/{{ image_store_user_manager }}.d/lamware-image-store.conf"
+    owner: root
+    group: root
+    mode: "0644"
   notify: Reload systemd for the image store
 
 - name: Apply the systemd reload now

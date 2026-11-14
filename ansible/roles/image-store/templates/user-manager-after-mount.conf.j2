@@ -1,0 +1,12 @@
+# /etc/systemd/system/{{ image_store_user_manager }}.d/lamware-image-store.conf
+# managed by Ansible (image-store role)
+#
+# The pipeline user's systemd manager starts only after its image store is
+# mounted read-only (ADR-025 phase 3). A podman namespace that predates the
+# read-only mount keeps a writable view of the store, and this manager (the
+# user lingers, so it starts at boot) is what starts podman. Wants, not
+# Requires: if the mount fails, lamware-podman refuses to run anyway, and the
+# user's other services should still start.
+[Unit]
+Wants={{ image_store_ro_unit }}
+After={{ image_store_ro_unit }}
