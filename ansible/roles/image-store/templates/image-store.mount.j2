@@ -1,0 +1,14 @@
+# {{ image_store_ro_unit }} — managed by Ansible (image-store role)
+# The pipeline user's image store, read-only (ADR-025 phase 3).
+[Unit]
+Description=lamware pipeline image store, read-only view
+After=local-fs.target
+
+[Mount]
+What={{ image_store_graph }}
+Where={{ image_store_ro }}
+Type=none
+Options=bind,ro
+
+[Install]
+WantedBy=multi-user.target

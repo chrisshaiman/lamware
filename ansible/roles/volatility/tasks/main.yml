@@ -182,7 +182,7 @@
 - name: Pre-build Volatility ISF cache
   ansible.builtin.command:
     cmd: >
-      podman run --rm
+      {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm
       --network=none
       --read-only
       --cap-drop=ALL

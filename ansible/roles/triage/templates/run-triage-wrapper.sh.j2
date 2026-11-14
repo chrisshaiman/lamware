@@ -61,7 +61,7 @@ podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
 cp "$SAMPLE_PATH" "$JOB_DIR/in/$SAMPLE_NAME"
 chmod 644 "$JOB_DIR/in/$SAMPLE_NAME"
 
-podman run --rm \
+{{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \

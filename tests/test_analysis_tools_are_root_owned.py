@@ -64,14 +64,14 @@ def test_the_build_context_is_taken_back_without_following_links(role):
 
 def test_build_inputs_are_copied_root_owned():
     seen = []
-    for f in ("image.yml", "image_base.yml"):
+    for f in ("image_build.yml", "image_base.yml"):
         for t in _walk(yaml.safe_load((ROOT / "ansible/roles/build-fetch/tasks" / f).read_text())):
             p = t.get("ansible.builtin.copy")
             # Only what lands in the build context; lamware-fetch keeps its own staging.
             if isinstance(p, dict) and "hb_build_dir" in str(p.get("dest", "")):
                 assert p.get("owner") == "root", f"{f}: {t.get('name')}"
                 seen.append(f)
-    assert sorted(set(seen)) == ["image.yml", "image_base.yml"], seen
+    assert sorted(set(seen)) == ["image_base.yml", "image_build.yml"], seen
 
 
 def test_sample_feeder_gives_its_user_nothing_but_read_on_the_config():

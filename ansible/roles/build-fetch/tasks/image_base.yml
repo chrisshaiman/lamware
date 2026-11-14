@@ -11,10 +11,11 @@
 # The ID is asserted after the load; the local tag keeps a prune from removing it.
 - name: "{{ hb_name }}: is {{ hb_base.ref.split('@')[0] }} (image {{ hb_base.id[:12] }}) in pipeline's store?"
   ansible.builtin.command:
-    cmd: podman image exists {{ hb_base.id }}
+    cmd: "{{ hb_pipeline_podman }} image exists {{ hb_base.id }}"
     chdir: "{{ hb_build_dir }}"
   become: true
   become_user: pipeline
+  environment: "{{ hb_pipeline_env }}"
   register: hb_base_present
   failed_when: hb_base_present.rc not in [0, 1]
   changed_when: false
@@ -47,17 +48,19 @@
         mode: "0640"
     - name: "{{ hb_name }}: load the base image (pipeline)"
       ansible.builtin.command:
-        cmd: podman load -i {{ hb_build_dir }}/../base.tar
+        cmd: "{{ hb_pipeline_podman }} load -i {{ hb_build_dir }}/../base.tar"
         chdir: "{{ hb_build_dir }}"
       become: true
       become_user: pipeline
+      environment: "{{ hb_pipeline_env }}"
       changed_when: true
     - name: "{{ hb_name }}: the loaded image must be the pinned image ID"
       ansible.builtin.command:
-        cmd: podman image exists {{ hb_base.id }}
+        cmd: "{{ hb_pipeline_podman }} image exists {{ hb_base.id }}"
         chdir: "{{ hb_build_dir }}"
       become: true
       become_user: pipeline
+      environment: "{{ hb_pipeline_env }}"
       changed_when: false
   always:
     - name: "{{ hb_name }}: remove the image archives"
@@ -71,9 +74,10 @@
 - name: "{{ hb_name }}: tag the base locally so a prune keeps it"
   ansible.builtin.command:
     cmd: >
-      podman tag {{ hb_base.id }}
+      {{ hb_pipeline_podman }} tag {{ hb_base.id }}
       localhost/lamware-base/{{ hb_base.ref.split('@')[0].split('/')[-1] }}:{{ hb_base.id[:12] }}
     chdir: "{{ hb_build_dir }}"
   become: true
   become_user: pipeline
+  environment: "{{ hb_pipeline_env }}"
   changed_when: false

@@ -1286,6 +1286,146 @@ users.
   first (`chown -R pipeline:lamware` on each), then redeploy the reverted role,
   which re-owns the rest. No data moves.
 
+
+### Amendment (2026-11-13, proposed): phase 3, the images the pipeline runs
+
+Phases 1 and 2 made the pipeline's code and the analysis tools' code root-owned
+(#787, #838, #839). The containers those tools run in are still the pipeline's:
+each wrapper runs `localhost/<tool>:latest` from the pipeline user's rootless
+store (`/home/pipeline/.local/share/containers/storage`), which that user can
+change. A compromised pipeline can rebuild or retag an image, or edit a layer's
+files on disk, and every later analysis runs its version. That is persistence
+and a quiet loss of analysis integrity (a tampered analyser can report a sample
+as clean). It is not an escalation: the containers already run with the
+pipeline's privileges and no network.
+
+**Measured on the host (podman 4.9.3, rootless, native overlay), with the
+limits of each result stated:**
+
+- The wrappers name images by mutable tag. The only check is at deploy time
+  (the `lamware.build-context` label); nothing checks at run time.
+- **Not every caller goes through a wrapper.** `run-dotnet-tools`,
+  `run-prompt-ab`, `run-sandbox`, the Volatility cache-build task and
+  security-test's network probe also name `localhost/<tool>:latest`. Any fix
+  must cover all of them.
+- **The build cache is the pipeline's.** `podman build` runs as the pipeline
+  user in its own store, without `--no-cache`. A tampered cached layer would be
+  baked into a freshly built image that the deploy then trusts.
+- **The image store's metadata is the pipeline's too**, not just its layer
+  files. An edit there could point an image ID at different layers. That is
+  reasoned, not tested; podman is not known to re-verify layers when it runs one.
+- **A root-built image used from a read-only additional store — unresolved.**
+  - In one run it **started and ran**, both as the image's non-root user and as
+    root. In that run, however, the store had been made world-readable
+    recursively, which also changed a private file in the image from 0600 to
+    0644. Files owned by the image's own user appeared as uid 65534.
+  - In a later run it **failed**, with `creating /etc/mtab symlink: permission
+    denied`. That run changed three things at once (a new graph root, explicit
+    storage flags, and a not-yet-created `XDG_CONFIG_HOME`), so the cause was
+    not isolated. It is **not** established that root ownership of the layers
+    caused the failure.
+- **Configuration precedence — unresolved.** With only `CONTAINERS_STORAGE_CONF`
+  set, podman kept the pipeline user's usual graph root, but did honour the
+  additional store from that file. Which file wins for which setting was not
+  isolated. Passing `--root`, `--runroot` and `--storage-driver` on the command
+  line did take effect.
+
+**Options:**
+
+1. *Root-built images in a read-only additional store.* Would make the images
+   root's. Whether they run rootless on podman 4.9, and with what file-ownership
+   cost inside the container, is open (above).
+2. *A dedicated non-root build user's store, shared read-only.* Reasoned, not
+   tried: likely the same cross-user ownership question as option 1.
+3. *Pin and watch.* Run by image ID from a root-owned manifest, ignore the
+   user's container configuration, and have AIDE watch layer contents. Weaker
+   than it first looked:
+   - an ID does not protect against a metadata edit (above), and the metadata
+     changes on every run, so AIDE cannot watch it;
+   - every deploy rebaselines AIDE (#822), so a layer edited before a deploy is
+     absorbed into the new baseline, not alerted on;
+   - it does not cover the build cache.
+4. *Keep the pipeline-built store, but read-only to everyone outside a build.*
+   Root bind-mounts the store read-only; each run uses a fresh empty writable
+   graph root with the read-only store as an additional store. A deploy
+   remounts it writable only for its own build step. Ownership stays mapped as
+   today, so containers should run as now, and the kernel refuses writes to
+   layers and metadata alike, whoever owns them. Untested.
+
+Whichever option is chosen, the build cache needs its own answer: build with
+`--no-cache`, or build in a separate store.
+
+**Controlled spike (2026-11-13), throwaway stores only, every podman call with
+explicit `--root`/`--runroot`:**
+
+- **Option 1 does not run on podman 4.9, and the cause is isolated.** The same
+  image fails from a root-built read-only store (`creating /etc/mtab symlink:
+  permission denied`), with or without the `XDG_CONFIG_HOME` override. It runs
+  from a pipeline-built store mounted the same way. The only difference is who
+  owns the layers. The earlier "success" was produced by re-moding the layer
+  files.
+- **Option 4 runs, and ownership is preserved:** the image's own user read its
+  0600 file, as in the control.
+- **Option 4, as built in the spike, is not tamper-proof.** Writing through the
+  read-only bind mount was refused for a direct write, but **succeeded through
+  `podman unshare`**: the layer file's hash and mode changed, and a container
+  then read the tampered content. Likely causes (reasoned, not isolated):
+  - the pipeline user's long-lived podman namespace predated the read-only
+    remount and kept a writable view of the mount;
+  - the store's real directory was owned by the pipeline and reachable through
+    a world-traversable path, so it could be written without going through the
+    mount at all.
+- **Lesson for any check of this property:** it must be probed from *inside* the
+  pipeline user's podman namespace (`podman unshare`), not only as the user.
+  The direct-write probe alone passed while the store was writable.
+
+**Second controlled spike (2026-11-13): option 4 holds with two conditions.**
+The pipeline built an image into a throwaway store. Root then placed the store's
+real directory under a root-only (0700) parent and bind-mounted it read-only
+elsewhere. Every write was probed as the pipeline user, directly and through
+`podman unshare`:
+
+| | pipeline's podman namespace started **before** the read-only mount | restarted (`podman system migrate`) **after** it |
+|---|---|---|
+| write via the read-only path | refused | refused |
+| write / chmod via `podman unshare` | **succeeded** (file changed) | refused |
+| write to the hidden real path (also via unshare) | refused | refused |
+| container from the read-only store | n/a | runs; the image's user reads its own 0600 file |
+
+The leak was namespace ordering: a podman namespace that predates the
+read-only remount keeps a writable view of the mount. The pause process's PID
+was not captured (the probe pattern was wrong), so the restart is evidenced by
+the change in behaviour.
+
+**Proposed decision: option 4.**
+
+- **The store:** the pipeline's image store lives under a root-only directory
+  and is reachable only through a read-only bind mount, set up at boot before
+  the pipeline user first runs podman.
+- **Each run:** uses a fresh empty graph root, with the read-only store as an
+  additional image store and explicit storage flags.
+- **Each deploy's build step:** opens the root-only parent (the read-only view
+  stays mounted), builds into the real path as the pipeline user, then closes
+  the parent, waits (bounded) for running containers, restarts the pipeline's
+  podman namespace, and probes; the deploy fails if the probe can write or is
+  blind. As built: `image-store` role, `lamware-image-store open|close`, and
+  `lamware-podman` for every run.
+- **What this closes:** layer files, image metadata and the build cache are all
+  read-only outside a deploy's build step, so it covers the gaps that ruled out
+  option 3.
+- **Every caller** that names an image moves to the per-run form: the wrappers
+  and the five other callers listed above.
+- **security-test check 18** must probe through `podman unshare`. The spike shows
+  that probe tells the broken and fixed states apart; a plain write test does not.
+
+**Not yet tested:** the deploy-time open/build/close cycle on the real 14
+images; a reboot (does the mount come up before the pipeline's first podman
+use?); and running containers across a namespace restart. Before migration the
+store should be pruned: 143 of its 166 images are dangling.
+
+**Rollback:** wrappers go back to tags; remove any manifest, per-run
+configuration, mounts or AIDE rules. No data moves.
+
 ---
 
 ## ADR-026: CVP frontier models are reached through Claude Platform on AWS, with SigV4 from IAM Roles Anywhere; no static key

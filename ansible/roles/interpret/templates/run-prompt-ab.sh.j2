@@ -51,7 +51,7 @@ mkdir -p "$OUT_DIR"
 # exists at all.
 export LITELLM_API_KEY="{{ litellm_master_key | mandatory }}"
 
-exec podman run --rm -i \
+exec {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \
     --read-only \
     --cap-drop=ALL \

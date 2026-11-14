@@ -37,7 +37,7 @@ if [ -z "${LAMWARE_IN_USER_SESSION:-}" ] && [ -S "/run/user/${_uid}/bus" ]; then
              --setenv=LAMWARE_IN_USER_SESSION=1 -- "$0" "$@"
 fi
 
-if ! podman image exists localhost/python-sandbox:latest; then
+if ! {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman image exists localhost/python-sandbox:latest; then
     echo "Error: image localhost/python-sandbox:latest not found — deploy the python-sandbox role first" >&2
     exit 1
 fi
@@ -50,7 +50,7 @@ BOOTSTRAP='import json,sys,types;q=json.load(sys.stdin);m=types.ModuleType("dotn
 # --user 65534:65534 inside rootless podman's user namespace, as every analysis
 # container runs. stderr is kept apart from stdout so the broker parses only
 # the result.
-head -c {{ pipeline_dotnet_tools_max_input }} | podman run --rm -i \
+head -c {{ pipeline_dotnet_tools_max_input }} | {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \
     --read-only \
     --cap-drop=ALL \

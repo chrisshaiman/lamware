@@ -27,3 +27,21 @@ security_test_nuclei_release_base: "https://github.com/projectdiscovery/nuclei/r
 ntfy_enabled: false
 ntfy_url: "https://ntfy.sh"
 ntfy_topic: ""
+
+# Every image a pipeline wrapper runs; check 18 requires each in the read-only
+# image store (ADR-025 phase 3). One per tool role's hb_tag.
+security_test_pipeline_images:
+  - localhost/dotnet-analysis:latest
+  - localhost/ghidra:latest
+  - localhost/go-analysis:latest
+  - localhost/interpret:latest
+  - localhost/java-analysis:latest
+  - localhost/office-macro-analysis:latest
+  - localhost/pcap-analysis:latest
+  - localhost/pdf-generation:latest
+  - localhost/powershell-analysis:latest
+  - localhost/pyinstaller-analysis:latest
+  - localhost/python-sandbox:latest
+  - localhost/screenshot-analysis:latest
+  - localhost/triage:latest
+  - localhost/volatility3:latest

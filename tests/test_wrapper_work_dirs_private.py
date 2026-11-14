@@ -120,10 +120,10 @@ def _defaults(role: str) -> dict:
     return data
 
 
-def _render(role: str, dest: Path) -> Path:
+def _render(role: str, dest: Path, **extra) -> Path:
     src = (ROLES / role / "templates" / TEMPLATES[role]).read_text()
     text = Environment(undefined=StrictUndefined, keep_trailing_newline=True) \
-        .from_string(src).render(**_defaults(role))
+        .from_string(src).render(**{**_defaults(role), **extra})
     dest.write_text(text)
     dest.chmod(0o755)
     return dest
@@ -202,13 +202,17 @@ def _execute(case: str, root: Path, *, fail: bool = False, kill: signal.Signals 
     role, build = CASES[case]
     stubs = root / "bin"
     stubs.mkdir()
-    (stubs / "podman").write_text(PODMAN_STUB)
-    (stubs / "podman").chmod(0o755)
+    # The wrappers run images through the image-store role's lamware-podman,
+    # which passes its arguments to podman unchanged (ADR-025 phase 3); the
+    # same recording stub stands in for both, so `podman unshare` is seen too.
+    for name in ("podman", "lamware-podman"):
+        (stubs / name).write_text(PODMAN_STUB)
+        (stubs / name).chmod(0o755)
     (stubs / "chmod").write_text(CHMOD_SHIM)
     (stubs / "chmod").chmod(0o755)
     tmp = root / "tmp"
     tmp.mkdir()
-    wrapper = _render(role, root / "wrapper.sh")
+    wrapper = _render(role, root / "wrapper.sh", image_store_lib_dir=str(stubs))
     argv, out = build(root)
     env = {
         **os.environ,
