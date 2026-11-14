@@ -276,6 +276,10 @@ def test_the_store_is_under_a_root_only_parent_and_mounted_read_only():
     opts = dict(ln.split("=", 1) for ln in mount.splitlines() if "=" in ln and not ln.startswith("#"))
     assert opts["What"] == d["image_store_graph"] and opts["Where"] == d["image_store_ro"]
     assert set(opts["Options"].split(",")) == {"bind", "ro"}
+    # systemd orders a local mount before local-fs.target on its own; ordering it
+    # after as well is a cycle (it was in the first version; systemd-analyze
+    # verify on the host found it).
+    assert "local-fs.target" not in _unit_deps(mount).get("After", set())
 
 
 UNITS = {"image_store_ro_unit": "x.mount", "image_store_user_manager": "user@997.service"}

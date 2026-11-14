@@ -2,7 +2,10 @@
 # The pipeline user's image store, read-only (ADR-025 phase 3).
 [Unit]
 Description=lamware pipeline image store, read-only view
-After=local-fs.target
+# No After=local-fs.target: systemd orders a local mount BEFORE local-fs.target
+# itself (and after the mount holding its path), so an explicit After made an
+# ordering cycle that boot would break by deleting local-fs.target's start job
+# (found with systemd-analyze verify before the first reboot).
 
 [Mount]
 What={{ image_store_graph }}
