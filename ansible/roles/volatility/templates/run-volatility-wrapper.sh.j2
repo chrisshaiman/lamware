@@ -89,7 +89,7 @@ podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
 # Use timeout(1) instead of --timeout — Podman 4.x rootless timeout is unreliable
 rc=0
 timeout --kill-after=60 {{ volatility_container_timeout }} \
-podman run --rm \
+{{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
     --network=none \
     --group-add keep-groups \
     --read-only \

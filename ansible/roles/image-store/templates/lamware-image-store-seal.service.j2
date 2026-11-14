@@ -1,0 +1,16 @@
+# /etc/systemd/system/lamware-image-store-seal.service — managed by Ansible (image-store role)
+# At boot, after the read-only mount: seal the store, restart the pipeline
+# user's podman namespace and prove the user cannot write it (ADR-025 phase 3).
+[Unit]
+Description=Seal the lamware pipeline image store and verify it
+Requires={{ image_store_ro_unit }}
+After={{ image_store_ro_unit }}
+Before=pipeline-spool.path multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{ image_store_lib_dir }}/lamware-image-store close
+
+[Install]
+WantedBy=multi-user.target

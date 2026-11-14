@@ -1104,7 +1104,7 @@
 - name: List container images visible to the pipeline user
   become: true
   become_user: pipeline
-  ansible.builtin.command: podman images --quiet --no-trunc
+  ansible.builtin.command: "{{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman images --quiet --no-trunc"
   args:
     chdir: "{{ pipeline_install_dir }}"
   register: pipeline_images
@@ -1132,7 +1132,7 @@
   become: true
   become_user: pipeline
   ansible.builtin.command: >-
-    podman run --rm --network=none --entrypoint /bin/true
+    {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm --network=none --entrypoint /bin/true
     {{ pipeline_images.stdout_lines | first }}
   args:
     chdir: "{{ pipeline_install_dir }}"

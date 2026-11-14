@@ -507,6 +507,9 @@ pipeline_patterns=(
     'podman build*'
     '/usr/bin/podman'
     '/usr/bin/podman *'
+    # Every pipeline podman call goes through this wrapper (ADR-025 phase 3);
+    # it is root-owned, so the pinned path cannot be substituted.
+    '/bin/bash {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman *'
     '/usr/bin/conmon *'
     'catatonit*'
     '/usr/bin/catatonit*'

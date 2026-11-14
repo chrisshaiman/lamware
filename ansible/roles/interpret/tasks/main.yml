@@ -162,7 +162,7 @@
     LITELLM_API_KEY: "{{ litellm_master_key | mandatory }}"
   ansible.builtin.command:
     cmd: >
-      podman run --rm --network=none
+      {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm --network=none
       --user 65534:65534
       -v /run/litellm/litellm.sock:/run/litellm.sock:ro
       -v {{ interpret_install_dir }}/netcheck.py:/opt/netcheck.py:ro

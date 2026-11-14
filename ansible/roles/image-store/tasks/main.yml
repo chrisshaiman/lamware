@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# roles/image-store/tasks/main.yml
+# The pipeline user's container images, read-only outside a deploy's build step
+# (ADR-025 phase 3). Runs before every role that builds or runs images.
+# =============================================================================
+
+- name: Name the read-only mount unit after its path
+  ansible.builtin.command: systemd-escape --path --suffix=mount {{ image_store_ro }}
+  register: image_store_ro_unit_name
+  changed_when: false
+
+- name: Remember the unit name
+  ansible.builtin.set_fact:
+    image_store_ro_unit: "{{ image_store_ro_unit_name.stdout }}"
+
+- name: Create the image store directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ image_store_base }}", owner: root, group: root, mode: "0755"}
+    # Root-only: the pipeline user cannot traverse to the store outside a build.
+    # (lamware-image-store open/close changes only this mode.)
+    - {path: "{{ image_store_sealed_dir }}", owner: root, group: root, mode: "0700"}
+    - {path: "{{ image_store_graph }}", owner: "{{ image_store_user }}", group: "{{ image_store_user }}", mode: "0700"}
+    # A build's runroot and empty config directory (build-fetch hb_pipeline_*):
+    # the pipeline user cannot create entries in the root-owned parent itself.
+    - {path: "{{ image_store_sealed_dir }}/build-run", owner: "{{ image_store_user }}", group: "{{ image_store_user }}", mode: "0700"}
+    - {path: "{{ image_store_sealed_dir }}/build-config", owner: "{{ image_store_user }}", group: "{{ image_store_user }}", mode: "0700"}
+    - {path: "{{ image_store_lib_dir }}", owner: root, group: root, mode: "0755"}
+
+# Once mounted, the path shows the store's own owner and mode and is read-only,
+# so it is created only while nothing is mounted on it (the second deploy failed
+# re-asserting root ownership through the mount).
+- name: Is the read-only view mounted?
+  ansible.builtin.command: mountpoint -q {{ image_store_ro }}
+  register: image_store_ro_mounted
+  changed_when: false
+  failed_when: image_store_ro_mounted.rc not in [0, 1, 32]
+
+- name: Create the read-only view's mountpoint
+  ansible.builtin.file:
+    path: "{{ image_store_ro }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: image_store_ro_mounted.rc != 0
+
+- name: Install the helpers (root-owned; ADR-025)
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ image_store_lib_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: lamware-podman.sh.j2, dest: lamware-podman, mode: "0755"}
+    - {src: lamware-image-store.sh.j2, dest: lamware-image-store, mode: "0750"}
+
+- name: Install the read-only mount and the boot-time seal
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: image-store.mount.j2, dest: "{{ image_store_ro_unit }}"}
+    - {src: lamware-image-store-seal.service.j2, dest: lamware-image-store-seal.service}
+  notify: Reload systemd for the image store
+
+- name: Apply the systemd reload now
+  ansible.builtin.meta: flush_handlers
+
+- name: Mount the store read-only and enable it at boot
+  ansible.builtin.systemd:
+    name: "{{ image_store_ro_unit }}"
+    state: started
+    enabled: true
+
+- name: Enable the boot-time seal
+  ansible.builtin.systemd:
+    name: lamware-image-store-seal.service
+    enabled: true
+
+# Seals the store, restarts the pipeline's podman namespace and proves the user
+# cannot write it; fails the deploy if it can.
+- name: Seal the image store now and verify it
+  ansible.builtin.command: "{{ image_store_lib_dir }}/lamware-image-store close"
+  register: image_store_seal
+  changed_when: false

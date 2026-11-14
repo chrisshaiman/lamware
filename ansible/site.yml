@@ -236,6 +236,12 @@
     - role: keycloak
       tags: [keycloak]
 
+    # 10d. Image store — the pipeline user's images, read-only outside a
+    #      deploy's build step (ADR-025 phase 3). Before every role that builds
+    #      or runs an image.
+    - role: image-store
+      tags: [image-store]
+
     # 11. PCAP analysis — containerized Zeek + Suricata for network traffic
     - role: pcap-analysis
       tags: [pcap-analysis]

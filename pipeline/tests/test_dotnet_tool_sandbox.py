@@ -158,11 +158,15 @@ def _render(template: str, **extra) -> str:
 def wrapper(tmp_path, monkeypatch):
     """The rendered run-dotnet-tools, with a stand-in podman on PATH that records
     its argv and runs the container's command with this interpreter."""
-    path = _script(tmp_path, "run-dotnet-tools", _render("run-dotnet-tools.sh.j2"))
     log = tmp_path / "podman-argv.json"
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    _script(bindir, "podman", f"#!{sys.executable}\n" + textwrap.dedent(f"""
+    # The wrapper runs its image through the image-store role's lamware-podman,
+    # which passes its arguments to podman unchanged (ADR-025 phase 3), so the
+    # stand-in takes that name.
+    path = _script(tmp_path, "run-dotnet-tools",
+                   _render("run-dotnet-tools.sh.j2", image_store_lib_dir=str(bindir)))
+    _script(bindir, "lamware-podman", f"#!{sys.executable}\n" + textwrap.dedent(f"""
         import json, os, sys
         args = sys.argv[1:]
         if args[:2] == ["image", "exists"]:
@@ -261,7 +265,12 @@ def test_the_wrapper_is_deployed_where_the_config_points():
                     reason="podman is not installed on this machine; the real-container run "
                            "is a host check (deploy, then a .NET sample) — see the PR body")
 def test_a_tool_call_in_a_real_container(tmp_path, monkeypatch):  # pragma: no cover
-    path = _script(tmp_path, "run-dotnet-tools", _render("run-dotnet-tools.sh.j2"))
+    # Off the host there is no read-only image store: run the local podman.
+    shim = tmp_path / "lib"
+    shim.mkdir()
+    _script(shim, "lamware-podman", '#!/bin/sh\nexec podman "$@"\n')
+    path = _script(tmp_path, "run-dotnet-tools",
+                   _render("run-dotnet-tools.sh.j2", image_store_lib_dir=str(shim)))
     monkeypatch.setenv("LAMWARE_IN_USER_SESSION", "1")
     if subprocess.run(["podman", "image", "exists", "localhost/python-sandbox:latest"]).returncode:
         pytest.skip("localhost/python-sandbox:latest is not built here")

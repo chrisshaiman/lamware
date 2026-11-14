@@ -1,0 +1,35 @@
+#!/bin/bash
+# {{ image_store_lib_dir }}/lamware-podman — managed by Ansible (image-store role)
+#
+# Stand-in for `podman` for everything the pipeline user runs from its images
+# (ADR-025 phase 3). Each call gets a fresh, empty writable store and config
+# directory; the images come only from the read-only store at
+# {{ image_store_ro }}. So nothing the pipeline user tagged, built or configured
+# earlier (in its own store or ~/.config/containers) can stand in for an image.
+#
+# Usage: lamware-podman <podman arguments...>   e.g. lamware-podman run --rm ... localhost/triage:latest
+set -uo pipefail
+
+RO_STORE="{{ image_store_ro }}"
+PODMAN="${LAMWARE_PODMAN_BIN:-/usr/bin/podman}"
+
+if [ ! -d "$RO_STORE/overlay-images" ]; then
+    echo "lamware-podman: the read-only image store $RO_STORE is not mounted; refusing to fall back to the user's own store" >&2
+    exit 125
+fi
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/lamware-podman.XXXXXX")" || exit 125
+cleanup() {
+    # Container layers in the throwaway store are owned by subuids.
+    "$PODMAN" unshare rm -rf "$WORK" 2>/dev/null || rm -rf "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
+mkdir -p "$WORK/config"
+
+# XDG_CONFIG_HOME: an empty, writable directory, so no user-level
+# containers.conf, storage.conf or registries.conf applies (podman also keeps
+# runtime state there, so it cannot be a read-only directory).
+XDG_CONFIG_HOME="$WORK/config" "$PODMAN" \
+    --root "$WORK/graph" --runroot "$WORK/run" --storage-driver overlay \
+    --storage-opt "additionalimagestore=$RO_STORE" \
+    "$@"

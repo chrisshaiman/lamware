@@ -1,0 +1,29 @@
+---
+# =============================================================================
+# image-store defaults: the pipeline user's container images, read-only outside
+# a deploy's build step (ADR-025 phase 3).
+#
+# The store's real directory sits under a root-only parent, so the pipeline user
+# cannot reach it; it sees the store only through a read-only bind mount. Every
+# analysis run uses a fresh, empty writable store plus this one as a read-only
+# additional image store (lamware-podman). A deploy opens the parent for its own
+# build, closes it, and restarts the pipeline user's podman namespace, because a
+# namespace that predates the read-only mount keeps a writable view of it
+# (measured, 2026-11-13).
+# =============================================================================
+
+image_store_base: /var/lib/lamware-images
+# Root-only parent (0700): the pipeline user cannot traverse it outside a build.
+image_store_sealed_dir: "{{ image_store_base }}/sealed"
+# The store itself (pipeline-owned, podman's graph root during builds).
+image_store_graph: "{{ image_store_sealed_dir }}/graph"
+# The read-only view every run uses.
+image_store_ro: "{{ image_store_base }}/ro"
+image_store_user: pipeline
+
+# Root-owned helpers.
+image_store_lib_dir: /usr/local/lib/lamware
+
+# How long `close` waits for running analysis containers before restarting the
+# pipeline user's podman namespace (which stops them).
+image_store_drain_seconds: 900

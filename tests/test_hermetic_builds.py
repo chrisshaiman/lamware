@@ -7,7 +7,7 @@ a build reached the network is decided on the host, at deploy time. The deploy
 is the behavioural check (`podman build --network=none` fails on any fetch, and
 the build-context label assert fails a build that kept an old image). These
 tests record which roles have moved to the one shared build
-(`build-fetch/tasks/image.yml`), and keep that list from growing back.
+(`build-fetch/tasks/image_build.yml`), and keep that list from growing back.
 
 The pdf-generation image stayed at 2026-05-17 for five months: its build ran
 `pip install weasyprint` as pipeline, which has no DNS, failed, and the old image
@@ -60,7 +60,9 @@ def _cmd(task: dict) -> str:
         body = task.get(mod)
         cmd = body.get("cmd") if isinstance(body, dict) else body
         if isinstance(cmd, str):
-            return " ".join(cmd.split())
+            # The pipeline user's podman is spelled through a variable that pins
+            # its store (ADR-025 phase 3; test_pipeline_image_store.py checks it).
+            return " ".join(cmd.replace("{{ hb_pipeline_podman }}", "podman").split())
     return ""
 
 
@@ -110,21 +112,21 @@ def test_migrated_roles_have_no_build_of_their_own():
 
 
 def test_the_shared_build_has_no_network_and_cannot_pull():
-    builds = [c for t in _tasks(SHARED / "image.yml") if "podman build" in (c := _cmd(t))]
+    builds = [c for t in _tasks(SHARED / "image_build.yml") if "podman build" in (c := _cmd(t))]
     assert len(builds) == 1, builds
     assert "--network=none" in builds[0] and "--pull=never" in builds[0]
     assert "--label lamware.build-context=" in builds[0]
 
 
 def test_the_shared_build_fails_a_deploy_that_kept_an_old_image():
-    asserts = [t for t in _tasks(SHARED / "image.yml") if "ansible.builtin.assert" in t]
+    asserts = [t for t in _tasks(SHARED / "image_build.yml") if "ansible.builtin.assert" in t]
     assert any("hb_image_label" in str(t["ansible.builtin.assert"]["that"])
                and "hb_context_hash" in str(t["ansible.builtin.assert"]["that"])
                for t in asserts), "nothing compares the image label with the context hash"
 
 
 def test_every_shared_fetch_runs_as_the_fetch_user():
-    fetches = [t for f in ("image.yml", "image_debs.yml") for t in _tasks(SHARED / f)
+    fetches = [t for f in ("image_build.yml", "image_debs.yml") for t in _tasks(SHARED / f)
                if re.search(r"\bpip\s+download|\bpodman\b[^|]*\spull\s|\bapt-get\b", _cmd(t))]
     assert len(fetches) == 3, [t["name"] for t in fetches]
     for t in fetches:
@@ -342,7 +344,7 @@ def test_the_local_base_tag_names_the_image():
 
 def _shared_nuget_config() -> ET.Element:
     """The nuget.config the shared build writes beside the fetched packages."""
-    writes = [t for t in _tasks(SHARED / "image.yml")
+    writes = [t for t in _tasks(SHARED / "image_build.yml")
               if str((t.get("ansible.builtin.copy") or {}).get("dest", "")).endswith("/nuget.config")]
     assert len(writes) == 1, [t.get("name") for t in writes]
     return ET.fromstring(writes[0]["ansible.builtin.copy"]["content"].strip())
@@ -373,7 +375,7 @@ def test_the_fetched_nuget_feed_is_the_only_source():
 
 
 def test_every_shared_get_url_runs_as_the_fetch_user_with_a_checksum():
-    gets = [t for f in ("image.yml", "image_debs.yml", "image_base.yml")
+    gets = [t for f in ("image_build.yml", "image_debs.yml", "image_base.yml")
             for t in _tasks(SHARED / f) if "ansible.builtin.get_url" in t]
     assert gets, "no get_url in the shared build: the NuGet fetch went missing"
     for t in gets:

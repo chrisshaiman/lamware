@@ -100,14 +100,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! podman image exists localhost/python-sandbox:latest; then
+if ! {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman image exists localhost/python-sandbox:latest; then
     echo "Error: image localhost/python-sandbox:latest not found — deploy the python-sandbox role first" >&2
     exit 1
 fi
 
 # Stream stdin directly into the container — no shell variable, no quoting concerns.
 # USER directive in Containerfile enforces non-root; no --user override needed.
-head -c {{ python_sandbox_max_script_size }} | podman run --rm -i \
+head -c {{ python_sandbox_max_script_size }} | {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \
     --read-only \
     --cap-drop=ALL \

@@ -45,3 +45,13 @@ build_fetch_wheel_platforms:
   - manylinux_2_17_x86_64
   - manylinux2014_x86_64
   - any
+
+# The pipeline user's podman during a build: the protected image store as its
+# graph root, a runroot inside the sealed area, and an empty config directory so
+# nothing in ~/.config/containers applies (ADR-025 phase 3; image-store role).
+hb_store_graph: "{{ image_store_graph | default('/var/lib/lamware-images/sealed/graph') }}"
+hb_store_sealed: "{{ image_store_sealed_dir | default('/var/lib/lamware-images/sealed') }}"
+hb_pipeline_podman: "podman --root {{ hb_store_graph }} --runroot {{ hb_store_sealed }}/build-run --storage-driver overlay"
+hb_pipeline_env:
+  XDG_CONFIG_HOME: "{{ hb_store_sealed }}/build-config"
+

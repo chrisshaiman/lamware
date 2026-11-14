@@ -135,7 +135,7 @@ if [ "$1" = "--tool" ]; then
     chmod -R u+rwX,go-rwx "$JOB_DIR/project"
     podman unshare chown -R "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/project"
 
-    podman run --rm \
+    {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
         --network=none \
         --read-only \
         --cap-drop=ALL \
@@ -183,7 +183,7 @@ if [ "$1" = "--shellcode" ]; then
     cp "$DUMP_FILE" "$JOB_DIR/in/$DUMP_NAME"
     chmod 644 "$JOB_DIR/in/$DUMP_NAME"
 
-    podman run --rm \
+    {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
         --network=none \
         --read-only \
         --cap-drop=ALL \
@@ -232,7 +232,7 @@ setup_job_dir
 cp "$SAMPLE_PATH" "$JOB_DIR/in/$SAMPLE_NAME"
 chmod 644 "$JOB_DIR/in/$SAMPLE_NAME"
 
-podman run --rm \
+{{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \

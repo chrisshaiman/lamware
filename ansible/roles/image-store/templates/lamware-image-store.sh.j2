@@ -1,0 +1,78 @@
+#!/bin/bash
+# {{ image_store_lib_dir }}/lamware-image-store — managed by Ansible (image-store role)
+#
+# open    let the pipeline user reach its image store, for a deploy's build step
+# close   seal it again and prove it is sealed (exit 1 if it is not)
+# status  print whether it is sealed
+#
+# Sealed = the store's parent is root-only, and the pipeline user's podman
+# namespace was restarted after the read-only mount, because a namespace that
+# predates the mount keeps a writable view of it (measured, 2026-11-13).
+set -uo pipefail
+SEALED="{{ image_store_sealed_dir }}"
+GRAPH="{{ image_store_graph }}"
+RO="{{ image_store_ro }}"
+U="{{ image_store_user }}"
+
+as_user() {
+    local rt="/run/user/$(id -u "$U")"
+    # -u TMPDIR: runuser keeps the caller's, and root's (/tmp/user/0, from
+    # pam_tmpdir) is not writable by the user -- the probe's control caught it
+    # on the first deploy and reported the probe blind.
+    (cd / && runuser -u "$U" -- env -u TMPDIR ${rt:+XDG_RUNTIME_DIR=$rt} "$@")
+}
+
+# The probe that tells sealed from not: create (and remove) a marker through
+# podman unshare, where the 2026-11-13 leak showed (a plain write was refused
+# while this worked). Works on an empty store, unlike appending to images.json.
+# Returns 0 = writable, 1 = not writable, 2 = the probe itself is blind.
+probe_writable() {
+    local ctl rc=1
+    ctl="$(as_user mktemp -d)" || return 2
+    # Control: the same probe must succeed where the user CAN write, or a
+    # broken podman unshare would read as "sealed".
+    if ! as_user podman unshare sh -c "touch '$ctl/probe' && rm -f '$ctl/probe'" 2>/dev/null; then
+        as_user rm -rf "$ctl"; echo "probe is blind: podman unshare cannot write $ctl" >&2; return 2
+    fi
+    as_user rm -rf "$ctl"
+    for d in "$RO" "$GRAPH"; do
+        if as_user podman unshare sh -c "touch '$d/.lamware-seal-probe' && rm -f '$d/.lamware-seal-probe'" 2>/dev/null; then
+            echo "writable through podman unshare: $d" >&2; rc=0
+        fi
+    done
+    return $rc
+}
+
+case "${1:-}" in
+  open)
+    mountpoint -q "$RO" || { echo "read-only mount $RO missing" >&2; exit 1; }
+    chmod 0711 "$SEALED"
+    echo "image store open for $U"
+    ;;
+  close)
+    chmod 0700 "$SEALED"
+    # Any process of the user still holding the store open keeps its access
+    # after the chmod (an open directory fd ignores later permission changes).
+    pids=$(for p in $(pgrep -u "$U"); do ls -l /proc/$p/fd /proc/$p/cwd 2>/dev/null | grep -q -- "$SEALED" && echo $p; done | sort -u)
+    [ -n "$pids" ] && { echo "ending $U processes holding the store: $pids"; kill $pids 2>/dev/null; sleep 1; kill -9 $pids 2>/dev/null; }
+    # Restarting the namespace stops the user's running containers, so let any
+    # in-flight analysis finish first (each run's container has a conmon).
+    # Bounded: the store is already unreachable for new builds, and a seal that
+    # never happens is worse than one failed run.
+    for _ in $(seq 1 {{ image_store_drain_seconds // 10 }}); do
+        pgrep -u "$U" -x conmon >/dev/null || break
+        sleep 10
+    done
+    pgrep -u "$U" -x conmon >/dev/null && echo "WARNING: $U containers still running after {{ image_store_drain_seconds }}s; restarting the namespace anyway" >&2
+    as_user podman system migrate >/dev/null 2>&1 || true
+    probe_writable; rc=$?
+    [ $rc = 2 ] && { echo "SEAL UNVERIFIED: the probe is blind" >&2; exit 1; }
+    [ $rc = 0 ] && { echo "SEAL FAILED: $U can still write the image store" >&2; exit 1; }
+    echo "image store sealed: $U cannot write it (probed through podman unshare; control passed)"
+    ;;
+  status)
+    probe_writable; rc=$?
+    if [ "$(stat -c %a "$SEALED")" = 700 ] && [ $rc = 1 ]; then echo sealed; else echo "open or unverified (probe=$rc)"; exit 1; fi
+    ;;
+  *) echo "usage: $0 open|close|status" >&2; exit 2 ;;
+esac

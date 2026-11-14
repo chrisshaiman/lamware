@@ -57,7 +57,7 @@ podman unshare chown "$CONTAINER_UID:$CONTAINER_GID" "$JOB_DIR/out"
 cp "$PCAP_PATH" "$JOB_DIR/pcap/" 2>/dev/null || true
 chmod -R a+rX "$JOB_DIR/pcap"
 
-podman run --rm \
+{{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm \
     --network=none \
     --read-only \
     --cap-drop=ALL \

@@ -45,7 +45,13 @@ EXCEPTIONS: dict[tuple[str, str], str] = {
 # treats that script as a sample-processing container missing all five flags.
 # Third false positive of this shape in one file; the fix each time is to match
 # what the thing IS rather than text that resembles it.
-_PODMAN_CMD = re.compile(r"^[ \t]*(?:[^#'\"\n]*\|[ \t]*)?podman[ \t]+run\b", re.M)
+#
+# Pipeline wrappers run images through the image-store role's helper
+# (`{{ image_store_lib_dir | default(...) }}/lamware-podman run`, ADR-025 phase
+# 3), which passes its arguments to podman unchanged, so that spelling counts.
+_HELPER = r"\{\{ image_store_lib_dir \| default\('[^']*'\) \}\}/lamware-"
+_PODMAN_CMD = re.compile(
+    r"^[ \t]*(?:[^#'\"\n]*\|[ \t]*)?(?:" + _HELPER + r")?podman[ \t]+run\b", re.M)
 
 
 def _podman_invocations(text: str) -> list[str]:
