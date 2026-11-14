@@ -272,17 +272,75 @@ def test_the_store_is_under_a_root_only_parent_and_mounted_read_only():
                 if t.get("name") == "Create the image store directories")
     sealed = next(i for i in loop if i["path"] == "{{ image_store_sealed_dir }}")
     assert (sealed["owner"], sealed["mode"]) == ("root", "0700")
-    mount = _render("image-store.mount.j2", image_store_ro_unit="x.mount")
+    mount = _render("image-store.mount.j2", **UNITS)
     opts = dict(ln.split("=", 1) for ln in mount.splitlines() if "=" in ln and not ln.startswith("#"))
     assert opts["What"] == d["image_store_graph"] and opts["Where"] == d["image_store_ro"]
     assert set(opts["Options"].split(",")) == {"bind", "ro"}
+    # systemd orders a local mount before local-fs.target on its own; ordering it
+    # after as well is a cycle (it was in the first version; systemd-analyze
+    # verify on the host found it).
+    assert "local-fs.target" not in _unit_deps(mount).get("After", set())
+
+
+UNITS = {"image_store_ro_unit": "x.mount", "image_store_user_manager": "user@997.service"}
+
+
+def _unit_deps(text: str) -> dict[str, set[str]]:
+    """Unit-section dependency directives, each a set of unit names."""
+    deps: dict[str, set[str]] = {}
+    for ln in text.splitlines():
+        if "=" in ln and not ln.startswith("#"):
+            k, v = ln.split("=", 1)
+            if k in ("Wants", "Requires", "After", "Before"):
+                deps.setdefault(k, set()).update(v.split())
+    return deps
 
 
 def test_the_seal_runs_at_boot_before_the_pipeline_can_start():
-    unit = _render("lamware-image-store-seal.service.j2", image_store_ro_unit="x.mount")
-    assert "Requires=x.mount" in unit and "After=x.mount" in unit
-    assert "pipeline-spool.path" in next(ln for ln in unit.splitlines() if ln.startswith("Before="))
+    unit = _render("lamware-image-store-seal.service.j2", **UNITS)
+    d = _unit_deps(unit)
+    assert {"x.mount"} <= d["Requires"] and {"x.mount", "user@997.service"} <= d["After"]
+    # Wants pulls the lingering user's manager into the boot transaction; without
+    # it logind starts the manager as a separate job and After= orders nothing.
+    assert "user@997.service" in d["Wants"]
+    assert "pipeline-spool.service" in d["Before"]
     assert re.search(r"^ExecStart=\S+/lamware-image-store close$", unit, re.M)
+
+
+def test_the_pipeline_users_manager_waits_for_the_read_only_mount():
+    """A podman namespace that predates the read-only mount keeps a writable view
+    of the store; the lingering user's manager is what starts podman at boot."""
+    d = _unit_deps(_render("user-manager-after-mount.conf.j2", **UNITS))
+    assert d == {"Wants": {"x.mount"}, "After": {"x.mount"}}
+    tasks = list(_walk(yaml.safe_load((ROLE / "tasks/main.yml").read_text())))
+    dest = next(t["ansible.builtin.template"]["dest"] for t in tasks
+                if (t.get("ansible.builtin.template") or {}).get("src") == "user-manager-after-mount.conf.j2")
+    assert dest == "/etc/systemd/system/{{ image_store_user_manager }}.d/lamware-image-store.conf"
+    fact = next(t["ansible.builtin.set_fact"] for t in tasks
+                if "image_store_user_manager" in (t.get("ansible.builtin.set_fact") or {}))
+    assert fact["image_store_user_manager"].startswith("user@{{ ansible_facts.getent_passwd[image_store_user][1] }}")
+
+
+# Path, socket and timer units order themselves before paths/sockets/timers.target,
+# which come before basic.target; a user manager comes after basic.target. A unit
+# both after the manager and before one of those is an ordering cycle, which
+# systemd breaks at boot by dropping a job of its choosing (the first draft of
+# this ordering had exactly that: Before=pipeline-spool.path).
+EARLY = (".path", ".socket", ".timer")
+
+
+def _cycle(deps: dict[str, set[str]]) -> list[str]:
+    if not any(u.startswith("user@") for u in deps.get("After", ())):
+        return []
+    return sorted(u for u in deps.get("Before", ()) if u.endswith(EARLY))
+
+
+def test_the_seal_ordering_has_no_cycle_through_basic_target():
+    assert _cycle(_unit_deps(_render("lamware-image-store-seal.service.j2", **UNITS))) == []
+
+
+def test_the_cycle_check_catches_the_first_draft():
+    assert _cycle({"After": {"user@997.service"}, "Before": {"pipeline-spool.path"}}) == ["pipeline-spool.path"]
 
 
 def test_close_restarts_the_namespace_then_probes_with_a_control():

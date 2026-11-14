@@ -5,7 +5,17 @@
 Description=Seal the lamware pipeline image store and verify it
 Requires={{ image_store_ro_unit }}
 After={{ image_store_ro_unit }}
-Before=pipeline-spool.path multi-user.target
+# After the pipeline user's manager: the probe needs its runtime directory, and
+# the namespace restart must come after anything the manager started. Wants
+# pulls the manager into the boot transaction, so the ordering applies (logind
+# otherwise starts it for the lingering user as a separate, later job).
+Wants={{ image_store_user_manager }}
+After={{ image_store_user_manager }}
+# Before the spool SERVICE, not its .path unit: path units are ordered before
+# paths.target and so before basic.target, while the user manager above comes
+# after basic.target -- Before=pipeline-spool.path made an ordering cycle. A
+# file that lands early fires the path; the service it starts waits for this.
+Before=pipeline-spool.service multi-user.target
 
 [Service]
 Type=oneshot
