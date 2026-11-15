@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 KVM = ROOT / "ansible/roles/kvm"
 KVM_DEFAULTS = yaml.safe_load((KVM / "defaults/main.yml").read_text())
 KVM_TASKS = yaml.safe_load((KVM / "tasks/main.yml").read_text())
+KVM_HANDLERS = yaml.safe_load((KVM / "handlers/main.yml").read_text())
 GUESTS = [{"name": "clean", "snapshot": "clean"}, {"name": "office", "snapshot": "office"}]
 
 # Permissions that take a file path or change a domain's definition. cape must
@@ -143,14 +144,27 @@ def _i(fragment: str) -> int:
     raise AssertionError(f"no kvm task {fragment!r}")
 
 
+def _h(fragment: str) -> int:
+    for i, t in enumerate(KVM_HANDLERS):
+        if fragment.lower() in (t.get("name") or "").lower():
+            return i
+    raise AssertionError(f"no kvm handler {fragment!r}")
+
+
 def test_the_rule_is_in_place_before_access_control_is_switched_on():
     assert _i("Install the libvirt access rule") < _i("Switch on libvirt access control")
-    assert _i("Remove the audit rule") < _i("Restart libvirtd to apply access control")
+    assert _i("Remove the audit rule") < _i("Apply pending libvirt and CAPE restarts")
 
 
 def test_the_restart_is_refused_under_a_running_guest():
-    assert _i("List running guests") < _i("Refuse to restart libvirtd") < _i("Restart libvirtd to apply")
-    guard = KVM_TASKS[_i("Refuse to restart libvirtd")]["ansible.builtin.assert"]["that"]
+    """Handlers with `listen` run in file order: list, refuse, then restart."""
+    on = KVM_TASKS[_i("Switch on libvirt access control")]
+    assert on["notify"] == "Apply libvirt access control"
+    order = [_h("List running guests"), _h("Refuse to restart libvirtd"), _h("Restart libvirtd to apply")]
+    assert order == sorted(order)
+    for n in ("List running guests", "Refuse to restart libvirtd", "Restart libvirtd to apply"):
+        assert KVM_HANDLERS[_h(n)]["listen"] == "Apply libvirt access control"
+    guard = KVM_HANDLERS[_h("Refuse to restart libvirtd")]["ansible.builtin.assert"]["that"]
     assert "kvm_running_guests.stdout" in str(guard)
 
 
@@ -159,9 +173,17 @@ def test_the_role_proves_the_rule_with_an_allowed_and_a_refused_call_as_cape():
     refused = KVM_TASKS[_i("As cape, list networks")]
     for t in (allowed, refused):
         assert t["become_user"] == "{{ cape_user }}"
-    assert "rc != 0" in allowed["failed_when"]
+    assert "rc != 0" in allowed["failed_when"] and "kvm_acl_root_view" in allowed["failed_when"]
     assert "rc == 0" in refused["failed_when"] and "access denied" in refused["failed_when"]
-    assert _i("Restart libvirtd to apply") < _i("As cape, list domains")
+    # The restart is flushed before the probes, so they test the running daemon.
+    assert _i("Apply pending libvirt and CAPE restarts") < _i("As root, list domains") < _i("As cape, list domains")
+    assert KVM_TASKS[_i("Apply pending libvirt and CAPE restarts")]["ansible.builtin.meta"] == "flush_handlers"
+
+
+def test_no_task_runs_only_when_something_changed():
+    """ansible-lint no-handler: those belong in handlers, which is where they are."""
+    bad = [t.get("name") for t in KVM_TASKS if "is changed" in str(t.get("when", ""))]
+    assert bad == []
 
 
 def _user_group_tasks(role: str):
@@ -183,11 +205,13 @@ def test_the_kvm_role_takes_cape_out_of_kvm_and_restarts_capes_services():
     gp = KVM_TASKS[_i("Take cape out of the kvm group")]
     assert gp["ansible.builtin.command"] == "gpasswd -d {{ cape_user }} kvm"
     assert "getent_group.kvm" in gp["when"]
-    rs = KVM_TASKS[_i("Restart CAPE and cape's user manager so they drop the kvm group")]
+    assert gp["notify"] == "Drop the kvm group from cape's processes"
+    rs = KVM_HANDLERS[_h("Restart CAPE and cape's user manager")]
     # cape lingers: its user manager runs from boot and hands kvm to its children.
     assert set(rs["loop"]) == {"cape", "cape-processor", "cape-web",
                                "user@{{ ansible_facts.getent_passwd[cape_user][1] }}.service"}
-    assert rs["when"] == "kvm_cape_left_kvm is changed"
+    assert rs["listen"] == "Drop the kvm group from cape's processes"
+    assert _h("Read cape's uid") < _h("Restart CAPE and cape's user manager")
 
 
 def test_guest_images_are_root_owned_and_private():

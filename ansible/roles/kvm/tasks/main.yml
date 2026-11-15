@@ -65,28 +65,9 @@
   ansible.builtin.command: gpasswd -d {{ cape_user }} kvm
   when: cape_user in (ansible_facts.getent_group.kvm[2] | default('')).split(',')
   changed_when: true
-  register: kvm_cape_left_kvm
-
-# A process keeps the groups it started with: CAPE's services hold kvm until they
-# restart. cape-rooter runs as root and is unaffected. cape lingers, so its
-# systemd user manager runs from boot and passes kvm to everything it starts; it
-# was missed the first time (security-test check 19 caught it).
-- name: Read cape's uid (its user manager is user@<uid>)
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ cape_user }}"
-  when: kvm_cape_left_kvm is changed
-
-- name: Restart CAPE and cape's user manager so they drop the kvm group
-  ansible.builtin.systemd_service:
-    name: "{{ item }}"
-    state: restarted
-  loop:
-    - cape
-    - cape-processor
-    - cape-web
-    - "user@{{ ansible_facts.getent_passwd[cape_user][1] }}.service"
-  when: kvm_cape_left_kvm is changed
+  # A process keeps the groups it started with; the handlers restart CAPE's
+  # services and cape's lingering user manager (handlers/main.yml).
+  notify: Drop the kvm group from cape's processes
 
 # --- libvirt access control (ADR-027) ----------------------------------------
 # The rule goes in BEFORE access_drivers is switched on: with access control on and
@@ -110,38 +91,34 @@
     path: /etc/libvirt/libvirtd.conf
     regexp: '^\s*access_drivers\s*='
     line: 'access_drivers = [ "polkit" ]   # ADR-027, managed by Ansible (kvm role)'
-  register: kvm_libvirt_acl_conf
+  # libvirtd reads access_drivers only at start; the handlers refuse to restart it
+  # under a running guest (handlers/main.yml).
+  notify: Apply libvirt access control
 
-# libvirtd reads access_drivers only at start. A restart does not stop running
-# guests, but CAPE loses its connection mid-analysis, so refuse rather than restart
-# under a detonation.
-- name: List running guests before restarting libvirtd
-  ansible.builtin.command: virsh -c qemu:///system list --name
-  register: kvm_running_guests
-  changed_when: false
-  when: kvm_libvirt_acl_conf is changed
-
-- name: Refuse to restart libvirtd under a running guest
-  ansible.builtin.assert:
-    that: kvm_running_guests.stdout | trim == ""
-    fail_msg: "guests running ({{ kvm_running_guests.stdout | trim }}); re-run when the sandbox is idle"
-  when: kvm_libvirt_acl_conf is changed
-
-- name: Restart libvirtd to apply access control
-  ansible.builtin.systemd_service:
-    name: libvirtd
-    state: restarted
-  when: kvm_libvirt_acl_conf is changed
+# Restart now if needed, so the probes below test the daemon as it will run.
+- name: Apply pending libvirt and CAPE restarts before probing
+  ansible.builtin.meta: flush_handlers
 
 # Behavioural, as cape: an allowed call succeeds (the control) and a refused one
 # is refused. A refusal without the control would also pass with libvirt down.
-- name: As cape, list domains (must be allowed)
+# Compared with what root sees: on a fresh host this role runs before cape-guests
+# has defined any guest, and an empty list is then correct.
+- name: As root, list domains (the reference)
+  ansible.builtin.command: virsh -c qemu:///system list --all --name
+  register: kvm_acl_root_view
+  changed_when: false
+
+- name: As cape, list domains (must be allowed, and show every guest that exists)
   ansible.builtin.command: virsh -c qemu:///system list --all --name
   become: true
   become_user: "{{ cape_user }}"
   register: kvm_acl_allowed
   changed_when: false
-  failed_when: kvm_acl_allowed.rc != 0 or (cape_guests[0].name not in kvm_acl_allowed.stdout)
+  failed_when: >-
+    kvm_acl_allowed.rc != 0 or
+    (cape_guests | map(attribute='name')
+       | select('in', kvm_acl_root_view.stdout_lines | map('trim') | list)
+       | reject('in', kvm_acl_allowed.stdout_lines | map('trim') | list) | list | length > 0)
 
 - name: As cape, list networks (must be refused)
   ansible.builtin.command: virsh -c qemu:///system net-list --all
