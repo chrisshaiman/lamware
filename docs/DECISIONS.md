@@ -48,6 +48,7 @@ these describe an AWS data plane that no longer exists.
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
 | [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Proposed — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
+| [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1535,3 +1536,190 @@ Cost Explorer as the service `Claude Platform`.
 - **Pricing:** whether Mythos 5.1 is metered at the first-party list rate ($10 / $50 per
   million tokens) in Claude Consumption Units is not yet confirmed.
 
+
+---
+
+## ADR-027: The cape account controls its two guests through libvirt, not libvirt itself
+
+**Status:** Accepted, option 2 as amended below (2026-11-14, owner). Implemented 2026-11-14.
+**Refs:** ADR-025 (code the pipeline runs is root-owned), #801 (vhost modules), #835 (CAPE rooter)
+
+### Context
+
+CAPE drives its guests through libvirt's system daemon (`qemu:///system`). To let it,
+the kvm and qemu-patched roles both put the `cape` user in the `libvirt` and `kvm`
+groups. Measured on the host, 2026-11-14:
+
+- **Full control is all-or-nothing.** `libvirtd.conf` sets `unix_sock_group = "libvirt"`,
+  `unix_sock_rw_perms = "0770"` and `auth_unix_rw = "none"`. The packaged polkit rule
+  `60-libvirt.rules` grants `org.libvirt.unix.manage` to the whole group, and no
+  `access_drivers` are configured. So any process running as cape gets the full
+  read-write API from a root daemon. That includes defining a domain with a host disk
+  or filesystem passed through, network and storage definitions, and raw QEMU monitor
+  commands. That is root-equivalent: the standard libvirt-group escalation.
+- **CAPE uses a small part of the API.** Its `LibVirtMachinery` (`abstracts.py`,
+  `modules/machinery/kvm.py`) calls `open`, `lookupByName`/`lookupByID`, the domain
+  listings, `info`/`state`/`isActive`, `XMLDesc`, the snapshot lookups and listings,
+  `revertToSnapshot`, `destroy`, `screenshot`, and `coreDump`. It never defines,
+  undefines or migrates a domain, and never touches networks, storage or node devices.
+- **`coreDump(path)` is a root file write to a caller-chosen path.** libvirtd, running
+  as root, creates the dump file at whatever path the client names. Per-task memory
+  dumps call it with `storage/analyses/<id>/memory.dmp`. An allow-list of operations
+  cannot fix this, because libvirt's access-control checks do not see the path.
+- **`kvm` gives direct `/dev/kvm` access**, and with it a host-kernel attack surface (the
+  #801 class). CAPE does not need it: under `qemu:///system`, libvirt starts QEMU as
+  `libvirt-qemu`, and no CAPE code opens `/dev/kvm`.
+- **cape can write the office guest's disk.** `windows11-office.qcow2` is
+  `libvirt-qemu:kvm 0775`, and cape is in `kvm`, so cape can plant something in the
+  image every later office detonation boots from. The clean guest's disk is `0600`.
+- **libvirt's access checks default to "yes".** Every `org.libvirt.api.*` polkit action
+  ships with `implicit any: yes`. With access control on, any user no rule matches is
+  allowed, so the rules must end by refusing everyone not listed.
+- **CAPE calls libvirt from more than the machinery.** Startup checks (`startup.py`:
+  domain and snapshot lookups), the QEMU screenshot auxiliary (enabled: `screenshot`)
+  and the web console (`web/guac`, `central_guac.py`: `state`, `XMLDesc`; console
+  disabled here) all run as cape.
+- **The read-only socket is world-accessible.** `libvirtd-ro.socket` sets
+  `SocketMode=0666`, overriding `unix_sock_ro_perms = "0770"`. Any local user, the
+  pipeline included, can read domain definitions. Low severity on its own.
+
+### Options
+
+1. **Accept.** cape stays root-equivalent, and every cape-reachable bug is a root bug.
+2. **libvirt access control (`access_drivers = ["polkit"]`) plus a memory-dump helper.**
+   Polkit rules allow cape only the domain permissions CAPE needs (getattr, read,
+   snapshot, start, stop, screenshot), only on the named guests, plus the connect-level
+   reads. root keeps everything; everyone else gets nothing. `core-dump` is denied, so
+   `dump_memory` moves to a root-owned helper. The helper takes only a guest label from
+   the allow-list and a numeric task id. It dumps into a root-owned staging directory,
+   then copies the file into the task directory **as cape**, so root never writes
+   through a path cape controls. This needs one more local CAPE patch, to
+   `dump_memory`. cape leaves the `kvm` group.
+3. **Rootless libvirt (`qemu:///session` as cape).** No root daemon in cape's path at
+   all, and dumps are written as cape. Rejected because it weakens guest containment,
+   the primary threat for a malware sandbox. Today `qemu.conf` sets
+   `security_driver = "apparmor"`, so each guest's QEMU runs as `libvirt-qemu` under a
+   per-VM AppArmor profile, and a guest escape lands confined. A session daemon cannot
+   load AppArmor profiles, so QEMU would run unconfined as cape, and an escape would
+   reach every analysis and CAPE's credentials. It also keeps `/dev/kvm`, and needs
+   `qemu-bridge-helper` made privileged (it is not setuid here) to attach to
+   `virbr-det`. Both guest disks, one with an external snapshot chain, would have to
+   move into cape's ownership. Otherwise: But the detonation network, the rooter, the AppArmor/sVirt confinement and the
+   bridge are built around the system daemon. Session networking needs the setuid
+   `qemu-bridge-helper`, and cape would keep `/dev/kvm`. This is the largest change, and
+   it keeps the kernel surface.
+4. **A root VM-control daemon with a narrow API**, with CAPE patched to call it for every
+   operation. The same boundary as option 2, with more code we own and a larger CAPE
+   patch.
+
+### Decision (proposed)
+
+**Option 2**, done in this order, each step measured:
+
+0. **Audit first.** Enable the ACL with a rule that only logs each action cape (and any
+   other non-root user) triggers, with domain names, and decides nothing, so the
+   defaults still allow. Then CAPE's real call sequence, including one operator-run
+   detonation, yields the exact permission set. The enforcing rule is written from
+   that log, not from documentation.
+1. **Spike on the host, with nothing detonated.** Enable the ACL with rules for cape.
+   Run CAPE's exact call sequence against the `clean` guest:
+   lookup, snapshot listing, revert, screenshot, destroy. Those must succeed. Each of
+   these must be refused: `defineXML`, `qemuMonitorCommand`, `coreDump`, network and
+   storage writes, any other domain name, and a read-only-socket call by the pipeline
+   user. The operator starts and stops the guest, because a running guest is the
+   operator's call. Not yet measured: which permissions `revertToSnapshot` needs (it
+   may need `write` as well as `snapshot`). The spike decides that.
+2. **Memory-dump helper and CAPE patch.** Proven by one operator-run detonation with
+   `memory=1`: the dump arrives, is owned by cape, and Volatility reads it.
+3. **Remove cape from `kvm`** in both the kvm and qemu-patched roles. cape **stays in
+   `libvirt`**: with `auth_unix_rw = "none"` the group is now only what lets cape reach
+   the read-write socket, and the ACL decides what it may do there. Set the office
+   disk to `0600`, like the clean one. Then check that cape's group list is exactly
+   what CAPE needs.
+4. **A security-test check.** As cape, a call that must be refused is refused and a call
+   that must succeed succeeds (the control). As cape, `/dev/kvm` cannot be opened.
+
+### Spike results (2026-11-14)
+
+- **Audit mode must allow explicitly.** 75 of the `org.libvirt.api.*` actions default
+  to `no` (snapshot, start, stop, screenshot, write, core-dump, ...). With
+  `access_drivers` on, those defaults apply to every caller, root included. The first
+  audit rule decided nothing, so CAPE's revert was refused: task 1312 failed on both
+  guests, and CAPE then dropped both machines from its table until restarted. The
+  working audit rule allows root and cape explicitly and logs through `logger`. Ubuntu
+  runs polkitd with `--no-debug`, which drops `polkit.log()`.
+- **CAPE's complete permission set**, from startup, the read-only calls and one
+  detonation (task 1313, normal result): `connect.getattr`, `connect.search-domains`,
+  and `domain.getattr`, `read`, `screenshot` (about one a second), `snapshot` (revert to
+  a running snapshot; no `start`) and `stop`. No `write`, `start` or `core-dump`. No other
+  user touched libvirt during the run. The pipeline user reads domains over the
+  read-only socket.
+- **`domain.snapshot` is a root file write.** Revert and create share this one
+  permission. On a throwaway VM, cape asked for an external memory snapshot whose file
+  was an existing root-owned 0600 file in a root-only directory. libvirtd (root)
+  overwrote it with about 39 MB of saved VM state before the snapshot failed on its disk
+  overlay. AppArmor did not block it. New memory files were created and then removed on
+  failure. Disk overlays failed, because QEMU runs as `libvirt-qemu`, confined. libvirt
+  refused an existing file as an overlay.
+
+**Amended decision.** polkit gives cape only `connect.getattr`,
+`connect.search-domains` and `domain.getattr`/`read`/`screenshot`/`stop` on the named
+guests. None of these takes a path. Snapshot revert goes through a root-owned helper
+(`lamware-vm revert <guest>`) that accepts only an allow-listed guest and a snapshot
+that already exists, and can neither create a snapshot nor name a file. CAPE's revert
+call is patched to use it through sudo. That makes one local CAPE patch, not the
+memory-dump one. `core-dump` is refused: full-VM memory dumps are not supported, and the
+dump helper is the documented route back if they are ever needed (issue to be filed
+after deploy). Once the change is enforced, the new security-test check also confirms
+CAPE still has both machines loaded, because a missing permission makes CAPE drop them.
+
+### As built (2026-11-14)
+
+- **kvm role:** installs `/etc/polkit-1/rules.d/49-lamware-libvirt.rules` (root: all;
+  cape: the measured set on the guests named in `cape_guests`; everyone else: no),
+  then sets `access_drivers`. It restarts libvirtd only when no guest is running, then
+  proves an allowed and a refused call as cape. It takes cape out of `kvm` and
+  restarts CAPE's services **and cape's systemd user manager**. cape lingers, so the
+  manager runs from boot and passes the group to everything it starts. The first
+  deploy missed it, and check 19 caught it.
+- **cape role:** root-owned `/usr/local/sbin/lamware-vm revert <guest> <snapshot>`,
+  which accepts only each configured guest's configured snapshot. A sudo rule for that
+  command only. Local patch 0004 makes `LibVirtMachinery.start` call it.
+- **cape-guests and qemu-patched:** the image directory is `root:root 0711`; the
+  cape-guests role had it as `cape:cape 0755`, and the two roles flipped it
+  0755/0711 on every deploy. Base images are `0600`.
+- **security-test check 19:** probes as cape. One allowed call is the control; network
+  listing must be refused by the rule; `/dev/kvm` must not open; no cape process may
+  hold `kvm`; the pipeline user may not read libvirt; CAPE must have every guest
+  loaded; nothing in the image directory may be group- or world-writable. It failed
+  before the role changes and passed after.
+- **Proof:** a detonation under the enforced rule (task 1316) completed in the
+  sample's best observed tier, with no refusal and one helper revert.
+- **Not part of this ADR:** CAPE logs at every start that it cannot reach the rooter
+  socket. That predates this work (seen at the first boot of the day) and is tracked
+  separately.
+
+### Consequences
+
+- cape loses root-equivalence through libvirt. A compromise of CAPE's web, processing
+  or machinery code then reaches only the two guests.
+- **One more local CAPE patch** (the third). It must be re-applied on CAPE upgrades and
+  checked by the role, like the existing two.
+- **Other users are refused explicitly.** That includes the pipeline on the read-only
+  socket, which closes the world-readable domain definitions too.
+- **The ACL governs root too.** The polkit rule must allow uid 0 everything, or Ansible
+  and the operator lock themselves out of libvirt. Restarting libvirtd with the ACL
+  enabled is the risky moment, so it happens with no guest running.
+- The kvm role is console-gated (CLAUDE.md §7a), so the operator deploys steps 1 and 3.
+
+### Rollback
+
+Remove `access_drivers` from `libvirtd.conf` and restart libvirtd with no guest running.
+That restores the group-based model at once. Put the group memberships back if they
+were removed. Revert the CAPE patch. No data moves.
+
+### Not yet known
+
+- The exact permission set CAPE's sequence needs (step 1 measures it).
+- Whether the guacamole/VNC console path in CAPE's web UI uses libvirt. It is not in
+  the machinery's call list; the spike checks it.

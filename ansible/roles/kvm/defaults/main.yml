@@ -12,3 +12,11 @@
 # Increase for larger hosts: 64 GB host (RISE-1) can support 16384+ pages.
 # Formula: desired_GB * 1024 / 2 = page_count
 kvm_hugepages_2mb: 4096
+
+# libvirt access control for the cape user (ADR-027). Measured on 2026-11-14 from
+# CAPE's startup, its read-only calls and a full detonation (audit mode). Nothing
+# here takes a file path: snapshot (which also CREATES snapshots, and libvirtd then
+# writes the memory file as root wherever the caller says), core-dump, save and
+# write are deliberately absent. CAPE reverts through the cape role's lamware-vm.
+kvm_libvirt_cape_connect_perms: [getattr, search-domains]
+kvm_libvirt_cape_domain_perms: [getattr, read, screenshot, stop]

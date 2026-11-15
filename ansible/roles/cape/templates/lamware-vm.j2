@@ -1,0 +1,37 @@
+#!/bin/bash
+# {{ cape_vm_helper }} -- managed by Ansible (cape role). Root-owned; cape runs it
+# through sudo (/etc/sudoers.d/lamware-vm).
+#
+# The one libvirt write CAPE needs, done as root (ADR-027). cape is not given
+# libvirt's snapshot permission: the same permission CREATES snapshots, and
+# libvirtd (root) writes an external snapshot's memory file to any path the
+# caller names -- measured 2026-11-14, it overwrote an existing root-owned file.
+# This reverts a configured guest to its configured snapshot and does nothing
+# else: no snapshot is created, no path is taken from the caller.
+#
+# Usage: lamware-vm revert <guest> <snapshot>
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 077
+
+VIRSH="{{ cape_vm_virsh }}"
+# guest:snapshot pairs, from cape_guests (the same list kvm.conf is written from).
+ALLOWED=" {% for g in cape_guests %}{{ g.name }}:{{ g.snapshot }} {% endfor %}"
+
+die() { echo "lamware-vm: $*" >&2; exit 2; }
+
+[ $# -eq 3 ] || die "usage: lamware-vm revert <guest> <snapshot>"
+[ "$1" = revert ] || die "unknown action: $1"
+guest=$2
+snap=$3
+case "$ALLOWED" in
+    *" $guest:$snap "*) ;;
+    *) die "not an allowed guest/snapshot pair: $guest/$snap" ;;
+esac
+
+# The pair is fixed, but confirm the snapshot really exists on that guest, so a
+# missing snapshot fails here with a clear message rather than inside virsh.
+"$VIRSH" -q -c qemu:///system snapshot-list --name "$guest" | grep -qxF -- "$snap" \
+    || die "guest $guest has no snapshot named $snap"
+
+exec "$VIRSH" -q -c qemu:///system snapshot-revert --domain "$guest" --snapshotname "$snap"

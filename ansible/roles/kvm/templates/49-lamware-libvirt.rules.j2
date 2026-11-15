@@ -1,0 +1,24 @@
+// /etc/polkit-1/rules.d/49-lamware-libvirt.rules -- managed by Ansible (kvm role)
+//
+// libvirt access control (ADR-027). With access_drivers = ["polkit"], libvirtd asks
+// polkit before every API call. Three outcomes, and nothing falls through to
+// libvirt's own defaults (75 actions default to "no" and would apply to root):
+//
+//   root   everything (Ansible, the operator, libvirtd's own housekeeping);
+//   cape   only what CAPE was measured to use, on its own guests: no permission
+//          that takes a path (snapshot, core-dump, save, write); its reverts go
+//          through the root-owned {{ cape_vm_helper | default('/usr/local/sbin/lamware-vm') }};
+//   anyone else: nothing (the read-only socket is world-accessible).
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.libvirt.api.") != 0) return;
+    if (subject.user == "root") return polkit.Result.YES;
+    if (subject.user == "{{ cape_user }}") {
+        var connect = [{% for p in kvm_libvirt_cape_connect_perms %}"org.libvirt.api.connect.{{ p }}"{{ ", " if not loop.last }}{% endfor %}];
+        if (connect.indexOf(action.id) >= 0) return polkit.Result.YES;
+        var domain = [{% for p in kvm_libvirt_cape_domain_perms %}"org.libvirt.api.domain.{{ p }}"{{ ", " if not loop.last }}{% endfor %}];
+        var guests = [{% for g in cape_guests %}"{{ g.name }}"{{ ", " if not loop.last }}{% endfor %}];
+        if (domain.indexOf(action.id) >= 0 && guests.indexOf(action.lookup("domain_name")) >= 0)
+            return polkit.Result.YES;
+    }
+    return polkit.Result.NO;
+});

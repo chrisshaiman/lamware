@@ -89,6 +89,32 @@
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
     - 0003-cleaners-commit-bulk-task-deletes.patch
+    - 0004-libvirt-revert-through-root-helper.patch
+
+# 0004 (ADR-027) makes CAPE revert its guests through a root-owned helper instead
+# of libvirt's snapshot API: that permission also creates snapshots, and libvirtd
+# (root) writes an external snapshot's memory file wherever the caller says. The
+# helper and its sudo rule go in BEFORE the patch, so CAPE never restarts patched
+# but unable to revert.
+- name: Install the guest-revert helper (root-owned; ADR-027)
+  ansible.builtin.template:
+    src: lamware-vm.j2
+    dest: "{{ cape_vm_helper }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Let cape run the guest-revert helper, and nothing else new, through sudo
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/lamware-vm
+    content: |
+      # managed by Ansible (cape role) -- ADR-027. The helper accepts only each
+      # configured guest's configured snapshot; the arguments are checked there.
+      {{ cape_user }} ALL=(root) NOPASSWD: {{ cape_vm_helper }} revert *
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
 
 # 0001 fixes an upstream defect introduced by CAPEv2#3006 (2026-05-11).
 # build_parent_attribute_list() spoofs Explorer as the parent of every launched
@@ -115,6 +141,7 @@
     - 0001-analyzer-parent-spoofing-fallback.patch
     - 0002-office-libreoffice-fallback.patch
     - 0003-cleaners-commit-bulk-task-deletes.patch
+    - 0004-libvirt-revert-through-root-helper.patch
   register: cape_patch_result
   notify: Restart Cape services
 
@@ -144,6 +171,18 @@
   changed_when: false
   failed_when: cape_cleaner_patch_verify.rc != 0
   register: cape_cleaner_patch_verify
+
+# 0004: without it CAPE still calls libvirt's revert directly, which the ADR-027
+# access rule refuses -- every detonation would fail and CAPE would drop both
+# machines from its table.
+- name: Verify CAPE reverts its guests through the helper
+  ansible.builtin.command:
+    cmd: >-
+      grep -q "lamware ADR-027"
+      {{ cape_install_dir }}/lib/cuckoo/common/abstracts.py
+  changed_when: false
+  failed_when: cape_revert_patch_verify.rc != 0
+  register: cape_revert_patch_verify
 
 - name: Fix CAPEv2 directory ownership after cape2.sh
   ansible.builtin.file:

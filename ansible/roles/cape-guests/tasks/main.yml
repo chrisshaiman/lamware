@@ -18,9 +18,12 @@
   ansible.builtin.file:
     path: "{{ cape_guest_image_dir }}"
     state: directory
-    owner: "{{ cape_user }}"
-    group: "{{ cape_user }}"
-    mode: "0755"
+    # root, 0711 (libvirt's own default): the guests' disks and saved memory live
+    # here, so whoever owns the directory can swap or delete them whatever their
+    # own modes say. It was cape:cape 0755 (ADR-027).
+    owner: root
+    group: root
+    mode: "0711"
 
 - name: Move guest images from upload staging to images directory
   ansible.builtin.shell: |
@@ -42,8 +45,13 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: Set guest image ownership for libvirt access
-  ansible.builtin.shell: chown libvirt-qemu:kvm {{ cape_guest_image_dir }}/windows11-*.qcow2
+# 0600: QEMU runs as their owner, libvirt-qemu. The office image was 0775, so any
+# member of kvm (cape, until ADR-027) could write the disk every office
+# detonation boots from.
+- name: Set guest image ownership and mode for libvirt access
+  ansible.builtin.shell: |
+    chown libvirt-qemu:kvm {{ cape_guest_image_dir }}/windows11-*.qcow2
+    chmod 0600 {{ cape_guest_image_dir }}/windows11-*.qcow2
   args:
     executable: /bin/bash
   changed_when: false
