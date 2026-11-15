@@ -1,7 +1,7 @@
 # =============================================================================
 # lamware nginx — React SPA + FastAPI reverse proxy
 #
-# Serves the React frontend from /opt/frontend/dist/ and proxies
+# Serves the React frontend from {{ frontend_dist_dir }}/ and proxies
 # /api/*, /health, /ws/*, /docs, /redoc to FastAPI on port 8001.
 #
 # Listens on all interfaces — protected by OVH robot firewall + fail2ban.

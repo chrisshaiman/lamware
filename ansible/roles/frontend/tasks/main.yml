@@ -58,15 +58,36 @@
 
 # -------------------------------------------------------------------------
 # Build React frontend
+#
+# The build user exists only to run npm. Whatever controls the build controls
+# the JavaScript every signed-in browser runs, so no service account (cape used
+# to) may own the build tree, and nothing but root may own the tree nginx serves
+# or any directory above it (security-test check 22).
 # -------------------------------------------------------------------------
 
-- name: Create frontend install directory
+- name: Create the frontend build user
+  ansible.builtin.user:
+    name: "{{ frontend_build_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ frontend_build_dir }}"
+    create_home: false
+
+- name: Create the build directory (the build user's home)
   ansible.builtin.file:
-    path: "{{ frontend_install_dir }}"
+    path: "{{ frontend_build_dir }}"
     state: directory
-    owner: "{{ frontend_user }}"
-    group: "{{ frontend_user }}"
-    mode: "0750"
+    owner: "{{ frontend_build_user }}"
+    group: "{{ frontend_build_user }}"
+    mode: "0700"
+
+- name: Create the build source directory
+  ansible.builtin.file:
+    path: "{{ frontend_build_dir }}/src"
+    state: directory
+    owner: "{{ frontend_build_user }}"
+    group: "{{ frontend_build_user }}"
+    mode: "0700"
 
 # Staged through private temp directories at both ends, as the pipeline role's
 # package source is (#537). A fixed /tmp name let any local user pre-create the
@@ -106,11 +127,11 @@
     - name: Extract frontend source on server
       ansible.builtin.unarchive:
         src: "{{ frontend_remote_tmp.path }}/frontend-src.tar.gz"
-        dest: "{{ frontend_install_dir }}/src/"
+        dest: "{{ frontend_build_dir }}/src/"
         remote_src: true
         extra_opts: ["--strip-components=1"]
-        owner: "{{ frontend_user }}"
-        group: "{{ frontend_user }}"
+        owner: "{{ frontend_build_user }}"
+        group: "{{ frontend_build_user }}"
       register: frontend_source
 
   always:
@@ -131,31 +152,47 @@
 - name: Deploy frontend .env for build
   ansible.builtin.template:
     src: frontend.env.j2
-    dest: "{{ frontend_install_dir }}/src/.env"
-    owner: "{{ frontend_user }}"
-    group: "{{ frontend_user }}"
+    dest: "{{ frontend_build_dir }}/src/.env"
+    owner: "{{ frontend_build_user }}"
+    group: "{{ frontend_build_user }}"
     mode: "0600"
   no_log: true
   register: frontend_env
 
+# Also when no build output exists yet: the first deploy of a new build directory
+# extracts the same source as before, which may not report a change.
+- name: Check whether a build output exists
+  ansible.builtin.stat:
+    path: "{{ frontend_build_dir }}/src/dist/index.html"
+  register: frontend_built
+
 - name: Install npm dependencies
   ansible.builtin.command:
     cmd: npm ci
-    chdir: "{{ frontend_install_dir }}/src"
+    chdir: "{{ frontend_build_dir }}/src"
   become: true
-  become_user: "{{ frontend_user }}"
-  when: frontend_source.changed or frontend_env.changed
+  become_user: "{{ frontend_build_user }}"
+  when: frontend_source.changed or frontend_env.changed or not frontend_built.stat.exists
   changed_when: true
 
 - name: Build frontend (npm run build)
   ansible.builtin.command:
     cmd: npm run build
-    chdir: "{{ frontend_install_dir }}/src"
+    chdir: "{{ frontend_build_dir }}/src"
   become: true
-  become_user: "{{ frontend_user }}"
-  when: frontend_source.changed or frontend_env.changed
+  become_user: "{{ frontend_build_user }}"
+  when: frontend_source.changed or frontend_env.changed or not frontend_built.stat.exists
   changed_when: true
   register: frontend_build
+
+# Root copies what the build user produced. A link in it would make nginx serve
+# whatever the link points at, so the output must be plain files and directories.
+- name: Refuse build output that holds anything but files and directories
+  ansible.builtin.command:
+    cmd: find {{ frontend_build_dir }}/src/dist -mindepth 1 ! -type f ! -type d -print -quit
+  register: frontend_dist_odd
+  changed_when: false
+  failed_when: frontend_dist_odd.rc != 0 or frontend_dist_odd.stdout | length > 0
 
 # The build is staged whole and swapped in by rename, not copied over the
 # serving directory: copy never deletes, so that directory kept every bundle
@@ -169,7 +206,7 @@
     cmd: >
       set -o pipefail;
       [ -d {{ frontend_dist_dir }} ] || exit 1;
-      diff <(cd {{ frontend_install_dir }}/src/dist && find . -type f | sort)
+      diff <(cd {{ frontend_build_dir }}/src/dist && find . -type f | sort)
       <(cd {{ frontend_dist_dir }} && find . -type f | sort) > /dev/null
     executable: /bin/bash
   register: frontend_dist_diff
@@ -180,6 +217,14 @@
   ansible.builtin.set_fact:
     frontend_dist_stale: "{{ (frontend_build.changed | default(false)) or frontend_dist_diff.rc != 0 }}"
 
+- name: Create the parent of the serving directory (root's)
+  ansible.builtin.file:
+    path: "{{ frontend_dist_dir | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Remove a staging directory a failed deploy left behind  # noqa: no-handler
   ansible.builtin.file:
     path: "{{ frontend_dist_dir }}.new"
@@ -188,7 +233,7 @@
 
 - name: Stage the new build beside the serving directory  # noqa: no-handler
   ansible.builtin.copy:
-    src: "{{ frontend_install_dir }}/src/dist/"
+    src: "{{ frontend_build_dir }}/src/dist/"
     dest: "{{ frontend_dist_dir }}.new/"
     remote_src: true
     owner: root
@@ -208,11 +253,6 @@
   when: frontend_dist_stale | bool
   changed_when: true
   notify: Reload nginx
-
-- name: Fix dist permissions for nginx (www-data needs read + traverse)
-  ansible.builtin.file:
-    path: "{{ frontend_install_dir }}"
-    mode: "o+x"
 
 - name: Fix dist directory permissions
   ansible.builtin.command:
@@ -317,3 +357,25 @@
       Restart=on-failure
       RestartSec=5
   notify: Reload systemd and restart nginx
+
+# -------------------------------------------------------------------------
+# Retire the old layout, once nginx serves from frontend_dist_dir
+# -------------------------------------------------------------------------
+
+- name: Apply the nginx reload before the old tree goes
+  ansible.builtin.meta: flush_handlers
+
+- name: Confirm nginx no longer serves from the old tree
+  ansible.builtin.shell:
+    cmd: set -o pipefail; nginx -T 2>/dev/null | grep -cF -- '{{ frontend_retired_dir }}' || true
+    executable: /bin/bash
+  register: frontend_old_refs
+  changed_when: false
+  failed_when: frontend_old_refs.stdout | int != 0
+
+# Python's rmtree removes links rather than following them, and works by
+# descriptor, so the previous owner cannot steer it outside the tree.
+- name: Remove the old frontend tree
+  ansible.builtin.file:
+    path: "{{ frontend_retired_dir }}"
+    state: absent
