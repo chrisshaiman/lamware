@@ -64,3 +64,9 @@ cape_rooter_files:
   lib/cuckoo/common/__init__.py: 0bdff8b3756588dcade7d93175a1c851bf18fe5298e16860089b61b9d0519e94
   lib/cuckoo/common/path_utils.py: 71382988ff808160c0bcc8126a04da10b52048898bfd912657d946c96a7673a7
   lib/cuckoo/common/constants.py: 486cb5324f2aa3d78cbb5968100a50a50bcf16c54b36d1adeed04137200c5ad3
+
+# Root-owned helper that reverts a guest to its configured snapshot for CAPE
+# (ADR-027; local patch 0004 calls it through sudo). The path is also written in
+# the patch, so change both together.
+cape_vm_helper: /usr/local/sbin/lamware-vm
+cape_vm_virsh: /usr/bin/virsh

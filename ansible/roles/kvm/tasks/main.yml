@@ -45,13 +45,88 @@
     state: started
     enabled: true
 
-# Cape runs its analysis VMs as the cape user. The cape user must be in
-# the libvirt and kvm groups to interact with the hypervisor without sudo.
-- name: Add cape user to libvirt and kvm groups
+# CAPE drives its guests through libvirt as the cape user. `libvirt` is what lets
+# it reach the read-write socket; what it may do there is decided by the access
+# rule below (ADR-027), not by the group. It is not in `kvm`: libvirt starts QEMU
+# as libvirt-qemu, and nothing in CAPE opens /dev/kvm, so the group was only a
+# host-kernel surface and write access to group-writable guest disks.
+- name: Add cape user to the libvirt group
   ansible.builtin.user:
     name: "{{ cape_user }}"
-    groups: libvirt,kvm
+    groups: libvirt
     append: true
+
+- name: Read the kvm group's members
+  ansible.builtin.getent:
+    database: group
+    key: kvm
+
+- name: Take cape out of the kvm group (ADR-027)
+  ansible.builtin.command: gpasswd -d {{ cape_user }} kvm
+  when: cape_user in (ansible_facts.getent_group.kvm[2] | default('')).split(',')
+  changed_when: true
+  # A process keeps the groups it started with; the handlers restart CAPE's
+  # services and cape's lingering user manager (handlers/main.yml).
+  notify: Drop the kvm group from cape's processes
+
+# --- libvirt access control (ADR-027) ----------------------------------------
+# The rule goes in BEFORE access_drivers is switched on: with access control on and
+# no rule, libvirt's own defaults apply, and they refuse snapshot/start/stop/... to
+# every caller, root included (measured: task 1312 failed that way).
+- name: Install the libvirt access rule
+  ansible.builtin.template:
+    src: 49-lamware-libvirt.rules.j2
+    dest: /etc/polkit-1/rules.d/49-lamware-libvirt.rules
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove the audit rule left by the ADR-027 spike
+  ansible.builtin.file:
+    path: /etc/polkit-1/rules.d/49-lamware-libvirt-audit.rules
+    state: absent
+
+- name: Switch on libvirt access control
+  ansible.builtin.lineinfile:
+    path: /etc/libvirt/libvirtd.conf
+    regexp: '^\s*access_drivers\s*='
+    line: 'access_drivers = [ "polkit" ]   # ADR-027, managed by Ansible (kvm role)'
+  # libvirtd reads access_drivers only at start; the handlers refuse to restart it
+  # under a running guest (handlers/main.yml).
+  notify: Apply libvirt access control
+
+# Restart now if needed, so the probes below test the daemon as it will run.
+- name: Apply pending libvirt and CAPE restarts before probing
+  ansible.builtin.meta: flush_handlers
+
+# Behavioural, as cape: an allowed call succeeds (the control) and a refused one
+# is refused. A refusal without the control would also pass with libvirt down.
+# Compared with what root sees: on a fresh host this role runs before cape-guests
+# has defined any guest, and an empty list is then correct.
+- name: As root, list domains (the reference)
+  ansible.builtin.command: virsh -c qemu:///system list --all --name
+  register: kvm_acl_root_view
+  changed_when: false
+
+- name: As cape, list domains (must be allowed, and show every guest that exists)
+  ansible.builtin.command: virsh -c qemu:///system list --all --name
+  become: true
+  become_user: "{{ cape_user }}"
+  register: kvm_acl_allowed
+  changed_when: false
+  failed_when: >-
+    kvm_acl_allowed.rc != 0 or
+    (cape_guests | map(attribute='name')
+       | select('in', kvm_acl_root_view.stdout_lines | map('trim') | list)
+       | reject('in', kvm_acl_allowed.stdout_lines | map('trim') | list) | list | length > 0)
+
+- name: As cape, list networks (must be refused)
+  ansible.builtin.command: virsh -c qemu:///system net-list --all
+  become: true
+  become_user: "{{ cape_user }}"
+  register: kvm_acl_refused
+  changed_when: false
+  failed_when: kvm_acl_refused.rc == 0 or 'access denied' not in kvm_acl_refused.stderr
 
 # Hugepages pre-allocate memory for KVM guests, reducing latency from
 # page faults during analysis and preventing the host from swapping VM

@@ -1,0 +1,35 @@
+diff --git a/lib/cuckoo/common/abstracts.py b/lib/cuckoo/common/abstracts.py
+--- a/lib/cuckoo/common/abstracts.py
++++ b/lib/cuckoo/common/abstracts.py
+@@ -8,6 +8,7 @@
+ import logging
+ import os
+ import socket
++import subprocess
+ import threading
+ import time
+ import timeit
+@@ -504,10 +505,20 @@
+             raise CuckooMachineError(f"No snapshot found for virtual machine {label}")
+ 
+         log.debug("Using snapshot %s for virtual machine %s", snapshot.getName(), label)
++        # lamware ADR-027: cape is not given libvirt's snapshot permission, because
++        # the same permission creates snapshots, and libvirtd (root) writes an
++        # external snapshot's memory file to any path the caller names. A root
++        # helper reverts to an EXISTING snapshot, by name, and does nothing else.
+         try:
+-            vm.revertToSnapshot(snapshot, flags=0)
+-        except libvirt.libvirtError as e:
+-            raise CuckooMachineError(f"Unable to restore snapshot on virtual machine {label}. Your snapshot MUST BE in running state!") from e
++            subprocess.run(
++                ["/usr/bin/sudo", "-n", "/usr/local/sbin/lamware-vm", "revert", label, snapshot.getName()],
++                check=True, capture_output=True, text=True, timeout=600,
++            )
++        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
++            detail = (getattr(e, "stderr", None) or str(e)).strip()[:300]
++            raise CuckooMachineError(
++                f"Unable to restore snapshot on virtual machine {label} via lamware-vm: {detail}"
++            ) from e
+ 
+         # Check state.
+         self._wait_status(label, self.RUNNING)

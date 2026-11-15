@@ -30,7 +30,8 @@
     shell: /bin/bash
     home: "/home/{{ cape_user }}"
     create_home: true
-    groups: libvirt,kvm
+    # Not kvm (ADR-027): libvirt runs QEMU as libvirt-qemu. The kvm role removes it.
+    groups: libvirt
     append: true
 
 # This role builds the patched emulator with CAPE's own installer, so it needs a
@@ -332,13 +333,16 @@
     group: tss
     mode: "0755"
 
+# images is 0711, not 0755: the cape-guests role sets it so (it holds the guests'
+# disks), and the two roles flipped it on every deploy (ADR-027). 0711 still lets
+# libvirt-qemu traverse to the disks.
 - name: Fix libvirt directory permissions (cape installer sets 700)
   ansible.builtin.file:
-    path: "{{ item }}"
-    mode: "0755"
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
   loop:
-    - /var/lib/libvirt
-    - /var/lib/libvirt/images
+    - {path: /var/lib/libvirt, mode: "0755"}
+    - {path: /var/lib/libvirt/images, mode: "0711"}
 
 - name: Ensure libvirtd is running after reinstall
   ansible.builtin.systemd:

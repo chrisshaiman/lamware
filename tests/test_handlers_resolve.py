@@ -57,10 +57,11 @@ def _handlers(role: Path) -> set[str]:
         for h in hs:
             if isinstance(h, dict) and h.get("name"):
                 out.add(h["name"])
-                # a handler can itself notify another handler
-                n = h.get("notify")
-                if isinstance(n, str):
-                    out.add(n) if False else None
+            # A `listen` topic is a notify target too: every handler that listens
+            # on it runs, in file order (roles/kvm, ADR-027).
+            if isinstance(h, dict) and h.get("listen"):
+                ls = h["listen"]
+                out.update([ls] if isinstance(ls, str) else ls)
     return out
 
 

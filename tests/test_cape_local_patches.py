@@ -39,6 +39,7 @@ PATCHES = [
     "0001-analyzer-parent-spoofing-fallback.patch",
     "0002-office-libreoffice-fallback.patch",
     "0003-cleaners-commit-bulk-task-deletes.patch",
+    "0004-libvirt-revert-through-root-helper.patch",
 ]
 
 
