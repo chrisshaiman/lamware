@@ -49,6 +49,7 @@ these describe an AWS data plane that no longer exists.
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
 | [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Proposed — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
 | [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
+| [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1747,3 +1748,44 @@ were removed. Revert the CAPE patch. No data moves.
 - The exact permission set CAPE's sequence needs (step 1 measures it).
 - Whether the guacamole/VNC console path in CAPE's web UI uses libvirt. It is not in
   the machinery's call list; the spike checks it.
+
+---
+
+## ADR-028: CAPE's rooter is not run; lamware's own firewall is the guests' network boundary
+
+**Status:** Accepted (2026-11-15, owner). Implemented 2026-11-15.
+**Refs:** ADR-020 (one firewall mechanism), ADR-027, #459 (INetSim DNS), #708 (guest-input chain), #835 (rooter root-owned copy)
+
+### Context
+
+CAPE's rooter (`utils/rooter.py`, unit `cape-rooter`) is a root daemon. CAPE's scheduler sends it commands over a Unix socket, and it applies per-VM iptables and routing for each analysis. Measured on 2026-11-15:
+
+- **CAPE could not reach it.**
+  - The socket is `root:cape 0620`; the rooter is started with `-g cape`, by upstream's unit and by #835's.
+  - CAPE's services run with `Group=lamware` (`cape.service.d/lamware-group.conf`, dated 2026-05-15). systemd then derives their supplementary groups from `/etc/group`, which does not list cape's own primary group `cape`. The scheduler's groups were `pcap lamware systemd-journal libvirt`.
+  - So every rooter call since about 2026-05-15 failed with `Permission denied`. CAPE logged it as `CRITICAL` and carried on.
+- **What the rooter would do here.** With `route = none` (set since 2026-04-01), CAPE asks it for `drop_enable`, which drops every packet the host sends to the guest except the CAPE agent (port 8000) and result-server replies. That includes INetSim's replies.
+- **The guests depend on INetSim.** INetSim's DNS only started working with #459 (2026-08-25). In task 1316, the sample's DNS lookup was answered by INetSim, and 99 TCP flows went to it. Every detonation since August, including every evaluation baseline, used a network where the guests reach INetSim *because* the rooter was unreachable. Repairing the socket alone would reintroduce the #459 failure.
+- **Containment does not come from the rooter.** It is lamware's own firewall: the guest-input chain (#708) and the detonation air gap, both probe-tested by the security test.
+- **CAPE does not need it to start.** `init_rooter` returns early when `route = none` and VPN, Tor, INetSim and socks5 routing are all disabled, which they are.
+
+### Options
+
+1. **Don't run it.** Make the measured state official: stop and mask the rooter, remove #835's copy, and accept CAPE's per-task "rooter unreachable" log line as expected. This removes one root daemon that takes cape's commands, and changes no detonation.
+2. **Fix the socket group and switch to CAPE's `inetsim` route.** CAPE would then redirect **all** guest traffic to INetSim, including connections to arbitrary IPs, which the firewall now drops. That might be a more realistic simulated network, but it changes results, so under consistency-first it needs a measured before/after on the eval corpus first.
+3. **Fix only the socket group.** Breaks INetSim (the #459 failure). Rejected.
+
+### Decision
+
+**Option 1.** The cape role stops, disables and **masks** `cape-rooter`, so a CAPE upgrade that re-enables it fails instead of quietly bringing it back. It removes `/opt/cape-rooter`, the staging directory, the unit's drop-ins and the stale socket. The network-monitor allowlist no longer accepts a rooter process. Security-test check 15 requires the unit to be masked and inactive, no rooter process, and no socket, with a control that a known unit loads. Option 2 is filed as an investigation, not a change.
+
+### Consequences
+
+- One fewer root daemon accepting input from cape; #835's concern (root running cape-controlled code) goes away entirely.
+- CAPE logs that it cannot reach the rooter at each task. That is expected and documented, not silenced: silencing it would take another local CAPE patch.
+- The `Group=lamware` drop-in stays: the pipeline reads CAPE's output through that group's ACLs.
+- Detonation behaviour is unchanged. The proof is a detonation whose network picture matches task 1316: DNS answered by INetSim, flows to 192.168.100.1.
+
+### Rollback
+
+`systemctl unmask cape-rooter` and redeploy the cape role from before this change. For the rooter to actually work, the socket group would also have to change. As shown above, that changes every detonation's network, so it is option 2, not a rollback.

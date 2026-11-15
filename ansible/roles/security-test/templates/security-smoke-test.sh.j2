@@ -432,37 +432,25 @@ else
     pass "pipeline and analysis-tool code: not writable by $PIPE_USER or cape (its data dirs are)"
 fi
 
-echo "[15/19] CONTAINMENT: the CAPE rooter runs as root, so it must run only root-owned code..."
-# ADR-025 for CAPE: cape2.sh runs it from the cape-owned checkout through its
-# virtualenv. The cape role runs a root-owned copy under `python3 -I`. Asked of the RUNNING process (/proc), not of
-# the unit file, and with access(2) via `find -writable` as cape.
-ROOTER_DIR="{{ security_test_cape_rooter_dir | default('/opt/cape-rooter') }}"
-CAPE_DIR="{{ security_test_cape_install_dir | default('/opt/CAPEv2') }}"
-RPID=$(systemctl show cape-rooter -p MainPID --value 2>/dev/null || echo 0)
-if [ -z "$RPID" ] || [ "$RPID" = "0" ]; then
-    fail "cape-rooter is not running, so its code could not be checked"
+echo "[15/19] CONTAINMENT: CAPE's rooter (a root daemon that takes cape's commands) is not running..."
+# ADR-028: it was unreachable from CAPE from 2026-05-15 anyway, and switching it back
+# on would cut the guests off from INetSim. Masked, so an upgrade that re-enables it
+# fails. Checked on the unit, the process table and the socket; the control is a
+# unit that must load, so a broken systemctl query cannot read as "not running".
+ROOTER_SOCK="{{ security_test_cape_rooter_socket | default('/tmp/cuckoo-rooter') }}"
+ROOTER_BAD=""
+R_LOAD=$(systemctl show cape-rooter -p LoadState --value 2>/dev/null)
+[ "$R_LOAD" = "masked" ] || ROOTER_BAD="$ROOTER_BAD unit is '${R_LOAD:-unknown}', not masked;"
+systemctl is-active -q cape-rooter 2>/dev/null && ROOTER_BAD="$ROOTER_BAD unit is active;"
+R_PIDS=$(pgrep -f 'utils/rooter\.py|[[:space:]]rooter\.py' 2>/dev/null | tr '\n' ' ')
+[ -n "$R_PIDS" ] && ROOTER_BAD="$ROOTER_BAD rooter process running (pid $R_PIDS);"
+[ -e "$ROOTER_SOCK" ] && ROOTER_BAD="$ROOTER_BAD socket $ROOTER_SOCK exists;"
+if [ "$(systemctl show cape -p LoadState --value 2>/dev/null)" != "loaded" ]; then
+    fail "rooter probe is blind: systemctl cannot read the cape unit"
+elif [ -n "$ROOTER_BAD" ]; then
+    fail "cape-rooter is back:$ROOTER_BAD"
 else
-    RCMD=$(tr '\0' ' ' < /proc/$RPID/cmdline)
-    REXE=$(readlink -f /proc/$RPID/exe)
-    RCWD=$(readlink -f /proc/$RPID/cwd)
-    ROOTER_BAD=""
-    case "$RCMD" in *"$ROOTER_DIR/utils/rooter.py"*) ;; *) ROOTER_BAD="$ROOTER_BAD script not $ROOTER_DIR/utils/rooter.py;" ;; esac
-    case " $RCMD " in *" -I "*) ;; *) ROOTER_BAD="$ROOTER_BAD not isolated (-I);" ;; esac
-    case "$RCMD" in *poetry*) ROOTER_BAD="$ROOTER_BAD runs through poetry;" ;; esac
-    case "$RCWD" in "$ROOTER_DIR"*) ;; *) ROOTER_BAD="$ROOTER_BAD cwd $RCWD;" ;; esac
-    W=$(cd / && sudo -u cape find "$ROOTER_DIR" "$REXE" -writable 2>/dev/null | head -5)
-    [ -n "$W" ] && ROOTER_BAD="$ROOTER_BAD writable by cape: $(echo $W);"
-    O=$(find "$ROOTER_DIR" "$REXE" ! -user root 2>/dev/null | head -5)
-    [ -n "$O" ] && ROOTER_BAD="$ROOTER_BAD not root-owned: $(echo $O);"
-    # The control: cape must be able to write its own checkout, or a probe that
-    # cannot act as cape would pass by finding nothing.
-    if ! (cd / && sudo -u cape test -w "$CAPE_DIR/utils") 2>/dev/null; then
-        fail "rooter probe is blind: cape cannot write its own $CAPE_DIR/utils, so 'nothing writable' proves nothing"
-    elif [ -n "$ROOTER_BAD" ]; then
-        fail "cape-rooter (root) runs code cape controls:$ROOTER_BAD"
-    else
-        pass "cape-rooter: root-owned copy under python3 -I, nothing writable by cape (its checkout is)"
-    fi
+    pass "cape-rooter: masked, not running, no socket (ADR-028)"
 fi
 
 # -------------------------------------------------------------------------
