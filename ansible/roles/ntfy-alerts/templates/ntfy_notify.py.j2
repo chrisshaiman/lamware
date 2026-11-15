@@ -12,6 +12,7 @@ Author: Christopher Shaiman
 License: Apache 2.0
 """
 import argparse
+import json
 import logging
 import re
 import sys
@@ -19,11 +20,13 @@ import sys
 import requests
 
 NTFY_URL = "{{ ntfy_url }}"
-NTFY_TOPIC = "{{ ntfy_topic }}"
-# Bearer token for a protected topic. Empty = unauthenticated, which is what
-# ntfy.sh gives you: the topic string is then the entire access control, and
-# topics are a routing key, not a secret (#352).
-NTFY_TOKEN = "{{ ntfy_token | default('') }}"
+# The topic and the bearer token are read from here at send time, not rendered
+# into this file: every account that imports or runs this module could read it,
+# and only root, the notify user and auto-feeder need to send (V12). Callers that
+# cannot read it enqueue instead (ntfy_enqueue.py). An empty token means
+# unauthenticated, which is what ntfy.sh gives you: the topic string is then the
+# entire access control (#352).
+NTFY_SECRETS_FILE = "{{ ntfy_secrets_file }}"
 {# `| bool` is load-bearing (#349). Bare Jinja truthiness tests the STRING:
    `-e ntfy_enabled=false` on the command line arrives as "false", which is
    non-empty and therefore true, so asking for alerts off rendered them ON.
@@ -38,6 +41,20 @@ log = logging.getLogger("ntfy")
 # broken. Callers holding a value they KNOW is a hostname use defang_ioc().
 _URL_RE = re.compile(r"\b(https?)://(\S+)", re.IGNORECASE)
 _IPV4_RE = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
+
+
+def _credentials() -> tuple[str, str]:
+    """(topic, token) from NTFY_SECRETS_FILE, or ("", "") if it cannot be read.
+
+    Logged, not raised: an alerting shim must not take down its caller.
+    """
+    try:
+        with open(NTFY_SECRETS_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+        return str(cfg.get("topic") or ""), str(cfg.get("token") or "")
+    except (OSError, ValueError, AttributeError) as e:
+        log.warning("ntfy credentials unreadable (%s): %s", NTFY_SECRETS_FILE, type(e).__name__)
+        return "", ""
 
 
 def defang_ioc(value: str, ioc_type: str = "") -> str:
@@ -87,7 +104,10 @@ def send_alert(title: str, message: str, priority: str = "default",
     Returns:
         True if sent successfully, False otherwise
     """
-    if not NTFY_ENABLED or not NTFY_TOPIC:
+    if not NTFY_ENABLED:
+        return False
+    topic, token = _credentials()
+    if not topic:
         return False
 
     # Defang here rather than at each call site: this is the only path to a
@@ -108,12 +128,12 @@ def send_alert(title: str, message: str, priority: str = "default",
         # NOT defanged: this is the dashboard link we WANT tappable, and it is
         # operator-supplied rather than sample-derived.
         headers["Click"] = click
-    if NTFY_TOKEN:
-        headers["Authorization"] = f"Bearer {NTFY_TOKEN}"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
     try:
         resp = requests.post(
-            f"{NTFY_URL}/{NTFY_TOPIC}",
+            f"{NTFY_URL}/{topic}",
             data=message.encode("utf-8"),
             headers=headers,
             timeout=10,

@@ -34,12 +34,13 @@ from ntfy_notify import defang_ioc, send_alert
 # Configuration
 # ---------------------------------------------------------------------------
 
-# Group lamware (setgid dir) may read what this writes; /api/alerts serves
+# Group lamware (setgid data dir) may read what this writes; /api/alerts serves
 # latest-digest.json. Nobody else may (#729 moved the digest off pipeline).
 os.umask(0o027)
 
-INSTALL_DIR = Path("{{ ntfy_install_dir }}")
-DIGEST_FILE = INSTALL_DIR / "latest-digest.json"
+# Output goes to the data directory: the code directory is root's (V12).
+DATA_DIR = Path("{{ ntfy_data_dir }}")
+DIGEST_FILE = DATA_DIR / "latest-digest.json"
 
 DB_CONFIG = {
     "host": "{{ postgres_listen_address | default('127.0.0.1') }}",
@@ -63,7 +64,7 @@ HAIKU_MODEL = "{{ interpret_summary_model | default('claude-haiku-4-5-20251001')
 
 log = logging.getLogger("daily-digest")
 log.setLevel(logging.INFO)
-handler = RotatingFileHandler(str(INSTALL_DIR / "digest.log"), maxBytes=2_000_000, backupCount=3)
+handler = RotatingFileHandler(str(DATA_DIR / "digest.log"), maxBytes=2_000_000, backupCount=3)
 handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
 log.addHandler(handler)
 # No StreamHandler (#353). The cron entry used to redirect stdout into

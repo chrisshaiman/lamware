@@ -14,10 +14,11 @@ ExecStart=/usr/bin/python3 {{ ntfy_install_dir }}/daily-digest.py
 # The script's RotatingFileHandler is the only writer of digest.log. stderr is
 # kept separately so a crash before logging is configured is not lost (#353).
 StandardOutput=null
-StandardError=append:{{ ntfy_install_dir }}/digest.err
+StandardError=append:{{ ntfy_data_dir }}/digest.err
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths={{ ntfy_install_dir }}
+# Only the data directory: the code is root's (V12).
+ReadWritePaths={{ ntfy_data_dir }}
 TimeoutStartSec=900

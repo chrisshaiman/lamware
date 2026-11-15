@@ -16,46 +16,102 @@
     create_home: false
     shell: /usr/sbin/nologin
 
-# setgid so files the digest writes (latest-digest.json, which /api/alerts
-# serves) are group lamware without the notify user joining that group.
-- name: Create ntfy-alerts directory
+# ADR-025 for the notifier (V12). Root runs ntfy_notify.py (the network monitor)
+# and ntfy_enqueue.py (lamware-aide, the AWS forwarder's alert unit), and pipeline
+# and auto-feeder import from here, so the code is root's: it used to be the notify
+# user's, which made that account root within five minutes (an adversarial review
+# found it). The notify user reads it through an ACL; it writes only ntfy_data_dir.
+- name: Create the ntfy-alerts code directory (root-owned)
   ansible.builtin.file:
     path: "{{ ntfy_install_dir }}"
+    state: directory
+    owner: root
+    group: lamware
+    mode: "0750"
+
+- name: Let the notify user traverse the code directory (ACL)
+  ansible.posix.acl:
+    path: "{{ ntfy_install_dir }}"
+    entity: "{{ ntfy_user }}"
+    etype: user
+    permissions: rx
+    state: present
+
+# setgid so the digest's files (latest-digest.json, which /api/alerts serves) are
+# group lamware without the notify user joining that group.
+- name: Create the notify user's data directory
+  ansible.builtin.file:
+    path: "{{ ntfy_data_dir }}"
     state: directory
     owner: "{{ ntfy_user }}"
     group: lamware
     mode: "2750"
 
-# The directory used to be pipeline-owned, so its bytecode cache is too. Python
-# loads a cached .pyc whose recorded source mtime and size match without
-# re-reading the source, so a pipeline-writable cache in a directory the notify
-# user imports from would let pipeline run code as the notify user, which has
-# egress. Removed when it is not the notify user's; it regenerates.
+# Moves the digest's existing output out of the code directory once.
+- name: Move the digest's output files to the data directory
+  ansible.builtin.shell: |
+    set -eu
+    n=0
+    for f in digest.log digest.log.1 digest.log.2 digest.log.3 digest.err latest-digest.json; do
+      src="{{ ntfy_install_dir }}/$f"
+      [ -f "$src" ] && [ ! -L "$src" ] || continue
+      [ -e "{{ ntfy_data_dir }}/$f" ] || install -o {{ ntfy_user }} -g lamware -m 0640 "$src" "{{ ntfy_data_dir }}/$f"
+      rm -f -- "$src"; n=$((n+1))
+    done
+    echo "moved $n"
+  args:
+    executable: /bin/bash
+  register: ntfy_moved
+  changed_when: "'moved 0' not in ntfy_moved.stdout"
+
+# CPython trusts a .pyc whose recorded mtime and size match the source, without
+# reading the source. The cache the notify user wrote must go: only root may
+# write this directory now, so a new cache is root's.
 - name: Check who owns the module bytecode cache
   ansible.builtin.stat:
     path: "{{ ntfy_install_dir }}/__pycache__"
   register: ntfy_pycache
 
-- name: Remove a bytecode cache the notify user does not own
+- name: Remove a bytecode cache root does not own
   ansible.builtin.file:
     path: "{{ ntfy_install_dir }}/__pycache__"
     state: absent
-  when: ntfy_pycache.stat.exists and ntfy_pycache.stat.pw_name != ntfy_user
+  when: ntfy_pycache.stat.exists and ntfy_pycache.stat.pw_name != 'root'
 
-- name: Hand the digest's existing output files to the notify user
+# Its own directory: /etc/lamware is root 0700 (networking) and stays that way.
+- name: Create the ntfy secrets directory
   ansible.builtin.file:
-    path: "{{ ntfy_install_dir }}/{{ item }}"
-    owner: "{{ ntfy_user }}"
-    group: lamware
+    path: "{{ ntfy_secrets_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the ntfy topic and token (root and the notify user only)
+  ansible.builtin.copy:
+    dest: "{{ ntfy_secrets_file }}"
+    content: "{{ {'topic': ntfy_topic, 'token': (ntfy_token | default(''))} | to_json }}\n"
+    owner: root
+    group: "{{ ntfy_user }}"
     mode: "0640"
-  loop: [digest.log, digest.err, latest-digest.json]
-  failed_when: false   # absent on a fresh host; the digest creates them
+  no_log: true
+  diff: false
+
+# auto-feeder sends directly (it imports send_alert); every other non-root
+# caller only enqueues and never needs the token.
+- name: Let auto-feeder read the ntfy topic and token (ACL)
+  ansible.posix.acl:
+    path: "{{ ntfy_secrets_file }}"
+    entity: auto-feeder
+    etype: user
+    permissions: r
+    state: present
 
 - name: Deploy ntfy notification module
   ansible.builtin.template:
     src: ntfy_notify.py.j2
     dest: "{{ ntfy_install_dir }}/ntfy_notify.py"
-    owner: "{{ ntfy_user }}"
+    owner: root
     # group lamware, matching the DIRECTORY, not pipeline (#347). auto-feeder
     # runs as its own user and is in lamware; with group pipeline it could
     # traverse the directory and not read the module. It has been importing
@@ -66,20 +122,28 @@
     # and NOT caught by the `except ImportError` guard around it.
     group: lamware
     mode: "0750"
-  # Carries ntfy_topic, which is the ONLY access control on a public ntfy
-  # relay — see #352. --diff would print it. Same reasoning as the digest
-  # below; not no_log, for the same reason.
+  # The topic and token now live in ntfy_secrets_file, not here; diff stays off
+  # in case an older template is ever redeployed.
   diff: false
 
-# Owner-only: only the notify user runs it, and it carries the DB password and
-# the LiteLLM key. It used to be group lamware, readable by every member.
+# The relay and the digest import it as the notify user.
+- name: Let the notify user read the notification module (ACL)
+  ansible.posix.acl:
+    path: "{{ ntfy_install_dir }}/ntfy_notify.py"
+    entity: "{{ ntfy_user }}"
+    etype: user
+    permissions: r
+    state: present
+
+# Root-owned, readable only by the notify user (its group): only it runs the
+# digest, and it carries the DB password and the LiteLLM key.
 - name: Deploy daily digest script
   ansible.builtin.template:
     src: daily-digest.py.j2
     dest: "{{ ntfy_install_dir }}/daily-digest.py"
-    owner: "{{ ntfy_user }}"
+    owner: root
     group: "{{ ntfy_user }}"
-    mode: "0700"
+    mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
   # litellm_master_key. NOT no_log: that also censors failure messages, so a
   # firing `| mandatory` would report "censored" instead of naming the missing
@@ -109,7 +173,7 @@
   ansible.builtin.template:
     src: ntfy_enqueue.py.j2
     dest: "{{ ntfy_install_dir }}/ntfy_enqueue.py"
-    owner: "{{ ntfy_user }}"
+    owner: root
     group: lamware
     mode: "0750"
 
@@ -117,9 +181,9 @@
   ansible.builtin.template:
     src: ntfy_relay.py.j2
     dest: "{{ ntfy_install_dir }}/ntfy_relay.py"
-    owner: "{{ ntfy_user }}"
+    owner: root
     group: "{{ ntfy_user }}"
-    mode: "0700"
+    mode: "0750"
 
 - name: Deploy the alert relay units
   ansible.builtin.template:

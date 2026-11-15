@@ -228,15 +228,17 @@ def test_no_pipeline_owned_sender_is_left():
     for name in ("Deploy ntfy notification module", "Deploy daily digest script",
                  "Deploy the alert enqueue script (run by pipeline-uid callers)",
                  "Deploy the alert relay"):
-        assert _task(name)["ansible.builtin.template"]["owner"] == "{{ ntfy_user }}", name
+        assert _task(name)["ansible.builtin.template"]["owner"] == "root", (
+            f"{name}: root runs or imports this file, so only root may own it (V12)")
 
 
-def test_a_pipeline_owned_bytecode_cache_is_removed():
-    """A cache pipeline can write, in a directory the notify user imports from,
-    would let pipeline run code as a user with egress."""
-    t = _task("Remove a bytecode cache the notify user does not own")
+def test_a_bytecode_cache_root_does_not_own_is_removed():
+    """CPython loads a .pyc whose recorded mtime and size match the source
+    without reading the source. A cache another account wrote, in a directory
+    root runs code from, is that account's code running as root."""
+    t = _task("Remove a bytecode cache root does not own")
     assert t["ansible.builtin.file"]["state"] == "absent"
-    assert "pw_name != ntfy_user" in str(t["when"])
+    assert "pw_name != 'root'" in str(t["when"])
 
 
 def test_the_spool_runner_queues_rather_than_sends():

@@ -39,11 +39,19 @@ def _ansible_bool(v):
 
 
 def load(token="", url="https://ntfy.sh", topic="t", enabled=True):
-    """Render the module and exec it, returning its namespace."""
+    """Render the module and exec it, returning its namespace.
+
+    The topic and token are written to a secrets file the way the role writes
+    them, and the module reads that file at send time.
+    """
+    import json
+    import tempfile
+    secrets = Path(tempfile.mkdtemp()) / "ntfy.json"
+    secrets.write_text(json.dumps({"topic": topic, "token": token}) + "\n")
     env = jinja2.Environment()  # noqa: S701 — rendering Python, not HTML
     env.filters["bool"] = _ansible_bool
     src = env.from_string(TEMPLATE).render(
-        ntfy_url=url, ntfy_topic=topic, ntfy_token=token, ntfy_enabled=enabled)
+        ntfy_url=url, ntfy_enabled=enabled, ntfy_secrets_file=str(secrets))
     ns: dict = {}
     exec(compile(src, "ntfy_notify.py", "exec"), ns)  # noqa: S102
     return ns

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     auto_feeder_state: str = "/opt/auto-feeder/state/state.json"
     auto_feeder_log: str = "/opt/auto-feeder/run/auto-feeder.log"
     pause_file: str = "/opt/pipeline/control/PAUSE"
-    digest_file: str = "/opt/ntfy-alerts/latest-digest.json"
+    digest_file: str = "/var/lib/lamware-notify/latest-digest.json"
     pipeline_cmd: str = "/usr/local/bin/run-pipeline"
 
     # CORS — React dev server by default; extend in env file for prod WireGuard IP
