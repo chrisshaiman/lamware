@@ -90,6 +90,7 @@
     - 0002-office-libreoffice-fallback.patch
     - 0003-cleaners-commit-bulk-task-deletes.patch
     - 0004-libvirt-revert-through-root-helper.patch
+    - 0005-libvirt-memory-dump-through-root-helper.patch
 
 # 0004 (ADR-027) makes CAPE revert its guests through a root-owned helper instead
 # of libvirt's snapshot API: that permission also creates snapshots, and libvirtd
@@ -104,13 +105,24 @@
     group: root
     mode: "0755"
 
+# 0005 does the same for full-VM memory dumps: libvirtd writes them wherever the
+# caller says too. The helper dumps into this root-only directory and renames the
+# file into the task folder; it must be on the same filesystem as the analyses.
+- name: Create the memory-dump staging directory (root only; ADR-027)
+  ansible.builtin.file:
+    path: "{{ cape_vm_dump_staging }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: Let cape run the guest-revert helper, and nothing else new, through sudo
   ansible.builtin.copy:
     dest: /etc/sudoers.d/lamware-vm
     content: |
-      # managed by Ansible (cape role) -- ADR-027. The helper accepts only each
-      # configured guest's configured snapshot; the arguments are checked there.
-      {{ cape_user }} ALL=(root) NOPASSWD: {{ cape_vm_helper }} revert *
+      # managed by Ansible (cape role) -- ADR-027. The helper accepts only configured
+      # guests, each one's configured snapshot, and a numeric task id; it takes no path.
+      {{ cape_user }} ALL=(root) NOPASSWD: {{ cape_vm_helper }} revert *, {{ cape_vm_helper }} dump *
     owner: root
     group: root
     mode: "0440"
@@ -142,6 +154,7 @@
     - 0002-office-libreoffice-fallback.patch
     - 0003-cleaners-commit-bulk-task-deletes.patch
     - 0004-libvirt-revert-through-root-helper.patch
+    - 0005-libvirt-memory-dump-through-root-helper.patch
   register: cape_patch_result
   notify: Restart Cape services
 
@@ -183,6 +196,17 @@
   changed_when: false
   failed_when: cape_revert_patch_verify.rc != 0
   register: cape_revert_patch_verify
+
+# 0005: without it CAPE calls libvirt's core dump directly, which the access rule
+# refuses -- and CAPE logs that and carries on, so Volatility silently gets nothing.
+- name: Verify CAPE dumps memory through the helper
+  ansible.builtin.command:
+    cmd: >-
+      grep -q "lamware ADR-027 (dump)"
+      {{ cape_install_dir }}/lib/cuckoo/common/abstracts.py
+  changed_when: false
+  failed_when: cape_dump_patch_verify.rc != 0
+  register: cape_dump_patch_verify
 
 - name: Fix CAPEv2 directory ownership after cape2.sh
   ansible.builtin.file:

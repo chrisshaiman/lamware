@@ -40,6 +40,7 @@ PATCHES = [
     "0002-office-libreoffice-fallback.patch",
     "0003-cleaners-commit-bulk-task-deletes.patch",
     "0004-libvirt-revert-through-root-helper.patch",
+    "0005-libvirt-memory-dump-through-root-helper.patch",
 ]
 
 
