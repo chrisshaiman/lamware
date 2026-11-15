@@ -1165,3 +1165,49 @@
       will not say so -- it will exit 0 and write a CAPE-only report (#576).
       {% endif %}
     success_msg: "analysis containers start as pipeline"
+
+# ---------------------------------------------------------------------------
+# Corpus intake (`make intake`): root runs only root-owned code (V8, ADR-025)
+# ---------------------------------------------------------------------------
+# scripts/intake.sh used to put the runner, the downloader and the root-appended
+# log in /opt/pipeline/intake/<batch>, root:lamware 2770, and write a unit that ran
+# the script from there as root. Any lamware account could swap that script before
+# the next `make intake`, or symlink the log root appended to. intake.sh now
+# installs the code under /usr/local/lib/lamware/intake and keeps the batch dir
+# root's; this migrates the host's existing state once.
+- name: Find an intake unit that runs a script from a batch directory
+  ansible.builtin.command: grep -lE '^ExecStart=/bin/bash /opt/pipeline/intake/' /etc/systemd/system/lamware-intake.service
+  register: pipeline_old_intake_unit
+  changed_when: false
+  failed_when: pipeline_old_intake_unit.rc not in [0, 1, 2]
+
+- name: Remove that intake unit (intake.sh writes a new one per batch)
+  ansible.builtin.file:
+    path: /etc/systemd/system/lamware-intake.service
+    state: absent
+  when: pipeline_old_intake_unit.rc == 0
+
+- name: Reload systemd after removing the old intake unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: pipeline_old_intake_unit.rc == 0
+
+# Parent first: once it is root 0755 nobody else can create or rename entries in it,
+# so the link check on each child cannot be raced.
+- name: Make the intake directory and each batch directory root's (0755)
+  ansible.builtin.shell: |
+    set -eu
+    [ -d /opt/pipeline/intake ] && [ ! -L /opt/pipeline/intake ] || { echo "normalised 0"; exit 0; }
+    n=0
+    for d in /opt/pipeline/intake /opt/pipeline/intake/*; do
+      [ -d "$d" ] && [ ! -L "$d" ] || continue
+      if [ "$(stat -c '%U:%G %a' "$d")" != "root:root 755" ]; then
+        # g-s too: GNU chmod keeps the setgid bit of a directory on a numeric mode.
+        chown -h root:root -- "$d"; chmod 0755 -- "$d"; chmod g-s -- "$d"; n=$((n+1))
+      fi
+    done
+    echo "normalised $n"
+  args:
+    executable: /bin/bash
+  register: pipeline_intake_dirs
+  changed_when: "'normalised 0' not in pipeline_intake_dirs.stdout"

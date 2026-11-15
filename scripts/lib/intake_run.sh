@@ -17,6 +17,9 @@ RUN_PIPELINE=${INTAKE_RUN_PIPELINE:-/usr/local/bin/run-pipeline}
 REPORTS=${INTAKE_REPORTS_DIR:-/opt/pipeline/reports}
 PAUSE=${INTAKE_PAUSE_FILE:-/opt/pipeline/control/PAUSE}
 PY=${INTAKE_PYTHON:-/usr/bin/python3}
+# Root-owned code (scripts/intake.sh installs it); never run from the batch dir.
+LIB=${INTAKE_LIB:-/usr/local/lib/lamware/intake}
+DL="$B/dl"
 LOG="$B/intake.log"
 STATUS="$B/status.tsv"
 say() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
@@ -28,10 +31,12 @@ for e in json.load(open(sys.argv[1])):
 say "batch start: $(printf '%s\n' "$entries" | wc -l) samples"
 while IFS=$'\t' read -r sha sig; do
     [ -n "$sha" ] || continue
+    case "$sha" in *[!0-9a-f]*) say "skip: not a sha256: $sha"; continue ;; esac
+    [ ${#sha} -eq 64 ] || { say "skip: not a sha256: $sha"; continue; }
     if grep -q "^$sha" "$STATUS" 2>/dev/null; then say "skip $sha (already in status)"; continue; fi
     if [ -e "$PAUSE" ]; then say "PAUSE file present -- stopping"; break; fi
-    d="$B/$sha"
-    out=$(sudo -u auto-feeder "$PY" "$B/intake_download.py" "$sha" "$d" 2>>"$LOG") \
+    d="$DL/$sha"
+    out=$(sudo -u auto-feeder "$PY" "$LIB/intake_download.py" "$sha" "$d" 2>>"$LOG") \
         || { say "download FAILED $sha ($sig)"; printf '%s\t%s\tdownload_failed\t-\n' "$sha" "$sig" >> "$STATUS"; continue; }
     path=${out%%$'\t'*}; name=${out#*$'\t'}
     say "pipeline start $sha ($sig) $name"
@@ -43,6 +48,7 @@ while IFS=$'\t' read -r sha sig; do
     printf '%s\t%s\trc=%s\t%s\n' "$sha" "$sig" "$rc" "$after" >> "$STATUS"
     say "pipeline done $sha rc=$rc report=$after"
     # The staged copy is not needed after the run: CAPE keeps its own in storage.
-    rm -rf --one-file-system "$d"
+    # As auto-feeder, which owns it: root does not delete inside another account's dir.
+    sudo -u auto-feeder rm -rf --one-file-system "$d"
 done <<< "$entries"
 say "batch end"

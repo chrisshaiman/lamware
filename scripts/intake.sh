@@ -54,10 +54,17 @@ esac
 
 say "batch=$NAME samples=$N -> $B"
 say "THIS DETONATES LIVE MALWARE on $HOST."
-ssh "$HOST" "sudo install -d -o root -g lamware -m 2770 /opt/pipeline/intake '$B'" || exit 1
-ssh "$HOST" "sudo tee '$B/manifest.json' >/dev/null && sudo chmod 0644 '$B/manifest.json'" < "$MANIFEST" || exit 1
-ssh "$HOST" "sudo tee '$B/intake_download.py' >/dev/null && sudo chmod 0755 '$B/intake_download.py'" < "$(dirname "$0")/lib/intake_download.py" || exit 1
-ssh "$HOST" "sudo tee '$B/intake_run.sh' >/dev/null && sudo chmod 0755 '$B/intake_run.sh'" < "$(dirname "$0")/lib/intake_run.sh" || exit 1
+# The runner is root (it switches to auto-feeder and pipeline), so everything it
+# executes or appends to is root's: the code under $LIB, and the batch directory,
+# which holds the manifest, log and status. Only $B/dl, where auto-feeder writes
+# the downloads, belongs to auto-feeder. The old layout put the code and logs in a
+# root:lamware 2770 directory, so any lamware account could swap the script root
+# ran or symlink the log root appended to.
+LIB=/usr/local/lib/lamware/intake
+ssh "$HOST" "sudo install -d -o root -g root -m 0755 /usr/local/lib/lamware '$LIB' /opt/pipeline/intake '$B' && sudo install -d -o auto-feeder -g lamware -m 2750 '$B/dl'" || exit 1
+ssh "$HOST" "sudo install -o root -g root -m 0644 /dev/stdin '$B/manifest.json'" < "$MANIFEST" || exit 1
+ssh "$HOST" "sudo install -o root -g root -m 0755 /dev/stdin '$LIB/intake_download.py'" < "$(dirname "$0")/lib/intake_download.py" || exit 1
+ssh "$HOST" "sudo install -o root -g root -m 0755 /dev/stdin '$LIB/intake_run.sh'" < "$(dirname "$0")/lib/intake_run.sh" || exit 1
 ssh "$HOST" "sudo tee /etc/systemd/system/${UNIT}.service >/dev/null" <<UNITEOF
 [Unit]
 Description=lamware corpus intake batch $NAME (one-shot, operator-started)
@@ -66,7 +73,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash $B/intake_run.sh $B
+UMask=0022
+ExecStart=/bin/bash $LIB/intake_run.sh $B
 TimeoutStartSec=infinity
 UNITEOF
 ssh "$HOST" "sudo systemctl daemon-reload && sudo systemctl start --no-block ${UNIT}.service" || exit 1
