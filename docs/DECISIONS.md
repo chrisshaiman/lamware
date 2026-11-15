@@ -1700,6 +1700,15 @@ CAPE still has both machines loaded, because a missing permission makes CAPE dro
   socket. That predates this work (seen at the first boot of the day) and is tracked
   separately.
 
+### Correction (2026-11-15): cape was still root at reboot
+
+"cape loses root-equivalence through libvirt" held for libvirt, but cape was still
+root-equivalent another way. CAPE's installer leaves `@reboot cd /opt/CAPEv2/utils/ &&
+./smtp_sinkhole.sh` in root's crontab, and cape owns that tree. Found by an
+adversarial review; fixed by removing that line and two other dead cape2.sh lines. A
+new security-test check (root's cron jobs run and name only root-owned,
+root-only-writable paths) guards the class.
+
 ### Correction (2026-11-15): memory dumps were in use
 
 The amended decision above says full-VM memory dumps were not used. That was wrong.
