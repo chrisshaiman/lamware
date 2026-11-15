@@ -185,3 +185,33 @@ def test_the_move_carries_the_digest_output_over_once(tmp_path):
 
     again = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
     assert again.stdout.strip() == "moved 0"
+
+
+# --- the topic stays out of the logs -------------------------------------------
+
+def test_a_failed_send_does_not_log_the_topic(tmp_path, caplog):
+    """The exception text carries the URL, and with no token the topic in it is
+    the whole access control (#352). The callers' logs are group-readable."""
+    secrets = tmp_path / "ntfy.json"
+    secrets.write_text(json.dumps({"topic": "lamware-SECRETTOPIC", "token": ""}))
+    ns = _module(secrets)
+
+    def boom(url, **_):
+        raise ConnectionError(f"Max retries exceeded with url: {url}")
+
+    ns["requests"].post = boom
+    with caplog.at_level("WARNING"):
+        assert ns["send_alert"]("t", "m") is False
+    text = caplog.text
+    assert "ntfy send failed: ConnectionError" in text, text
+    assert "SECRETTOPIC" not in text, text
+
+
+def test_the_digest_logs_are_redacted_quietly():
+    t = _task("Redact the ntfy topic from the digest's logs")
+    r = t["ansible.builtin.replace"]
+    assert r["regexp"] == "{{ ntfy_topic | regex_escape }}" and r["replace"] == "<topic>"
+    assert t["no_log"] is True and t["diff"] is False
+    f = _task("Find the digest's logs")["ansible.builtin.find"]
+    assert f["paths"] == "{{ ntfy_data_dir }}"
+    assert {"digest.log*", "digest.err"} == set(f["patterns"].split(","))

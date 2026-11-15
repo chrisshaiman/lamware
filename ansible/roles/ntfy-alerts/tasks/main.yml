@@ -64,6 +64,25 @@
   register: ntfy_moved
   changed_when: "'moved 0' not in ntfy_moved.stdout"
 
+# send_alert used to log the exception text, which carries the topic in its URL,
+# into logs group lamware reads. It no longer does; this removes what it left.
+- name: Find the digest's logs
+  ansible.builtin.find:
+    paths: "{{ ntfy_data_dir }}"
+    patterns: "digest.log*,digest.err"
+    file_type: file
+  register: ntfy_digest_logs
+
+- name: Redact the ntfy topic from the digest's logs
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: "{{ ntfy_topic | regex_escape }}"
+    replace: "<topic>"
+  loop: "{{ ntfy_digest_logs.files }}"
+  when: ntfy_topic | length > 0
+  no_log: true
+  diff: false
+
 # CPython trusts a .pyc whose recorded mtime and size match the source, without
 # reading the source. The cache the notify user wrote must go: only root may
 # write this directory now, so a new cache is root's.

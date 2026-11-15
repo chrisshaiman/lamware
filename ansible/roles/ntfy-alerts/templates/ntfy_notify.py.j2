@@ -140,7 +140,11 @@ def send_alert(title: str, message: str, priority: str = "default",
         )
         return resp.status_code == 200
     except Exception as e:
-        log.warning(f"ntfy send failed: {e}")
+        # The exception text carries the URL, and the URL carries the topic: the
+        # whole access control when no token is set (#352). The callers' logs
+        # are wider-readable than the secrets file, so the topic never goes in.
+        log.warning("ntfy send failed: %s: %s", type(e).__name__,
+                    str(e).replace(topic, "<topic>"))
         return False
 
 
