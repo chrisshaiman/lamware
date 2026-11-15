@@ -109,7 +109,7 @@ def _read_disk_usage() -> dict | None:
 
 
 def _read_latest_digest() -> dict | None:
-    """Read /opt/ntfy-alerts/latest-digest.json, stamped with its own age.
+    """Read /var/lib/lamware-notify/latest-digest.json, stamped with its own age.
 
     The file is only rewritten on a day that produced analyses — "no analyses
     today" correctly declines to overwrite it. That is sensible behaviour and

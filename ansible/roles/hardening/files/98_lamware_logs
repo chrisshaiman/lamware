@@ -49,7 +49,7 @@
 
 # lamware's own append-only logs, never rotated: they may grow, not shrink or change
 # owner. Appended nightly (digest, retention) or every 5 minutes (network monitor).
-/opt/ntfy-alerts/digest\.log$ f ActLog
+/var/lib/lamware-notify/digest\.log$ f ActLog
 /opt/CAPEv2/log/retention\.log$ f ActLog
 /opt/network-monitor/network-monitor\.log$ f ActLog
 

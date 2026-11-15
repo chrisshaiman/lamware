@@ -37,3 +37,12 @@ ntfy_dropbox_dir: /var/spool/lamware-notify
 # A compromised pipeline can only submit alert text; these bound how much.
 ntfy_relay_max_per_run: 20
 ntfy_relay_max_bytes: 16384
+
+# ADR-025 for the notifier (V12): code root-owned in ntfy_install_dir; what the
+# notify user writes (the digest's output) lives here instead. The API reads
+# latest-digest.json from here, through group lamware.
+ntfy_data_dir: /var/lib/lamware-notify
+# The ntfy topic and token, out of the code (the module used to embed them, which
+# made them readable by every lamware account). Root, the notify user and
+# auto-feeder (an ACL) are the only readers; every other caller enqueues.
+ntfy_secrets_file: /etc/lamware-notify/ntfy.json

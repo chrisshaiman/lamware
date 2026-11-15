@@ -128,10 +128,10 @@ def test_no_template_tests_ntfy_enabled_bare():
 # ---------------------------------------------------------------------------
 
 def test_the_module_group_matches_the_directory():
-    """The directory is pipeline:lamware 0750 so auto-feeder (in lamware) can
+    """The directory is root:lamware 0750 so auto-feeder (in lamware) can
     traverse it. Deploying the module group `pipeline` meant it could reach the
     file and not read it."""
-    d = _task("Create ntfy-alerts directory")["ansible.builtin.file"]
+    d = _task("Create the ntfy-alerts code directory (root-owned)")["ansible.builtin.file"]
     m = _task("Deploy ntfy notification module")["ansible.builtin.template"]
     assert d["group"] == "lamware"
     assert m["group"] == "lamware", (
@@ -141,11 +141,13 @@ def test_the_module_group_matches_the_directory():
 
 def test_the_digest_script_is_readable_only_by_the_user_that_runs_it():
     """#729 moved the digest to the notify user. It carries the DB password and
-    the LiteLLM key, and nobody else runs it, so it is owner-only now; it was
-    group lamware, which made both readable by every member of that group."""
+    the LiteLLM key, and nobody else runs it: group lamware made both readable
+    by every member of that group. V12 made it root's, so the notify user reads
+    it through its own group and cannot change it."""
     t = _task("Deploy daily digest script")["ansible.builtin.template"]
-    assert t["owner"] == t["group"] == "{{ ntfy_user }}"
-    assert t["mode"] == "0700"
+    assert t["owner"] == "root"
+    assert t["group"] == "{{ ntfy_user }}"
+    assert t["mode"] == "0750"
 
 
 def test_the_import_guard_catches_more_than_ImportError():
@@ -278,7 +280,7 @@ def test_stderr_is_still_captured_somewhere():
     """Dropping the redirect must not mean losing a crash that happens before
     logging is configured."""
     svc = _digest_unit()["Service"]
-    assert svc["StandardError"] == "append:/opt/ntfy-alerts/digest.err", (
+    assert svc["StandardError"] == "append:/var/lib/lamware-notify/digest.err", (
         f"stderr goes nowhere useful: {svc.get('StandardError')!r}")
 
 
@@ -286,5 +288,6 @@ def _digest_unit() -> configparser.ConfigParser:
     cp = configparser.ConfigParser(interpolation=None)
     cp.read_string(jinja2.Template(
         (NTFY / "templates" / "lamware-digest.service.j2").read_text()).render(
-            ntfy_user="lamware-notify", ntfy_install_dir="/opt/ntfy-alerts"))
+            ntfy_user="lamware-notify", ntfy_install_dir="/opt/ntfy-alerts",
+            ntfy_data_dir="/var/lib/lamware-notify"))
     return cp
