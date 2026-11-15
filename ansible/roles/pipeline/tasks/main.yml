@@ -1203,7 +1203,8 @@
     for d in /opt/pipeline/intake /opt/pipeline/intake/*; do
       [ -d "$d" ] && [ ! -L "$d" ] || continue
       if [ "$(stat -c '%U:%G %a' "$d")" != "root:root 755" ]; then
-        chown -h root:root -- "$d"; chmod 0755 -- "$d"; n=$((n+1))
+        # g-s too: GNU chmod keeps the setgid bit of a directory on a numeric mode.
+        chown -h root:root -- "$d"; chmod 0755 -- "$d"; chmod g-s -- "$d"; n=$((n+1))
       fi
     done
     echo "normalised $n"

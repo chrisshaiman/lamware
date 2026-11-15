@@ -163,3 +163,35 @@ def test_samples_are_staged_under_the_auto_feeder_dl_directory(tmp_path):
     _run(b, env)
     for call in pipe_log.read_text().splitlines():
         assert call.split()[0].startswith(f"{b}/dl/"), call
+
+
+def test_the_batch_directory_migration_reaches_its_target_and_stays_there(tmp_path):
+    """Run the role's normalise script against a setgid tree (the host had 2770
+    batch dirs). `chmod 0755` alone keeps setgid on a directory, so the first
+    version never matched `755` and reported a change on every deploy."""
+    import os
+    import subprocess
+
+    import yaml
+    tasks = yaml.safe_load((ROOT / "ansible" / "roles" / "pipeline" / "tasks" / "main.yml").read_text())
+    script = next(t for t in tasks if isinstance(t, dict) and t.get("name")
+                  == "Make the intake directory and each batch directory root's (0755)")["ansible.builtin.shell"]
+    me = f"{os.getuid()}"
+    top = tmp_path / "intake"
+    (top / "batch-a").mkdir(parents=True)
+    os.symlink("/etc", top / "link")
+    for d in (top, top / "batch-a"):
+        os.chmod(d, 0o2770)
+    # Run as the test user: root:root becomes the caller's own name and group.
+    import grp
+    import pwd
+    owner = f"{pwd.getpwuid(os.getuid()).pw_name}:{grp.getgrgid(os.getgid()).gr_name}"
+    script = (script.replace("/opt/pipeline/intake", str(top))
+              .replace("chown -h root:root", f"chown -h {me}:{os.getgid()}")
+              .replace("root:root 755", f"{owner} 755"))
+    first = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    assert first.stdout.strip() == "normalised 2"
+    for d in (top, top / "batch-a"):
+        assert oct(d.stat().st_mode & 0o7777) == "0o755", d
+    second = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    assert second.stdout.strip() == "normalised 0"
