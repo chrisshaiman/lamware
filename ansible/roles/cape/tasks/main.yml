@@ -59,6 +59,28 @@
     executable: /bin/bash
   changed_when: false
 
+# cape2.sh also writes root crontab lines no role manages. One ran cape-owned code
+# as root at every boot (`cd /opt/CAPEv2/utils/ && ./smtp_sinkhole.sh`: cape owns
+# that tree, so it could rewrite the script and make it executable). The others
+# signal a Tor control port nothing listens on, and chown a /data tree MongoDB does
+# not use (its dbPath is /var/lib/mongodb) recursively as root. None does anything
+# lamware relies on; the sinkhole script was mode 0600 and never ran. Removed by
+# pattern, keeping every other line exactly; security-test check 20 then requires
+# that root's scheduled jobs run only code root owns.
+- name: Remove root cron lines from cape2.sh that run cape-owned code or nothing
+  ansible.builtin.shell: |
+    set -eu
+    cur=$(crontab -l -u root 2>/dev/null || true)
+    new=$(printf '%s\n' "$cur" | grep -vE '{{ cape_root_cron_retired | join('|') }}' || true)
+    if [ "$cur" != "$new" ]; then
+      printf '%s\n' "$new" | crontab -u root -
+      echo "removed: $(printf '%s\n' "$cur" | grep -cE '{{ cape_root_cron_retired | join('|') }}')"
+    fi
+  args:
+    executable: /bin/bash
+  register: cape_root_cron_cleanup
+  changed_when: "'removed:' in cape_root_cron_cleanup.stdout"
+
 # CAPE is installed by upstream's cape2.sh and is NOT version-pinned, so an
 # upgrade replaces these files wholesale. Both patches lived only on the host
 # until #607; the first one is load-bearing — without it EVERY detonation fails.
