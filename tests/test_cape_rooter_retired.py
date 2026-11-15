@@ -43,7 +43,7 @@ PGREP = '#!/bin/sh\n[ -n "$ROOTER_PIDS" ] && echo "$ROOTER_PIDS" && exit 0\nexit
 
 
 def _check15(sock: str) -> str:
-    start = SMOKE.index('echo "[15/20]')
+    start = SMOKE.index('echo "[15/21]')
     block = SMOKE[start:SMOKE.index("# ----", start)]
     return Environment().from_string(block).render(security_test_cape_rooter_socket=sock)
 

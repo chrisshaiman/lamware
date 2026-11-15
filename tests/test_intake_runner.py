@@ -19,7 +19,9 @@ SHA_A, SHA_B = "a" * 64, "b" * 64
 def _setup(tmp_path, fail_download=(), pipeline_rc=0):
     bin_ = tmp_path / "bin"
     bin_.mkdir()
-    (bin_ / "sudo").write_text('#!/bin/sh\n[ "$1" = "-u" ] && shift 2\nexec "$@"\n')
+    sudo_log = tmp_path / "sudo_calls"
+    # Fake sudo: records "<user> <command...>", drops `-u user`.
+    (bin_ / "sudo").write_text(f'#!/bin/sh\n[ "$1" = "-u" ] && {{ echo "$2 $3 $4" >> {sudo_log}; shift 2; }}\nexec "$@"\n')
     reports = tmp_path / "reports"
     reports.mkdir()
     pipe_log = tmp_path / "pipeline_calls"
@@ -33,7 +35,9 @@ def _setup(tmp_path, fail_download=(), pipeline_rc=0):
         {"sha256": SHA_A, "signature": "Stealc"}, {"sha256": SHA_B, "signature": "Vidar"}]))
     # Fake download helper with the real CLI: <sha> <out_dir> -> "<path>\t<name>"
     fails = " ".join(fail_download)
-    (b / "intake_download.py").write_text(f'''import sys, os
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "intake_download.py").write_text(f'''import sys, os
 sha, out = sys.argv[1], sys.argv[2]
 if sha in "{fails}".split(): sys.exit(3)
 os.makedirs(out, exist_ok=True)
@@ -43,7 +47,8 @@ print(p + "\\t" + "s.exe")
 ''')
     env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}",
            "INTAKE_RUN_PIPELINE": str(bin_ / "run-pipeline"), "INTAKE_REPORTS_DIR": str(reports),
-           "INTAKE_PAUSE_FILE": str(tmp_path / "PAUSE"), "INTAKE_PYTHON": "python3"}
+           "INTAKE_PAUSE_FILE": str(tmp_path / "PAUSE"), "INTAKE_PYTHON": "python3",
+           "INTAKE_LIB": str(lib)}
     return b, env, pipe_log, reports
 
 
@@ -70,7 +75,7 @@ def test_each_sample_runs_the_pipeline_with_its_family(tmp_path):
 def test_the_staged_sample_is_removed_after_its_run(tmp_path):
     b, env, _, _ = _setup(tmp_path)
     _run(b, env)
-    assert not (b / SHA_A).exists() and not (b / SHA_B).exists()
+    assert not (b / "dl" / SHA_A).exists() and not (b / "dl" / SHA_B).exists()
 
 
 def test_a_rerun_skips_finished_samples(tmp_path):
@@ -100,3 +105,61 @@ def test_the_pause_file_stops_the_batch(tmp_path):
     _run(b, env)
     assert not pipe_log.exists()
     assert "PAUSE file present" in (b / "intake.log").read_text()
+
+
+# --- ADR-025 for intake: root runs only root-owned code, writes only its own dir --
+
+def test_nothing_in_the_batch_directory_is_executed(tmp_path):
+    """The batch dir used to be lamware-group-writable and held the scripts root ran.
+    A planted downloader there must never run; the real one comes from INTAKE_LIB."""
+    b, env, pipe_log, _ = _setup(tmp_path)
+    marker = tmp_path / "PLANTED_RAN"
+    (b / "intake_download.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n")
+    _run(b, env)
+    assert not marker.exists()
+    assert len(pipe_log.read_text().splitlines()) == 2
+
+
+def test_a_manifest_entry_that_is_not_a_sha256_is_skipped_before_any_download(tmp_path):
+    b, env, pipe_log, _ = _setup(tmp_path)
+    (b / "manifest.json").write_text(json.dumps([
+        {"sha256": "../../../etc", "signature": "x"}, {"sha256": "A" * 64, "signature": "x"},
+        {"sha256": "a" * 63, "signature": "x"}, {"sha256": SHA_B, "signature": "Vidar"}]))
+    _run(b, env)
+    calls = (tmp_path / "sudo_calls").read_text().splitlines()
+    downloads = [c for c in calls if "intake_download.py" in c]
+    assert len(downloads) == 1 and SHA_B in pipe_log.read_text()
+    assert (b / "intake.log").read_text().count("not a sha256") == 3
+
+
+def test_the_staged_sample_is_removed_as_auto_feeder_not_root(tmp_path):
+    b, env, _, _ = _setup(tmp_path)
+    _run(b, env)
+    rms = [c for c in (tmp_path / "sudo_calls").read_text().splitlines() if " rm " in f" {c} "]
+    assert rms and all(c.startswith("auto-feeder rm") for c in rms), rms
+
+
+INTAKE_SH = (ROOT / "scripts" / "intake.sh").read_text()
+
+
+def test_intake_sh_installs_the_code_root_owned_and_runs_it_from_there():
+    assert "LIB=/usr/local/lib/lamware/intake" in INTAKE_SH
+    assert "install -o root -g root -m 0755 /dev/stdin '$LIB/intake_run.sh'" in INTAKE_SH
+    assert "install -o root -g root -m 0755 /dev/stdin '$LIB/intake_download.py'" in INTAKE_SH
+    exec_lines = [ln for ln in INTAKE_SH.splitlines() if ln.startswith("ExecStart=")]
+    assert exec_lines == ["ExecStart=/bin/bash $LIB/intake_run.sh $B"]
+
+
+def test_intake_sh_gives_auto_feeder_only_the_download_dir():
+    assert "install -d -o root -g root -m 0755 /usr/local/lib/lamware '$LIB' /opt/pipeline/intake '$B'" in INTAKE_SH
+    assert "install -d -o auto-feeder -g lamware -m 2750 '$B/dl'" in INTAKE_SH
+    assert "2770" not in "".join(ln for ln in INTAKE_SH.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def test_samples_are_staged_under_the_auto_feeder_dl_directory(tmp_path):
+    """The batch dir is root's; only dl/ belongs to auto-feeder, so that is where
+    the downloader writes and what the pipeline is pointed at."""
+    b, env, pipe_log, _ = _setup(tmp_path)
+    _run(b, env)
+    for call in pipe_log.read_text().splitlines():
+        assert call.split()[0].startswith(f"{b}/dl/"), call

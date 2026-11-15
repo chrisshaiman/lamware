@@ -28,8 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SMOKE = (ROOT / "ansible/roles/security-test/templates/security-smoke-test.sh.j2").read_text()
 CAPE_TASKS = yaml.safe_load((ROOT / "ansible/roles/cape/tasks/main.yml").read_text())
 CAPE_DEFAULTS = yaml.safe_load((ROOT / "ansible/roles/cape/defaults/main.yml").read_text())
-CHECKER = SMOKE[SMOKE.index("python3 -I - <<'PYEOF'\n") + len("python3 -I - <<'PYEOF'\n"):
-                SMOKE.index("\nPYEOF\n")]
+_START = "cat > \"$ROOTJOBS_PY\" <<'PYEOF'\n"
+CHECKER = SMOKE[SMOKE.index(_START) + len(_START):SMOKE.index("\nPYEOF\n")]
 
 HOST_CRONTAB = """\
 @reboot /bin/mkdir -p /data/configdb && /bin/mkdir -p /data/db && /bin/chown mongodb:mongodb /data -R
@@ -79,7 +79,7 @@ def _check(tree: Path, crontab: str, trusted: int, cron_d: dict | None = None) -
         (tree / "cron.d" / name).write_text(body)
     env = {"PATH": f"{tree / 'bin'}:/usr/bin:/bin", "TRUSTED_UID": str(trusted),
            "CRONTAB_FILE": str(tree / "no-crontab"), "CRON_D": str(tree / "cron.d")}
-    return subprocess.run([sys.executable, "-I", "-c", CHECKER], capture_output=True, text=True,
+    return subprocess.run([sys.executable, "-I", "-c", CHECKER, "cron"], capture_output=True, text=True,
                           env=env, timeout=30).stdout
 
 
@@ -137,7 +137,7 @@ def test_comments_and_variables_are_not_jobs(tree):
 
 
 def test_the_check_reports_blind_when_nothing_parses():
-    block = SMOKE[SMOKE.index('echo "[20/20]'):SMOKE.index("# Summary + ntfy")]
+    block = SMOKE[SMOKE.index('echo "[20/21]'):SMOKE.index('echo "[21/21]')]
     assert 'if [ -z "$CRON_SEEN" ] || [ "$CRON_SEEN" = "0" ]; then' in block
     assert "root cron probe is blind" in block
 
@@ -175,3 +175,70 @@ def test_the_host_crontab_after_cleanup_passes_check_20_shape():
     pats = [re.compile(p) for p in CAPE_DEFAULTS["cape_root_cron_retired"]]
     removed = [ln for ln in HOST_CRONTAB.splitlines() if any(p.search(ln) for p in pats)]
     assert len(removed) == 3
+
+
+# --- check 21: the same test for root's systemd units (V8) -----------------------
+
+def _units(tree: Path, show: str, trusted: int) -> str:
+    f = tree / "show.txt"
+    f.write_text(show)
+    env = {"PATH": "/usr/bin:/bin", "TRUSTED_UID": str(trusted), "SYSTEMCTL_SHOW_FILE": str(f)}
+    return subprocess.run([sys.executable, "-I", "-c", CHECKER, "units"], capture_output=True, text=True,
+                          env=env, timeout=30).stdout
+
+
+def _block(unit: str, user: str, *argvs: str) -> str:
+    lines = [f"Id={unit}", f"User={user}"]
+    for i, a in enumerate(argvs):
+        key = "ExecStart" if i == 0 else "ExecStartPre"
+        lines.append(f"{key}={{ path={a.split()[0]} ; argv[]={a} ; ignore_errors=no ; start_time=[n/a] }}")
+    return "\n".join(lines) + "\n"
+
+
+def test_a_root_unit_running_a_trusted_path_passes(tree):
+    out = _units(tree, _block("good.service", "", f"/bin/bash {tree}/trusted/job.sh"), ME)
+    assert "PARSED 1" in out and "BAD" not in out, out
+
+
+@pytest.mark.parametrize("argv,why", [
+    ("/bin/bash {t}/groupdir/run.sh {t}/groupdir", "V8: a script in a group-writable (2770) dir"),
+    ("{t}/open/job.sh", "a binary in a world-writable dir"),
+    ("-{t}/trusted/loose.sh", "systemd's '-' prefix does not hide the path"),
+])
+def test_a_root_unit_naming_an_untrusted_path_fails(tree, argv, why):
+    out = _units(tree, _block("bad.service", "root", argv.format(t=tree)), ME)
+    assert "BAD bad.service" in out, why
+
+
+def test_a_unit_running_as_another_user_is_skipped(tree):
+    show = _block("cape.service", "cape", f"{tree}/open/job.sh") + "\n" + \
+        _block("ok.service", "", f"{tree}/trusted/job.sh")
+    out = _units(tree, show, ME)
+    assert "PARSED 1" in out and "BAD" not in out, out
+
+
+def test_every_exec_line_of_a_root_unit_is_checked(tree):
+    show = _block("two.service", "", f"{tree}/trusted/job.sh", f"{tree}/open/job.sh")
+    assert "BAD two.service" in _units(tree, show, ME)
+
+
+def test_no_root_unit_parsed_means_blind(tree):
+    out = _units(tree, _block("x.service", "cape", "/bin/true"), ME)
+    assert "PARSED 0" in out
+    block = SMOKE[SMOKE.index('echo "[21/21]'):SMOKE.index("# Summary + ntfy")]
+    assert 'if [ -z "$UNIT_SEEN" ] || [ "$UNIT_SEEN" = "0" ]; then' in block
+
+
+def test_a_data_path_argument_is_not_code(tree):
+    """Stock units pass log files under a group-writable /var/log (root:syslog 775);
+    a file argument without an exec bit or script suffix is data, not what runs."""
+    data = tree / "open" / "pacct"
+    data.write_text("")
+    data.chmod(0o644)
+    out = _units(tree, _block("acct.service", "", f"{tree}/trusted/job.sh {data}"), ME)
+    assert "PARSED 1" in out and "BAD" not in out, out
+
+
+def test_a_script_argument_in_an_untrusted_dir_is_still_code(tree):
+    out = _units(tree, _block("alert.service", "", f"/usr/bin/python3 {tree}/open/job.sh"), ME)
+    assert "BAD alert.service" in out
