@@ -125,6 +125,12 @@ def test_cron_d_lines_count_only_for_root(tree):
     assert "BAD" in out
 
 
+def test_device_files_like_dev_null_are_not_flagged(tree):
+    """/dev/null is root-owned 0666 by design; distro cron lines redirect to it."""
+    out = _check(tree, "", ME, {"sysstat": "5-55/10 * * * * root command -v debian-sa1 > /dev/null && debian-sa1 1 1\n"})
+    assert "PARSED 1" in out and "BAD" not in out, out
+
+
 def test_comments_and_variables_are_not_jobs(tree):
     out = _check(tree, "# a comment\nSHELL=/bin/bash\n\n", ME)
     assert "PARSED 0" in out

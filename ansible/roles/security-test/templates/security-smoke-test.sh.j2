@@ -623,6 +623,8 @@ def unsafe(path):
             st = os.stat(p)
         except OSError:
             return None
+        if stat.S_ISCHR(st.st_mode) or stat.S_ISBLK(st.st_mode):
+            return None    # /dev/null and friends: world-writable by design, not code
         sticky = st.st_mode & stat.S_ISVTX
         if st.st_uid not in trusted or (st.st_mode & 0o022 and not (stat.S_ISDIR(st.st_mode) and sticky)):
             return f"{p} {st.st_uid}:{st.st_gid} {oct(st.st_mode & 0o7777)}"
