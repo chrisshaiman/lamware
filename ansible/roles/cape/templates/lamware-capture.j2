@@ -1,0 +1,106 @@
+#!/usr/bin/python3 -I
+# {{ cape_capture_helper }} -- managed by Ansible (cape role). Root-owned; cape runs it
+# through sudo (/etc/sudoers.d/lamware-capture). ADR-029.
+"""Packet capture for CAPE's sniffer, on the detonation bridge only.
+
+CAPE's sniffer (modules/auxiliary/sniffer.py) runs its configured tcpdump through
+sudo when sudo allows it, with exactly this argument shape:
+
+    -U -q -s 0 -i <interface> -n -Z <user> -w <analyses>/<task>/dump.pcap <filter...>
+
+This helper accepts only that shape, with the interface fixed to the detonation
+bridge, the user fixed to cape, and the path fixed to a task's dump.pcap. It opens
+that file itself WITH CAPE'S PERMISSIONS (tcpdump would open it as root, in a
+directory cape owns), hands it to tcpdump as stdout (`-w -`), and puts the filter
+after `--` so no part of it can be read as an option. tcpdump drops to cape (-Z)
+once the interface is open, so CAPE can still stop it.
+
+Standard library only, run with -I: nothing cape can write is imported.
+"""
+import os
+import pwd
+import re
+import sys
+
+TCPDUMP = "/usr/bin/tcpdump"
+INTERFACE = "{{ cape_capture_interface }}"
+CAPE_USER = "{{ cape_user }}"
+ANALYSES = "{{ cape_vm_dump_analyses_dir }}"
+PCAP_RE = re.compile(r"^" + re.escape(ANALYSES) + r"/([0-9]{1,9})/dump\.pcap$")
+# A filter element: words, addresses, ports, parentheses and spaces. CAPE passes the
+# configured bpf ("not arp") as one element, so spaces are allowed inside one.
+FILTER_RE = re.compile(r"^[A-Za-z0-9.:() ]+$")
+# None marks the three values checked separately.
+SHAPE = ["-U", "-q", "-s", "0", "-i", None, "-n", "-Z", None, "-w", None]
+ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
+
+
+class Refused(Exception):
+    """The arguments are not the shape CAPE's sniffer sends."""
+
+
+def parse(argv: list[str]) -> tuple[str, list[str]]:
+    """CAPE's sniffer arguments -> (pcap path, filter elements). Anything else raises."""
+    if len(argv) < len(SHAPE):
+        raise Refused(f"{len(argv)} arguments, expected at least {len(SHAPE)}")
+    for i, want in enumerate(SHAPE):
+        if want is not None and argv[i] != want:
+            raise Refused(f"argument {i + 1} is {argv[i]!r}, expected {want!r}")
+    interface, user, path = argv[5], argv[8], argv[10]
+    if interface != INTERFACE:
+        raise Refused(f"interface {interface!r}: only {INTERFACE} may be captured")
+    if user != CAPE_USER:
+        raise Refused(f"-Z {user!r}: tcpdump drops to {CAPE_USER} only")
+    if not PCAP_RE.match(path):
+        raise Refused(f"-w {path!r}: only {ANALYSES}/<task>/dump.pcap")
+    filt = argv[len(SHAPE):]
+    for element in filt:
+        if not FILTER_RE.match(element) or element.lstrip().startswith("-"):
+            raise Refused(f"filter element {element!r}")
+    return path, filt
+
+
+def open_as(user: str, path: str) -> int:
+    """Open path for writing with user's permissions, not root's; return the fd.
+
+    The task directory is cape's, so a link or a swapped directory there must not
+    steer a root write. Opened as cape, it reaches only what cape could anyway.
+    """
+    pw = pwd.getpwnam(user)
+    os.setgroups(os.getgrouplist(user, pw.pw_gid))
+    os.setegid(pw.pw_gid)
+    os.seteuid(pw.pw_uid)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+        # The analyses tree is setgid lamware; CAPE's pcaps have always been group cape.
+        os.fchown(fd, -1, pw.pw_gid)
+    finally:
+        os.seteuid(0)
+        os.setegid(0)
+        os.setgroups([])
+    return fd
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0:
+        print("lamware-capture: must run as root (through sudo)", file=sys.stderr)
+        return 2
+    try:
+        path, filt = parse(argv)
+    except Refused as e:
+        print(f"lamware-capture: refused: {e}", file=sys.stderr)
+        return 2
+    try:
+        fd = open_as(CAPE_USER, path)
+    except OSError as e:
+        print(f"lamware-capture: cannot open {path} as {CAPE_USER}: {e}", file=sys.stderr)
+        return 1
+    os.dup2(fd, 1)
+    os.close(fd)
+    os.execve(TCPDUMP, [TCPDUMP, "-U", "-q", "-s", "0", "-i", INTERFACE, "-n",
+                        "-Z", CAPE_USER, "-w", "-", "--", *filt], ENV)
+    return 1  # not reached
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

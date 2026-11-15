@@ -50,6 +50,7 @@ these describe an AWS data plane that no longer exists.
 | [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Proposed — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
 | [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
+| [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1798,3 +1799,43 @@ CAPE's rooter (`utils/rooter.py`, unit `cape-rooter`) is a root daemon. CAPE's s
 ### Rollback
 
 `systemctl unmask cape-rooter` and redeploy the cape role from before this change. For the rooter to actually work, the socket group would also have to change. As shown above, that changes every detonation's network, so it is option 2, not a rollback.
+
+---
+
+## ADR-029: CAPE captures packets through a root helper, on the detonation bridge only
+
+**Status:** Accepted (2026-11-15, owner). Implemented 2026-11-15.
+**Refs:** ADR-027 (the same pattern for libvirt), #711 (capture without sudo)
+
+### Context
+
+CAPE's sniffer runs tcpdump for each analysis. #711 replaced cape2.sh's `sudo tcpdump` rule (root with any arguments) with file capabilities on `/usr/bin/tcpdump` for a group only cape was in. Capabilities apply to every invocation, so cape could capture on any interface, not just the detonation bridge. Loopback carries nginx's traffic to its upstreams and every call to the LLM router, in clear text.
+
+Measured on the host (2026-11-15):
+
+- CAPE's sniffer (`modules/auxiliary/sniffer.py`) uses sudo whenever `sudo --list <tcpdump>` succeeds. It passes a fixed argument shape with `-Z <its user>`, and stops the capture by signalling sudo's child process. The tcpdump path comes from `auxiliary.conf`.
+- tcpdump opens its `-w` file as root, before it drops to the `-Z` user. A test capture into a root-only directory succeeded. The task directory is cape's.
+- With `Defaults use_pty` (Ubuntu's default), sudo's child is a root monitor process, which CAPE cannot signal.
+
+### Decision
+
+The same shape as ADR-027's `lamware-vm`:
+
+- **The helper.** `/usr/local/sbin/lamware-capture` is root-owned and runs Python with `-I`. It accepts only the sniffer's argument shape, the detonation bridge, `-Z cape`, and `<analyses>/<task>/dump.pcap`. Every filter element must be words, addresses, ports, parentheses and spaces.
+- **How it runs tcpdump.** The helper opens the pcap itself with cape's permissions, without following links, and passes it to tcpdump as stdout (`-w -`). It puts the filter after `--`.
+- **sudo.** cape may run the helper and nothing else new; `!use_pty` is set for this one command, so CAPE can still stop the capture. `auxiliary.conf`'s `[sniffer] tcpdump` points at the helper.
+- **What is removed.** tcpdump loses its capabilities, its statoverride and the apt hook that re-applied them. The `pcap` group is removed.
+- **Security-test check 23** probes it:
+  - each service user tries to capture on `lo`, and must fail;
+  - root doing the same is the control that the probe can see a capture;
+  - the helper must refuse `lo` and must capture on the bridge.
+
+### Consequences
+
+- Packet capture is root's alone. cape can capture the detonation bridge only, into a task's own `dump.pcap`.
+- A CAPE upgrade that changes the sniffer's argument shape makes the helper refuse it. The result is an empty pcap and a refusal in CAPE's log; the role's deploy-time probe catches it at the next deploy.
+- No local CAPE patch is needed.
+
+### Rollback
+
+Revert and redeploy the cape role. The old capture-privileges tasks re-create the `pcap` group, the statoverride and the capabilities, and the sniffer goes back to `/usr/bin/tcpdump`.
