@@ -583,6 +583,9 @@ for p in $(pgrep -u "$CAPE_U"); do
 done
 LV_MACH=$(runuser -u postgres -- psql -tAd cape -c "select count(*) from machines" 2>/dev/null)
 [ "$LV_MACH" = "{{ (cape_guests | default([1, 2])) | length }}" ] || LV_BAD="$LV_BAD CAPE has ${LV_MACH:-?} machines loaded;"
+# Where the root helper's memory dumps are written before they move to cape.
+[ "$(stat -c '%U %a' {{ cape_vm_dump_staging | default('/var/lib/lamware-memdump') }} 2>/dev/null)" = "root 700" ] \
+    || LV_BAD="$LV_BAD the memory-dump staging directory is not root 0700;"
 LV_W=$(find {{ cape_guest_image_dir | default('/var/lib/libvirt/images') }} -maxdepth 1 -perm /022 -printf '%p ' 2>/dev/null)
 [ -n "$LV_W" ] && LV_BAD="$LV_BAD group/world-writable in the guest image dir: $LV_W;"
 if [ "$LV_CTL" != 0 ]; then

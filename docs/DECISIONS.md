@@ -1699,6 +1699,30 @@ CAPE still has both machines loaded, because a missing permission makes CAPE dro
   socket. That predates this work (seen at the first boot of the day) and is tracked
   separately.
 
+### Correction (2026-11-15): memory dumps were in use
+
+The amended decision above says full-VM memory dumps were not used. That was wrong.
+The pipeline's code default is `cape_memory_dump: False`, but the deployed pipeline
+config sets it to `True`. So production `run-pipeline` submissions request `memory=1`,
+and the Volatility stage reads the dump. The claim came from the code default and from
+`make detonate`, which refuses `memory`, instead of from the deployed config. After
+#844, CAPE's `coreDump` was refused, and CAPE logs that and carries on, so Volatility
+would have silently had no input. No pipeline run happened in that window.
+
+**Fix (#845):** `lamware-vm dump <guest> <task-id>`, now a Python helper (stdlib only,
+`python3 -I`). It accepts a configured guest and a numeric task id, and no path.
+libvirtd writes into a root-only staging directory on the same filesystem. The helper
+gives the file to cape: owner, mode 0640, and the task folder's default ACL, which a
+renamed file would not inherit and which is how the pipeline reads it. It then renames
+the file into `<analyses>/<id>/memory.dmp` through directory handles opened without
+following links, after checking the folder is cape's. Local CAPE patch 0005 makes
+`dump_memory` call it. The cape-role cron that deletes dumps after 60 minutes runs as
+cape, so it still reclaims them.
+
+**Proven:** a pipeline run with `memory=1` (task 1317). The dump arrived through the
+helper as an 8,606,523,139-byte ELF image, `cape:cape 0640` with `group:lamware:r--`,
+and Volatility read it. Staging was empty afterwards, with no refusals.
+
 ### Consequences
 
 - cape loses root-equivalence through libvirt. A compromise of CAPE's web, processing

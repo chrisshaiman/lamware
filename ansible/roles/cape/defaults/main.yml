@@ -70,3 +70,7 @@ cape_rooter_files:
 # the patch, so change both together.
 cape_vm_helper: /usr/local/sbin/lamware-vm
 cape_vm_virsh: /usr/bin/virsh
+# lamware-vm dump: libvirtd writes into this root-only directory; the helper then
+# renames the file into the task folder (same filesystem, so no 8.6 GB copy).
+cape_vm_dump_staging: /var/lib/lamware-memdump
+cape_vm_dump_analyses_dir: "{{ cape_install_dir }}/storage/analyses"

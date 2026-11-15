@@ -1,37 +1,170 @@
-#!/bin/bash
+#!/usr/bin/python3 -I
 # {{ cape_vm_helper }} -- managed by Ansible (cape role). Root-owned; cape runs it
 # through sudo (/etc/sudoers.d/lamware-vm).
-#
-# The one libvirt write CAPE needs, done as root (ADR-027). cape is not given
-# libvirt's snapshot permission: the same permission CREATES snapshots, and
-# libvirtd (root) writes an external snapshot's memory file to any path the
-# caller names -- measured 2026-11-14, it overwrote an existing root-owned file.
-# This reverts a configured guest to its configured snapshot and does nothing
-# else: no snapshot is created, no path is taken from the caller.
-#
-# Usage: lamware-vm revert <guest> <snapshot>
-set -euo pipefail
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-umask 077
+"""The two libvirt writes CAPE needs, done as root (ADR-027).
 
-VIRSH="{{ cape_vm_virsh }}"
-# guest:snapshot pairs, from cape_guests (the same list kvm.conf is written from).
-ALLOWED=" {% for g in cape_guests %}{{ g.name }}:{{ g.snapshot }} {% endfor %}"
+cape is not given libvirt's snapshot or core-dump permission: both make libvirtd
+(root) write a file wherever the caller says (measured 2026-11-14: a snapshot
+request overwrote an existing root-owned file). This helper takes no path.
 
-die() { echo "lamware-vm: $*" >&2; exit 2; }
+  lamware-vm revert <guest> <snapshot>
+      Revert a configured guest to its configured snapshot. Creates nothing.
 
-[ $# -eq 3 ] || die "usage: lamware-vm revert <guest> <snapshot>"
-[ "$1" = revert ] || die "unknown action: $1"
-guest=$2
-snap=$3
-case "$ALLOWED" in
-    *" $guest:$snap "*) ;;
-    *) die "not an allowed guest/snapshot pair: $guest/$snap" ;;
-esac
+  lamware-vm dump <guest> <task-id>
+      Dump a configured guest's memory for CAPE task <task-id>. libvirtd writes
+      into a root-only staging directory; the file is given to cape (mode, owner
+      and the task folder's default ACL, so the pipeline can read it) and renamed
+      into <analyses>/<task-id>/memory.dmp through directory handles opened
+      without following links, after checking the folder belongs to cape. Root
+      never writes through a path cape could have swapped.
 
-# The pair is fixed, but confirm the snapshot really exists on that guest, so a
-# missing snapshot fails here with a clear message rather than inside virsh.
-"$VIRSH" -q -c qemu:///system snapshot-list --name "$guest" | grep -qxF -- "$snap" \
-    || die "guest $guest has no snapshot named $snap"
+Standard library only, run with -I: nothing cape can write is imported.
+"""
+import os
+import pwd
+import stat
+import subprocess
+import sys
+import time
 
-exec "$VIRSH" -q -c qemu:///system snapshot-revert --domain "$guest" --snapshotname "$snap"
+VIRSH = "{{ cape_vm_virsh }}"
+# guest -> snapshot, from cape_guests (the same list kvm.conf is written from).
+GUESTS = { {% for g in cape_guests %}"{{ g.name }}": "{{ g.snapshot }}"{{ ", " if not loop.last }}{% endfor %} }
+ANALYSES = "{{ cape_vm_dump_analyses_dir }}"
+STAGING = "{{ cape_vm_dump_staging }}"
+CAPE_USER = "{{ cape_user }}"
+DUMP_NAME = "memory.dmp"
+STALE_SECONDS = 6 * 3600
+DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
+os.umask(0o077)
+
+
+def die(msg: str, code: int = 2) -> "None":
+    print(f"lamware-vm: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def virsh(*args: str, capture: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run([VIRSH, "-q", "-c", "qemu:///system", *args],
+                          check=True, capture_output=capture, text=True)
+
+
+def revert(guest: str, snap: str) -> None:
+    if GUESTS.get(guest) != snap or not snap:
+        die(f"not an allowed guest/snapshot pair: {guest}/{snap}")
+    names = [n.strip() for n in virsh("snapshot-list", "--name", guest, capture=True).stdout.splitlines()]
+    if snap not in names:
+        die(f"guest {guest} has no snapshot named {snap}")
+    os.execv(VIRSH, [VIRSH, "-q", "-c", "qemu:///system", "snapshot-revert",
+                     "--domain", guest, "--snapshotname", snap])
+
+
+def open_dir_nofollow(path: str) -> int:
+    """Open an absolute directory path component by component, never following a link."""
+    fd = os.open("/", DIR_FLAGS)
+    try:
+        for part in [p for p in path.split("/") if p]:
+            nxt = os.open(part, DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except OSError:
+        os.close(fd)
+        raise
+
+
+def task_dir(task_id: str, cape_uid: int) -> int:
+    try:
+        fd = open_dir_nofollow(f"{ANALYSES}/{task_id}")
+    except OSError as e:
+        die(f"task folder {ANALYSES}/{task_id} is not a plain directory: {e.strerror}")
+    st = os.fstat(fd)
+    if st.st_uid != cape_uid:
+        os.close(fd)
+        die(f"task folder {ANALYSES}/{task_id} is not owned by {CAPE_USER}")
+    return fd
+
+
+def staging_dir() -> int:
+    fd = open_dir_nofollow(STAGING)
+    st = os.fstat(fd)
+    if st.st_uid != os.geteuid() or st.st_mode & 0o077:
+        os.close(fd)
+        die(f"staging directory {STAGING} must be owned by the helper's user and closed to others")
+    return fd
+
+
+def file_acl_from_default(dir_fd: int) -> str:
+    """The task folder's default ACL, as the access ACL a file created there gets.
+    A renamed file inherits nothing, so it is applied explicitly; execute bits are
+    dropped, as file creation would."""
+    out = subprocess.run(["getfacl", "--default", "--omit-header", "--absolute-names",
+                          f"/proc/self/fd/{dir_fd}"], pass_fds=(dir_fd,),
+                         capture_output=True, text=True, check=True).stdout
+    entries = []
+    for line in out.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        tag, _, perms = line.rpartition(":")
+        entries.append(f"{tag}:{perms.replace('x', '-')}")
+    return "\n".join(entries)
+
+
+def dump(guest: str, task_id: str) -> None:
+    if guest not in GUESTS:
+        die(f"not an allowed guest: {guest}")
+    if not (task_id.isascii() and task_id.isdigit() and 0 < len(task_id) <= 9 and task_id[0] != "0"):
+        die(f"not a task id: {task_id!r}")
+    cape = pwd.getpwnam(CAPE_USER)
+    tfd = task_dir(task_id, cape.pw_uid)       # checked before anything is written
+    sfd = staging_dir()
+    for old in os.listdir(sfd):                 # a killed dump leaves gigabytes behind
+        try:
+            if time.time() - os.stat(old, dir_fd=sfd, follow_symlinks=False).st_mtime > STALE_SECONDS:
+                os.unlink(old, dir_fd=sfd)
+        except OSError:
+            pass
+    name = f"{task_id}.{os.getpid()}.dmp"
+    try:
+        virsh("dump", "--memory-only", guest, f"{STAGING}/{name}")
+        ffd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=sfd)
+        try:
+            if not stat.S_ISREG(os.fstat(ffd).st_mode):
+                die("the dump is not a regular file")
+            os.fchown(ffd, cape.pw_uid, cape.pw_gid)
+            os.fchmod(ffd, 0o640)
+            acl = file_acl_from_default(tfd)
+            if acl:
+                subprocess.run(["setfacl", "--set-file=-", f"/proc/self/fd/{ffd}"], input=acl,
+                               pass_fds=(ffd,), text=True, check=True, capture_output=True)
+        finally:
+            os.close(ffd)
+        os.rename(name, DUMP_NAME, src_dir_fd=sfd, dst_dir_fd=tfd)
+    except BaseException:
+        try:
+            os.unlink(name, dir_fd=sfd)
+        except OSError:
+            pass
+        raise
+
+
+def main(argv: list[str]) -> None:
+    if len(argv) != 3:
+        die("usage: lamware-vm revert <guest> <snapshot> | dump <guest> <task-id>")
+    action, a, b = argv
+    if action == "revert":
+        revert(a, b)
+    elif action == "dump":
+        dump(a, b)
+    else:
+        die(f"unknown action: {action}")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except subprocess.CalledProcessError as e:
+        die(f"{os.path.basename(str(e.cmd[0]))} failed: {(e.stderr or '').strip()[:300]}", 1)

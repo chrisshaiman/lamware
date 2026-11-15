@@ -1,0 +1,36 @@
+diff --git a/lib/cuckoo/common/abstracts.py b/lib/cuckoo/common/abstracts.py
+--- a/lib/cuckoo/common/abstracts.py
++++ b/lib/cuckoo/common/abstracts.py
+@@ -605,16 +605,23 @@
+         """
+         log.debug("Dumping memory for machine %s", label)
+ 
+-        conn = self._connect(label)
++        # lamware ADR-027 (dump): cape is not given libvirt's core-dump permission,
++        # because libvirtd (root) writes the dump to whatever path the caller names.
++        # A root helper dumps a configured guest for a task id into a root-only
++        # staging directory and hands the file to cape inside that task's folder.
++        # It takes no path, so the task id is read back out of CAPE's own one.
++        task_dir, name = os.path.split(path)
++        task_id = os.path.basename(task_dir)
++        if name != "memory.dmp" or not task_id.isdigit():
++            raise CuckooMachineError(f"Memory dump path {path} is not storage/analyses/<id>/memory.dmp")
+         try:
+-            # create the memory dump file ourselves first so it doesn't end up root/root 0600
+-            # it'll still be owned by root, so we can't delete it, but at least we can read it
+-            fd = open(path, "w")
+-            fd.close()
+-            vm = conn.lookupByName(label)
+-            vm.coreDump(path, flags=libvirt.VIR_DUMP_MEMORY_ONLY)
+-        except libvirt.libvirtError as e:
+-            raise CuckooMachineError(f"Error dumping memory virtual machine {label}: {e}") from e
++            subprocess.run(
++                ["/usr/bin/sudo", "-n", "/usr/local/sbin/lamware-vm", "dump", label, task_id],
++                check=True, capture_output=True, text=True, timeout=3600,
++            )
++        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
++            detail = (getattr(e, "stderr", None) or str(e)).strip()[:300]
++            raise CuckooMachineError(f"Error dumping memory virtual machine {label} via lamware-vm: {detail}") from e
+ 
+     def _status(self, label):
+         """Gets current status of a vm.
