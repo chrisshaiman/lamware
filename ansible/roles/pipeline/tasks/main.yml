@@ -1186,12 +1186,11 @@
     path: /etc/systemd/system/lamware-intake.service
     state: absent
   when: pipeline_old_intake_unit.rc == 0
-  register: pipeline_old_intake_removed
 
 - name: Reload systemd after removing the old intake unit
   ansible.builtin.systemd_service:
     daemon_reload: true
-  when: pipeline_old_intake_removed is changed
+  when: pipeline_old_intake_unit.rc == 0
 
 # Parent first: once it is root 0755 nobody else can create or rename entries in it,
 # so the link check on each child cannot be raced.
