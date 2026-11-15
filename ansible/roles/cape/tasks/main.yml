@@ -69,7 +69,7 @@
 # that root's scheduled jobs run only code root owns.
 - name: Remove root cron lines from cape2.sh that run cape-owned code or nothing
   ansible.builtin.shell: |
-    set -eu
+    set -euo pipefail
     cur=$(crontab -l -u root 2>/dev/null || true)
     new=$(printf '%s\n' "$cur" | grep -vE '{{ cape_root_cron_retired | join('|') }}' || true)
     if [ "$cur" != "$new" ]; then
