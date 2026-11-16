@@ -71,3 +71,8 @@ cape_root_cron_retired:
   - 'cd /opt/CAPEv2/utils/ && \./smtp_sinkhole\.sh'
   - 'signal newnym'
   - 'chown mongodb:mongodb /data -R'
+
+# CAPE web UI login (V13): one human account; its generated password is kept here,
+# root 0600. Read it with `sudo cat`. The `cape` superuser stays unusable (API token).
+cape_web_admin_user: lamware-admin
+cape_web_admin_password_file: /etc/lamware-cape/web-admin-password

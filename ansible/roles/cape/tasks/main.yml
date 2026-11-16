@@ -648,6 +648,10 @@
 - name: Replace CAPE's default credentials
   ansible.builtin.include_tasks: credentials.yml
 
+# V13: the web UI needs a login; see web-login.yml.
+- name: Require a login for CAPE's web UI
+  ansible.builtin.import_tasks: web-login.yml
+
 - name: Generate Cape API token
   ansible.builtin.shell: |
     set -o pipefail

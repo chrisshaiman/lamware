@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# roles/cape/tasks/web-login.yml
+# CAPE's web UI requires a login (V13).
+#
+# It listened on the WireGuard address with [web_auth] off, so any VPN peer or local
+# account could browse every analysis, download samples and dropped files, submit
+# and delete. Now:
+#   - [web_auth] is on;
+#   - lamware_login.LamwareLoginRequired makes every page need a login, because
+#     CAPE's own decorator covers only some views (see the module's docstring);
+#   - one human account, cape_web_admin_user, has a generated password kept in
+#     cape_web_admin_password_file (root 0600). `sudo cat` it to log in.
+# CAPE's API keeps its token authentication; the pipeline is unaffected.
+# =============================================================================
+
+- name: Turn on CAPE's web authentication
+  community.general.ini_file:
+    path: "{{ cape_install_dir }}/conf/web.conf"
+    section: web_auth
+    option: enabled
+    value: "yes"
+    mode: "0640"
+  notify: Restart Cape services
+
+- name: Install the site-wide login middleware
+  ansible.builtin.copy:
+    src: lamware_login.py
+    dest: "{{ cape_install_dir }}/web/web/lamware_login.py"
+    owner: "{{ cape_user }}"
+    group: "{{ cape_user }}"
+    mode: "0644"
+  notify: Restart Cape services
+
+# local_settings.py starts with `from .settings import *`, so MIDDLEWARE is in scope.
+- name: Add the login middleware to CAPE's web settings
+  ansible.builtin.lineinfile:
+    path: "{{ cape_install_dir }}/web/web/local_settings.py"
+    regexp: '^MIDDLEWARE = \[\*MIDDLEWARE, "web\.lamware_login\.'
+    line: 'MIDDLEWARE = [*MIDDLEWARE, "web.lamware_login.LamwareLoginRequired"]'
+  notify: Restart Cape services
+
+- name: Create the directory for the CAPE web login's password (root only)
+  ansible.builtin.file:
+    path: "{{ cape_web_admin_password_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Generate the CAPE web login's password once
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      umask 077
+      python3 -I -c 'import secrets; print(secrets.token_urlsafe(24))' > "{{ cape_web_admin_password_file }}"
+    creates: "{{ cape_web_admin_password_file }}"
+    executable: /bin/bash
+
+- name: Read the CAPE web login's password
+  ansible.builtin.slurp:
+    src: "{{ cape_web_admin_password_file }}"
+  register: cape_web_admin_pw
+  no_log: true
+
+# allauth requires a verified address while [registration] email_confirmation is on,
+# so the account gets one. Prints created, updated or kept; never the password.
+- name: Create or update the CAPE web login
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ cape_install_dir }}/web
+      /etc/poetry/venv/bin/poetry run python3 manage.py shell -c "
+      import os
+      from django.contrib.auth import get_user_model
+      from allauth.account.models import EmailAddress
+      pw = os.environ['LAMWARE_CAPE_WEB_PW']
+      User = get_user_model()
+      u, created = User.objects.get_or_create(username='{{ cape_web_admin_user }}')
+      what = 'created' if created else 'kept'
+      email = '{{ cape_web_admin_user }}@localhost'
+      if (u.email != email or not u.is_active or not u.is_staff or not u.is_superuser
+              or not u.check_password(pw)):
+          u.email, u.is_active, u.is_staff, u.is_superuser = email, True, True, True
+          u.set_password(pw)
+          u.save()
+          what = 'created' if created else 'updated'
+      EmailAddress.objects.update_or_create(user=u, email=email, defaults={'verified': True, 'primary': True})
+      print('web-login', what)
+      "
+    executable: /bin/bash
+  environment:
+    LAMWARE_CAPE_WEB_PW: "{{ cape_web_admin_pw.content | b64decode | trim }}"
+  become: true
+  become_user: "{{ cape_user }}"
+  register: cape_web_login
+  no_log: true
+  changed_when: "'web-login kept' not in cape_web_login.stdout"
+  failed_when: cape_web_login.rc != 0 or 'web-login ' not in cape_web_login.stdout
