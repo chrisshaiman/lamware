@@ -244,27 +244,26 @@ def test_every_probe_command_drops_to_the_pipeline_user():
     Asserts on each command that reads CAPE storage, not on the presence of
     the string anywhere in the block — the first version of this test passed
     with the probe rewritten to run as root, because a *second* `su` further
-    down still satisfied a substring check.
+    down still satisfied a substring check. Since V2 these are `runuser -u
+    pipeline --` with the path as an argument; test_network_monitor_no_shell_strings
+    runs them against a hostile directory name.
     """
     block = _probe_block()
 
-    # The probe assignment itself must drop privileges. Scoped to the
-    # assignment so a `su` anywhere else in the block cannot satisfy it.
     assignment = block.split("probe_dir=", 1)[1].split("\n\n", 1)[0]
-    assert "su -s /bin/bash -c" in assignment and "pipeline" in assignment, (
+    assert "runuser -u pipeline --" in assignment, (
         f"the probe must run as the pipeline user, got:\n{assignment}"
     )
 
-    # The listing check is the second privileged read.
-    listing = [ln for ln in block.splitlines() if "ls -1 '$probe_dir'" in ln]
+    listing = [ln for ln in block.splitlines() if '-- ls -1 -- "$probe_dir"' in ln]
     assert listing, "no listing check found"
     for ln in listing:
-        assert "su -s /bin/bash -c" in ln and "pipeline" in ln, ln
+        assert "runuser -u pipeline --" in ln, ln
 
     # Exactly one read is deliberately run as root: distinguishing "unreadable"
-    # from "nothing detonated yet". More than one means a probe lost its `su`.
-    assert block.count("su -s /bin/bash -c") == 2, (
-        f"expected 2 unprivileged reads, found {block.count('su -s /bin/bash -c')}"
+    # from "nothing detonated yet". More than one means a probe lost its runuser.
+    assert block.count("runuser -u pipeline --") == 2, (
+        f"expected 2 unprivileged reads, found {block.count('runuser -u pipeline --')}"
     )
 
 
