@@ -896,8 +896,8 @@ fi
 echo "[25/25] AUTH: CAPE's web UI sends an unauthenticated request to its login page..."
 # V13: CAPE's UI listened on the WireGuard address with no login; any VPN peer or
 # local account could browse analyses, download samples, submit and delete. Probed
-# as nobody, which is no CAPE user: each page must answer with a redirect to the
-# login page, never 200. The control: the login page itself must answer 200, or the
+# as nobody, which is no CAPE user: each page must answer with a redirect to a
+# login page (allauth's, or Django admin's for /admin/), never 200. The control: the login page itself must answer 200, or the
 # UI is down and every "not 200" would be meaningless. The token API must refuse
 # an unauthenticated request.
 CW="{{ cape_web_url | default('http://10.200.0.1:8000') }}"
@@ -907,7 +907,9 @@ cw_code() { runuser -u nobody -- curl -s -o /dev/null -w '%{http_code} %{redirec
 for p in / /analysis/ /submit/ "/analysis/${CW_LAST:-1}/" /accounts/api-keys/ /apiv2/ /admin/ /dashboard/; do
     r=$(cw_code "$p")
     case "$r" in
-        302\ *"/accounts/login/"*) ;;
+        # Django's admin keeps its own login page (its views are login_not_required
+        # under the site-wide middleware and enforce staff login themselves).
+        302\ *"/accounts/login/"*|302\ *"/admin/login/"*) ;;
         *) CW_OPEN="$CW_OPEN $p:[${r% }]" ;;
     esac
 done

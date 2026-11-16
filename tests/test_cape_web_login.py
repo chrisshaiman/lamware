@@ -149,6 +149,7 @@ def _check25(tmp_path, responses: dict[str, str]) -> str:
 
 
 LOGIN = "302 http://cape/accounts/login/?next=/"
+ADMIN_LOGIN = "302 http://cape/admin/login/?next=/admin/"
 PAGES = ["/", "/analysis/", "/submit/", "/analysis/1321/", "/accounts/api-keys/", "/apiv2/", "/admin/", "/dashboard/"]
 
 
@@ -181,3 +182,16 @@ def test_check25_counts_a_redirect_elsewhere_as_open(tmp_path):
                                     "/": "302 http://cape/analysis/"}
     out = _check25(tmp_path, r)
     assert "FAIL: CAPE web pages answer without a login: /:[302 http://cape/analysis/]" in out, out
+
+
+def test_check25_accepts_django_admins_own_login_page(tmp_path):
+    """Django admin enforces staff login itself; its redirect is to /admin/login/."""
+    r = {p: LOGIN for p in PAGES} | {"/admin/": ADMIN_LOGIN, "/accounts/login/": "200 ",
+                                    "/apiv2/tasks/view/1321/": "401 "}
+    assert "PASS: CAPE web UI" in _check25(tmp_path, r)
+
+
+def test_check25_does_not_accept_any_path_containing_login(tmp_path):
+    r = {p: LOGIN for p in PAGES} | {"/submit/": "302 http://cape/analysis/?q=/login/x",
+                                    "/accounts/login/": "200 ", "/apiv2/tasks/view/1321/": "401 "}
+    assert "FAIL: CAPE web pages answer without a login: /submit/" in _check25(tmp_path, r)
