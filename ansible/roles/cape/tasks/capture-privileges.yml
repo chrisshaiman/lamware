@@ -75,7 +75,7 @@
 - name: Check cape can capture on the detonation bridge through the helper, and stop it
   ansible.builtin.shell:
     cmd: |
-      set -u
+      set -uo pipefail
       d="{{ cape_vm_dump_analyses_dir }}/0"
       sudo -u {{ cape_user }} mkdir -p "$d"
       # CAPE's own identity: uid cape, the unit's Group= (lamware), cape's groups.
