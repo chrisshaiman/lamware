@@ -130,6 +130,44 @@
   delay: 5
   until: litellm_health_postflush.status == 200
 
+# --- scoped keys (V1) ---------------------------------------------------------------
+
+- name: Install the scoped-key manager (root only)
+  ansible.builtin.copy:
+    src: lamware-litellm-keys
+    dest: /usr/local/sbin/lamware-litellm-keys
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create the scoped-key directory (root only)
+  ansible.builtin.file:
+    path: "{{ litellm_keys_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write the scoped-key specs
+  ansible.builtin.copy:
+    dest: "{{ litellm_keys_file | dirname }}/specs.json"
+    content: "{{ litellm_scoped_keys | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+
+# Prints only {name: kept|updated|created}; the keys go to litellm_keys_file.
+- name: Create or update the scoped keys
+  ansible.builtin.command:
+    cmd: >-
+      /usr/local/sbin/lamware-litellm-keys {{ litellm_keys_file | dirname }}/specs.json
+  environment:
+    LITELLM_CONFIG: "{{ litellm_install_dir }}/config.yaml"
+    LITELLM_URL: "http://{{ litellm_listen_address }}:{{ litellm_port }}"
+    LITELLM_KEYS_FILE: "{{ litellm_keys_file }}"
+  register: litellm_keys_result
+  changed_when: (litellm_keys_result.stdout | from_json).values() | reject('equalto', 'kept') | list | length > 0
+
 - name: Stat the LiteLLM socket directory
   ansible.builtin.stat:
     path: /run/litellm

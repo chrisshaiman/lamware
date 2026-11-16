@@ -154,6 +154,11 @@
     permissions: r
     state: present
 
+- name: Read the scoped LiteLLM keys
+  ansible.builtin.import_role:
+    name: litellm
+    tasks_from: read-keys
+
 # Root-owned, readable only by the notify user (its group): only it runs the
 # digest, and it carries the DB password and the LiteLLM key.
 - name: Deploy daily digest script
@@ -164,7 +169,7 @@
     group: "{{ ntfy_user }}"
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
-  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # the LiteLLM key. NOT no_log: that also censors failure messages, so a
   # firing `| mandatory` would report "censored" instead of naming the missing
   # variable — the opaque-guard problem #238 exists to fix.
   diff: false

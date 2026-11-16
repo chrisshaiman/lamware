@@ -196,6 +196,11 @@
     from lamware_shared.cape_payloads import find_payloads"
   changed_when: false
 
+- name: Read the scoped LiteLLM keys
+  ansible.builtin.import_role:
+    name: litellm
+    tasks_from: read-keys
+
 - name: Deploy lamware-api environment file
   ansible.builtin.template:
     src: lamware-api.env.j2

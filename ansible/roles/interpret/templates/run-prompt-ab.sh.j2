@@ -49,7 +49,9 @@ mkdir -p "$OUT_DIR"
 # user in `ps` for the life of the run (#238). This is the same mistake the #260
 # measurement made from an ad-hoc command line, which is half the reason this wrapper
 # exists at all.
-export LITELLM_API_KEY="{{ litellm_master_key | mandatory }}"
+# The interpret key (V1): a scoped LiteLLM key that calls models and nothing else,
+# not the master key, which administers LiteLLM. This file is root:pipeline 0750.
+export LITELLM_API_KEY="{{ litellm_scoped.interpret | mandatory }}"
 
 exec {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \

@@ -109,9 +109,13 @@ def test_templates_that_render_the_key_suppress_diff():
     """
     rendering = {}
     for path in ANSIBLE.rglob("*.j2"):
-        if "litellm_master_key" in path.read_text(errors="ignore"):
+        text = path.read_text(errors="ignore")
+        # The master key, and since V1 the scoped keys that replaced it at the call sites.
+        if "litellm_master_key" in text or "litellm_scoped" in text:
             rendering[path.name] = path
     assert rendering, "expected at least one template to render litellm_master_key"
+    assert any("litellm_scoped" in p.read_text() for p in rendering.values()), (
+        "expected the call sites to render scoped keys")
 
     offenders = []
     for name, tmpl_path in rendering.items():
@@ -127,7 +131,7 @@ def test_templates_that_render_the_key_suppress_diff():
             offenders.append(f"{tasks.relative_to(_ROOT)} (src: {name})")
 
     assert not offenders, (
-        f"these tasks render litellm_master_key into a file without `diff: false`: "
+        f"these tasks render a LiteLLM key into a file without `diff: false`: "
         f"{offenders}. Running the play with --diff would print the key.")
 
 
