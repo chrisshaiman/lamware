@@ -288,3 +288,30 @@ def test_a_non_http_litellm_url_is_refused(tmp_path):
                        env={"PATH": "/usr/bin:/bin", "LITELLM_URL": "file:///etc/shadow"},
                        capture_output=True, text=True, timeout=30)
     assert r.returncode != 0 and "must be http(s)" in r.stderr
+
+
+def test_the_investigate_key_allows_exactly_the_agents_allowlist():
+    """VALID_MODELS = sorted(MODEL_COSTS). A model added there and not here would be
+    refused by LiteLLM; one here and not there is spend the agent can't account for."""
+    import ast
+    tree = ast.parse((ROOT / "api/app/investigate/orchestrator.py").read_text())
+    costs = next(n.value for n in ast.walk(tree)
+                 if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "MODEL_COSTS")
+    allowed = sorted(k.value for k in costs.keys)
+    spec = next(s for s in DEFAULTS["litellm_scoped_keys"] if s["name"] == "investigate")
+    assert sorted(spec["models"]) == allowed
+
+
+def test_every_settings_key_the_api_sends_has_its_own_scoped_key():
+    """The miss that made this test: the API sent settings.litellm_key from two places,
+    and V1 scoped it for one of them. Each settings field the API sends to LiteLLM
+    must be written by the env template from a scoped key."""
+    import re as _re
+    sent = set()
+    for py in (ROOT / "api" / "app").rglob("*.py"):
+        sent |= set(_re.findall(r"Bearer \{settings\.(litellm_\w+)\}", py.read_text()))
+    env = (ANSIBLE / "roles/api/templates/lamware-api.env.j2").read_text()
+    assert sent == {"litellm_key", "litellm_investigate_key"}, sent
+    for field in sent:
+        line = next(ln for ln in env.splitlines() if ln.startswith(f"LAMWARE_{field.upper()}="))
+        assert "litellm_scoped" in line, line

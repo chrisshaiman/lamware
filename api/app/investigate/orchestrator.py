@@ -217,12 +217,12 @@ async def run_conversation_turn(
     # Checked once, up front: without a key every turn 401s, and the retry/stream
     # error path reports that as an upstream failure rather than as missing deploy
     # config. There is no default key to fall back on by design (#238).
-    if not settings.litellm_key:
-        log.error("LAMWARE_LITELLM_KEY is not set — investigation agent cannot "
-                  "authenticate to LiteLLM. Written by lamware-api.env.j2 from the "
-                  "vault variable litellm_master_key.")
+    if not settings.litellm_investigate_key:
+        log.error("LAMWARE_LITELLM_INVESTIGATE_KEY is not set — investigation agent "
+                  "cannot authenticate to LiteLLM. Written by lamware-api.env.j2 from the "
+                  "litellm role's scoped key 'investigate'.")
         yield {"event": "error",
-               "data": {"message": "LiteLLM key not configured (LAMWARE_LITELLM_KEY)"}}
+               "data": {"message": "LiteLLM key not configured (LAMWARE_LITELLM_INVESTIGATE_KEY)"}}
         return
 
     openai_tools = _build_openai_tools()
@@ -252,7 +252,7 @@ async def run_conversation_turn(
                     "POST",
                     f"{settings.litellm_url}/v1/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {settings.litellm_key}",
+                        "Authorization": f"Bearer {settings.litellm_investigate_key}",
                         "Content-Type": "application/json",
                     },
                     content=json.dumps(body, default=str),

@@ -77,6 +77,10 @@ litellm_scoped_keys:
     models: []
   - name: digest
     models: ["{{ interpret_summary_model | default('local-qwen-llamacpp') }}"]
+  # The API's investigation agent: exactly api/app/investigate/orchestrator.py's
+  # MODEL_COSTS, which is also its allowlist (a test keeps the two equal).
+  - name: investigate
+    models: ["claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6"]
   - name: api-spend
     role: proxy_admin_viewer
     models: ["no-models"]
