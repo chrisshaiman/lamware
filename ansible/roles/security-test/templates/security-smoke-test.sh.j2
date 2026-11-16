@@ -823,9 +823,23 @@ for u in "$CAP_USER" pipeline lamware-api auto-feeder lamware-notify lamware-fet
 done
 sudo -u "$CAP_USER" sudo -n "$CAP_HELPER" -U -q -s 0 -i lo -n -Z "$CAP_USER" -w "$CAP_DIR/dump.pcap" not arp >/dev/null 2>&1
 CAP_LO=$?
+# The bridge capture is started and STOPPED the way CAPE does it: as cape, find
+# sudo's child with ps --ppid and signal it. /proc is hidepid here, and the first
+# helper could not be found that way, so a real analysis left its capture running.
 sudo -u "$CAP_USER" mkdir -p "$CAP_DIR"
-sudo -u "$CAP_USER" timeout 3 sudo -n "$CAP_HELPER" -U -q -s 0 -i "$CAP_IFACE" -n -Z "$CAP_USER" -w "$CAP_DIR/dump.pcap" not arp >/dev/null 2>&1
-CAP_BRIDGE=$?
+CAP_STOP=$(sudo -u "$CAP_USER" bash -c '
+    sudo -n "$1" -U -q -s 0 -i "$2" -n -Z "$3" -w "$4" not arp >/dev/null 2>&1 &
+    s=$!; sleep 2
+    c=$(ps --ppid "$s" -o pid= | tr -d " ")
+    if [ -z "$c" ]; then echo nochild; kill "$s" 2>/dev/null; exit 0; fi
+    kill -TERM "$c"
+    for i in 1 2 3 4 5; do kill -0 "$s" 2>/dev/null || break; sleep 1; done
+    if kill -0 "$s" 2>/dev/null; then echo stuck; else echo stopped; fi
+' _ "$CAP_HELPER" "$CAP_IFACE" "$CAP_USER" "$CAP_DIR/dump.pcap")
+CAP_MAGIC=$(od -An -tx1 -N4 "$CAP_DIR/dump.pcap" 2>/dev/null | tr -d ' \n')
+# Only the probe's own capture: CAPE's filters always start with `host <ip>`.
+CAP_LEFT=$(pgrep -u "$CAP_USER" -f -- "-i $CAP_IFACE -n -w - -- not arp$" | tr '\n' ' ')
+[ -n "$CAP_LEFT" ] && kill $CAP_LEFT
 rm -rf -- "$CAP_DIR"
 if [ "$CAP_CTRL" != 0 ] && [ "$CAP_CTRL" != 124 ]; then
     fail "capture probe is blind: root could not capture on lo (rc $CAP_CTRL)"
@@ -833,10 +847,12 @@ elif [ -n "$CAP_BAD" ]; then
     fail "a service user can capture packets:$CAP_BAD"
 elif [ "$CAP_LO" != 2 ]; then
     fail "the capture helper did not refuse lo (rc $CAP_LO, expected 2)"
-elif [ "$CAP_BRIDGE" != 124 ]; then
-    fail "the capture helper could not capture on $CAP_IFACE for $CAP_USER (rc $CAP_BRIDGE, expected 124)"
+elif [ "$CAP_STOP" != stopped ] || [ -n "$CAP_LEFT" ]; then
+    fail "cape cannot stop a capture the way CAPE does (stop=$CAP_STOP, left running: ${CAP_LEFT:-none})"
+elif [ "$CAP_MAGIC" != d4c3b2a1 ]; then
+    fail "the capture helper wrote no pcap on $CAP_IFACE for $CAP_USER (magic=${CAP_MAGIC:-none})"
 else
-    pass "capture: no service user captures on lo; the helper refuses lo and captures on $CAP_IFACE"
+    pass "capture: no service user captures on lo; the helper refuses lo, captures on $CAP_IFACE, and cape can stop it"
 fi
 
 # -------------------------------------------------------------------------

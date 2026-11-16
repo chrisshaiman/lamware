@@ -66,28 +66,40 @@
     mode: "0640"
   notify: Restart Cape services
 
-# Prove the helper captures, as cape, through sudo, before anything is taken away.
-# Task id 0 is never a real CAPE task. timeout's 124 means tcpdump had the interface
-# open and was still capturing; a refusal exits 2 at once. A valid pcap starts with
-# its magic number, which tcpdump writes as soon as the file is opened.
-- name: Check cape can capture on the detonation bridge through the helper
+# Prove the helper captures, as cape, through sudo, and that CAPE can STOP it,
+# before anything is taken away. Task id 0 is never a real CAPE task. CAPE stops the
+# sniffer by finding sudo's child with `ps --ppid` and signalling it, as cape; the
+# first version of the helper could not be found that way (/proc is hidepid here)
+# and a real analysis left its capture running. So the probe does exactly that.
+# A valid pcap starts with its magic number, written as soon as tcpdump starts.
+- name: Check cape can capture on the detonation bridge through the helper, and stop it
   ansible.builtin.shell:
     cmd: |
       set -u
       d="{{ cape_vm_dump_analyses_dir }}/0"
       sudo -u {{ cape_user }} mkdir -p "$d"
-      sudo -u {{ cape_user }} timeout 3 sudo -n {{ cape_capture_helper }} -U -q -s 0 \
-        -i {{ cape_capture_interface }} -n -Z {{ cape_user }} -w "$d/dump.pcap" not arp
-      rc=$?
+      stop=$(sudo -u {{ cape_user }} bash -c '
+        sudo -n "$1" -U -q -s 0 -i "$2" -n -Z "$3" -w "$4" not arp >/dev/null 2>&1 &
+        s=$!; sleep 2
+        c=$(ps --ppid "$s" -o pid= | tr -d " ")
+        if [ -z "$c" ]; then echo nochild; kill "$s" 2>/dev/null; exit 0; fi
+        kill -TERM "$c"
+        for i in 1 2 3 4 5; do kill -0 "$s" 2>/dev/null || break; sleep 1; done
+        if kill -0 "$s" 2>/dev/null; then echo stuck; else echo stopped; fi
+      ' _ {{ cape_capture_helper }} {{ cape_capture_interface }} {{ cape_user }} "$d/dump.pcap")
+      # Only the probe's own capture: CAPE's filters always start with `host <ip>`.
+      left=$(pgrep -u {{ cape_user }} -f -- "-i {{ cape_capture_interface }} -n -w - -- not arp$" | tr '\n' ' ')
+      [ -n "$left" ] && kill $left
       magic=$(od -An -tx1 -N4 "$d/dump.pcap" 2>/dev/null | tr -d ' \n')
       owner=$(stat -c '%U:%G' "$d/dump.pcap" 2>/dev/null)
       rm -rf -- "$d"
-      echo "rc=$rc magic=$magic owner=$owner"
+      echo "stop=$stop left=[${left% }] magic=$magic owner=$owner"
     executable: /bin/bash
   register: cape_capture_probe
   changed_when: false
   failed_when: >-
-    cape_capture_probe.stdout is not search('rc=124 ')
+    cape_capture_probe.stdout is not search('stop=stopped ')
+    or cape_capture_probe.stdout is not search('left=\[\] ')
     or cape_capture_probe.stdout is not search('magic=d4c3b2a1 ')
     or cape_capture_probe.stdout is not search('owner=' ~ cape_user ~ ':' ~ cape_user ~ '$')
   when: not ansible_check_mode

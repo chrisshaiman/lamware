@@ -88,23 +88,85 @@ def test_main_refuses_without_root(monkeypatch):
     assert H["main"](_cape_argv()) == 2
 
 
-def test_tcpdump_gets_the_fixed_interface_stdout_and_the_filter_after_double_dash(monkeypatch, tmp_path):
-    os_ = H["os"]
-    seen = {}
+def test_tcpdump_runs_as_cape_with_only_the_capture_capabilities():
+    argv = H["capture_argv"](_cape_argv()[11:])
+    assert argv[0] == "/usr/bin/setpriv"
+    sp = argv[:argv.index("--")]
+    assert "--reuid=cape" in sp and "--regid=cape" in sp and "--init-groups" in sp
+    for flag in ("--inh-caps", "--ambient-caps", "--bounding-set"):
+        assert f"{flag}=-all,+net_raw,+net_admin" in sp, flag
+    td = argv[argv.index("--") + 1:]
+    assert td[0] == "/usr/bin/tcpdump"
+    assert td[td.index("-i") + 1] == "virbr-det"
+    assert td[td.index("-w") + 1] == "-"
+    assert "-Z" not in td, "tcpdump is already cape; -Z would need root"
+    dd = td.index("--")
+    assert td[dd + 1:] == _cape_argv()[11:]
+
+
+def test_signals_are_forwarded_and_handlers_exist_before_the_fork(monkeypatch, tmp_path):
+    """The parent path of main(): handlers, fork, drop to cape, forward, wait."""
+    os_, sig = H["os"], H["signal"]
+    events = []
+    handlers = {}
     monkeypatch.setattr(os_, "geteuid", lambda: 0)
-    monkeypatch.setitem(H, "open_as", lambda user, path: os_.open(tmp_path / "f", os_.O_WRONLY | os_.O_CREAT))
-    monkeypatch.setattr(os_, "dup2", lambda fd, to: seen.setdefault("dup2", to))
-    monkeypatch.setattr(os_, "execve", lambda prog, argv, env: seen.update(prog=prog, argv=argv, env=env))
+    monkeypatch.setitem(H, "open_as", lambda u, p: os_.open(tmp_path / "f", os_.O_WRONLY | os_.O_CREAT))
+    monkeypatch.setattr(sig, "signal", lambda s, h: (events.append(("handler", s)), handlers.__setitem__(s, h)))
+
+    def fake_fork():
+        events.append(("fork",))
+        return 4242
+
+    def fake_become(user):
+        events.append(("become", user))
+        handlers[sig.SIGTERM](sig.SIGTERM, None)   # CAPE's stop arrives while we wait
+
+    monkeypatch.setattr(os_, "fork", fake_fork)
+    monkeypatch.setitem(H, "become", fake_become)
+    monkeypatch.setattr(os_, "kill", lambda pid, s: events.append(("kill", pid, s)))
+    monkeypatch.setattr(os_, "waitpid", lambda pid, f: (pid, 0))
+    assert H["main"](_cape_argv()) == 0
+    fork_at = events.index(("fork",))
+    assert {e[1] for e in events[:fork_at] if e[0] == "handler"} >= {sig.SIGTERM, sig.SIGINT}
+    assert ("become", "cape") in events[fork_at:]
+    assert ("kill", 4242, sig.SIGTERM) in events
+
+
+def test_a_signal_before_the_child_exists_is_sent_once_it_does(monkeypatch, tmp_path):
+    os_, sig = H["os"], H["signal"]
+    handlers, kills = {}, []
+    monkeypatch.setattr(os_, "geteuid", lambda: 0)
+    monkeypatch.setitem(H, "open_as", lambda u, p: os_.open(tmp_path / "f", os_.O_WRONLY | os_.O_CREAT))
+    monkeypatch.setattr(sig, "signal", lambda s, h: handlers.__setitem__(s, h))
+
+    def fork_after_a_signal():
+        handlers[sig.SIGTERM](sig.SIGTERM, None)
+        return 4242
+
+    monkeypatch.setattr(os_, "fork", fork_after_a_signal)
+    monkeypatch.setitem(H, "become", lambda u: None)
+    monkeypatch.setattr(os_, "kill", lambda pid, s: kills.append((pid, s)))
+    monkeypatch.setattr(os_, "waitpid", lambda pid, f: (pid, 0))
     H["main"](_cape_argv())
-    argv = seen["argv"]
-    assert seen["prog"] == "/usr/bin/tcpdump" and seen["dup2"] == 1
-    assert argv[argv.index("-i") + 1] == "virbr-det"
-    assert argv[argv.index("-Z") + 1] == "cape"
-    assert argv[argv.index("-w") + 1] == "-"
-    dd = argv.index("--")
-    assert argv[dd + 1:] == _cape_argv()[11:]
-    assert all(not a.startswith("-") for a in argv[dd + 1:])
-    assert seen["env"]["PATH"].startswith("/usr/sbin")
+    assert kills == [(4242, sig.SIGTERM)]
+
+
+def test_the_parent_drops_to_cape_for_good_and_stays_visible(monkeypatch):
+    os_ = H["os"]
+    calls = []
+    monkeypatch.setattr(os_, "setgroups", lambda g: calls.append("setgroups"))
+    monkeypatch.setattr(os_, "setresgid", lambda *a: calls.append(("setresgid", len(set(a)))))
+    monkeypatch.setattr(os_, "setresuid", lambda *a: calls.append(("setresuid", len(set(a)))))
+
+    class Libc:
+        def prctl(self, opt, val, *rest):
+            calls.append(("prctl", opt, val))
+            return 0
+
+    monkeypatch.setattr(H["ctypes"], "CDLL", lambda *a, **k: Libc())
+    import getpass
+    H["become"](getpass.getuser())
+    assert calls == ["setgroups", ("setresgid", 1), ("setresuid", 1), ("prctl", 4, 1)], calls
 
 
 # --- the file open ------------------------------------------------------------------
@@ -154,7 +216,7 @@ def _task(name):
 
 def test_capture_through_the_helper_is_proven_before_the_old_rights_go():
     n = _names()
-    probe = n.index("Check cape can capture on the detonation bridge through the helper")
+    probe = n.index(PROBE)
     for before in ("Install the capture helper (root-owned; ADR-029)",
                    "Let cape run the capture helper through sudo",
                    "Point CAPE's sniffer at the capture helper"):
@@ -164,13 +226,27 @@ def test_capture_through_the_helper_is_proven_before_the_old_rights_go():
         assert probe < n.index(after), after
 
 
-def test_the_probe_runs_as_cape_through_sudo_and_checks_the_file():
-    t = _task("Check cape can capture on the detonation bridge through the helper")
+PROBE = "Check cape can capture on the detonation bridge through the helper, and stop it"
+
+
+def test_the_probe_stops_the_capture_the_way_cape_does():
+    t = _task(PROBE)
     cmd = t["ansible.builtin.shell"]["cmd"]
-    assert "sudo -u {{ cape_user }} timeout 3 sudo -n {{ cape_capture_helper }}" in cmd
-    assert "-i {{ cape_capture_interface }}" in cmd
+    assert "sudo -u {{ cape_user }} bash -c" in cmd and 'sudo -n "$1"' in cmd
+    assert 'ps --ppid "$s" -o pid=' in cmd and 'kill -TERM "$c"' in cmd
     fw = t["failed_when"]
-    assert "rc=124" in fw and "magic=d4c3b2a1" in fw and "owner=" in fw
+    for want in ("stop=stopped", "left=", "magic=d4c3b2a1", "owner="):
+        assert want in fw, want
+
+
+def test_the_leftover_match_cannot_hit_a_real_capes_capture():
+    """The probe kills what it leaves; CAPE's filter always starts with `host <ip>`."""
+    import re
+    cmd = _task(PROBE)["ansible.builtin.shell"]["cmd"]
+    pat = re.search(r'pgrep -u .+? -f -- "([^"]+)"', cmd).group(1).replace("{{ cape_capture_interface }}", "virbr-det")
+    probe = "/usr/bin/tcpdump -U -q -s 0 -i virbr-det -n -w - -- not arp"
+    real = "/usr/bin/tcpdump -U -q -s 0 -i virbr-det -n -w - -- " + " ".join(_cape_argv()[11:])
+    assert re.search(pat, probe) and not re.search(pat, real)
 
 
 def test_sudo_runs_the_helper_without_a_pty_so_cape_can_stop_it():
@@ -250,4 +326,5 @@ def test_check_23_has_a_control_and_probes_every_service_user():
     assert 'fail "capture probe is blind' in block
     for u in ("pipeline", "lamware-api", "auto-feeder", "lamware-notify", "lamware-web-build"):
         assert u in block
-    assert '[ "$CAP_LO" != 2 ]' in block and '[ "$CAP_BRIDGE" != 124 ]' in block
+    assert '[ "$CAP_LO" != 2 ]' in block
+    assert 'ps --ppid "$s" -o pid=' in block and '[ "$CAP_STOP" != stopped ]' in block

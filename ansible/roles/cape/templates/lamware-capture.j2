@@ -11,18 +11,29 @@ sudo when sudo allows it, with exactly this argument shape:
 This helper accepts only that shape, with the interface fixed to the detonation
 bridge, the user fixed to cape, and the path fixed to a task's dump.pcap. It opens
 that file itself WITH CAPE'S PERMISSIONS (tcpdump would open it as root, in a
-directory cape owns), hands it to tcpdump as stdout (`-w -`), and puts the filter
-after `--` so no part of it can be read as an option. tcpdump drops to cape (-Z)
-once the interface is open, so CAPE can still stop it.
+directory cape owns) and hands it to tcpdump as stdout (`-w -`), with the filter
+after `--` so no part of it can be read as an option.
+
+How CAPE stops it decides the process shape. CAPE signals sudo's child, found with
+`ps --ppid`, and /proc here is mounted hidepid=invisible: a process that holds a
+capability cape lacks, or that changed uid, is invisible to cape. So tcpdump runs
+as cape with only the two capture capabilities (setpriv, ambient), as a child of
+this helper; the helper then drops to cape for good with no capabilities, marks
+itself dumpable so cape can see it, and forwards CAPE's signal to tcpdump.
 
 Standard library only, run with -I: nothing cape can write is imported.
 """
+import ctypes
 import os
 import pwd
 import re
+import signal
 import sys
 
 TCPDUMP = "/usr/bin/tcpdump"
+SETPRIV = "/usr/bin/setpriv"
+CAPTURE_CAPS = "-all,+net_raw,+net_admin"
+PR_SET_DUMPABLE = 4
 INTERFACE = "{{ cape_capture_interface }}"
 CAPE_USER = "{{ cape_user }}"
 ANALYSES = "{{ cape_vm_dump_analyses_dir }}"
@@ -50,7 +61,7 @@ def parse(argv: list[str]) -> tuple[str, list[str]]:
     if interface != INTERFACE:
         raise Refused(f"interface {interface!r}: only {INTERFACE} may be captured")
     if user != CAPE_USER:
-        raise Refused(f"-Z {user!r}: tcpdump drops to {CAPE_USER} only")
+        raise Refused(f"-Z {user!r}: tcpdump runs as {CAPE_USER} only")
     if not PCAP_RE.match(path):
         raise Refused(f"-w {path!r}: only {ANALYSES}/<task>/dump.pcap")
     filt = argv[len(SHAPE):]
@@ -81,6 +92,28 @@ def open_as(user: str, path: str) -> int:
     return fd
 
 
+def capture_argv(filt: list[str]) -> list[str]:
+    """tcpdump as cape, holding only the two capture capabilities."""
+    return [SETPRIV, f"--reuid={CAPE_USER}", f"--regid={CAPE_USER}", "--init-groups",
+            f"--inh-caps={CAPTURE_CAPS}", f"--ambient-caps={CAPTURE_CAPS}",
+            f"--bounding-set={CAPTURE_CAPS}", "--",
+            TCPDUMP, "-U", "-q", "-s", "0", "-i", INTERFACE, "-n", "-w", "-", "--", *filt]
+
+
+def become(user: str) -> None:
+    """Drop to user for good, with no capabilities, and stay visible to user in /proc.
+
+    A uid change clears the dumpable flag, which makes /proc/<pid> root's and so
+    hidden from cape; CAPE could then not find this process to stop it.
+    """
+    pw = pwd.getpwnam(user)
+    os.setgroups(os.getgrouplist(user, pw.pw_gid))
+    os.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
+    os.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE)")
+
+
 def main(argv: list[str]) -> int:
     if os.geteuid() != 0:
         print("lamware-capture: must run as root (through sudo)", file=sys.stderr)
@@ -95,11 +128,41 @@ def main(argv: list[str]) -> int:
     except OSError as e:
         print(f"lamware-capture: cannot open {path} as {CAPE_USER}: {e}", file=sys.stderr)
         return 1
-    os.dup2(fd, 1)
+    # Handlers first: a signal between fork and here must reach tcpdump, not kill
+    # this process and leave tcpdump running. One that arrives before the child
+    # exists is held and sent once it does.
+    state: dict = {"child": 0, "pending": 0}
+
+    def forward(signum: int, _frame: object) -> None:
+        if state["child"]:
+            os.kill(state["child"], signum)
+        else:
+            state["pending"] = signum
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, forward)
+    child = os.fork()
+    if child == 0:
+        try:
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(sig, signal.SIG_DFL)
+            os.dup2(fd, 1)
+            os.close(fd)
+            os.execve(SETPRIV, capture_argv(filt), ENV)
+        finally:
+            os._exit(127)
+    state["child"] = child
+    if state["pending"]:
+        os.kill(child, state["pending"])
     os.close(fd)
-    os.execve(TCPDUMP, [TCPDUMP, "-U", "-q", "-s", "0", "-i", INTERFACE, "-n",
-                        "-Z", CAPE_USER, "-w", "-", "--", *filt], ENV)
-    return 1  # not reached
+    try:
+        become(CAPE_USER)
+    except OSError as e:
+        os.kill(child, signal.SIGTERM)
+        print(f"lamware-capture: cannot drop to {CAPE_USER}: {e}", file=sys.stderr)
+    _, status = os.waitpid(child, 0)
+    code = os.waitstatus_to_exitcode(status)
+    return 128 - code if code < 0 else code
 
 
 if __name__ == "__main__":

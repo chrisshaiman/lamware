@@ -1816,6 +1816,7 @@ Measured on the host (2026-11-15):
 - CAPE's sniffer (`modules/auxiliary/sniffer.py`) uses sudo whenever `sudo --list <tcpdump>` succeeds. It passes a fixed argument shape with `-Z <its user>`, and stops the capture by signalling sudo's child process. The tcpdump path comes from `auxiliary.conf`.
 - tcpdump opens its `-w` file as root, before it drops to the `-Z` user. A test capture into a root-only directory succeeded. The task directory is cape's.
 - With `Defaults use_pty` (Ubuntu's default), sudo's child is a root monitor process, which CAPE cannot signal.
+- `/proc` is mounted `hidepid=invisible`. CAPE finds the process to stop with `ps --ppid <sudo>`, run as cape. A process that changed uid, or holds a capability cape lacks, is invisible to cape. The first version of the helper ran tcpdump as root with `-Z cape`. In detonation 1319, CAPE logged `Failed to get child pid of sudo process to stop the sniffer`, and the capture kept running after the analysis.
 
 ### Decision
 
@@ -1823,12 +1824,16 @@ The same shape as ADR-027's `lamware-vm`:
 
 - **The helper.** `/usr/local/sbin/lamware-capture` is root-owned and runs Python with `-I`. It accepts only the sniffer's argument shape, the detonation bridge, `-Z cape`, and `<analyses>/<task>/dump.pcap`. Every filter element must be words, addresses, ports, parentheses and spaces.
 - **How it runs tcpdump.** The helper opens the pcap itself with cape's permissions, without following links, and passes it to tcpdump as stdout (`-w -`). It puts the filter after `--`.
+- **The process shape follows from how CAPE stops it.**
+  - tcpdump runs as cape holding only `net_raw` and `net_admin` (`setpriv`, ambient), as a child of the helper.
+  - The helper then drops to cape for good, with no capabilities, and marks itself dumpable, so cape can see it.
+  - It forwards CAPE's signal to tcpdump. Signalling depends only on uid, so the signal reaches tcpdump even though cape cannot see it.
 - **sudo.** cape may run the helper and nothing else new; `!use_pty` is set for this one command, so CAPE can still stop the capture. `auxiliary.conf`'s `[sniffer] tcpdump` points at the helper.
 - **What is removed.** tcpdump loses its capabilities, its statoverride and the apt hook that re-applied them. The `pcap` group is removed.
 - **Security-test check 23** probes it:
   - each service user tries to capture on `lo`, and must fail;
   - root doing the same is the control that the probe can see a capture;
-  - the helper must refuse `lo` and must capture on the bridge.
+  - the helper must refuse `lo`, must capture on the bridge, and must be stoppable the way CAPE stops it: as cape, through `ps --ppid`.
 
 ### Consequences
 
