@@ -240,7 +240,7 @@ def test_the_key_file_is_root_only_and_the_manager_prints_no_secret():
 # --- check 24, run for real against fixture trees ---------------------------------------
 
 SMOKE = (ANSIBLE / "roles/security-test/templates/security-smoke-test.sh.j2").read_text()
-CHECK24 = SMOKE[SMOKE.index('echo "[24/24]'):SMOKE.index("# Summary + ntfy alert on failure")]
+CHECK24 = SMOKE[SMOKE.index('echo "[24/25]'):SMOKE.index('echo "[25/25]')]
 
 
 def _check24(tmp_path, files: dict[str, str], config=True) -> str:
