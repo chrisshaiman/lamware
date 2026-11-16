@@ -622,9 +622,15 @@ cape_storage_problem=""
 
 # Newest first: an old analysis can be pruned mid-check, and a corpus-wide
 # scan every 5 minutes is not free.
-probe_dir=$(su -s /bin/bash -c \
-    "ls -1dt '$CAPE_ANALYSES'/*/CAPE '$CAPE_ANALYSES'/*/files '$CAPE_ANALYSES'/*/procdump 2>/dev/null | head -1" \
-    pipeline 2>/dev/null)
+#
+# Every unprivileged read here is `runuser -u <user> -- <program> <args>`: the
+# path goes in as an ARGUMENT, never into a shell string. The directory names
+# under analyses/ are cape's to choose, and this script runs as root; a name with
+# a quote and `$(...)` in it ran as the target user while these were `su -c`
+# strings (V2). The one shell left gets the path as "$1".
+probe_dir=$(cd / && runuser -u pipeline -- /bin/bash -c \
+    'ls -1dt "$1"/*/CAPE "$1"/*/files "$1"/*/procdump 2>/dev/null | head -1' \
+    _ "$CAPE_ANALYSES" 2>/dev/null)
 
 if [ -z "$probe_dir" ]; then
     # Either nothing has been detonated yet, or we cannot traverse at all.
@@ -636,7 +642,7 @@ if [ -z "$probe_dir" ]; then
     else
         cape_storage_status="empty"
     fi
-elif ! su -s /bin/bash -c "ls -1 '$probe_dir' >/dev/null 2>&1" pipeline 2>/dev/null; then
+elif ! (cd / && runuser -u pipeline -- ls -1 -- "$probe_dir") >/dev/null 2>&1; then
     cape_storage_status="alert"
     cape_storage_problem="pipeline user cannot list $probe_dir — payload discovery is blocked"
 fi
@@ -664,9 +670,8 @@ if systemctl is-active --quiet cape 2>/dev/null; then
     # monitor runs every 5 — so "no machine free right now" is the normal state
     # during a corpus run, and alerting on it would train everyone to ignore
     # this alert. The #451 signature was the table being EMPTY.
-    machine_count=$(su -s /bin/bash -c \
-        "psql -tAX -d {{ cape_db_name | default('cape') }} -c 'SELECT count(*) FROM machines;'" \
-        postgres 2>/dev/null | tr -d '[:space:]')
+    machine_count=$(cd / && runuser -u postgres -- psql -tAX -d "{{ cape_db_name | default('cape') }}" \
+        -c 'SELECT count(*) FROM machines;' 2>/dev/null | tr -d '[:space:]')
     if [ -z "$machine_count" ]; then
         # Cannot ask. Explicitly NOT an alert: a database we cannot reach is a
         # different fault, already covered elsewhere, and crying "no machines"
@@ -744,7 +749,9 @@ for store in {{ cape_install_dir | default('/opt/CAPEv2') }}/storage/binaries \
     n=$(find "$store" -maxdepth 1 -type f -perm -o=r 2>/dev/null | wc -l)
     [ "$n" -eq 0 ] && continue
     probe=$(find "$store" -maxdepth 1 -type f -perm -o=r 2>/dev/null | head -1)
-    if su -s /bin/bash -c "head -c 1 '$probe' >/dev/null 2>&1" nobody 2>/dev/null; then
+    # The file name is cape's (or the motif corpus's) to choose: an argument, not a
+    # shell string (V2).
+    if (cd / && runuser -u nobody -- head -c 1 -- "$probe") >/dev/null 2>&1; then
         exposed_samples=$((exposed_samples + n))
         exposed_where="${exposed_where:+$exposed_where, }$store ($n files)"
     fi

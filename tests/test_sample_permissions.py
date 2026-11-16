@@ -145,7 +145,7 @@ def test_exposure_is_confirmed_by_reading_as_nobody():
     — which is true of CAPE binaries/ today. Only an actual read settles it.
     """
     block = _exposure_block()
-    assert "su -s /bin/bash -c" in block and "nobody" in block, block
+    assert 'runuser -u nobody -- head -c 1 -- "$probe"' in block, block
 
 
 def test_both_sample_stores_are_covered():
