@@ -117,18 +117,19 @@ def test_signals_are_forwarded_and_handlers_exist_before_the_fork(monkeypatch, t
         events.append(("fork",))
         return 4242
 
-    def fake_become(user):
-        events.append(("become", user))
+    def fake_become(user, gid):
+        events.append(("become", user, gid))
         handlers[sig.SIGTERM](sig.SIGTERM, None)   # CAPE's stop arrives while we wait
 
     monkeypatch.setattr(os_, "fork", fake_fork)
     monkeypatch.setitem(H, "become", fake_become)
+    monkeypatch.setitem(H, "caller_gid", lambda user, env: 986)
     monkeypatch.setattr(os_, "kill", lambda pid, s: events.append(("kill", pid, s)))
     monkeypatch.setattr(os_, "waitpid", lambda pid, f: (pid, 0))
     assert H["main"](_cape_argv()) == 0
     fork_at = events.index(("fork",))
     assert {e[1] for e in events[:fork_at] if e[0] == "handler"} >= {sig.SIGTERM, sig.SIGINT}
-    assert ("become", "cape") in events[fork_at:]
+    assert ("become", "cape", 986) in events[fork_at:], "the parent must take the caller's gid"
     assert ("kill", 4242, sig.SIGTERM) in events
 
 
@@ -144,7 +145,8 @@ def test_a_signal_before_the_child_exists_is_sent_once_it_does(monkeypatch, tmp_
         return 4242
 
     monkeypatch.setattr(os_, "fork", fork_after_a_signal)
-    monkeypatch.setitem(H, "become", lambda u: None)
+    monkeypatch.setitem(H, "become", lambda u, g: None)
+    monkeypatch.setitem(H, "caller_gid", lambda user, env: 986)
     monkeypatch.setattr(os_, "kill", lambda pid, s: kills.append((pid, s)))
     monkeypatch.setattr(os_, "waitpid", lambda pid, f: (pid, 0))
     H["main"](_cape_argv())
@@ -165,8 +167,33 @@ def test_the_parent_drops_to_cape_for_good_and_stays_visible(monkeypatch):
 
     monkeypatch.setattr(H["ctypes"], "CDLL", lambda *a, **k: Libc())
     import getpass
-    H["become"](getpass.getuser())
+    H["become"](getpass.getuser(), os.getgid())
     assert calls == ["setgroups", ("setresgid", 1), ("setresuid", 1), ("prctl", 4, 1)], calls
+
+
+def test_the_parent_keeps_the_callers_gid_when_it_is_one_of_capes_groups():
+    """hidepid compares gid as well as uid: CAPE runs with Group=lamware, and a
+    helper with cape's primary gid was invisible to it (detonation 1320)."""
+    import getpass
+    import pwd
+    me = getpass.getuser()
+    primary = pwd.getpwnam(me).pw_gid
+    mine = [g for g in os.getgrouplist(me, primary) if g != primary]
+    if mine:
+        assert H["caller_gid"](me, {"SUDO_GID": str(mine[0])}) == mine[0]
+    assert H["caller_gid"](me, {"SUDO_GID": str(primary)}) == primary
+
+
+@pytest.mark.parametrize("env", [{}, {"SUDO_GID": ""}, {"SUDO_GID": "x"}, {"SUDO_GID": "0"}, {"SUDO_GID": "65533"}])
+def test_any_other_caller_gid_falls_back_to_capes_own(env):
+    import getpass
+    import pwd
+    me = getpass.getuser()
+    primary = pwd.getpwnam(me).pw_gid
+    raw = env.get("SUDO_GID", "")
+    if raw.isdigit() and int(raw) in os.getgrouplist(me, primary):
+        pytest.skip("this machine's user is in that group")
+    assert H["caller_gid"](me, env) == primary
 
 
 # --- the file open ------------------------------------------------------------------
@@ -232,7 +259,9 @@ PROBE = "Check cape can capture on the detonation bridge through the helper, and
 def test_the_probe_stops_the_capture_the_way_cape_does():
     t = _task(PROBE)
     cmd = t["ansible.builtin.shell"]["cmd"]
-    assert "sudo -u {{ cape_user }} bash -c" in cmd and 'sudo -n "$1"' in cmd
+    assert 'setpriv --reuid={{ cape_user }} --regid="$g" --init-groups bash -c' in cmd
+    assert "systemctl show -p Group --value cape.service" in cmd
+    assert 'sudo -n "$1"' in cmd
     assert 'ps --ppid "$s" -o pid=' in cmd and 'kill -TERM "$c"' in cmd
     fw = t["failed_when"]
     for want in ("stop=stopped", "left=", "magic=d4c3b2a1", "owner="):
@@ -328,3 +357,4 @@ def test_check_23_has_a_control_and_probes_every_service_user():
         assert u in block
     assert '[ "$CAP_LO" != 2 ]' in block
     assert 'ps --ppid "$s" -o pid=' in block and '[ "$CAP_STOP" != stopped ]' in block
+    assert 'setpriv --reuid="$CAP_USER" --regid="$CAP_GROUP" --init-groups' in block

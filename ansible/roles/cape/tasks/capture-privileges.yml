@@ -78,7 +78,11 @@
       set -u
       d="{{ cape_vm_dump_analyses_dir }}/0"
       sudo -u {{ cape_user }} mkdir -p "$d"
-      stop=$(sudo -u {{ cape_user }} bash -c '
+      # CAPE's own identity: uid cape, the unit's Group= (lamware), cape's groups.
+      # hidepid compares gid as well as uid, so `sudo -u cape` (group cape) can see
+      # what CAPE cannot; the second version of the helper passed that and failed CAPE.
+      g=$(systemctl show -p Group --value cape.service); g=${g:-{{ cape_user }}}
+      stop=$(setpriv --reuid={{ cape_user }} --regid="$g" --init-groups bash -c '
         sudo -n "$1" -U -q -s 0 -i "$2" -n -Z "$3" -w "$4" not arp >/dev/null 2>&1 &
         s=$!; sleep 2
         c=$(ps --ppid "$s" -o pid= | tr -d " ")

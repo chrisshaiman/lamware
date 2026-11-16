@@ -827,7 +827,9 @@ CAP_LO=$?
 # sudo's child with ps --ppid and signal it. /proc is hidepid here, and the first
 # helper could not be found that way, so a real analysis left its capture running.
 sudo -u "$CAP_USER" mkdir -p "$CAP_DIR"
-CAP_STOP=$(sudo -u "$CAP_USER" bash -c '
+# As CAPE runs: uid cape with the unit's Group= (lamware). hidepid compares gid too.
+CAP_GROUP=$(systemctl show -p Group --value cape.service); CAP_GROUP=${CAP_GROUP:-$CAP_USER}
+CAP_STOP=$(setpriv --reuid="$CAP_USER" --regid="$CAP_GROUP" --init-groups bash -c '
     sudo -n "$1" -U -q -s 0 -i "$2" -n -Z "$3" -w "$4" not arp >/dev/null 2>&1 &
     s=$!; sleep 2
     c=$(ps --ppid "$s" -o pid= | tr -d " ")

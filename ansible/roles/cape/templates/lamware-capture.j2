@@ -100,15 +100,30 @@ def capture_argv(filt: list[str]) -> list[str]:
             TCPDUMP, "-U", "-q", "-s", "0", "-i", INTERFACE, "-n", "-w", "-", "--", *filt]
 
 
-def become(user: str) -> None:
-    """Drop to user for good, with no capabilities, and stay visible to user in /proc.
+def caller_gid(user: str, env: dict) -> int:
+    """The gid sudo was called with, if it is one of user's groups; else user's own.
+
+    hidepid lets a process see another only if both its uid AND its gid match.
+    CAPE's units run as cape with Group=lamware, so this process must carry the
+    caller's gid, not cape's primary one, or CAPE cannot find it to stop it.
+    """
+    pw = pwd.getpwnam(user)
+    try:
+        gid = int(env.get("SUDO_GID", ""))
+    except ValueError:
+        return pw.pw_gid
+    return gid if gid in os.getgrouplist(user, pw.pw_gid) else pw.pw_gid
+
+
+def become(user: str, gid: int) -> None:
+    """Drop to user and gid for good, with no capabilities, and stay visible to the caller.
 
     A uid change clears the dumpable flag, which makes /proc/<pid> root's and so
     hidden from cape; CAPE could then not find this process to stop it.
     """
     pw = pwd.getpwnam(user)
     os.setgroups(os.getgrouplist(user, pw.pw_gid))
-    os.setresgid(pw.pw_gid, pw.pw_gid, pw.pw_gid)
+    os.setresgid(gid, gid, gid)
     os.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
     if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE)")
@@ -156,7 +171,7 @@ def main(argv: list[str]) -> int:
         os.kill(child, state["pending"])
     os.close(fd)
     try:
-        become(CAPE_USER)
+        become(CAPE_USER, caller_gid(CAPE_USER, os.environ))
     except OSError as e:
         os.kill(child, signal.SIGTERM)
         print(f"lamware-capture: cannot drop to {CAPE_USER}: {e}", file=sys.stderr)
