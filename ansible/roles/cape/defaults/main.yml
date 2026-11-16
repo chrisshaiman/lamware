@@ -60,6 +60,11 @@ cape_vm_virsh: /usr/bin/virsh
 cape_vm_dump_staging: /var/lib/lamware-memdump
 cape_vm_dump_analyses_dir: "{{ cape_install_dir }}/storage/analyses"
 
+# Root-owned helper CAPE's sniffer runs through sudo to capture packets (ADR-029):
+# only the detonation bridge, only into a task's dump.pcap, opened as cape.
+cape_capture_helper: /usr/local/sbin/lamware-capture
+cape_capture_interface: "{{ cape_interface }}"
+
 # Root crontab lines cape2.sh installs that lamware removes (grep -E patterns).
 # See the "Remove root cron lines from cape2.sh" task.
 cape_root_cron_retired:

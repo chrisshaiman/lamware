@@ -1,0 +1,184 @@
+#!/usr/bin/python3 -I
+# {{ cape_capture_helper }} -- managed by Ansible (cape role). Root-owned; cape runs it
+# through sudo (/etc/sudoers.d/lamware-capture). ADR-029.
+"""Packet capture for CAPE's sniffer, on the detonation bridge only.
+
+CAPE's sniffer (modules/auxiliary/sniffer.py) runs its configured tcpdump through
+sudo when sudo allows it, with exactly this argument shape:
+
+    -U -q -s 0 -i <interface> -n -Z <user> -w <analyses>/<task>/dump.pcap <filter...>
+
+This helper accepts only that shape, with the interface fixed to the detonation
+bridge, the user fixed to cape, and the path fixed to a task's dump.pcap. It opens
+that file itself WITH CAPE'S PERMISSIONS (tcpdump would open it as root, in a
+directory cape owns) and hands it to tcpdump as stdout (`-w -`), with the filter
+after `--` so no part of it can be read as an option.
+
+How CAPE stops it decides the process shape. CAPE signals sudo's child, found with
+`ps --ppid`, and /proc here is mounted hidepid=invisible: a process that holds a
+capability cape lacks, or that changed uid, is invisible to cape. So tcpdump runs
+as cape with only the two capture capabilities (setpriv, ambient), as a child of
+this helper; the helper then drops to cape for good with no capabilities, marks
+itself dumpable so cape can see it, and forwards CAPE's signal to tcpdump.
+
+Standard library only, run with -I: nothing cape can write is imported.
+"""
+import ctypes
+import os
+import pwd
+import re
+import signal
+import sys
+
+TCPDUMP = "/usr/bin/tcpdump"
+SETPRIV = "/usr/bin/setpriv"
+CAPTURE_CAPS = "-all,+net_raw,+net_admin"
+PR_SET_DUMPABLE = 4
+INTERFACE = "{{ cape_capture_interface }}"
+CAPE_USER = "{{ cape_user }}"
+ANALYSES = "{{ cape_vm_dump_analyses_dir }}"
+PCAP_RE = re.compile(r"^" + re.escape(ANALYSES) + r"/([0-9]{1,9})/dump\.pcap$")
+# A filter element: words, addresses, ports, parentheses and spaces. CAPE passes the
+# configured bpf ("not arp") as one element, so spaces are allowed inside one.
+FILTER_RE = re.compile(r"^[A-Za-z0-9.:() ]+$")
+# None marks the three values checked separately.
+SHAPE = ["-U", "-q", "-s", "0", "-i", None, "-n", "-Z", None, "-w", None]
+ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
+
+
+class Refused(Exception):
+    """The arguments are not the shape CAPE's sniffer sends."""
+
+
+def parse(argv: list[str]) -> tuple[str, list[str]]:
+    """CAPE's sniffer arguments -> (pcap path, filter elements). Anything else raises."""
+    if len(argv) < len(SHAPE):
+        raise Refused(f"{len(argv)} arguments, expected at least {len(SHAPE)}")
+    for i, want in enumerate(SHAPE):
+        if want is not None and argv[i] != want:
+            raise Refused(f"argument {i + 1} is {argv[i]!r}, expected {want!r}")
+    interface, user, path = argv[5], argv[8], argv[10]
+    if interface != INTERFACE:
+        raise Refused(f"interface {interface!r}: only {INTERFACE} may be captured")
+    if user != CAPE_USER:
+        raise Refused(f"-Z {user!r}: tcpdump runs as {CAPE_USER} only")
+    if not PCAP_RE.match(path):
+        raise Refused(f"-w {path!r}: only {ANALYSES}/<task>/dump.pcap")
+    filt = argv[len(SHAPE):]
+    for element in filt:
+        if not FILTER_RE.match(element) or element.lstrip().startswith("-"):
+            raise Refused(f"filter element {element!r}")
+    return path, filt
+
+
+def open_as(user: str, path: str) -> int:
+    """Open path for writing with user's permissions, not root's; return the fd.
+
+    The task directory is cape's, so a link or a swapped directory there must not
+    steer a root write. Opened as cape, it reaches only what cape could anyway.
+    """
+    pw = pwd.getpwnam(user)
+    os.setgroups(os.getgrouplist(user, pw.pw_gid))
+    os.setegid(pw.pw_gid)
+    os.seteuid(pw.pw_uid)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+        # The analyses tree is setgid lamware; CAPE's pcaps have always been group cape.
+        os.fchown(fd, -1, pw.pw_gid)
+    finally:
+        os.seteuid(0)
+        os.setegid(0)
+        os.setgroups([])
+    return fd
+
+
+def capture_argv(filt: list[str]) -> list[str]:
+    """tcpdump as cape, holding only the two capture capabilities."""
+    return [SETPRIV, f"--reuid={CAPE_USER}", f"--regid={CAPE_USER}", "--init-groups",
+            f"--inh-caps={CAPTURE_CAPS}", f"--ambient-caps={CAPTURE_CAPS}",
+            f"--bounding-set={CAPTURE_CAPS}", "--",
+            TCPDUMP, "-U", "-q", "-s", "0", "-i", INTERFACE, "-n", "-w", "-", "--", *filt]
+
+
+def caller_gid(user: str, env: dict) -> int:
+    """The gid sudo was called with, if it is one of user's groups; else user's own.
+
+    hidepid lets a process see another only if both its uid AND its gid match.
+    CAPE's units run as cape with Group=lamware, so this process must carry the
+    caller's gid, not cape's primary one, or CAPE cannot find it to stop it.
+    """
+    pw = pwd.getpwnam(user)
+    try:
+        gid = int(env.get("SUDO_GID", ""))
+    except ValueError:
+        return pw.pw_gid
+    return gid if gid in os.getgrouplist(user, pw.pw_gid) else pw.pw_gid
+
+
+def become(user: str, gid: int) -> None:
+    """Drop to user and gid for good, with no capabilities, and stay visible to the caller.
+
+    A uid change clears the dumpable flag, which makes /proc/<pid> root's and so
+    hidden from cape; CAPE could then not find this process to stop it.
+    """
+    pw = pwd.getpwnam(user)
+    os.setgroups(os.getgrouplist(user, pw.pw_gid))
+    os.setresgid(gid, gid, gid)
+    os.setresuid(pw.pw_uid, pw.pw_uid, pw.pw_uid)
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_DUMPABLE, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE)")
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0:
+        print("lamware-capture: must run as root (through sudo)", file=sys.stderr)
+        return 2
+    try:
+        path, filt = parse(argv)
+    except Refused as e:
+        print(f"lamware-capture: refused: {e}", file=sys.stderr)
+        return 2
+    try:
+        fd = open_as(CAPE_USER, path)
+    except OSError as e:
+        print(f"lamware-capture: cannot open {path} as {CAPE_USER}: {e}", file=sys.stderr)
+        return 1
+    # Handlers first: a signal between fork and here must reach tcpdump, not kill
+    # this process and leave tcpdump running. One that arrives before the child
+    # exists is held and sent once it does.
+    state: dict = {"child": 0, "pending": 0}
+
+    def forward(signum: int, _frame: object) -> None:
+        if state["child"]:
+            os.kill(state["child"], signum)
+        else:
+            state["pending"] = signum
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, forward)
+    child = os.fork()
+    if child == 0:
+        try:
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(sig, signal.SIG_DFL)
+            os.dup2(fd, 1)
+            os.close(fd)
+            os.execve(SETPRIV, capture_argv(filt), ENV)
+        finally:
+            os._exit(127)
+    state["child"] = child
+    if state["pending"]:
+        os.kill(child, state["pending"])
+    os.close(fd)
+    try:
+        become(CAPE_USER, caller_gid(CAPE_USER, os.environ))
+    except OSError as e:
+        os.kill(child, signal.SIGTERM)
+        print(f"lamware-capture: cannot drop to {CAPE_USER}: {e}", file=sys.stderr)
+    _, status = os.waitpid(child, 0)
+    code = os.waitstatus_to_exitcode(status)
+    return 128 - code if code < 0 else code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

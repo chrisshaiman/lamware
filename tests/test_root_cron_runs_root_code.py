@@ -137,7 +137,7 @@ def test_comments_and_variables_are_not_jobs(tree):
 
 
 def test_the_check_reports_blind_when_nothing_parses():
-    block = SMOKE[SMOKE.index('echo "[20/22]'):SMOKE.index('echo "[21/22]')]
+    block = SMOKE[SMOKE.index('echo "[20/23]'):SMOKE.index('echo "[21/23]')]
     assert 'if [ -z "$CRON_SEEN" ] || [ "$CRON_SEEN" = "0" ]; then' in block
     assert "root cron probe is blind" in block
 
@@ -225,7 +225,7 @@ def test_every_exec_line_of_a_root_unit_is_checked(tree):
 def test_no_root_unit_parsed_means_blind(tree):
     out = _units(tree, _block("x.service", "cape", "/bin/true"), ME)
     assert "PARSED 0" in out
-    block = SMOKE[SMOKE.index('echo "[21/22]'):SMOKE.index("# Summary + ntfy")]
+    block = SMOKE[SMOKE.index('echo "[21/23]'):SMOKE.index("# Summary + ntfy")]
     assert 'if [ -z "$UNIT_SEEN" ] || [ "$UNIT_SEEN" = "0" ]; then' in block
 
 
