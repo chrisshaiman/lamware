@@ -92,15 +92,22 @@
         id: "{{ build_fetch_python_slim_id }}"
     hb_lock: requirements.lock
 
+- name: Read the scoped LiteLLM keys
+  ansible.builtin.import_role:
+    name: litellm
+    tasks_from: read-keys
+
+# Group pipeline, not lamware (V1): it carries a LiteLLM key, and only pipeline runs
+# it. Group lamware made it readable by cape, auto-feeder and lamware-api.
 - name: Deploy interpret wrapper script
   ansible.builtin.template:
     src: run-interpret-wrapper.sh.j2
     dest: "{{ interpret_install_dir }}/run-interpret"
     owner: root
-    group: lamware
+    group: pipeline
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
-  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # the interpret key. NOT no_log: that also censors failure messages, so a
   # firing `| mandatory` would report "censored" instead of naming the missing
   # variable — the opaque-guard problem #238 exists to fix.
   diff: false
@@ -135,10 +142,10 @@
     src: run-prompt-ab.sh.j2
     dest: "{{ interpret_install_dir }}/run-prompt-ab"
     owner: root
-    group: lamware
+    group: pipeline
     mode: "0750"
   # Suppresses the rendered body under --diff, which would otherwise print
-  # litellm_master_key. NOT no_log: that also censors failure messages, so a
+  # the interpret key. NOT no_log: that also censors failure messages, so a
   # firing `| mandatory` would report "censored" instead of naming the missing
   # variable — the opaque-guard problem #238 exists to fix.
   diff: false
@@ -159,7 +166,7 @@
   # podman -e LITELLM_API_KEY (no value) forwards it from this environment. Output stays
   # visible (no no_log) so a probe failure is debuggable.
   environment:
-    LITELLM_API_KEY: "{{ litellm_master_key | mandatory }}"
+    LITELLM_API_KEY: "{{ litellm_scoped.interpret | mandatory }}"
   ansible.builtin.command:
     cmd: >
       {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm --network=none

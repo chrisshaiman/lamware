@@ -1,0 +1,27 @@
+---
+# =============================================================================
+# roles/litellm/tasks/read-keys.yml
+# Read the scoped LiteLLM keys (V1) into `litellm_scoped`, for a role that renders
+# one: `import_role: name=litellm tasks_from=read-keys` (import, so the tasks carry the importing role's tags). The litellm role creates
+# them; a role deployed before it ever has fails here with a clear message rather
+# than rendering an empty key.
+# =============================================================================
+
+- name: Read the scoped LiteLLM keys
+  ansible.builtin.slurp:
+    src: "{{ litellm_keys_file }}"
+  register: litellm_keys_slurp
+  no_log: true
+  failed_when: false
+
+- name: Refuse to continue without the scoped keys
+  ansible.builtin.assert:
+    that: litellm_keys_slurp.content is defined
+    fail_msg: >-
+      {{ litellm_keys_file }} is missing or unreadable. Deploy the litellm role first
+      (make deploy TAGS=litellm); it creates the scoped keys.
+
+- name: Load the scoped LiteLLM keys
+  ansible.builtin.set_fact:
+    litellm_scoped: "{{ litellm_keys_slurp.content | b64decode | from_json }}"
+  no_log: true

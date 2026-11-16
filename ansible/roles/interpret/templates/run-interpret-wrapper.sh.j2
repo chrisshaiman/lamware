@@ -27,7 +27,9 @@ fi
 # written inline into podman's argv. /proc/<pid>/cmdline is world-readable, so an inline
 # value is visible to every local user in `ps` for the life of the run — which for a deep
 # analysis is hours. Same reason the netcheck probe in tasks/main.yml passes it by name.
-export LITELLM_API_KEY="{{ litellm_master_key | mandatory }}"
+# The interpret key (V1): a scoped LiteLLM key that calls models and nothing else,
+# not the master key, which administers LiteLLM. This file is root:pipeline 0750.
+export LITELLM_API_KEY="{{ litellm_scoped.interpret | mandatory }}"
 
 {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \

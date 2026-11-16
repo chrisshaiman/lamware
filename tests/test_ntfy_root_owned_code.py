@@ -36,7 +36,7 @@ def _render(name: str, **over) -> str:
     env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("true", "yes", "1")
     env.filters["mandatory"] = lambda v: v
     vars_ = {**DEFAULTS, "ntfy_topic": "topic-SENTINEL", "ntfy_token": "tk_SENTINEL",
-             "pipeline_db_password": "x", "litellm_master_key": "x", **over}
+             "pipeline_db_password": "x", "litellm_scoped": {"digest": "x"}, **over}
     return env.from_string((NTFY / "templates" / name).read_text()).render(**vars_)
 
 

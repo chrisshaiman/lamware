@@ -62,3 +62,21 @@ litellm_eval_mythos_model: "claude-mythos-5-1"
 # eval-mythos stays on 5.1 so the two versions can be compared.
 litellm_eval_mythos52_model: "claude-mythos-5-2"
 litellm_eval_fable52_model: "claude-fable-5-2"
+
+# Scoped keys (V1): one per caller, so the master key stays in LiteLLM's own files.
+# The master key administers LiteLLM: it creates keys, reads all spend, and could
+# re-route models. These keys can call only their models (none for api-spend) and no
+# admin endpoint, except that api-spend may read spend as a read-only admin viewer.
+# An empty models list means every model (interpret runs production and eval arms).
+# The role creates or updates them through LiteLLM's API (lamware-litellm-keys) and
+# keeps them in litellm_keys_file, root 0600. Other roles read them with
+# `import_role: name=litellm tasks_from=read-keys` (import, so the tasks carry the importing role's tags).
+litellm_keys_file: /etc/lamware-litellm/keys.json
+litellm_scoped_keys:
+  - name: interpret
+    models: []
+  - name: digest
+    models: ["{{ interpret_summary_model | default('local-qwen-llamacpp') }}"]
+  - name: api-spend
+    role: proxy_admin_viewer
+    models: ["no-models"]
