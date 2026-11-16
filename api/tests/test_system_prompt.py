@@ -43,6 +43,7 @@ _cfg_mod = types.ModuleType("app.config")
 _settings_sp = MagicMock()
 _settings_sp.litellm_url = "http://127.0.0.1:4000"
 _settings_sp.litellm_key = "sk-test"
+_settings_sp.litellm_investigate_key = "sk-test"
 _settings_sp.investigation_max_tool_calls_per_turn = 10
 _settings_sp.investigation_max_turns = 50
 _settings_sp.investigation_cost_alert_usd = 2.0

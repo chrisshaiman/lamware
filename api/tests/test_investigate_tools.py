@@ -63,6 +63,7 @@ _settings.sandbox_memory_mb = 256
 _settings.sandbox_max_script_bytes = 10240
 _settings.litellm_url = "http://127.0.0.1:4000"
 _settings.litellm_key = "sk-test"
+_settings.litellm_investigate_key = "sk-test"
 _settings.investigation_max_tool_calls_per_turn = 10
 _settings.investigation_max_turns = 50
 _settings.investigation_cost_alert_usd = 2.0

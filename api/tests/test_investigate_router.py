@@ -119,6 +119,7 @@ _settings.investigation_cost_alert_usd = 2.0
 # any earlier file's setdefault lost the race the comparison still works.
 _settings.litellm_url = "http://127.0.0.1:4000"
 _settings.litellm_key = "sk-test"
+_settings.litellm_investigate_key = "sk-test"
 _settings.investigation_max_tool_calls_per_turn = 10
 _app_config.settings = _settings  # type: ignore[attr-defined]
 sys.modules["app.config"] = _app_config

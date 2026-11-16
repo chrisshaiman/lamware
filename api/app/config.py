@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     # rejects the request rather than authenticating with a known key. Callers check
     # for empty explicitly so the failure reads as "unconfigured", not "unreachable".
     litellm_key: str = ""
+    # The investigation agent's own scoped key (V1): it calls the models in
+    # investigate.orchestrator.MODEL_COSTS and nothing else. litellm_key above is the
+    # spend router's read-only key, which can call no model. Empty fails closed.
+    litellm_investigate_key: str = ""
     investigation_max_turns: int = 100
     investigation_cost_alert_usd: float = 2.0
     investigation_max_tool_calls_per_turn: int = 20

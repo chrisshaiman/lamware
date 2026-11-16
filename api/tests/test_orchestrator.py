@@ -61,7 +61,8 @@ _cfg_mod = types.ModuleType("app.config")
 
 _settings = MagicMock()
 _settings.litellm_url = "http://127.0.0.1:4000"
-_settings.litellm_key = "sk-test"
+_settings.litellm_key = "sk-spend-only"
+_settings.litellm_investigate_key = "sk-test"
 _settings.investigation_max_tool_calls_per_turn = 10
 _settings.investigation_max_turns = 50
 _settings.investigation_cost_alert_usd = 2.0
@@ -585,9 +586,9 @@ def test_missing_litellm_key_fails_closed_before_any_request():
                 "no HTTP client may be constructed when litellm_key is unset")
 
     saved_client = _ns["httpx"].AsyncClient
-    saved_key = _settings.litellm_key
+    saved_key = _settings.litellm_investigate_key
     _ns["httpx"].AsyncClient = ExplodingClient
-    _settings.litellm_key = ""
+    _settings.litellm_investigate_key = ""
     try:
         events = asyncio.run(_collect(run_conversation_turn(
             messages=[{"role": "user", "content": "What is the C2 IP?"}],
@@ -599,11 +600,11 @@ def test_missing_litellm_key_fails_closed_before_any_request():
         )))
     finally:
         _ns["httpx"].AsyncClient = saved_client
-        _settings.litellm_key = saved_key
+        _settings.litellm_investigate_key = saved_key
 
     assert [e["event"] for e in events] == ["error"], (
         "an unset key must yield exactly one error event and stop")
-    assert "LAMWARE_LITELLM_KEY" in events[0]["data"]["message"], (
+    assert "LAMWARE_LITELLM_INVESTIGATE_KEY" in events[0]["data"]["message"], (
         "the error must name the env var so the fault reads as config, not network")
 
 
@@ -876,3 +877,51 @@ def test_a_clean_turn_is_not_marked_partial():
     done = next(e for e in events if e["event"] == "done")
     assert done["data"]["partial"] is False, done["data"]
     assert not [e for e in events if e["event"] == "error"]
+
+
+def test_the_agent_authenticates_with_its_own_key_not_the_spend_key():
+    """V1: settings.litellm_key is the spend router's read-only key, which LiteLLM
+    refuses for every model call. The agent must send litellm_investigate_key."""
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'
+            yield 'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+            yield "data: [DONE]"
+
+        def raise_for_status(self):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            seen["auth"] = kwargs.get("headers", {}).get("Authorization")
+            return FakeResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    saved = _ns["httpx"].AsyncClient
+    _ns["httpx"].AsyncClient = FakeClient
+    try:
+        asyncio.run(_collect(run_conversation_turn(
+            messages=[{"role": "user", "content": "hi"}], system_prompt="s",
+            model="claude-sonnet-4-6", session=MagicMock(), report={}, analysis_id=1)))
+    finally:
+        _ns["httpx"].AsyncClient = saved
+    assert seen["auth"] == f"Bearer {_settings.litellm_investigate_key}"
+    assert _settings.litellm_investigate_key != _settings.litellm_key

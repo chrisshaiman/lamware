@@ -51,6 +51,7 @@ these describe an AWS data plane that no longer exists.
 | [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 | [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
+| [030](#adr-030-every-litellm-caller-has-its-own-scoped-key-the-master-key-stays-in-litellms-files) | Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files | Accepted — implemented 2026-11-16 |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1844,3 +1845,36 @@ The same shape as ADR-027's `lamware-vm`:
 ### Rollback
 
 Revert and redeploy the cape role. The old capture-privileges tasks re-create the `pcap` group, the statoverride and the capabilities, and the sniffer goes back to `/usr/bin/tcpdump`.
+
+---
+
+## ADR-030: Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files
+
+**Status:** Accepted (2026-11-16, owner). Implemented 2026-11-16.
+**Refs:** #238 (no default key), #854 (scoped keys), CLAUDE.md §10 (usage tracking)
+
+### Context
+
+LiteLLM's master key administers the proxy: it creates keys, reads every caller's spend, and changes the proxy's configuration. It was rendered into the interpret wrappers (readable by four service accounts), the digest and the API's environment. #854 replaced it with scoped keys at the call sites it found.
+
+It missed one: the API sends `settings.litellm_key` from two places, the spend router and the investigation agent. #854 made that setting a read-only spend key, which LiteLLM refuses for every model call, so the agent lost access to its models. The enumeration was a grep whose output was cut at 60 lines.
+
+### Decision
+
+- The master key is rendered only by the litellm role. Security-test check 24 searches the host by content and fails on any copy outside LiteLLM's install directory.
+- Every caller gets its own key, created by the litellm role (`litellm_scoped_keys`, managed by `lamware-litellm-keys`), scoped to what that caller does:
+  - `interpret`: every model;
+  - `digest`: the summary model;
+  - `investigate`: the agent's `MODEL_COSTS`;
+  - `api-spend`: a read-only admin viewer that can call no model.
+- **One setting per key, never one setting shared by two callers.** A test enumerates every `Bearer {settings.litellm_*}` the API sends and requires each one to be written from a scoped key. A test also keeps the investigate key's models equal to `MODEL_COSTS`.
+
+### Consequences
+
+- A new caller needs a new key spec and its own setting. Reusing an existing one fails a test.
+- LiteLLM attributes usage to each key's alias, alongside the per-call usage lamware already records (§10).
+- Rotating the master key no longer touches any caller.
+
+### Rollback
+
+Revert and redeploy `litellm` and `api`. Keys left in LiteLLM's database stay valid until deleted by alias.
