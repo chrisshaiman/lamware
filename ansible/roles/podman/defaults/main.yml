@@ -1,0 +1,7 @@
+---
+# roles/podman/defaults/main.yml
+
+# Image used to prove a root container gets lamware-container and can signal its own
+# child (ADR-032). LiteLLM's pinned image: it has a shell and is always on the host
+# once the litellm role has run. On a fresh host the probe is skipped until then.
+podman_aa_probe_image: "{{ litellm_image | default('') }}"

@@ -52,6 +52,7 @@ these describe an AWS data plane that no longer exists.
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 | [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
 | [030](#adr-030-every-litellm-caller-has-its-own-scoped-key-the-master-key-stays-in-litellms-files) | Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files | Accepted — implemented 2026-11-16 |
+| [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1878,3 +1879,58 @@ It missed one: the API sends `settings.litellm_key` from two places, the spend r
 ### Rollback
 
 Revert and redeploy `litellm` and `api`. Keys left in LiteLLM's database stay valid until deleted by alias.
+
+---
+
+## ADR-032: Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix
+
+**Status:** Accepted (2026-11-16, owner). Temporary, until noble's podman ships the fix.
+**Refs:** #842 (LiteLLM never starts on kernel 7.0.0-43), container-libs PR #919 (merged 2026-11-06), containerd #14485, moby #54099
+
+### Context
+
+On kernel 7.0.0-43, LiteLLM never starts serving. The host has been pinned to -38 since 2026-11-14, so newer kernels, security updates included, install but don't boot. Measured over three test boots of -43 on 2026-11-16:
+
+- **Prisma's migration step finishes,** printing "No pending migrations to apply.", then sends SIGTERM to its schema engine. **The kernel refuses the signal** (`kill … = -1 EACCES`) and logs nothing, so the engine waits on stdin forever, the CLI waits for it, and LiteLLM waits for the CLI.
+- **Inside any root container that uses podman's default profile, a process cannot signal its own child on -43;** on -38 it can. Userspace is identical on both boots (podman 4.9.3, AppArmor parser 4.0.1, the same profile). The one difference is the label: `containers-default-0.57.4-apparmor1` on -38, `containers-default-0.57.4-apparmor1//&unconfined` on -43.
+  - Ubuntu's `kernel.apparmor_restrict_unprivileged_unconfined=1` (set by Ubuntu, on both kernels) now makes the kernel stack the container profile with `unconfined`.
+  - podman 0.57.4's template allows signals only to `peer=<its own name>`, which the stacked label doesn't match.
+- **Not the cause:** the BPF LSM (-43 hangs with it removed from `lsm=`), and kernel futex or epoll wakeups (every waiting thread is consistent).
+- **The same failure is reported for containerd, Docker, k3s, Incus and CRI-O.** Upstream podman fixed it in container-libs PR #919 by adding `peer=<name>//&*` signal and ptrace rules. Noble's podman 4.9.3 won't have that fix unless Ubuntu backports it.
+- **The pipeline's rootless containers are unaffected:** rootless podman applies no AppArmor here, and their labels read `unconfined`.
+
+### Options
+
+1. **Stay pinned to -38 until Ubuntu backports #919.** No customization, but no kernel security updates for an unknown time.
+2. **Run root containers with `apparmor=unconfined`.** This removes confinement and conflicts with SECURITY_CONSTRAINTS. Rejected.
+3. **Turn off `apparmor_restrict_unprivileged_unconfined`.** This disables an Ubuntu hardening restriction. Rejected.
+4. **Carry podman's own profile with upstream's fix applied, until Ubuntu ships it.**
+
+### Decision
+
+**Option 4.**
+
+- **The profile:** `lamware-container` (`ansible/roles/podman/files/`) is containers/common v0.57.4's template, rendered with that name, plus exactly the four lines of #919 (two rules and their comments). A test renders the vendored template and requires the profile to match line by line.
+- **How it's applied:** a `containers.conf.d` drop-in makes it root podman's default. Every root container (LiteLLM, llama-cpp, Keycloak) gets it without a flag, and rootless podman skips it.
+- **Security-test check 26:**
+  - the profile is loaded;
+  - every running root container is under it;
+  - a fresh root container can signal its own child;
+  - podman is still 4.9.3.
+  - It also reports whether podman's built-in profile delivers signals on the running kernel.
+
+Measured on -43 with the profile loaded: a container's process signals its child, LiteLLM serves within about 20 seconds, and the confinement probes (sysrq write, mount) are denied as under the built-in profile. Measured on -38: no difference from the built-in profile.
+
+### Consequences
+
+- **The kernel pin can be removed as a separate step:** one more -43 boot with this deployed, LiteLLM serving within a minute, then the pin is deleted.
+- **One file we carry.** Any podman upgrade fails check 26: remove the copy if the new podman has #919, re-derive it if not.
+- **The rules match `//&*`, as upstream's do,** rather than only `//&unconfined`. That is slightly broader, but it's the rule upstream reviewed, and the one we'd be running after a backport.
+
+### Exit
+
+Delete the profile, the drop-in and check 26's version clause once noble's podman ships #919's rules. Check 26 reporting "podman's own profile also delivers signals" on a stacking kernel is the sign.
+
+### Rollback
+
+Revert and redeploy `podman`. The drop-in disappears, and the root containers go back to podman's built-in profile at their next start. On a -43 kernel that brings back the LiteLLM hang, so roll back only while pinned to -38.
