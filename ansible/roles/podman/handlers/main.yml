@@ -6,3 +6,20 @@
 - name: Restart root containers
   ansible.builtin.command: systemctl try-restart litellm.service llama-cpp.service keycloak.service
   changed_when: true
+
+# The restart above returns before the services answer. Without this wait, the next
+# thing in the play (the security test) probes Keycloak mid-start and fails: measured
+# on the first deploy of ADR-032. `listen` runs it after the restart, in file order.
+- name: Wait for the root containers to answer after the restart
+  ansible.builtin.uri:
+    url: "{{ item }}"
+    status_code: 200
+  register: podman_root_ready
+  retries: 36
+  delay: 5
+  until: podman_root_ready.status == 200
+  loop:
+    - "http://127.0.0.1:{{ litellm_port | default(4000) }}/health/liveliness"
+    - "http://127.0.0.1:{{ llamacpp_port | default(11435) }}/health"
+    - "http://{{ keycloak_listen_address | default('127.0.0.1') }}:9000/auth/health/ready"
+  listen: Restart root containers

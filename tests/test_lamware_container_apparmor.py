@@ -186,3 +186,15 @@ def test_check26_notes_when_podmans_own_profile_works(tmp_path):
 def test_check26_fails_each_way_it_should(tmp_path, kw, want):
     out = _run26(tmp_path, **kw)
     assert "FAIL" in out and want in out, out
+
+
+def test_the_restart_waits_for_all_three_services_before_the_play_moves_on():
+    """The first deploy restarted Keycloak and the security test probed it mid-start."""
+    handlers = yaml.safe_load((ROLE / "handlers/main.yml").read_text())
+    names = [h["name"] for h in handlers]
+    wait = next(h for h in handlers if h.get("listen") == "Restart root containers")
+    assert names.index("Restart root containers") < names.index(wait["name"])
+    urls = " ".join(wait["loop"])
+    for frag in ("/health/liveliness", "llamacpp_port", "/auth/health/ready"):
+        assert frag in urls, frag
+    assert wait["until"] == "podman_root_ready.status == 200" and wait["retries"] * wait["delay"] >= 120
