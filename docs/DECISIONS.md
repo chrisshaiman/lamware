@@ -52,6 +52,7 @@ these describe an AWS data plane that no longer exists.
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 | [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
 | [030](#adr-030-every-litellm-caller-has-its-own-scoped-key-the-master-key-stays-in-litellms-files) | Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files | Accepted — implemented 2026-11-16 |
+| [031](#adr-031-the-lamware-group-is-narrowed-in-measured-phases-starting-with-cape) | The `lamware` group is narrowed in measured phases, starting with cape | Accepted — phase 0 in progress |
 | [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
 
 ### Historical — describe infrastructure that is no longer deployed
@@ -1879,6 +1880,58 @@ It missed one: the API sends `settings.litellm_key` from two places, the spend r
 ### Rollback
 
 Revert and redeploy `litellm` and `api`. Keys left in LiteLLM's database stay valid until deleted by alias.
+
+---
+
+## ADR-031: The `lamware` group is narrowed in measured phases, starting with cape
+
+**Status:** Accepted (2026-11-17, owner). Phase 0 in progress.
+**Refs:** ADR-025 (root-owned code), ADR-030 (one key per caller), #850, #854 (both exposures through this group)
+
+### Context
+
+`lamware` has four members: `pipeline`, `lamware-api`, `cape` and `auto-feeder`. The roles grant it access about 150 times across 20 roles: read access to the analysis tools' code, the pipeline's results, CAPE's output (through a default ACL), the MOTIF corpus and the notifier, and **write** access to four rendezvous places (the spool, the control directory, the auto-feeder's state and the sample-feeder's seen-hash file).
+
+Because one group carries every flow, each member gets the union of all of them:
+
+- **Reading:** #854 (a LiteLLM key in a file shared for one reader) and #850 (the ntfy topic) were both this.
+- **Writing:** the open feeder- and spool-state findings are this.
+- **cape is the account that handles guest-controlled data, and it's in all of it,** although it needs only to write its own results.
+
+A one-shot regrouping would change every one of those grants at once. When a read breaks here, nothing crashes: the report just comes out thinner. That is the failure mode this project keeps meeting, and a big change would invite it.
+
+### Decision
+
+**The rule:**
+
+- A group grants one data flow, and its members are that flow's writer and readers.
+- cape is a member of no group it doesn't write for.
+- A file holding a secret is never readable by a group whose members don't use that secret.
+- Readers open shared rendezvous files with `O_NOFOLLOW` and a regular-file check.
+
+**The method:** phases, each one PR, each done and verified in one sitting, with the host left stable between them.
+
+- **Phase 0, measure (no permission change):**
+  - Record which account actually opens what under the group's trees, over several days of normal use: `scripts/flow-measure/` (fatrace, installed for the measurement and removed after).
+  - Build a use-case check that compares the *shape* of real outputs (a detonation's report, the API's paths, the CAPE UI) against a recorded baseline.
+- **Phase 1:** cape leaves `lamware`. Access it still needs is granted explicitly first; its membership is removed second.
+- **Phase 2:** the spool and the feeder state get two-member groups, and their readers get `O_NOFOLLOW` (the open feeder- and spool-state findings).
+- **Phase 3, a decision rather than a commitment:** whether narrowing read access to code and retiring `lamware` is still worth it. After #850 and #854 the code holds no secrets.
+
+**Each phase:**
+
+- adds access before it removes any;
+- passes only if the use-case check matches its baseline;
+- has a one-line rollback (re-add a membership or a grant).
+
+### Consequences
+
+- The measured access map (phase 0) replaces the grant inventory as the source of truth. It's attached to this ADR when the measurement ends.
+- Slower than one migration, by design. Earlier changes of this size took days of fixes after they merged.
+
+### Rollback
+
+Each phase reverts by redeploying the previous commit. No phase removes the `lamware` group itself.
 
 ---
 
