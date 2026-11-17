@@ -98,7 +98,7 @@ def test_alias_and_several_roots_are_all_checked_and_comments_are_not(site, tmp_
 def test_no_served_path_is_reported_as_blind_by_the_shell(tmp_path):
     seen, bad = _served(tmp_path, "server { listen 80; }\n")
     assert (seen, bad) == (0, [])
-    block = SMOKE[SMOKE.index('echo "[22/25]'):]
+    block = SMOKE[SMOKE.index('echo "[22/26]'):]
     assert 'fail "served-tree probe is blind' in block
 
 

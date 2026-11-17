@@ -144,9 +144,24 @@ _PLAIN = re.compile(r"(?<![\w'-])podman[ \t]+(run|image[ \t]+exists|images|creat
 _VIA_HELPER = re.compile(re.escape(HELPER) + r"[ \t]+(run|image[ \t]+exists|images)\b")
 
 
+# A line that deliberately starts a ROOT container (security-test check 26 tests root
+# containers' AppArmor profile, ADR-032) carries this marker. Exempt lines are pinned
+# below to exactly those, so the marker cannot spread quietly.
+ROOT_MARK = "# root podman (ADR-032)"
+
+
 def _plain_podman(text: str) -> list[str]:
     return [ln.strip() for ln in text.splitlines()
-            if not ln.lstrip().startswith("#") and _PLAIN.search(ln)]
+            if not ln.lstrip().startswith("#") and _PLAIN.search(ln) and ROOT_MARK not in ln]
+
+
+def test_the_root_podman_marker_is_used_exactly_where_intended():
+    marked = {p.relative_to(ROLES).as_posix(): [ln.strip()[:40] for ln in p.read_text().splitlines()
+                                                 if ROOT_MARK in ln and _PLAIN.search(ln)]
+              for p in sorted(ROLES.glob("*/templates/*.j2")) if ROOT_MARK in p.read_text()}
+    assert marked == {"security-test/templates/security-smoke-test.sh.j2": [
+        'AA_OURS=$(podman run --rm --network=none',
+        'AA_UP=$(podman run --rm --network=none -']}, marked
 
 
 def _root_service(p: Path) -> bool:

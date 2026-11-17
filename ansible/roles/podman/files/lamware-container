@@ -1,0 +1,53 @@
+# Managed by Ansible (podman role). ADR-032.
+#
+# podman's own containers-default profile (containers/common v0.57.4, the version
+# Ubuntu noble's podman 4.9.3 embeds), rendered with the name lamware-container,
+# plus the two rules upstream added in container-libs PR #919 (merged 2026-11-06).
+# Nothing else differs; tests/test_lamware_container_apparmor.py checks that line
+# by line against the vendored template.
+#
+# Why: kernels that stack container profiles with unconfined (noble's 7.0 HWE from
+# -43, Ubuntu 25.10+) label container processes "<profile>//&unconfined". 0.57.4's
+# `peer=<profile>` then no longer matches a process in the same container, so a
+# process cannot signal its own child (EACCES, not logged) and Prisma's migration
+# step hangs LiteLLM forever (#842). Remove this file when noble's podman ships the
+# #919 rules; security-test check 26 reports when its built-in profile works again.
+#include <tunables/global>
+
+profile lamware-container flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Allow signals from privileged profiles and from within the same profile
+  signal (receive) peer=unconfined,
+  signal (send,receive) peer=lamware-container,
+  # With AppArmor 5.0+, child processes get a stacked profile.
+  signal (send,receive) peer=lamware-container//&*,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny mount,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # suppress ptrace denials when using 'ps' inside a container
+  ptrace (trace,read) peer=lamware-container,
+  # With AppArmor 5.0+, child processes get a stacked profile.
+  ptrace (trace,read) peer=lamware-container//&*,
+}

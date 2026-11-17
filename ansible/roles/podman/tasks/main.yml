@@ -181,3 +181,86 @@
     # Output to syslog, not /dev/null: on 2026-10-18 the check saw a dead
     # published port at 19:17 and nobody could know (#580).
     job: "/usr/local/sbin/check-podman-ports.sh 2>&1 | logger -t podman-port-health"
+
+# -------------------------------------------------------------------------
+# AppArmor profile for root containers (ADR-032, #842)
+#
+# Root containers (litellm, llama-cpp, keycloak) used podman's built-in
+# containers-default profile. On kernels that stack it with unconfined, a container's
+# processes cannot signal each other, and LiteLLM's startup hangs. lamware-container
+# is that profile plus upstream's fix (container-libs #919). It is made root podman's
+# default through a drop-in in /etc/containers/containers.conf.d, so every root
+# container gets it without a flag;
+# rootless podman (the pipeline) skips AppArmor and is unaffected (measured 2026-11-16).
+# -------------------------------------------------------------------------
+
+- name: Install the lamware-container AppArmor profile
+  ansible.builtin.copy:
+    src: lamware-container
+    dest: /etc/apparmor.d/lamware-container
+    owner: root
+    group: root
+    mode: "0644"
+  register: podman_aa_profile
+  notify: Restart root containers
+
+- name: Read which AppArmor profiles the kernel has loaded
+  ansible.builtin.command: cat /sys/kernel/security/apparmor/profiles
+  register: podman_aa_loaded
+  changed_when: false
+  check_mode: false
+
+- name: Load the lamware-container profile into the kernel
+  ansible.builtin.command: apparmor_parser -r -W /etc/apparmor.d/lamware-container
+  when: >-
+    podman_aa_profile is changed
+    or 'lamware-container (enforce)' not in podman_aa_loaded.stdout_lines
+  changed_when: true
+
+# 0755/0644 explicitly: rootless podman reads this directory too, and an unreadable
+# one makes every rootless podman command fail (measured: "finding config on
+# system: ... permission denied").
+- name: Create podman's system configuration drop-in directory
+  ansible.builtin.file:
+    path: /etc/containers/containers.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Make lamware-container root podman's default AppArmor profile
+  ansible.builtin.copy:
+    dest: /etc/containers/containers.conf.d/10-lamware-apparmor.conf
+    content: |
+      # Managed by Ansible (podman role). ADR-032.
+      [containers]
+      apparmor_profile = "lamware-container"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart root containers
+
+- name: Check the probe image is already on the host
+  ansible.builtin.command: podman image exists {{ podman_aa_probe_image }}
+  register: podman_aa_probe_image_present
+  changed_when: false
+  failed_when: false
+  when: podman_aa_probe_image | length > 0
+
+- name: Prove a root container gets the profile and can signal its own child
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      podman run --rm --network=none --pull=never --entrypoint sh {{ podman_aa_probe_image }}
+      -c 'cat /proc/self/attr/current; sleep 30 & kill $! && echo signal-delivered'
+    executable: /bin/bash
+  register: podman_aa_probe
+  changed_when: false
+  failed_when: >-
+    podman_aa_probe.rc != 0
+    or podman_aa_probe.stdout is not search('^lamware-container')
+    or 'signal-delivered' not in podman_aa_probe.stdout
+  when:
+    - not ansible_check_mode
+    - podman_aa_probe_image | length > 0
+    - podman_aa_probe_image_present.rc | default(1) == 0

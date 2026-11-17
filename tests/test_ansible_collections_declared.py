@@ -29,7 +29,9 @@ DECLARED = {c["name"] for c in REQ.get("collections", [])}
 # Shipped inside ansible-core; never needs declaring.
 BUILTIN = {"ansible.builtin", "ansible.legacy"}
 
-FQCN = re.compile(r"\b((?:community|ansible|containers|kubernetes)\.[a-z_]+)\.[a-z_]+\b")
+# Not after "/" or ".": "/etc/containers/containers.conf.d" is a path, not the
+# collection "containers.conf".
+FQCN = re.compile(r"(?<![/.\w])((?:community|ansible|containers|kubernetes)\.[a-z_]+)\.[a-z_]+\b")
 
 
 def _collections_used_in_repo() -> set[str]:
@@ -80,3 +82,13 @@ def test_the_pinned_role_is_version_locked():
     assert roles, "no roles declared"
     for r in roles:
         assert r.get("version"), f"{r['name']} is not pinned to a version"
+
+
+@pytest.mark.parametrize("text, found", [
+    ("  containers.podman.podman_container:\n", {"containers.podman"}),
+    ("- community.general.ini_file:", {"community.general"}),
+    ("    path: /etc/containers/containers.conf.d\n", set()),
+    ("    dest: /etc/containers/containers.conf.d/10-x.conf\n", set()),
+])
+def test_the_fqcn_scan_reads_modules_not_paths(text, found):
+    assert set(FQCN.findall(text)) == found
