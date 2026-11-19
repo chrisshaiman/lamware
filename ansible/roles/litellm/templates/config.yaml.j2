@@ -13,14 +13,15 @@
 # Automated runs are local by policy; these entries exist so an analyst can still
 # choose a cloud model from the GUI.
 {#
-  How an Anthropic entry authenticates. With litellm_anthropic_via_wif (ADR-033) it
-  points at the anthropic-wif forwarder's route for its workspace and carries a
-  placeholder the forwarder drops; no Anthropic key is on the host. Without it, the
-  workspace keys from the env file, as before. Production and eval stay separate
+  How an Anthropic entry authenticates. If its route ("production" or "eval") is in
+  litellm_anthropic_wif_routes (ADR-033), it points at the anthropic-wif forwarder's
+  route for that workspace and carries a placeholder the forwarder drops; that
+  route's key is then not on the host. Otherwise, the workspace key from the env
+  file, as before. Production and eval stay separate
   either way: separate keys, or separate routes that each refuse the other's models.
 #}
 {% macro anthropic_auth(route) %}
-{% if litellm_anthropic_via_wif %}
+{% if route in litellm_anthropic_wif_routes %}
       api_base: "{{ litellm_anthropic_wif_production_base if route == 'production' else litellm_anthropic_wif_eval_base }}"
       api_key: "sk-anthropic-wif-placeholder"
 {% else %}

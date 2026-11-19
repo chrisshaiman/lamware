@@ -9,5 +9,5 @@
   "issuer": anthropic_wif_issuer,
   "subject": anthropic_wif_subject,
   "audience": anthropic_wif_audience,
-  "routes": anthropic_wif_routes
+  "routes": anthropic_wif_routes | selectattr("workspace_id") | list
 } | to_nice_json }}

@@ -8,7 +8,7 @@
 # =============================================================================
 
 # Off until the ids exist. Rollback for the forwarder itself is this flag; the
-# LiteLLM side is litellm_anthropic_via_wif (litellm role).
+# LiteLLM side is litellm_anthropic_wif_routes (litellm role).
 anthropic_wif_enabled: false
 
 anthropic_wif_user: anthropic-wif
@@ -33,8 +33,10 @@ anthropic_wif_service_account_id: ""
 anthropic_wif_production_workspace_id: ""
 anthropic_wif_eval_workspace_id: ""
 
-# One route per workspace. A model belongs to exactly one route, so production
-# traffic cannot bill the eval workspace (the forwarder refuses otherwise). Ports
+# One route per workspace. A route is active only when its workspace id is set, so
+# one can move to federation before the other. A model belongs to exactly one route,
+# so production traffic cannot bill the eval workspace (the forwarder refuses
+# otherwise). Ports
 # must equal litellm_anthropic_wif_*_base (tests/test_anthropic_wif_role.py).
 anthropic_wif_routes:
   - name: production

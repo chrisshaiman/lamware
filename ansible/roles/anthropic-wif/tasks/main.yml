@@ -6,7 +6,7 @@
 # No API key on the host. A root-only ES256 key signs a fresh JWT per exchange;
 # its public half is registered as an inline-JWKS federation issuer. The forwarder
 # trades the JWT for a short-lived token per workspace and adds it to LiteLLM's
-# requests. LiteLLM switches to it with litellm_anthropic_via_wif (litellm role).
+# requests. LiteLLM moves a route to it with litellm_anthropic_wif_routes (litellm role).
 #
 # Author: Christopher Shaiman
 # License: Apache 2.0
@@ -137,11 +137,12 @@
       - anthropic_wif_organization_id | length == 36
       - anthropic_wif_federation_rule_id is match('fdrl_')
       - anthropic_wif_service_account_id is match('svac_')
-      - anthropic_wif_production_workspace_id is match('wrkspc_')
-      - anthropic_wif_eval_workspace_id is match('wrkspc_')
+      - anthropic_wif_routes | selectattr('workspace_id') | list | length > 0
+      - anthropic_wif_routes | selectattr('workspace_id') | rejectattr('workspace_id', 'match', 'wrkspc_') | list | length == 0
     fail_msg: >-
-      anthropic_wif_enabled is true but an organization, federation rule, service
-      account or workspace id is empty. Set them in ansible/vars/main.yml (ADR-033).
+      anthropic_wif_enabled is true but the organization, federation rule or service
+      account id is empty, or no route has a wrkspc_ workspace id. Set them in
+      ansible/vars/main.yml (ADR-033).
   when: anthropic_wif_enabled | bool
 
 - name: Enable and start the forwarder and the daily check
@@ -158,12 +159,12 @@
 - name: Apply a pending restart now, so the probes below see this config
   ansible.builtin.meta: flush_handlers
 
-- name: Wait for every route to listen
+- name: Wait for every active route to listen
   ansible.builtin.wait_for:
     host: "{{ anthropic_wif_listen_host }}"
     port: "{{ item.listen_port }}"
     timeout: 30
-  loop: "{{ anthropic_wif_routes }}"
+  loop: "{{ anthropic_wif_routes | selectattr('workspace_id') | list }}"
   loop_control:
     label: "{{ item.name }}"
   when: anthropic_wif_enabled | bool
@@ -183,7 +184,7 @@
       messages: []
     status_code: 403
     return_content: true
-  loop: "{{ anthropic_wif_routes }}"
+  loop: "{{ anthropic_wif_routes | selectattr('workspace_id') | list }}"
   loop_control:
     label: "{{ item.name }}"
   register: anthropic_wif_probe

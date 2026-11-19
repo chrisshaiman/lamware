@@ -54,12 +54,13 @@ litellm_llamacpp_seeds: [42, 1337, 8675309]
 # (tests/test_mythos_is_eval_only.py).
 litellm_claude_platform_aws_base: "http://127.0.0.1:4010"
 
-# Workload Identity Federation (ADR-033). True: every Anthropic entry (production,
-# eval, haiku-fallback) goes through the anthropic-wif forwarder's route for its
-# workspace, and the env file carries no Anthropic key. False (the rollback): the
-# workspace keys from the vault, as before. Ports must equal the anthropic-wif
-# role's routes (tests/test_anthropic_wif_role.py).
-litellm_anthropic_via_wif: false
+# Workload Identity Federation (ADR-033). Routes listed here ("production": the
+# analyst models and haiku-fallback; "eval": the eval-* arms) go through the
+# anthropic-wif forwarder's route for their workspace, and their key is left out of
+# the env file. Empty (the rollback): the workspace keys from the vault, as before.
+# Each route listed must be active in the anthropic-wif role. Ports must equal its
+# routes (tests/test_anthropic_wif_role.py).
+litellm_anthropic_wif_routes: []
 litellm_anthropic_wif_production_base: "http://127.0.0.1:4011"
 litellm_anthropic_wif_eval_base: "http://127.0.0.1:4012"
 

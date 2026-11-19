@@ -225,7 +225,7 @@
 
     # 10a-2. Claude API forwarder with Workload Identity Federation — no API key on
     #        the host; LiteLLM's Anthropic entries use it when
-    #        litellm_anthropic_via_wif is true (ADR-033). Before litellm, so the
+    #        litellm_anthropic_wif_routes lists their route (ADR-033). Before litellm, so the
     #        routes listen before LiteLLM is pointed at them. Off by default.
     - role: anthropic-wif
       tags: [anthropic-wif]

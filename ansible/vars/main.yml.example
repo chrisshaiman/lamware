@@ -179,12 +179,13 @@ claude_platform_aws_role_arn: ""            # arn:aws:iam::<account>:role/...
 
 # --- Workload Identity Federation to the Claude API (ADR-033) -----------------
 # Enable the forwarder first (anthropic_wif_enabled), deploy anthropic-wif and see
-# its health check pass, then switch LiteLLM (litellm_anthropic_via_wif) and deploy
-# litellm. Ids from the Console's workload identity page. Identifiers, not secrets.
+# its health check pass, then list the routes in litellm_anthropic_wif_routes and
+# deploy litellm. A route is active when its workspace id is set. Ids from the
+# Console. Identifiers, not secrets.
 anthropic_wif_enabled: false
 anthropic_wif_organization_id: ""            # organization UUID
 anthropic_wif_federation_rule_id: ""         # fdrl_...
 anthropic_wif_service_account_id: ""         # svac_...
 anthropic_wif_production_workspace_id: ""    # wrkspc_... (production models)
 anthropic_wif_eval_workspace_id: ""          # wrkspc_... (eval-* arms, spend-capped)
-litellm_anthropic_via_wif: false
+litellm_anthropic_wif_routes: []            # e.g. [eval]

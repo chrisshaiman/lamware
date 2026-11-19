@@ -3,13 +3,15 @@
 """The anthropic-wif role and LiteLLM's switch to it agree (ADR-033).
 
 Renders the real templates with both roles' defaults and asserts on parsed values:
-  - with litellm_anthropic_via_wif on, every Anthropic entry that is not local and
-    not on the separate eval forwarder goes to a WIF route, and its model is in that
-    route's allowlist (or the forwarder would 403 it), production on the production
-    route and eval-* on the eval route;
+  - with both routes in litellm_anthropic_wif_routes, every Anthropic entry that is
+    not local and not on the separate eval forwarder goes to a WIF route, and its
+    model is in that route's allowlist (or the forwarder would 403 it), production on
+    the production route and eval-* on the eval route; with only eval listed,
+    production keeps its key;
   - the rendered forwarder config passes the forwarder's own validator;
-  - with the switch on the env file has no Anthropic key, and with it off LiteLLM's
-    config is the same as before the switch existed (the rollback);
+  - a listed route's key is left out of the env file, and with the list empty
+    LiteLLM's config is the same as before the switch existed (the rollback);
+  - a route is active in the forwarder only when its workspace id is set;
   - the signing key is generated once and never overwritten, and reaches the units
     only through LoadCredential.
 Behaviour of the forwarder itself is in test_anthropic_wif_forwarder.py.
@@ -102,7 +104,7 @@ def test_the_litellm_bases_are_the_routes_ports():
 def test_switched_on_every_cloud_entry_reaches_a_route_that_allows_its_model():
     r = _routes()
     port_to_route = {f"http://127.0.0.1:{x['listen_port']}": x for x in r.values()}
-    entries = _cloud_entries(litellm_anthropic_via_wif=True)
+    entries = _cloud_entries(litellm_anthropic_wif_routes=["production", "eval"])
     assert len(entries) == 11, [n for n, _ in entries]   # 5 production, 5 eval, haiku-fallback
     for name, p in entries:
         route = port_to_route.get(p.get("api_base"))
@@ -113,27 +115,50 @@ def test_switched_on_every_cloud_entry_reaches_a_route_that_allows_its_model():
 
 
 def test_switched_on_no_entry_names_an_env_key():
-    text = _litellm("config.yaml.j2", litellm_anthropic_via_wif=True)
+    text = _litellm("config.yaml.j2", litellm_anthropic_wif_routes=["production", "eval"])
     assert "os.environ/ANTHROPIC" not in text
 
 
 def test_switched_off_entries_use_the_workspace_keys_as_before():
-    for name, p in _cloud_entries(litellm_anthropic_via_wif=False):
+    for name, p in _cloud_entries(litellm_anthropic_wif_routes=[]):
         want = "ANTHROPIC_RESEARCH_API_KEY" if name.startswith("eval-") else "ANTHROPIC_API_KEY"
         assert p == {"model": p["model"], "api_key": f"os.environ/{want}"}, name
 
 
 @pytest.mark.parametrize("trim", [False, True])
 def test_the_switch_renders_valid_yaml_with_and_without_trim_blocks(trim):
-    for on in (False, True):
-        assert yaml.safe_load(_litellm("config.yaml.j2", trim, litellm_anthropic_via_wif=on))
+    for routes in ([], ["eval"], ["production", "eval"]):
+        assert yaml.safe_load(_litellm("config.yaml.j2", trim, litellm_anthropic_wif_routes=routes))
 
 
-def test_switched_on_the_env_file_holds_no_anthropic_key():
-    on = _litellm("litellm.env.j2", litellm_anthropic_via_wif=True)
-    off = _litellm("litellm.env.j2", litellm_anthropic_via_wif=False)
-    assert "PRODKEY" not in on and "EVALKEY" not in on and "ANTHROPIC_" not in on.replace("# ", "")
-    assert "ANTHROPIC_API_KEY=PRODKEY" in off and "ANTHROPIC_RESEARCH_API_KEY=EVALKEY" in off
+def _env_keys(routes):
+    text = _litellm("litellm.env.j2", litellm_anthropic_wif_routes=routes)
+    return {ln.split("=", 1)[0]: ln.split("=", 1)[1] for ln in text.splitlines()
+            if "=" in ln and not ln.lstrip().startswith("#") and ln.startswith("ANTHROPIC")}
+
+
+def test_a_listed_routes_key_is_left_out_of_the_env_file():
+    assert _env_keys([]) == {"ANTHROPIC_API_KEY": "PRODKEY", "ANTHROPIC_RESEARCH_API_KEY": "EVALKEY"}
+    assert _env_keys(["eval"]) == {"ANTHROPIC_API_KEY": "PRODKEY"}
+    assert _env_keys(["production", "eval"]) == {}
+
+
+def test_eval_only_moves_the_eval_arms_and_leaves_production_on_its_key():
+    """The first step (ADR-033): the eval workspace is federated, production is not."""
+    for name, p in _cloud_entries(litellm_anthropic_wif_routes=["eval"]):
+        if name.startswith("eval-"):
+            assert p["api_base"] == LITELLM_DEFAULTS["litellm_anthropic_wif_eval_base"], name
+            assert p["api_key"] == "sk-anthropic-wif-placeholder", name
+        else:
+            assert p == {"model": p["model"], "api_key": "os.environ/ANTHROPIC_API_KEY"}, name
+
+
+def test_a_route_without_a_workspace_id_is_not_configured(tmp_path):
+    v = _wif_vars(anthropic_wif_production_workspace_id="")
+    text = _env().from_string((ROLE / "templates/config.json.j2").read_text()).render(**v)
+    p = tmp_path / "config.json"
+    p.write_text(text)
+    assert [r.name for r in wif.load_config(str(p), environ={}).routes] == ["eval"]
 
 
 def test_the_rendered_forwarder_config_passes_the_forwarders_validator(tmp_path):
