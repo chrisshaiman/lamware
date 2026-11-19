@@ -47,7 +47,7 @@ these describe an AWS data plane that no longer exists.
 | [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
-| [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Proposed — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
+| [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Accepted (2026-11-18) — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
 | [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 | [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
@@ -1436,7 +1436,7 @@ configuration, mounts or AIDE rules. No data moves.
 
 ## ADR-026: CVP frontier models are reached through Claude Platform on AWS, with SigV4 from IAM Roles Anywhere; no static key
 
-**Status:** Proposed (2026-11-09)
+**Status:** Accepted (2026-11-18, owner). Proposed 2026-11-09; the forwarder (`claude-platform-aws`) is deployed and in use. #723 closed as superseded; whether the CVP grant also covers the production key is #861.
 **Supersedes:** the proposals ADR-022 (#724, Anthropic-direct WIF from Keycloak) and
 ADR-024 (#784, Amazon Bedrock with IAM Roles Anywhere). Neither merged; their numbers
 stay retired.
