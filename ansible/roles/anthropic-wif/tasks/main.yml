@@ -1,0 +1,202 @@
+---
+# =============================================================================
+# roles/anthropic-wif/tasks/main.yml
+# Localhost forwarder to the Claude API with Workload Identity Federation (ADR-033).
+#
+# No API key on the host. A root-only ES256 key signs a fresh JWT per exchange;
+# its public half is registered as an inline-JWKS federation issuer. The forwarder
+# trades the JWT for a short-lived token per workspace and adds it to LiteLLM's
+# requests. LiteLLM moves a route to it with litellm_anthropic_wif_routes (litellm role).
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Install the forwarder's one dependency (ES256 signing)
+  ansible.builtin.apt:
+    name: python3-cryptography
+    state: present
+
+- name: Create the anthropic-wif group
+  ansible.builtin.group:
+    name: "{{ anthropic_wif_user }}"
+    system: true
+
+# A dedicated user, not root and not LiteLLM's. Egress: the host's OUTPUT policy is
+# ACCEPT and the only uid-scoped DROP is the pipeline user's, so this uid reaches
+# api.anthropic.com over 443 with no firewall change.
+- name: Create the anthropic-wif system user
+  ansible.builtin.user:
+    name: "{{ anthropic_wif_user }}"
+    group: "{{ anthropic_wif_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Create the install directory (root-owned code, ADR-025)
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The service user reads config.json here; the key inside stays root 0600 and
+# reaches the unit only through LoadCredential.
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0750"
+
+# Never regenerated: the Console holds this key's public half, and a new key means
+# re-registering the issuer's JWKS (ADR-033, rotation). `creates` makes that explicit.
+- name: Generate the signing key once (EC P-256, root only)
+  ansible.builtin.shell:
+    cmd: umask 077 && openssl ecparam -name prime256v1 -genkey -noout -out signing-key.pem
+    chdir: "{{ anthropic_wif_config_dir }}"
+    creates: "{{ anthropic_wif_config_dir }}/signing-key.pem"
+
+- name: Keep the signing key root-only
+  ansible.builtin.file:
+    path: "{{ anthropic_wif_config_dir }}/signing-key.pem"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Deploy the forwarder
+  ansible.builtin.copy:
+    src: anthropic_wif.py
+    dest: "{{ anthropic_wif_install_dir }}/anthropic_wif.py"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart anthropic-wif
+
+# The public key set, for registering or re-checking the issuer in the Console.
+- name: Derive the public key set from the signing key
+  ansible.builtin.command: >-
+    /usr/bin/python3 -I {{ anthropic_wif_install_dir }}/anthropic_wif.py jwks
+    --key {{ anthropic_wif_config_dir }}/signing-key.pem --kid {{ anthropic_wif_key_id }}
+  register: anthropic_wif_jwks
+  changed_when: false
+  check_mode: false
+
+- name: Publish the public key set
+  ansible.builtin.copy:
+    content: "{{ anthropic_wif_jwks.stdout }}\n"
+    dest: "{{ anthropic_wif_config_dir }}/jwks-public.json"
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0640"
+
+- name: Deploy the forwarder config
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ anthropic_wif_config_dir }}/config.json"
+    owner: root
+    group: "{{ anthropic_wif_user }}"
+    mode: "0640"
+  notify: Restart anthropic-wif
+
+- name: Deploy the systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-check.service
+    - anthropic-wif-check.timer
+    - anthropic-wif-alert.service
+  notify:
+    - Reload systemd for anthropic-wif units
+    - Restart anthropic-wif
+
+# ---------------------------------------------------------------- disabled path
+- name: Stop and disable the forwarder and the daily check (anthropic_wif_enabled is false)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    daemon_reload: true
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-check.timer
+  when: not (anthropic_wif_enabled | bool)
+
+# ----------------------------------------------------------------- enabled path
+- name: Refuse to enable without the federation ids (ADR-033)
+  ansible.builtin.assert:
+    that:
+      - anthropic_wif_organization_id | length == 36
+      - anthropic_wif_federation_rule_id is match('fdrl_')
+      - anthropic_wif_service_account_id is match('svac_')
+      - anthropic_wif_routes | selectattr('workspace_id') | list | length > 0
+      - anthropic_wif_routes | selectattr('workspace_id') | rejectattr('workspace_id', 'match', 'wrkspc_') | list | length == 0
+    fail_msg: >-
+      anthropic_wif_enabled is true but the organization, federation rule or service
+      account id is empty, or no route has a wrkspc_ workspace id. Set them in
+      ansible/vars/main.yml (ADR-033).
+  when: anthropic_wif_enabled | bool
+
+- name: Enable and start the forwarder and the daily check
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - anthropic-wif.service
+    - anthropic-wif-check.timer
+  when: anthropic_wif_enabled | bool
+
+- name: Apply a pending restart now, so the probes below see this config
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for every active route to listen
+  ansible.builtin.wait_for:
+    host: "{{ anthropic_wif_listen_host }}"
+    port: "{{ item.listen_port }}"
+    timeout: 30
+  loop: "{{ anthropic_wif_routes | selectattr('workspace_id') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: anthropic_wif_enabled | bool
+
+# Behavioural probe that spends nothing: on each route, the other route's first
+# model must be refused before any exchange. A 403 naming allowed_models proves
+# the process is up, accepted root (the peer-uid check passed) and keeps the two
+# workspaces apart. A peer-uid 403 names the uid instead and fails this check.
+- name: Probe each route refuses the other workspace's model
+  ansible.builtin.uri:
+    url: "http://{{ anthropic_wif_listen_host }}:{{ item.listen_port }}/v1/messages"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ (anthropic_wif_routes | rejectattr('name', 'equalto', item.name) | first).allowed_models[0] }}"
+      max_tokens: 1
+      messages: []
+    status_code: 403
+    return_content: true
+  loop: "{{ anthropic_wif_routes | selectattr('workspace_id') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: anthropic_wif_probe
+  failed_when: >-
+    anthropic_wif_probe.status != 403
+    or 'allowed_models' not in anthropic_wif_probe.content
+  when: anthropic_wif_enabled | bool
+
+# The real check once now: per route, a token exchange and a free count_tokens.
+# Fails the deploy if the key, issuer, rule, service account or workspace is wrong.
+- name: Run the health check once
+  ansible.builtin.systemd:
+    name: anthropic-wif-check.service
+    state: started
+  when: anthropic_wif_enabled | bool

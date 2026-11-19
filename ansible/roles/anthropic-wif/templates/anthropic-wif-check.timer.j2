@@ -1,0 +1,11 @@
+# Managed by Ansible (anthropic-wif role). ADR-033.
+[Unit]
+Description=Daily Claude API forwarder health check (ADR-033)
+
+[Timer]
+OnCalendar={{ anthropic_wif_check_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

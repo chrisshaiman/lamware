@@ -54,6 +54,7 @@ these describe an AWS data plane that no longer exists.
 | [030](#adr-030-every-litellm-caller-has-its-own-scoped-key-the-master-key-stays-in-litellms-files) | Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files | Accepted — implemented 2026-11-16 |
 | [031](#adr-031-the-lamware-group-is-narrowed-in-measured-phases-starting-with-cape) | The `lamware` group is narrowed in measured phases, starting with cape | Accepted — phase 0 in progress |
 | [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
+| [033](#adr-033-litellm-reaches-the-claude-api-through-workload-identity-federation-no-api-key-on-the-host) | LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1987,3 +1988,42 @@ Delete the profile, the drop-in and check 26's version clause once noble's podma
 ### Rollback
 
 Revert and redeploy `podman`. The drop-in disappears, and the root containers go back to podman's built-in profile at their next start. On a -43 kernel that brings back the LiteLLM hang, so roll back only while pinned to -38.
+
+## ADR-033: LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host
+
+**Status:** Proposed (2026-11-19).
+**Refs:** ADR-030 (scoped LiteLLM keys), ADR-025 (root-owned code), Claude API docs: Workload Identity Federation
+
+### Context
+
+LiteLLM's Anthropic entries authenticate with two long-lived workspace API keys from the vault: production (`ANTHROPIC_API_KEY`) and the spend-capped eval workspace (`ANTHROPIC_RESEARCH_API_KEY`). The keys sit in LiteLLM's env file and never expire, so a copy taken from the host works until someone notices and revokes it.
+
+An expiring key only moves the problem. A workspace key can be given an expiry, but a short one means rotating it by hand on a schedule, and a missed rotation stops every cloud call at once.
+
+The Claude API supports Workload Identity Federation: a workload presents a JWT from an identity provider the organization trusts and receives an access token that lasts minutes. The issuer can be registered with **inline** public keys. Anthropic then never contacts the issuer and compares its URL with the JWT's `iss` as a string, so the issuer can be the host itself.
+
+### Decision
+
+**The host is its own identity provider, and a loopback forwarder does the exchange.**
+
+- **The key:** an EC P-256 signing key generated on the host once, root `0600` in `/etc/anthropic-wif`. Its public half (`jwks-public.json`, derived on every deploy) is registered as a federation issuer with inline JWKS. The private key never leaves the host.
+- **The forwarder** (`ansible/roles/anthropic-wif`, its own system user, the same hardened unit and proxy core as the existing loopback forwarder):
+  - mints a fresh ES256 JWT for each exchange: unique `jti` (the issuer enforces single use), a 15-minute `exp`, a fixed `sub` and `aud` that the federation rule matches exactly;
+  - exchanges it at `POST /v1/oauth/token` for a token scoped to one workspace, caches that in memory only, refreshes 120 s before expiry, and keeps serving the cached token if a refresh fails until 30 s before expiry;
+  - forwards only `POST /v1/messages` and `/v1/messages/count_tokens` from allowlisted local uids, drops the caller's `x-api-key` and `authorization`, adds `Authorization: Bearer`, and streams responses unchanged, so the `usage` block still reaches LiteLLM (CLAUDE.md section 10).
+- **Production and eval stay separate.** Each workspace is its own *route*: its own loopback port, model allowlist and token. A model may be on only one route, and the forwarder refuses to start otherwise. A request for an eval model on the production port is refused before any exchange, so production traffic cannot bill the eval workspace, as the separate keys guaranteed before.
+- **LiteLLM switches per route** with `litellm_anthropic_wif_routes`. A listed route's entries (production: the analyst models and haiku-fallback; eval: the eval-\* arms) point at the forwarder with a placeholder key, and that route's key is left out of the env file. A route becomes active in the forwarder when its workspace id is set, so the two workspaces can move separately. With the list empty, the rendered config is unchanged from before this ADR (tested).
+- **The federation rule** has scope `workspace:developer`, the same access a workspace key has; the Console offers no narrower scope for a rule. Token lifetime is 600 seconds, and the rule is enabled only for the workspaces its routes use, each of which has the service account as a member.
+- **The ids** (organization, rule, service account, workspaces) are identifiers, not secrets, but they are the owner's. They live in the gitignored `ansible/vars/main.yml`.
+- **Health:** a daily check (and one at every deploy) does, per route, a token exchange and a free `count_tokens`, and alerts through ntfy on failure.
+
+### Consequences
+
+- **No long-lived Anthropic credential is on the host.** A stolen access token works for at most 10 minutes, in one workspace. The signing key is now the long-lived secret, but it is generated on and never leaves the host, and it's useless without the rule and organization id, which also have to match.
+- **The key is the issuer.** If the host is rebuilt or the key is lost, generate a new one and register its JWKS. Exchanges fail until then, and the daily check says so.
+- **Rotation is manual (inline mode).** Add the new key to the issuer's JWKS, deploy with the new `anthropic_wif_key_id`, then remove the old key. Nothing expires, so there's no schedule to miss.
+- **A new failure mode:** if the exchange endpoint is unreachable, cloud calls fail once the cached token expires (at most 10 minutes). Automated runs are local by policy, so this affects analyst and eval calls, not the pipeline.
+
+### Rollback
+
+While the workspace keys still exist: empty `litellm_anthropic_wif_routes` and deploy `litellm`. LiteLLM is back on the keys, and the forwarder can stay up unused. After the keys are deleted, rollback means creating new workspace keys first. Turning off `anthropic_wif_enabled` alone stops cloud calls.

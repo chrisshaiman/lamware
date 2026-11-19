@@ -26,3 +26,7 @@ pip-audit==2.10.0
 # of accident that breaks on an unrelated upgrade.
 jinja2==3.1.6
 PyYAML==6.0.3
+
+# The anthropic-wif forwarder signs ES256 JWTs with cryptography (the host runs
+# noble's python3-cryptography). Pinned so its tests run in CI instead of skipping.
+cryptography==50.0.0

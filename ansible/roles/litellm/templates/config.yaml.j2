@@ -12,21 +12,37 @@
 #
 # Automated runs are local by policy; these entries exist so an analyst can still
 # choose a cloud model from the GUI.
+{#
+  How an Anthropic entry authenticates. If its route ("production" or "eval") is in
+  litellm_anthropic_wif_routes (ADR-033), it points at the anthropic-wif forwarder's
+  route for that workspace and carries a placeholder the forwarder drops; that
+  route's key is then not on the host. Otherwise, the workspace key from the env
+  file, as before. Production and eval stay separate
+  either way: separate keys, or separate routes that each refuse the other's models.
+#}
+{% macro anthropic_auth(route) %}
+{% if route in litellm_anthropic_wif_routes %}
+      api_base: "{{ litellm_anthropic_wif_production_base if route == 'production' else litellm_anthropic_wif_eval_base }}"
+      api_key: "sk-anthropic-wif-placeholder"
+{% else %}
+      api_key: "os.environ/{{ 'ANTHROPIC_API_KEY' if route == 'production' else 'ANTHROPIC_RESEARCH_API_KEY' }}"
+{% endif %}
+{% endmacro %}
 model_list:
   - model_name: "{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
     litellm_params:
       model: "anthropic/{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
   - model_name: "{{ interpret_analyst_summary_model | default('claude-haiku-4-5') }}"
     litellm_params:
       model: "anthropic/{{ interpret_analyst_summary_model | default('claude-haiku-4-5') }}"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
   - model_name: "{{ interpret_analyst_escalation_model | default('claude-opus-4-6') }}"
     litellm_params:
       model: "anthropic/{{ interpret_analyst_escalation_model | default('claude-opus-4-6') }}"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
   # Current-gen Claude arms for the eval harness (A/B vs local qwen).
   # Use the UNDATED aliases: these models have no dated snapshot id, and a dated
@@ -34,12 +50,12 @@ model_list:
   - model_name: "claude-sonnet-5"
     litellm_params:
       model: "anthropic/claude-sonnet-5"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
   - model_name: "claude-opus-5"
     litellm_params:
       model: "anthropic/claude-opus-5"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
   # Frontier eval arms (opus55@10, fable51@10, opus48@10, sonnet55@10, haiku55@10). Eval-only: no interpret,
   # pipeline or vars setting may name these aliases or their models
@@ -52,30 +68,30 @@ model_list:
   - model_name: "eval-opus55"
     litellm_params:
       model: "anthropic/claude-opus-5-5"
-      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+{{ anthropic_auth('eval') }}
 
   - model_name: "eval-fable51"
     litellm_params:
       model: "anthropic/claude-fable-5-1"
-      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+{{ anthropic_auth('eval') }}
 
   # Opus 4.8 (opus48@10): the same eval-only rules, on the same eval key.
   - model_name: "eval-opus48"
     litellm_params:
       model: "anthropic/claude-opus-4-8"
-      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+{{ anthropic_auth('eval') }}
 
   # Sonnet 5.5 and Haiku 5.5 (sonnet55@10, haiku55@10): is a cheaper model good
   # enough for RE? Same eval-only rules, same eval key.
   - model_name: "eval-sonnet55"
     litellm_params:
       model: "anthropic/claude-sonnet-5-5"
-      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+{{ anthropic_auth('eval') }}
 
   - model_name: "eval-haiku55"
     litellm_params:
       model: "anthropic/claude-haiku-5-5"
-      api_key: "os.environ/ANTHROPIC_RESEARCH_API_KEY"
+{{ anthropic_auth('eval') }}
 
   # Mythos 5.1 under the owner's CVP access, through Claude Platform on AWS
   # (ADR-026). Eval-only: no production setting may name the alias or its model.
@@ -243,7 +259,7 @@ model_list:
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+{{ anthropic_auth('production') }}
 
 litellm_settings:
   drop_params: true
