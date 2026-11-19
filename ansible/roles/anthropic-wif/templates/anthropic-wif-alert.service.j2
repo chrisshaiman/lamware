@@ -1,0 +1,13 @@
+# Managed by Ansible (anthropic-wif role). ADR-033.
+[Unit]
+Description=Alert: Claude API forwarder check failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ ntfy_install_dir | default('/opt/ntfy-alerts') }}/ntfy_enqueue.py "Claude API forwarder check failed" "Cloud model calls will fail. The token exchange or the workspace changed (federation rule, service account, or the issuer's key). journalctl -u anthropic-wif-check" --priority high --tags warning
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{ ntfy_dropbox_dir | default('/var/spool/lamware-notify') }}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes

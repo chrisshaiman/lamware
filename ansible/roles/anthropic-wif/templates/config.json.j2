@@ -1,0 +1,13 @@
+{{ {
+  "listen_host": anthropic_wif_listen_host,
+  "allowed_peer_uids": anthropic_wif_allowed_peer_uids | map('int') | list,
+  "organization_id": anthropic_wif_organization_id,
+  "federation_rule_id": anthropic_wif_federation_rule_id,
+  "service_account_id": anthropic_wif_service_account_id,
+  "signing_key_file": anthropic_wif_config_dir ~ "/signing-key.pem",
+  "key_id": anthropic_wif_key_id,
+  "issuer": anthropic_wif_issuer,
+  "subject": anthropic_wif_subject,
+  "audience": anthropic_wif_audience,
+  "routes": anthropic_wif_routes
+} | to_nice_json }}

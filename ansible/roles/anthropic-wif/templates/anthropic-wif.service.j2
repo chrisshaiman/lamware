@@ -1,0 +1,44 @@
+# Managed by Ansible (anthropic-wif role). ADR-033.
+[Unit]
+Description=Claude API forwarder with Workload Identity Federation (ADR-033)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ anthropic_wif_user }}
+Group={{ anthropic_wif_user }}
+ExecStart=/usr/bin/python3 -I {{ anthropic_wif_install_dir }}/anthropic_wif.py serve --config {{ anthropic_wif_config_dir }}/config.json
+# The key file stays root 0600; systemd hands this unit a private copy.
+LoadCredential=signing-key.pem:{{ anthropic_wif_config_dir }}/signing-key.pem
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+UMask=0077
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

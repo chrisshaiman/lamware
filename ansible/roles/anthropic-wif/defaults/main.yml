@@ -1,0 +1,61 @@
+---
+# =============================================================================
+# roles/anthropic-wif/defaults/main.yml
+# Workload Identity Federation forwarder to the Claude API (ADR-033).
+#
+# The ids below are identifiers, not secrets, but they are the owner's: set them
+# in ansible/vars/main.yml (gitignored), never here.
+# =============================================================================
+
+# Off until the ids exist. Rollback for the forwarder itself is this flag; the
+# LiteLLM side is litellm_anthropic_via_wif (litellm role).
+anthropic_wif_enabled: false
+
+anthropic_wif_user: anthropic-wif
+anthropic_wif_install_dir: /opt/anthropic-wif
+anthropic_wif_config_dir: /etc/anthropic-wif
+anthropic_wif_listen_host: "127.0.0.1"
+# LiteLLM runs as root (--network=host), so root is its only caller.
+anthropic_wif_allowed_peer_uids: [0]
+
+# The federation issuer registered in the Console with inline JWKS. The issuer is
+# compared with the JWT's iss as a string and never fetched, so an internal name is
+# fine. The JWKS to register is /etc/anthropic-wif/jwks-public.json on the host.
+anthropic_wif_issuer: "https://wif.lamware.internal"
+anthropic_wif_subject: "lamware-litellm-forwarder"
+anthropic_wif_audience: "https://api.anthropic.com"
+anthropic_wif_key_id: "lamware-wif-1"
+
+# From the Console (set in ansible/vars/main.yml).
+anthropic_wif_organization_id: ""
+anthropic_wif_federation_rule_id: ""
+anthropic_wif_service_account_id: ""
+anthropic_wif_production_workspace_id: ""
+anthropic_wif_eval_workspace_id: ""
+
+# One route per workspace. A model belongs to exactly one route, so production
+# traffic cannot bill the eval workspace (the forwarder refuses otherwise). Ports
+# must equal litellm_anthropic_wif_*_base (tests/test_anthropic_wif_role.py).
+anthropic_wif_routes:
+  - name: production
+    listen_port: 4011
+    workspace_id: "{{ anthropic_wif_production_workspace_id }}"
+    allowed_models:
+      - "{{ interpret_analyst_model | default('claude-sonnet-4-6') }}"
+      - "{{ interpret_analyst_summary_model | default('claude-haiku-4-5') }}"
+      - "{{ interpret_analyst_escalation_model | default('claude-opus-4-6') }}"
+      # LiteLLM's haiku-fallback entry (local failure -> cloud): production traffic.
+      - "{{ litellm_fallback_backend | default('claude-haiku-4-5') }}"
+      - claude-sonnet-5
+      - claude-opus-5
+  - name: eval
+    listen_port: 4012
+    workspace_id: "{{ anthropic_wif_eval_workspace_id }}"
+    allowed_models:
+      - claude-opus-5-5
+      - claude-fable-5-1
+      - claude-opus-4-8
+      - claude-sonnet-5-5
+      - claude-haiku-5-5
+
+anthropic_wif_check_oncalendar: "*-*-* 06:20:00"

@@ -1,0 +1,37 @@
+# Managed by Ansible (anthropic-wif role). ADR-033.
+[Unit]
+Description=Claude API forwarder health check (ADR-033)
+After=network-online.target
+Wants=network-online.target
+OnFailure=anthropic-wif-alert.service
+
+[Service]
+Type=oneshot
+User={{ anthropic_wif_user }}
+Group={{ anthropic_wif_user }}
+ExecStart=/usr/bin/python3 -I {{ anthropic_wif_install_dir }}/anthropic_wif.py check --config {{ anthropic_wif_config_dir }}/config.json
+LoadCredential=signing-key.pem:{{ anthropic_wif_config_dir }}/signing-key.pem
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
