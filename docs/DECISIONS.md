@@ -54,6 +54,7 @@ these describe an AWS data plane that no longer exists.
 | [030](#adr-030-every-litellm-caller-has-its-own-scoped-key-the-master-key-stays-in-litellms-files) | Every LiteLLM caller has its own scoped key; the master key stays in LiteLLM's files | Accepted — implemented 2026-11-16 |
 | [031](#adr-031-the-lamware-group-is-narrowed-in-measured-phases-starting-with-cape) | The `lamware` group is narrowed in measured phases, starting with cape | Accepted — phase 0 in progress |
 | [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
+| [033](#adr-033-litellm-reaches-the-claude-api-through-workload-identity-federation-no-api-key-on-the-host) | LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
