@@ -1436,7 +1436,7 @@ configuration, mounts or AIDE rules. No data moves.
 
 ## ADR-026: CVP frontier models are reached through Claude Platform on AWS, with SigV4 from IAM Roles Anywhere; no static key
 
-**Status:** Accepted (2026-11-18, owner). Proposed 2026-11-09; the forwarder (`claude-platform-aws`) is deployed and in use. #723 closed as superseded; whether the CVP grant also covers the production key is #861.
+**Status:** Accepted (2026-11-18, owner). Proposed 2026-11-09; deployed and in use.
 **Supersedes:** the proposals ADR-022 (#724, Anthropic-direct WIF from Keycloak) and
 ADR-024 (#784, Amazon Bedrock with IAM Roles Anywhere). Neither merged; their numbers
 stay retired.
