@@ -93,31 +93,30 @@ model_list:
       model: "anthropic/claude-haiku-5-5"
 {{ anthropic_auth('eval') }}
 
-  # Mythos 5.1 under the owner's CVP access, through Claude Platform on AWS
-  # (ADR-026). Eval-only: no production setting may name the alias or its model.
-  # NO static key, by program rule: the entry points at the claude-platform-aws
-  # forwarder on loopback, which drops this placeholder and signs each request
-  # with short-lived IAM Roles Anywhere credentials. With the forwarder off,
-  # calls fail to connect instead of falling back to any key.
-  # tests/test_mythos_is_eval_only.py fails if this ever names os.environ/.
+  # Forwarder-only eval arms (Mythos 5.1, Mythos 5.2, Fable 5.2). Eval-only: no
+  # production setting may name these aliases or their models. NO key, ever, and
+  # NOT through anthropic_auth(): they always point at the anthropic-wif eval route
+  # (ADR-033), whose federated token is the only credential they may use, even when
+  # the other eval arms fall back to a workspace key. With the forwarder off, calls
+  # fail to connect instead of falling back to any key.
+  # tests/test_mythos_is_eval_only.py fails if one ever names os.environ/.
   - model_name: "eval-mythos"
     litellm_params:
       model: "anthropic/{{ litellm_eval_mythos_model }}"
-      api_base: "{{ litellm_claude_platform_aws_base }}"
-      api_key: "sk-claude-platform-aws-placeholder"
+      api_base: "{{ litellm_anthropic_wif_eval_base }}"
+      api_key: "sk-anthropic-wif-placeholder"
 
-  # Mythos 5.2 and Fable 5.2 on the same route and rules: no key, forwarder only.
   - model_name: "eval-mythos52"
     litellm_params:
       model: "anthropic/{{ litellm_eval_mythos52_model }}"
-      api_base: "{{ litellm_claude_platform_aws_base }}"
-      api_key: "sk-claude-platform-aws-placeholder"
+      api_base: "{{ litellm_anthropic_wif_eval_base }}"
+      api_key: "sk-anthropic-wif-placeholder"
 
   - model_name: "eval-fable52"
     litellm_params:
       model: "anthropic/{{ litellm_eval_fable52_model }}"
-      api_base: "{{ litellm_claude_platform_aws_base }}"
-      api_key: "sk-claude-platform-aws-placeholder"
+      api_base: "{{ litellm_anthropic_wif_eval_base }}"
+      api_key: "sk-anthropic-wif-placeholder"
 
   # The three Ollama-backed aliases (local-qwen, local-qwen-strict, local-qwen-re)
   # were removed 2026-09-27. No production stage called them — summary,
