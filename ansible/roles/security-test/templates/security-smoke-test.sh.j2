@@ -494,12 +494,20 @@ for u in {{ security_test_service_users | default(['cape', 'pipeline', 'lamware-
     hits=$(find /etc /usr /bin /sbin /lib /lib64 /boot -xdev -user "$u" -print 2>/dev/null | head -5 | tr '\n' ' ')
     [ -n "$hits" ] && SYS_BAD="$SYS_BAD $u: $hits;"
 done
+# /dev is outside -xdev's reach above, and /dev/null is the device every user
+# writes to. Whoever owns it can chmod it. Check 23's root tcpdump probe used to
+# write to it with -w, and tcpdump hands its output file to the tcpdump user when
+# it drops root: /dev/null was tcpdump:tcpdump from #853 until AIDE named it on
+# 2026-11-19. Any other root tool that drops privileges could do the same.
+DEVNULL=$(stat -c '%u:%g %a %t:%T %F' /dev/null 2>/dev/null)
 if ! find /etc -maxdepth 0 -user root >/dev/null 2>&1; then
     fail "system-directory ownership probe is blind: cannot read /etc"
 elif [ -n "$SYS_BAD" ]; then
     fail "service users own files in system directories:$SYS_BAD"
+elif [ "$DEVNULL" != "0:0 666 1:3 character special file" ]; then
+    fail "/dev/null is '$DEVNULL', not '0:0 666 1:3 character special file': a root tool that drops privileges may have chowned its output file"
 else
-    pass "system directories: no file owned by a lamware service user"
+    pass "system directories: no file owned by a lamware service user; /dev/null is root's"
 fi
 
 # -------------------------------------------------------------------------
@@ -815,10 +823,13 @@ CAP_IFACE="{{ cape_capture_interface | default(cape_interface | default('virbr-d
 CAP_DIR="{{ cape_vm_dump_analyses_dir | default('/opt/CAPEv2/storage/analyses') }}/0"
 CAP_USER="{{ cape_user | default('cape') }}"
 CAP_BAD=""
-timeout 3 /usr/bin/tcpdump -i lo -n -c 1 -w /dev/null >/dev/null 2>&1; CAP_CTRL=$?
+# `-w -` to a shell redirect, never `-w /dev/null`: tcpdump run as root hands its
+# output FILE to the tcpdump user when it drops privileges, and that chowned
+# /dev/null (check 17 now watches it). stdout is the shell's, so nothing is chowned.
+timeout 3 /usr/bin/tcpdump -i lo -n -c 1 -w - >/dev/null 2>&1; CAP_CTRL=$?
 for u in "$CAP_USER" pipeline lamware-api auto-feeder lamware-notify lamware-fetch lamware-web-build; do
     id "$u" >/dev/null 2>&1 || continue
-    sudo -u "$u" timeout 3 /usr/bin/tcpdump -i lo -n -c 1 -w /dev/null >/dev/null 2>&1
+    sudo -u "$u" timeout 3 /usr/bin/tcpdump -i lo -n -c 1 -w - >/dev/null 2>&1
     case $? in 0|124) CAP_BAD="$CAP_BAD $u captured on lo;" ;; esac
 done
 sudo -u "$CAP_USER" sudo -n "$CAP_HELPER" -U -q -s 0 -i lo -n -Z "$CAP_USER" -w "$CAP_DIR/dump.pcap" not arp >/dev/null 2>&1
