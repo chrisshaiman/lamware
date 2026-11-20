@@ -59,5 +59,9 @@ anthropic_wif_routes:
       - claude-opus-4-8
       - claude-sonnet-5-5
       - claude-haiku-5-5
+      # The forwarder-only arms: no key in any configuration (litellm config.yaml.j2).
+      - "{{ litellm_eval_mythos_model | default('claude-mythos-5-1') }}"
+      - "{{ litellm_eval_mythos52_model | default('claude-mythos-5-2') }}"
+      - "{{ litellm_eval_fable52_model | default('claude-fable-5-2') }}"
 
 anthropic_wif_check_oncalendar: "*-*-* 06:20:00"

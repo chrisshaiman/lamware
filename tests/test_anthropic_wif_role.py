@@ -37,6 +37,8 @@ spec.loader.exec_module(wif)
 LITELLM_DEFAULTS = yaml.safe_load((LITELLM / "defaults/main.yml").read_text())
 INTERPRET_DEFAULTS = yaml.safe_load((ROOT / "ansible/roles/interpret/defaults/main.yml").read_text())
 TASKS = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
+# Always on the eval route, with no key in any configuration (test_mythos_is_eval_only.py).
+FORWARDER_ONLY = {"eval-mythos", "eval-mythos52", "eval-fable52"}
 IDS = {"anthropic_wif_organization_id": "00000000-0000-4000-8000-000000000001",
        "anthropic_wif_federation_rule_id": "fdrl_X", "anthropic_wif_service_account_id": "svac_X",
        "anthropic_wif_production_workspace_id": "wrkspc_PROD",
@@ -105,7 +107,8 @@ def test_switched_on_every_cloud_entry_reaches_a_route_that_allows_its_model():
     r = _routes()
     port_to_route = {f"http://127.0.0.1:{x['listen_port']}": x for x in r.values()}
     entries = _cloud_entries(litellm_anthropic_wif_routes=["production", "eval"])
-    assert len(entries) == 11, [n for n, _ in entries]   # 5 production, 5 eval, haiku-fallback
+    # 5 production, 5 keyed eval arms, 3 forwarder-only eval arms, haiku-fallback
+    assert len(entries) == 14, [n for n, _ in entries]
     for name, p in entries:
         route = port_to_route.get(p.get("api_base"))
         assert route, f"{name} is not on a WIF route: {p}"
@@ -120,7 +123,10 @@ def test_switched_on_no_entry_names_an_env_key():
 
 
 def test_switched_off_entries_use_the_workspace_keys_as_before():
-    for name, p in _cloud_entries(litellm_anthropic_wif_routes=[]):
+    entries = [(n, p) for n, p in _cloud_entries(litellm_anthropic_wif_routes=[])
+               if n not in FORWARDER_ONLY]
+    assert len(entries) == 11
+    for name, p in entries:
         want = "ANTHROPIC_RESEARCH_API_KEY" if name.startswith("eval-") else "ANTHROPIC_API_KEY"
         assert p == {"model": p["model"], "api_key": f"os.environ/{want}"}, name
 
@@ -146,7 +152,7 @@ def test_a_listed_routes_key_is_left_out_of_the_env_file():
 def test_eval_only_moves_the_eval_arms_and_leaves_production_on_its_key():
     """The first step (ADR-033): the eval workspace is federated, production is not."""
     for name, p in _cloud_entries(litellm_anthropic_wif_routes=["eval"]):
-        if name.startswith("eval-"):
+        if name.startswith("eval-"):  # keyed and forwarder-only eval arms alike
             assert p["api_base"] == LITELLM_DEFAULTS["litellm_anthropic_wif_eval_base"], name
             assert p["api_key"] == "sk-anthropic-wif-placeholder", name
         else:

@@ -1,22 +1,21 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""The Mythos 5.1 arm reaches Claude Platform on AWS only through the SigV4 forwarder.
+"""The forwarder-only eval arms (Mythos 5.1/5.2, Fable 5.2) never carry a key.
 
-Renders the real LiteLLM template with the role's defaults and parses the Ansible role,
-asserting on structure rather than text (ADR-026):
+Renders the real LiteLLM template with the role's defaults and parses the Ansible roles,
+asserting on structure rather than text (ADR-033, superseding the route of ADR-026):
 
-  - no model_list entry for a model the forwarder signs for names a key: it points at
-    the loopback forwarder with a placeholder the forwarder drops. The checker is also
-    run against synthetic bad entries, so a checker that matches nothing fails here;
-  - LiteLLM's forwarder base and the forwarder's listen port agree, and the alias's
-    model is one the forwarder will sign for;
-  - the CA's private key is used only on the controller (delegate_to: localhost) and
-    no task copies it to the host; the host's key stays on the host and reaches the
-    service only through systemd LoadCredential;
-  - the role is in site.yml and off by default.
+  - every model_list entry for one of these models points at the anthropic-wif eval
+    route with the placeholder it drops, in EVERY configuration of
+    litellm_anthropic_wif_routes (so the eval arms' key fallback never reaches them).
+    The checker is also run against synthetic bad entries, so a checker that matches
+    nothing fails here;
+  - their models are on the eval route's allowlist and on no other route;
+  - nothing points at the old AWS forwarder any more.
 
-Structural, because these are deploy-time properties no runtime test on this machine
-reaches; the forwarder's behaviour is in test_claude_platform_aws_forwarder.py.
+The old AWS forwarder's own deploy properties (its CA key stays on the controller,
+its host key reaches the service only through LoadCredential) stay guarded below
+until that role is retired.
 """
 
 from pathlib import Path
@@ -29,31 +28,37 @@ jinja2 = pytest.importorskip("jinja2")
 ROOT = Path(__file__).resolve().parents[1]
 LITELLM = ROOT / "ansible/roles/litellm"
 ROLE = ROOT / "ansible/roles/claude-platform-aws"
+WIF = ROOT / "ansible/roles/anthropic-wif"
 DEFAULTS = yaml.safe_load((LITELLM / "defaults/main.yml").read_text()) or {}
 ROLE_DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) or {}
-PLACEHOLDER = "sk-claude-platform-aws-placeholder"
+PLACEHOLDER = "sk-anthropic-wif-placeholder"
+ALIASES = {"eval-mythos": DEFAULTS["litellm_eval_mythos_model"],
+           "eval-mythos52": DEFAULTS["litellm_eval_mythos52_model"],
+           "eval-fable52": DEFAULTS["litellm_eval_fable52_model"]}
+ROUTE_CONFIGS = ([], ["eval"], ["production"], ["production", "eval"])
 
 
-def _render_config() -> dict:
+def _render_config(routes=()) -> dict:
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     env.filters.setdefault("mandatory", lambda v: v)
     text = (LITELLM / "templates/config.yaml.j2").read_text()
     return yaml.safe_load(env.from_string(text).render(
-        **{**DEFAULTS, "litellm_master_key": "test-key"}))
+        **{**DEFAULTS, "litellm_master_key": "test-key",
+           "litellm_anthropic_wif_routes": list(routes)}))
 
 
-def _signed_entries(model_list: list[dict]) -> list[dict]:
-    signed = set(ROLE_DEFAULTS["claude_platform_aws_allowed_models"])
+def _forwarded_entries(model_list: list[dict]) -> list[dict]:
+    models = set(ALIASES.values())
     return [m for m in model_list
-            if m["model_name"] == "eval-mythos"
-            or m["litellm_params"].get("model", "").removeprefix("anthropic/") in signed]
+            if m["model_name"] in ALIASES
+            or m["litellm_params"].get("model", "").removeprefix("anthropic/") in models]
 
 
 def _violations(model_list: list[dict]) -> list[str]:
-    """Entries for a forwarded model that carry a key or bypass the forwarder."""
-    base = DEFAULTS["litellm_claude_platform_aws_base"]
+    """Entries for a forwarder-only model that carry a key or bypass the eval route."""
+    base = DEFAULTS["litellm_anthropic_wif_eval_base"]
     bad = []
-    for m in _signed_entries(model_list):
+    for m in _forwarded_entries(model_list):
         p = m["litellm_params"]
         if p.get("api_key") != PLACEHOLDER:
             bad.append(f"{m['model_name']}: api_key {p.get('api_key')!r}")
@@ -62,10 +67,10 @@ def _violations(model_list: list[dict]) -> list[str]:
     return bad
 
 
-def test_the_only_forwarded_entry_carries_no_key():
-    cfg = _render_config()
-    assert [m["model_name"] for m in _signed_entries(cfg["model_list"])] == [
-        "eval-mythos", "eval-mythos52", "eval-fable52"]
+@pytest.mark.parametrize("routes", ROUTE_CONFIGS)
+def test_the_forwarded_entries_carry_no_key_in_any_configuration(routes):
+    cfg = _render_config(routes)
+    assert [m["model_name"] for m in _forwarded_entries(cfg["model_list"])] == list(ALIASES)
     assert _violations(cfg["model_list"]) == []
 
 
@@ -75,30 +80,44 @@ def test_the_only_forwarded_entry_carries_no_key():
         "api_key": "os.environ/ANTHROPIC_RESEARCH_API_KEY"}},
     {"model_name": "eval-mythos", "litellm_params": {
         "model": "anthropic/claude-mythos-5-1", "api_key": PLACEHOLDER}},
+    {"model_name": "eval-mythos", "litellm_params": {
+        "model": "anthropic/claude-mythos-5-1", "api_base": "http://127.0.0.1:4011",
+        "api_key": PLACEHOLDER}},
     {"model_name": "some-other-alias", "litellm_params": {
-        "model": "anthropic/claude-mythos-5-1", "api_base": "http://127.0.0.1:4010",
+        "model": "anthropic/claude-mythos-5-1", "api_base": "http://127.0.0.1:4012",
         "api_key": "os.environ/ANTHROPIC_API_KEY"}},
 ])
 def test_the_checker_catches_a_key_or_a_bypass(bad):
-    """Guards the guard: a keyed Mythos entry, one that skips the forwarder, and a
-    second alias for the same model must each be reported."""
+    """Guards the guard: a keyed entry, one that skips the forwarder, one on the
+    production route, and a second keyed alias for the same model are each reported."""
     assert _violations([bad])
 
 
-def test_litellm_points_at_the_port_the_forwarder_listens_on():
-    host_port = DEFAULTS["litellm_claude_platform_aws_base"].removeprefix("http://")
-    assert host_port == (f"{ROLE_DEFAULTS['claude_platform_aws_listen_host']}:"
-                         f"{ROLE_DEFAULTS['claude_platform_aws_listen_port']}")
+def _wif_routes() -> dict[str, list[str]]:
+    """The anthropic-wif routes' allowlists, with role-default Jinja resolved."""
+    raw = yaml.safe_load((WIF / "defaults/main.yml").read_text())
+    env = jinja2.Environment()
+    ctx = {**DEFAULTS, **raw}
+    return {r["name"]: [env.from_string(m).render(**ctx) for m in r["allowed_models"]]
+            for r in raw["anthropic_wif_routes"]}
 
 
-def test_every_forwarded_alias_model_is_one_the_forwarder_signs_for():
-    """Both directions: an alias whose model the forwarder refuses fails at run time;
-    an allowlisted model with no forwarded alias is CVP access nothing should use."""
-    forwarded = {m["litellm_params"]["model"].removeprefix("anthropic/")
-                 for m in _render_config()["model_list"]
-                 if m["litellm_params"].get("api_base") == DEFAULTS["litellm_claude_platform_aws_base"]}
-    assert forwarded == set(ROLE_DEFAULTS["claude_platform_aws_allowed_models"])
+def test_their_models_are_on_the_eval_route_only():
+    routes = _wif_routes()
+    for model in ALIASES.values():
+        assert model in routes["eval"], model
+        assert model not in routes["production"], model
 
+
+def test_nothing_points_at_the_old_aws_forwarder():
+    old = DEFAULTS["litellm_claude_platform_aws_base"]
+    for routes in ROUTE_CONFIGS:
+        hits = [m["model_name"] for m in _render_config(routes)["model_list"]
+                if m["litellm_params"].get("api_base") == old]
+        assert hits == [], hits
+
+
+# --- the old AWS forwarder role, until it is retired ---------------------------------
 
 def test_the_role_is_off_by_default_and_in_site_yml():
     assert ROLE_DEFAULTS["claude_platform_aws_enabled"] is False
