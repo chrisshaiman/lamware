@@ -56,6 +56,7 @@ these describe an AWS data plane that no longer exists.
 | [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
 | [033](#adr-033-litellm-reaches-the-claude-api-through-workload-identity-federation-no-api-key-on-the-host) | LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host | Proposed |
 | [034](#adr-034-the-old-loopback-forwarder-is-retired-its-eval-arms-use-the-workload-identity-federation-eval-route) | The old loopback forwarder is retired; its eval arms use the Workload Identity Federation eval route | Proposed |
+| [035](#adr-035-the-nightly-aide-run-absorbs-only-detonation-reboot-and-container-runtime-differences) | The nightly AIDE run absorbs only detonation, reboot and container-runtime differences | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -2061,4 +2062,55 @@ A test pins the role to removal only: no task may start, enable or install anyth
 ### Rollback
 
 Revert this change and #865, restore the cloud-side resources and the CA, and redeploy `claude-platform-aws` and `litellm`. Once the owner deletes the cloud-side resources, rollback means recreating them.
+
+## ADR-035: The nightly AIDE run absorbs only detonation, reboot and container-runtime differences
+
+**Status:** Proposed (2026-11-20). The owner chose re-baselining after detonations, run nightly, with `/etc` content changes from libvirt accepted.
+**Refs:** #867 (the `/dev/null` finding), `ansible/roles/hardening/files/lamware-aide.py`, `expected-differences.conf`
+
+### Context
+
+A deploy and an apt run each renew the AIDE baseline, so a nightly difference is meant to be a change neither of them made. In practice every detonation night and every reboot also produced differences: CAPE's logs, the guest's libvirt and swtpm state, the per-VM AppArmor profile, and everything under `/run`. So the high-priority alert fired almost every night.
+
+From 11-16 to 11-19 it reported `/dev/null` changing owner (#867, a real finding) among dozens of expected entries, and nobody acted on it.
+
+Two fixes were considered:
+
+- **Excluding those paths from AIDE.** This hides two `/etc` entries and every attribute of the excluded paths, owner and mode included.
+- **Re-baselining after each detonation.** This absorbs *everything* that changed during the detonation, which is exactly when malware escaping the guest would change the host. There is also no single hook: detonations start from three front doors and CAPE's API, and the root VM helper sees each task's revert, not its end.
+
+### Decision
+
+**The nightly run absorbs differences only when every one of them is expected, judged per path and per attribute.**
+
+- **One scan.** `lamware-aide check` runs `aide --update`, which reports the differences and writes a new database from the same scan. A check followed by a separate rebaseline would absorb, unseen, anything changed between the two scans (a scan takes about 7 minutes).
+- **Classification.** Each Added, Removed or Changed entry is checked against `/etc/lamware-aide/expected-differences.conf`. Rules are `allow|deny SECTIONS LETTERS REGEX`, and the first match wins. For an allowed Changed entry, only the listed attributes of AIDE's summary string may change.
+  - No rule allows the type, mode, owner, ACL, xattr, SELinux, ext2-attribute or capability bits to change.
+  - The one exception is the group of CAPE's two live logs: each day's file is created by whichever CAPE process rotates it first, and they run with different groups.
+- **The rules come from evidence:** the 30 reports kept on the host (11-04 to 11-20). Each rule names what was seen.
+  - A detonation: CAPE's logs, the staged sample, the guest's overlay images, snapshot, nvram and swtpm state.
+  - Libvirt's rewrite of `/etc/libvirt/qemu/clean.xml` and of the per-VM AppArmor profile: contents and times only. The owner accepted this as the one weakening.
+  - A reboot: `/run`, postfix's chroot copies (never their contents), udev's disk links, cloud-init's state (never its user data or scripts), the NVMe nodes that swap names between boots, and rotated `dmesg` logs.
+  - A **new** file where systemd reads runtime units is never absorbed, except podman's per-container scopes.
+- **Outcomes:**
+  - **All expected:** the new database becomes the baseline, with a low-priority line.
+  - **Anything unexpected:** a high-priority alert lists only the unexpected entries, the new database is discarded, and the old baseline stays, so the alert repeats every night until a person rebaselines.
+  - **Fail closed:** a report whose parsed entries don't add up to AIDE's own counts, or a missing or malformed rules file, is treated as unexpected. The deploy runs `lamware-aide rules` and fails on a malformed file.
+
+Replayed over the kept reports, the nightly checks behave as intended:
+
+- **11-19:** its 30 detonation entries are absorbed, and the alert names `/dev/null`.
+- **11-16:** the 888 boot-noise entries are absorbed, and it still alerts on 87 real changes made that day.
+- **11-18 and 11-20:** they alert only on ADR-031's temporary measurement in `/root/flow-measure` (and a digest file this change also excludes).
+
+### Consequences
+
+- **A night with a detonation or a reboot and nothing else is quiet.** One new kind of difference wakes the alert, and keeps it awake until a person looks.
+- **The rules file is now security-relevant.** It lives under `/etc`, so AIDE watches it. A deploy changes it, and the deploy rebaselines.
+- **A change libvirt could make to the domain XML's contents is absorbed.** Its owner and mode are not.
+- **New noise must be explained before it is allowed.** It is an alert until a rule names it.
+
+### Rollback
+
+Revert and redeploy `hardening`: `check` goes back to `aide --check`, alerting on every difference.
 

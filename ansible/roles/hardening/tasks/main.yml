@@ -328,11 +328,12 @@
 # Until this, the baseline dated from 2026-04-25; the nightly check found about a
 # million differences, exited 7 and was read by nobody. Three parts:
 #   1. exclusions for data and storage that churn by design (99_lamware_exclusions);
-#   2. the nightly aidecheck runs lamware-aide check, which sends an ntfy alert on
-#      any difference or error;
+#   2. the nightly aidecheck runs lamware-aide check: one aide --update scan whose
+#      differences are classified (ADR-035). Only detonation, reboot and container
+#      runtime changes are absorbed; anything else alerts and keeps the baseline;
 #   3. lamware-aide rebaseline after every deploy (site.yml post_tasks) and every
 #      dpkg run (apt hook), reporting what it absorbs before replacing the baseline.
-# So a difference at night is a change that neither a deploy nor apt made.
+# So an alert at night is a change that no deploy, apt run, detonation or reboot made.
 # ---------------------------------------------------------------------------
 - name: Install the lamware AIDE rules (log rotation, exclusions)
   ansible.builtin.copy:
@@ -357,6 +358,29 @@
     owner: root
     group: root
     mode: "0750"
+
+# The differences the nightly run may absorb (ADR-035): a detonation, a reboot, the
+# container runtime. Under /etc so AIDE watches the rules themselves.
+- name: Create the lamware-aide configuration directory
+  ansible.builtin.file:
+    path: /etc/lamware-aide
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the expected-differences rules
+  ansible.builtin.copy:
+    src: expected-differences.conf
+    dest: /etc/lamware-aide/expected-differences.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+# A malformed rule would make every night fail closed; fail the deploy instead.
+- name: Validate the expected-differences rules
+  ansible.builtin.command: /usr/local/sbin/lamware-aide rules
+  changed_when: false
 
 # Created here, not by the script: the post-deploy rebaseline scans before it
 # writes its first report, so a directory the script made would be the next
