@@ -45,15 +45,6 @@ litellm_llamacpp_anthropic_base: "http://127.0.0.1:11435"
 # naming a seed keep resolving; the values themselves no longer reach the sampler.
 litellm_llamacpp_seeds: [42, 1337, 8675309]
 
-# The claude-platform-aws forwarder (ADR-026). Any model_list entry for a CVP
-# model (the eval-mythos alias) sets
-#   api_base: "{{ litellm_claude_platform_aws_base }}"
-#   api_key: "sk-claude-platform-aws-placeholder"
-# and never an os.environ/ key: the forwarder drops the placeholder and signs
-# with short-lived AWS credentials. Port must equal claude_platform_aws_listen_port
-# (tests/test_mythos_is_eval_only.py).
-litellm_claude_platform_aws_base: "http://127.0.0.1:4010"
-
 # Workload Identity Federation (ADR-033). Routes listed here ("production": the
 # analyst models and haiku-fallback; "eval": the eval-* arms) go through the
 # anthropic-wif forwarder's route for their workspace, and their key is left out of

@@ -489,7 +489,7 @@ echo "[17/26] CONTAINMENT: no lamware service user owns anything in the system d
 # a service user's tree, a package step run as the wrong user, or a hand edit.
 # Owners checked with -user, so a missing account is skipped.
 SYS_BAD=""
-for u in {{ security_test_service_users | default(['cape', 'pipeline', 'lamware-fetch', 'auto-feeder', 'claude-aws', 'lamware-api', 'lamware-notify']) | join(' ') }}; do
+for u in {{ security_test_service_users | default(['cape', 'pipeline', 'lamware-fetch', 'auto-feeder', 'anthropic-wif', 'lamware-api', 'lamware-notify']) | join(' ') }}; do
     id "$u" >/dev/null 2>&1 || continue
     hits=$(find /etc /usr /bin /sbin /lib /lib64 /boot -xdev -user "$u" -print 2>/dev/null | head -5 | tr '\n' ' ')
     [ -n "$hits" ] && SYS_BAD="$SYS_BAD $u: $hits;"

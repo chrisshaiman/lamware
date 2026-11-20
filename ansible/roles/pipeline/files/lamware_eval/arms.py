@@ -128,13 +128,13 @@ _REGISTRY: dict[str, Arm] = {
     # it. Both listed for the research key, 2026-10-13.
     "sonnet55@10": Arm("sonnet55@10", "eval-sonnet55", "router", 10),
     "haiku55@10": Arm("haiku55@10", "eval-haiku55", "router", 10),
-    # Mythos 5.1 under the owner's CVP access. Routes to the `eval-mythos` LiteLLM
-    # alias, which reaches Claude Platform on AWS only through the claude-platform-aws
-    # forwarder (ADR-026: SigV4 from short-lived Roles Anywhere credentials, no static
-    # key). "router": only the router resolves an alias to its model_list entry.
+    # A forwarder-only arm: the `eval-mythos` LiteLLM alias reaches the eval
+    # workspace only through the anthropic-wif eval route, with no key in any
+    # configuration (ADR-033). "router": only the router resolves an alias to its
+    # model_list entry.
     "mythos@10": Arm("mythos@10", "eval-mythos", "router", 10),
-    # The 5.2 pair, same route (2026-11-09). fable52@10 runs Fable 5.2 on the CVP
-    # route; fable51@10 stays on the eval key, so the routes can be compared.
+    # The 5.2 pair, same route and rules (2026-11-09). fable51@10 is a keyed eval
+    # arm, so the two Fable versions can be compared.
     "mythos52@10": Arm("mythos52@10", "eval-mythos52", "router", 10),
     "fable52@10": Arm("fable52@10", "eval-fable52", "router", 10),
 }

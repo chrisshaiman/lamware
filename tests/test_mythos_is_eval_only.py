@@ -11,11 +11,10 @@ asserting on structure rather than text (ADR-033, superseding the route of ADR-0
     The checker is also run against synthetic bad entries, so a checker that matches
     nothing fails here;
   - their models are on the eval route's allowlist and on no other route;
-  - nothing points at the old AWS forwarder any more.
-
-The old AWS forwarder's own deploy properties (its CA key stays on the controller,
-its host key reaches the service only through LoadCredential) stay guarded below
-until that role is retired.
+  - nothing points at the old forwarder's port any more, and its role only tears
+    it down (ADR-034): a revert or copy-paste would otherwise reinstall a second
+    credential path to the same workspace, and nothing on the host would flag a
+    forwarder that answers.
 """
 
 from pathlib import Path
@@ -28,9 +27,9 @@ jinja2 = pytest.importorskip("jinja2")
 ROOT = Path(__file__).resolve().parents[1]
 LITELLM = ROOT / "ansible/roles/litellm"
 ROLE = ROOT / "ansible/roles/claude-platform-aws"
+OLD_FORWARDER = "http://127.0.0.1:4010"   # retired (ADR-034)
 WIF = ROOT / "ansible/roles/anthropic-wif"
 DEFAULTS = yaml.safe_load((LITELLM / "defaults/main.yml").read_text()) or {}
-ROLE_DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text()) or {}
 PLACEHOLDER = "sk-anthropic-wif-placeholder"
 ALIASES = {"eval-mythos": DEFAULTS["litellm_eval_mythos_model"],
            "eval-mythos52": DEFAULTS["litellm_eval_mythos52_model"],
@@ -110,57 +109,50 @@ def test_their_models_are_on_the_eval_route_only():
 
 
 def test_nothing_points_at_the_old_aws_forwarder():
-    old = DEFAULTS["litellm_claude_platform_aws_base"]
     for routes in ROUTE_CONFIGS:
         hits = [m["model_name"] for m in _render_config(routes)["model_list"]
-                if m["litellm_params"].get("api_base") == old]
+                if m["litellm_params"].get("api_base") == OLD_FORWARDER]
         assert hits == [], hits
 
 
-# --- the old AWS forwarder role, until it is retired ---------------------------------
+# --- the old forwarder's role only tears it down (ADR-034) -------------------------
 
-def test_the_role_is_off_by_default_and_in_site_yml():
-    assert ROLE_DEFAULTS["claude_platform_aws_enabled"] is False
-    plays = yaml.safe_load((ROOT / "ansible/site.yml").read_text())
-    roles = [r["role"] if isinstance(r, dict) else r
-             for p in plays for r in p.get("roles", [])]
-    assert "claude-platform-aws" in roles
+TASKS = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
 
 
-def _tasks(tasks=None):
-    tasks = tasks if tasks is not None else yaml.safe_load((ROLE / "tasks/main.yml").read_text())
-    for t in tasks:
-        yield t
-        yield from _tasks(t.get("block", []))
+def _modules(task: dict) -> dict:
+    return {k: v for k, v in task.items() if "." in k}
 
 
-META = {"name", "when", "register", "delegate_to", "become", "notify", "loop",
-        "changed_when", "failed_when", "block", "tags"}
+def test_no_task_starts_enables_or_installs_the_old_forwarder():
+    for task in TASKS:
+        for module, args in _modules(task).items():
+            name = task.get("name", "")
+            if module == "ansible.builtin.systemd" and isinstance(args, dict):
+                assert args.get("state") in (None, "stopped"), name
+                assert args.get("enabled") in (None, False), name
+            assert module not in ("ansible.builtin.template", "ansible.builtin.copy",
+                                  "ansible.builtin.get_url", "ansible.builtin.apt",
+                                  "community.crypto.openssl_privatekey",
+                                  "community.crypto.x509_certificate_pipe"), f"{name}: installs"
+            if module in ("ansible.builtin.user", "ansible.builtin.group"):
+                assert args.get("state") == "absent", name
 
 
-def _module(task: dict) -> tuple[str, object]:
-    (key,) = [k for k in task if k not in META]
-    return key, task[key]
+def test_units_code_config_and_user_are_removed():
+    defaults = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
+    absent = [_modules(t)["ansible.builtin.file"] for t in TASKS
+              if _modules(t).get("ansible.builtin.file", {}).get("state") == "absent"]
+    loops = [t.get("loop") for t in TASKS
+             if _modules(t).get("ansible.builtin.file", {}).get("state") == "absent"]
+    assert "{{ claude_platform_aws_retired_units }}" in loops
+    assert "{{ claude_platform_aws_retired_dirs }}" in loops
+    assert set(defaults["claude_platform_aws_retired_dirs"]) == {
+        "/opt/claude-platform-aws", "/etc/claude-platform-aws"}
+    assert "claude-platform-aws.service" in defaults["claude_platform_aws_retired_units"]
+    assert absent, "no removal task found: the checks above would pass vacuously"
 
 
-def test_the_ca_key_is_used_only_on_the_controller():
-    """Anchored on what a task DOES with the path (module parameters and loop items),
-    not on prose: an assert whose message names ca.key is not a use of it."""
-    uses = [t for t in _tasks() if "block" not in t
-            and _module(t)[0] != "ansible.builtin.assert"
-            and "ca.key" in yaml.safe_dump([_module(t)[1], t.get("loop")])]
-    assert uses, "no task signs with the CA: the checker would pass vacuously"
-    for t in uses:
-        assert t.get("delegate_to") == "localhost", f"{t['name']} touches ca.key on the host"
-        assert not any(k.endswith((".copy", ".template")) for k in t), t["name"]
-
-
-def test_the_host_key_reaches_the_services_only_through_loadcredential():
-    for unit in ("claude-platform-aws.service.j2", "claude-platform-aws-check.service.j2"):
-        text = (ROLE / "templates" / unit).read_text()
-        lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
-        assert any(ln.startswith("LoadCredential=host.key:") for ln in lines), unit
-        assert not any("Environment=" in ln and "AWS_" in ln for ln in lines), unit
-    key_task = next(t for t in _tasks() if "openssl_privatekey" in str(list(t)))
-    params = key_task["community.crypto.openssl_privatekey"]
-    assert (params["owner"], params["mode"], params["regenerate"]) == ("root", "0400", "never")
+def test_the_role_has_no_handlers_templates_or_files_left():
+    for sub in ("handlers", "templates", "files"):
+        assert not (ROLE / sub).exists(), sub

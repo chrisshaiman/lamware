@@ -47,7 +47,7 @@ these describe an AWS data plane that no longer exists.
 | [017](#adr-017-investigation-agent-architecture) | Investigation agent architecture | Live — the capability boundaries |
 | [018](#adr-018-adopt-alembic-for-malware_analysis-schema-migrations) | Alembic for schema migrations | Live |
 | [019](#adr-019-family-attribution-is-not-a-capability-metric-for-the-re-stage) | Family attribution is not a capability metric | Live — enforced in the scorecard |
-| [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Accepted (2026-11-18) — supersedes the unmerged proposals 022 (#724) and 024 (#784) |
+| [026](#adr-026-cvp-frontier-models-are-reached-through-claude-platform-on-aws-with-sigv4-from-iam-roles-anywhere-no-static-key) | CVP frontier models through Claude Platform on AWS, SigV4 from IAM Roles Anywhere; no static key | Superseded by ADR-034 (2026-11-20); accepted 2026-11-18 |
 | [027](#adr-027-the-cape-account-controls-its-two-guests-through-libvirt-not-libvirt-itself) | The cape account controls its two guests through libvirt, not libvirt itself | Accepted — implemented 2026-11-14 |
 | [028](#adr-028-capes-rooter-is-not-run-lamwares-own-firewall-is-the-guests-network-boundary) | CAPE's rooter is not run; lamware's own firewall is the guests' network boundary | Accepted — implemented 2026-11-15 |
 | [029](#adr-029-cape-captures-packets-through-a-root-helper-on-the-detonation-bridge-only) | CAPE captures packets through a root helper, on the detonation bridge only | Accepted — implemented 2026-11-15 |
@@ -55,6 +55,7 @@ these describe an AWS data plane that no longer exists.
 | [031](#adr-031-the-lamware-group-is-narrowed-in-measured-phases-starting-with-cape) | The `lamware` group is narrowed in measured phases, starting with cape | Accepted — phase 0 in progress |
 | [032](#adr-032-root-containers-use-lamware-container-podmans-apparmor-profile-plus-upstreams-stacked-peer-fix) | Root containers use lamware-container: podman's AppArmor profile plus upstream's stacked-peer fix | Accepted — temporary until noble's podman ships container-libs #919 |
 | [033](#adr-033-litellm-reaches-the-claude-api-through-workload-identity-federation-no-api-key-on-the-host) | LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host | Proposed |
+| [034](#adr-034-the-old-loopback-forwarder-is-retired-its-eval-arms-use-the-workload-identity-federation-eval-route) | The old loopback forwarder is retired; its eval arms use the Workload Identity Federation eval route | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -1437,7 +1438,7 @@ configuration, mounts or AIDE rules. No data moves.
 
 ## ADR-026: CVP frontier models are reached through Claude Platform on AWS, with SigV4 from IAM Roles Anywhere; no static key
 
-**Status:** Accepted (2026-11-18, owner). Proposed 2026-11-09; deployed and in use.
+**Status:** Superseded by ADR-034 (2026-11-20): retired, its arms moved to ADR-033's eval route. Accepted 2026-11-18 (owner); proposed 2026-11-09.
 **Supersedes:** the proposals ADR-022 (#724, Anthropic-direct WIF from Keycloak) and
 ADR-024 (#784, Amazon Bedrock with IAM Roles Anywhere). Neither merged; their numbers
 stay retired.
@@ -2028,3 +2029,36 @@ The Claude API supports Workload Identity Federation: a workload presents a JWT 
 ### Rollback
 
 While the workspace keys still exist: empty `litellm_anthropic_wif_routes` and deploy `litellm`. LiteLLM is back on the keys, and the forwarder can stay up unused. After the keys are deleted, rollback means creating new workspace keys first. Turning off `anthropic_wif_enabled` alone stops cloud calls.
+
+## ADR-034: The old loopback forwarder is retired; its eval arms use the Workload Identity Federation eval route
+
+**Status:** Proposed (2026-11-20).
+**Refs:** ADR-026 (superseded), ADR-033, #864, #865
+
+### Context
+
+ADR-026's loopback forwarder gave three eval arms a route to the eval workspace with no static key, using short-lived cloud credentials from a certificate issued by a CA on the controller. ADR-033 then gave the eval workspace a federated route with no key at all, and #865 moved those three arms to it, after confirming the workspace lists their models and that a call on each returns 200.
+
+Since #865 nothing points at the old forwarder: no LiteLLM entry, and no forwarded call in the 24 hours before this change. Its host certificate was four days from expiry, and keeping it would mean renewing a certificate and a second credential path to the same workspace, with no caller.
+
+### Decision
+
+**Retire it.** The `claude-platform-aws` role becomes teardown-only, as the Ollama role did (#818):
+
+- stop and disable the service and its daily check, clear their failed state, and remove the four unit files;
+- remove `/opt/claude-platform-aws` (the forwarder and its credential helper) and `/etc/claude-platform-aws` (config, host key and certificate);
+- remove the `claude-aws` user and group;
+- assert that nothing listens on port 4010 afterwards.
+
+A test pins the role to removal only: no task may start, enable or install anything, and it has no handlers, templates or files.
+
+### Consequences
+
+- **One credential path to the eval workspace,** ADR-033's, which every eval arm now uses.
+- **The cloud-side resources and the controller's CA are the owner's to delete.** Nothing on the host references them after the teardown.
+- **Security-test check 17** now watches the `anthropic-wif` service user in place of the removed one.
+
+### Rollback
+
+Revert this change and #865, restore the cloud-side resources and the CA, and redeploy `claude-platform-aws` and `litellm`. Once the owner deletes the cloud-side resources, rollback means recreating them.
+
