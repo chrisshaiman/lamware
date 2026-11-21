@@ -41,6 +41,9 @@
 # Rewritten by the network monitor on every pass, so AIDE cannot tell an edit
 # from the monitor's own write; the monitor's code and configuration stay monitored.
 !/opt/network-monitor/(baseline|status)\.json$
+# The daily digest's output (ntfy-alerts, ADR-025), rewritten every morning. Its
+# code and configuration stay monitored. Missed when #850 moved it here (11-20 check).
+!/var/lib/lamware-notify/latest-digest\.json$
 # Detonation traffic logs and reports (inetsim): analysis data, like CAPE storage.
 !/var/log/inetsim
 # security-test's output and nuclei's cache. merge-check runs security-test after

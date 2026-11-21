@@ -4,9 +4,12 @@
 
 The nightly check compared against a baseline from April, failed every night with
 about a million differences, and nobody read it. These tests run the real script
-with a fake `aide` and a fake alert queue: a difference must alert, a clean run
-must not, an error must alert as a failure, and a rebaseline must swap the
-databases only when AIDE produced a new one. The host evidence (a rebaseline and
+with a fake `aide` and a fake alert queue: an unexpected difference must alert and
+keep the baseline, expected ones (a detonation, a reboot, ADR-035) must be absorbed
+quietly from the same scan, a report that cannot be classified must fail closed, an
+error must alert as a failure, and a rebaseline must swap the databases only when
+AIDE produced a new one. The expected-differences rules are tested as shipped,
+against entries from the host's real reports. The host evidence (a rebaseline and
 a check on the sandbox) is in the PR; this is what CI can observe.
 """
 import importlib.util
@@ -64,6 +67,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(aide, "DB_PREV", str(prev))
     monkeypatch.setattr(aide, "LOCK", str(tmp_path / "lock"))
     monkeypatch.setattr(aide, "REPORT_DIR", str(tmp_path / "reports"))
+    monkeypatch.setattr(aide, "EXPECTED", str(FILES / "expected-differences.conf"))
     monkeypatch.setattr(aide.os, "chown", lambda path, uid, gid: state["chown"].append((path, uid, gid)))
 
     def fake_run(argv, **kw):
@@ -86,20 +90,24 @@ def test_summary_counts_and_directories():
     assert dict(s["top_dirs"])["/usr/local/bin"] == 2
 
 
-def test_a_clean_check_sends_nothing(env):
+def test_a_clean_check_sends_nothing_and_keeps_the_baseline(env):
     env["rc"] = 0
     assert aide.main(["check"]) == 0
     assert env["alerts"] == []
-    assert env["argv"][0][:2] == [aide.AIDE, "--check"]
+    # One scan that both compares and writes a new database (ADR-035).
+    assert env["argv"][0][:2] == [aide.AIDE, "--update"]
+    assert env["db"].read_text() == "OLD" and not env["new"].exists()
 
 
-def test_a_difference_alerts_high_with_the_counts(env):
+def test_an_unexpected_difference_alerts_high_names_it_and_keeps_the_baseline(env):
     env["rc"], env["out"] = 7, REPORT
     assert aide.main(["check"]) == 7          # the unit still shows failed
     [a] = env["alerts"]
-    assert a["priority"] == "high"
-    assert "3 added, 1 removed, 1 changed" in a["message"]
-    assert "/usr/local/bin" in a["message"]
+    assert a["priority"] == "high" and a["title"] == "AIDE: 5 unexpected differences since the baseline"
+    for p in ("/usr/local/bin/implant", "/etc/sudoers.d/old", "/usr/bin/sudo"):
+        assert p in a["message"]
+    assert env["db"].read_text() == "OLD" and not env["new"].exists()
+    assert not env["prev"].exists()
 
 
 def test_an_aide_error_alerts_as_a_failure(env):
@@ -107,6 +115,7 @@ def test_an_aide_error_alerts_as_a_failure(env):
     assert aide.main(["check"]) == 17
     [a] = env["alerts"]
     assert a["title"] == "AIDE check failed" and a["priority"] == "high"
+    assert env["db"].read_text() == "OLD" and not env["new"].exists()
 
 
 def test_rebaseline_reports_what_it_absorbs_then_swaps(env):
@@ -287,3 +296,167 @@ def test_every_rotated_active_log_gets_freqrotlog(path):
 def test_freqrotlog_does_not_reach_rotated_copies_or_other_files(path):
     assert not any(re.match(r, path) for r, _, _ in ROTATED_RULES), path
 
+
+
+# --- the nightly gate: absorb only what a detonation or a reboot changes (ADR-035) -----
+
+def _report(added=(), removed=(), changed=()):
+    """An AIDE 0.18 report with these entries; changed entries are (summary, path)."""
+    lines = ["Start timestamp: 2026-11-20 00:00:01 -0800 (AIDE 0.18.6)",
+             "AIDE found differences between database and filesystem!!", "", "Summary:",
+             "  Total number of entries:\t1000",
+             f"  Added entries:\t\t{len(added)}", f"  Removed entries:\t\t{len(removed)}",
+             f"  Changed entries:\t\t{len(changed)}", ""]
+    for title, items in (("Added", [("f++++++++++++++++++", p) for p in added]),
+                         ("Removed", [("f------------------", p) for p in removed]),
+                         ("Changed", list(changed))):
+        if items:
+            lines += ["-" * 51, f"{title} entries:", "-" * 51, ""]
+            lines += [f"{flags}: {p}" for flags, p in items]
+    lines += ["", "-" * 51, "Detailed information about changes:", "-" * 51, "",
+              "File: /opt/CAPEv2/log/cuckoo.log", " Size      : 1 | 2"]
+    return "\n".join(lines) + "\n"
+
+
+EXPECTED_RULES = aide.load_expected(str(FILES / "expected-differences.conf"))
+SWTPM = "/var/lib/libvirt/swtpm/00000000-0000-4000-8000-000000000000/tpm2/tpm2-00.permall"
+# Real entries from the 2026-11-19 check (a detonation night), uuid and sample renamed.
+DETONATION = _report(
+    added=["/opt/CAPEv2/log/cuckoo.log.2026-11-16", "/opt/CAPEv2/log/process-1322.log",
+           "/tmp/cuckoo-tmp", "/tmp/cuckoo-tmp/upload_f_tjpd_s",
+           "/tmp/cuckoo-tmp/upload_f_tjpd_s/sample.exe", "/run/libvirt/qemu/swtpm",
+           "/var/lib/libvirt/images/windows11-guest.1795065977"],
+    removed=["/opt/CAPEv2/log/cuckoo.log.2026-09-16",
+             "/var/lib/libvirt/images/windows11-guest.1794790133"],
+    changed=[("d =.... mc.. .. . ", "/etc/apparmor.d/libvirt"),
+             ("f =.... mci.H.. . ", "/etc/libvirt/qemu/clean.xml"),
+             ("f <b... mci.H.. . ", "/opt/CAPEv2/log/cuckoo.log"),
+             ("f =...g mci.H.. . ", "/opt/CAPEv2/log/process.log"),
+             ("f =.... .c..... . ", "/var/lib/libvirt/images/windows11-guest.qcow2"),
+             ("f =.... mci.H.. . ", SWTPM),
+             ("d   ...   .n .. . ", "/run/libvirt/qemu")])
+
+
+def test_the_shipped_rules_load():
+    assert len(EXPECTED_RULES) > 20
+    assert aide.main(["rules"]) in (0, 1)   # EXPECTED is the host path outside the env fixture
+
+
+def test_a_detonation_night_is_absorbed_quietly_from_the_same_scan(env):
+    env["rc"], env["out"] = 7, DETONATION
+    assert aide.main(["check"]) == 0
+    assert env["db"].read_text() == "NEW" and env["prev"].read_text() == "OLD"
+    assert len(env["argv"]) == 1                       # one scan, no second pass
+    [a] = env["alerts"]
+    assert a["priority"] == "low" and "16 expected differences absorbed" in a["title"]
+
+
+def test_the_dev_null_finding_still_alerts_on_a_detonation_night(env):
+    """The 11-19 check: /dev/null's owner changed among 30 detonation entries."""
+    report = DETONATION.replace("Changed entries:\t\t7", "Changed entries:\t\t8").replace(
+        '"d   ...   .n .. . : /run/libvirt/qemu"', "").replace(
+        "d   ...   .n .. . : /run/libvirt/qemu",
+        "d   ...   .n .. . : /run/libvirt/qemu\nc =..ug    . ..   : /dev/null")
+    env["rc"], env["out"] = 7, report
+    assert aide.main(["check"]) == 7
+    [a] = env["alerts"]
+    assert a["priority"] == "high" and a["title"].startswith("AIDE: 1 unexpected")
+    assert "/dev/null" in a["message"] and "cuckoo" not in a["message"]
+    assert env["db"].read_text() == "OLD" and not env["new"].exists()
+
+
+@pytest.mark.parametrize("section, flags, path", [
+    ("Changed", "c =..ug    . ..   ", "/dev/null"),                         # 11-19
+    ("Changed", "f =.... .c..H.. . ", "/var/lib/libvirt/images/windows11-guest.qcow2"),
+    ("Changed", "f =..p. mci.H.. . ", "/etc/libvirt/qemu/clean.xml"),        # mode
+    ("Changed", "f =...u mci.H.. . ", SWTPM),                                # owner
+    ("Changed", "! =.... mci.H.. . ", "/opt/CAPEv2/log/cuckoo.log"),         # type
+    ("Changed", "f =.... mci.H..C. ", "/run/libvirt/qemu/x"),                # capabilities
+    ("Added", "f++++++++++++++++++", "/run/systemd/system/evil.service"),
+    ("Added", "f++++++++++++++++++", "/run/systemd/transient/evil.service"),
+    ("Added", "f++++++++++++++++++", "/run/credentials/x.service/key"),
+    ("Changed", "f =.... mci.H.. . ", "/run/credentials/x.service/key"),
+    ("Changed", "f =.... mc..H.. . ", "/var/lib/cloud/instances/" + "0" * 8 + "-0000-4000-8000-" + "0" * 12 + "/scripts/part-001"),
+    ("Changed", "f =.... mci.H.. . ", "/var/spool/postfix/etc/resolv.conf"),
+    ("Added", "f++++++++++++++++++", "/root/flow-measure/flow-20261118T071143.json"),
+    ("Changed", "f =.... mc..H.. . ", "/opt/CAPEv2/data/yara/index_memory.yarc"),
+    ("Added", "f++++++++++++++++++", "/opt/CAPEv2/log/../../../usr/bin/x"),
+])
+def test_these_are_never_absorbed(section, flags, path):
+    assert not aide.is_expected((section, flags, path), EXPECTED_RULES)
+
+
+@pytest.mark.parametrize("section, flags, path", [
+    ("Added", "f++++++++++++++++++",
+     "/run/systemd/transient/libpod-" + "a" * 64 + ".scope"),
+    ("Changed", "f =.... mci.H.. . ", "/run/systemd/system/netplan-ovs-cleanup.service"),
+    ("Changed", "l.=.... mci.  .   ", "/var/spool/postfix/etc/localtime"),
+    ("Changed", "ll=....    .  .   ", "/dev/disk/by-id/nvme-x-part1"),
+    ("Changed", "f =.... mci.... . ", "/run/credentials/x.service/key"),
+    ("Added", "b++++++++++++++++++", "/dev/nvme1n1p5"),
+])
+def test_reboot_and_runtime_entries_are_absorbed(section, flags, path):
+    assert aide.is_expected((section, flags, path), EXPECTED_RULES)
+
+
+def test_a_report_that_does_not_add_up_fails_closed(env):
+    env["rc"], env["out"] = 7, DETONATION.replace("Added entries:\t\t7", "Added entries:\t\t9")
+    assert aide.main(["check"]) == 7
+    [a] = env["alerts"]
+    assert a["priority"] == "high" and "NOT CLASSIFIED" in a["message"]
+    assert env["db"].read_text() == "OLD" and not env["new"].exists()
+
+
+def test_missing_rules_fail_closed(env, monkeypatch):
+    monkeypatch.setattr(aide, "EXPECTED", str(env["db"].parent / "absent.conf"))
+    env["rc"], env["out"] = 7, DETONATION
+    assert aide.main(["check"]) == 7
+    [a] = env["alerts"]
+    assert a["priority"] == "high" and "expected-differences rules" in a["message"]
+    assert env["db"].read_text() == "OLD"
+
+
+@pytest.mark.parametrize("line", ["allow X cm /x", "allow C qq /x", "permit C cm /x", "allow C cm"])
+def test_a_malformed_rule_is_refused(tmp_path, line):
+    f = tmp_path / "r.conf"
+    f.write_text(line + "\n")
+    with pytest.raises(ValueError):
+        aide.load_expected(str(f))
+
+
+def test_no_allow_rule_lets_owner_mode_or_capabilities_change_except_cape_logs():
+    for action, _sections, letters, rx in EXPECTED_RULES:
+        if action != "allow":
+            continue
+        risky = letters & set("YpugAXSEC")
+        if rx.pattern == r"/opt/CAPEv2/log/(cuckoo|process)\.log":
+            assert risky == {"g"}, risky
+        else:
+            assert not risky, (rx.pattern, risky)
+
+
+def test_the_deploy_installs_and_validates_the_rules():
+    import yaml
+    tasks = yaml.safe_load((ROOT / "ansible/roles/hardening/tasks/main.yml").read_text())
+    by_name = {t.get("name"): t for t in tasks if isinstance(t, dict)}
+    inst = by_name["Install the expected-differences rules"]["ansible.builtin.copy"]
+    assert (inst["src"], inst["dest"]) == ("expected-differences.conf", aide.EXPECTED)
+    names = list(by_name)
+    assert names.index("Install lamware-aide") < names.index("Validate the expected-differences rules")
+    assert by_name["Validate the expected-differences rules"]["ansible.builtin.command"] == \
+        "/usr/local/sbin/lamware-aide rules"
+
+
+@pytest.mark.parametrize("flags, letters", [
+    ("c =..ug    . ..   ", {"u", "g"}),                 # /dev/null, 2026-11-19
+    ("f <b... mci.H.. . ", {"Z", "b", "m", "c", "i", "H"}),
+    ("ll=....    .  .   ", {"l"}),                      # a udev disk link
+    ("d   ...   .n .. . ", {"n"}),
+    ("! =.... mc..... . ", {"Y", "m", "c"}),
+    # Constructed, not from a report: capabilities, the 18th and last column.
+    ("".join("C" if i == 17 else "f" if i == 0 else "." for i in range(18)), {"C"}),
+])
+def test_summary_columns_are_read_by_position(flags, letters):
+    """Strings from the host's reports: one column off reads an owner change as
+    something else, which is exactly the mistake a test fixture made once."""
+    assert aide.changed_letters(flags) == letters
