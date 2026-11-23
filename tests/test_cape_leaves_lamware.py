@@ -42,6 +42,41 @@ def test_the_cape_role_removes_the_membership_before_the_restarting_drop_ins():
         assert names.index("Remove cape from the lamware group") < names.index(dropin)
 
 
+def test_cape_restarts_with_its_new_groups_before_the_capture_probe():
+    """The first phase-1 deploy probed in the window between the membership removal
+    and the end-of-play restart: CAPE still carried lamware, and the probe saw no
+    capture child under hidepid ("nochild")."""
+    names = _names(CAPE_TASKS)
+    flush = names.index("Restart CAPE with its new groups before anything probes it")
+    assert CAPE_TASKS[flush]["ansible.builtin.meta"] == "flush_handlers"
+    assert names.index("Deploy CAPE processor drop-in (cape group + umask)") < flush
+    assert names.index("Remove cape from the lamware group") < flush
+    assert flush < names.index("Give CAPE's sniffer capture rights without sudo")
+    stale = _task("Find CAPE processes still carrying the lamware group")
+    assert stale["notify"] == "Restart Cape services"
+    assert stale["changed_when"] == "cape_stale_groups.stdout | length > 0"
+    assert names.index("Find CAPE processes still carrying the lamware group") < flush
+
+
+def test_the_stale_group_finder_names_exactly_the_processes_that_carry_it(tmp_path):
+    """Run the task's own shell against fake /proc status files and a stub ps."""
+    cmd = _task("Find CAPE processes still carrying the lamware group")["ansible.builtin.shell"]["cmd"]
+    cmd = jinja2.Environment().from_string(cmd).render(cape_user="cape")  # noqa: S701 - shell
+    proc, bindir = tmp_path / "proc", tmp_path / "bin"
+    proc.mkdir()
+    bindir.mkdir()
+    for pid, gid, groups in (("10", "986", "1002"), ("11", "1002", "1002 986"), ("12", "1002", "1002 999")):
+        (proc / pid).mkdir()
+        (proc / pid / "status").write_text(f"Gid:\t{gid}\t{gid}\t{gid}\t{gid}\nGroups:\t{groups}\n")
+    (bindir / "ps").write_text("#!/bin/bash\nprintf '10\\n11\\n12\\n'\n")
+    (bindir / "getent").write_text("#!/bin/bash\necho lamware:x:986:pipeline\n")
+    for f in bindir.iterdir():
+        f.chmod(0o755)
+    out = subprocess.run(["bash", "-c", cmd.replace('"/proc/$p/status"', f'"{proc}/$p/status"')],
+                         capture_output=True, text=True, env={"PATH": f"{bindir}:/usr/bin:/bin"})
+    assert out.returncode == 0 and out.stdout.split() == ["10", "11"], out
+
+
 @pytest.mark.parametrize("name", ["Deploy CAPE service drop-in (cape group + umask)",
                                   "Deploy CAPE processor drop-in (cape group + umask)"])
 def test_the_cape_units_run_as_group_cape(name):

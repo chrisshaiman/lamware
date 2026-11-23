@@ -789,6 +789,36 @@
       umask 0027
       exec /usr/bin/tcpdump "$@"
 
+# Restart CAPE NOW if its groups changed, not at the end of the play. Between the
+# membership removal and the restart, CAPE's running processes still carry
+# lamware while cape no longer belongs to it, so the capture helper (which uses
+# the caller's gid only if it is one of cape's groups) starts captures CAPE cannot
+# see to stop under hidepid. The probe below also reads the unit's Group from
+# systemd, which is stale until the reload. Measured on the first phase-1 deploy
+# (2026-11-22): the probe ran in that window and reported "nochild".
+# From the running processes, not from what this play changed: a deploy that
+# failed before the restart left the removal and the drop-ins applied and CAPE
+# still running with lamware, and the next deploy changes neither.
+- name: Find CAPE processes still carrying the lamware group
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      g=$(getent group lamware | cut -d: -f3) || exit 0
+      [ -n "$g" ] || exit 0
+      for p in $(ps -u {{ cape_user }} -o pid=); do
+        awk -v g="$g" '/^(Gid|Groups):/{for (i = 2; i <= NF; i++) if ($i == g) f = 1} END {exit !f}' \
+          "/proc/$p/status" 2>/dev/null && echo "$p"
+      done
+      exit 0
+    executable: /bin/bash
+  register: cape_stale_groups
+  changed_when: cape_stale_groups.stdout | length > 0
+  notify: Restart Cape services
+  check_mode: false
+
+- name: Restart CAPE with its new groups before anything probes it
+  ansible.builtin.meta: flush_handlers
+
 # The capture rights CAPE's sniffer needs, without sudo (capture-privileges.yml).
 - name: Give CAPE's sniffer capture rights without sudo
   ansible.builtin.import_tasks: capture-privileges.yml
