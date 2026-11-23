@@ -35,7 +35,7 @@ def test_the_cape_role_removes_the_membership_before_the_restarting_drop_ins():
     rm = _task("Remove cape from the lamware group")
     assert rm["ansible.builtin.command"] == "gpasswd -d {{ cape_user }} lamware"
     assert rm["when"] == "'lamware' in cape_groups_now.stdout.split()"
-    assert rm["notify"] == "Restart Cape services"
+    assert rm["notify"] == ["Restart Cape services", "Restart cape's user manager"]
     assert names.index("Read cape's groups") < names.index("Remove cape from the lamware group")
     for dropin in ("Deploy CAPE service drop-in (cape group + umask)",
                    "Deploy CAPE processor drop-in (cape group + umask)"):
@@ -53,7 +53,11 @@ def test_cape_restarts_with_its_new_groups_before_the_capture_probe():
     assert names.index("Remove cape from the lamware group") < flush
     assert flush < names.index("Give CAPE's sniffer capture rights without sudo")
     stale = _task("Find CAPE processes still carrying the lamware group")
-    assert stale["notify"] == "Restart Cape services"
+    # cape lingers: its user manager keeps the groups it started with (check 27 found it).
+    assert stale["notify"] == ["Restart Cape services", "Restart cape's user manager"]
+    handlers = yaml.safe_load((ROLES / "cape/handlers/main.yml").read_text())
+    um = next(h for h in handlers if h["name"] == "Restart cape's user manager")
+    assert um["ansible.builtin.shell"]["cmd"] == 'systemctl restart "user@$(id -u {{ cape_user }}).service"'
     assert stale["changed_when"] == "cape_stale_groups.stdout | length > 0"
     assert names.index("Find CAPE processes still carrying the lamware group") < flush
 

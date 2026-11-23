@@ -11,3 +11,13 @@
     - cape-web
     - cape-processor
   failed_when: false  # services may not be running yet on first provision
+
+# cape lingers, so its systemd user manager runs from boot with the groups cape had
+# then, and passes them to anything it starts. A group removed from cape needs this
+# restart too (the kvm removal missed it first, ADR-027; the lamware removal missed
+# it first as well: security-test check 27 caught it, 2026-11-23).
+- name: Restart cape's user manager
+  ansible.builtin.shell:
+    cmd: systemctl restart "user@$(id -u {{ cape_user }}).service"
+    executable: /bin/bash
+  changed_when: true

@@ -734,7 +734,9 @@
   ansible.builtin.command: gpasswd -d {{ cape_user }} lamware
   when: "'lamware' in cape_groups_now.stdout.split()"
   changed_when: true
-  notify: Restart Cape services
+  notify:
+    - Restart Cape services
+    - Restart cape's user manager
 
 # -------------------------------------------------------------------------
 # CAPE service drop-in — run as group cape with umask 0027. New analysis files
@@ -813,7 +815,9 @@
     executable: /bin/bash
   register: cape_stale_groups
   changed_when: cape_stale_groups.stdout | length > 0
-  notify: Restart Cape services
+  notify:
+    - Restart Cape services
+    - Restart cape's user manager
   check_mode: false
 
 - name: Restart CAPE with its new groups before anything probes it
