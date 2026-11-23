@@ -306,11 +306,8 @@
     home: /opt/lamware-api
     create_home: false
 
-- name: Add cape user to lamware group
-  ansible.builtin.user:
-    name: "{{ cape_user }}"
-    groups: lamware
-    append: true
+# cape is no longer a member of lamware (ADR-031 phase 1): the cape role removes
+# it, before CAPE restarts.
 
 # -------------------------------------------------------------------------
 # lamware packages — deliver source trees to the host so the pipeline venv

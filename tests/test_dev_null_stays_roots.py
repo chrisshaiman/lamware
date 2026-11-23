@@ -24,7 +24,7 @@ def _check17() -> str:
     env = jinja2.Environment()  # noqa: S701 - shell, not HTML
     env.filters["bool"] = bool
     out = env.from_string(SMOKE).render()
-    return out[out.index('echo "[17/26]'):out.index('echo "[18/26]')]
+    return out[out.index('echo "[17/27]'):out.index('echo "[18/27]')]
 
 
 def _run17(tmp_path: Path, devnull: str) -> str:
