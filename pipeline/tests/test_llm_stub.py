@@ -184,3 +184,16 @@ def test_the_stub_refuses_a_non_loopback_address():
 def test_replies_are_deterministic():
     body = {"model": "stub", "system": PROMPTS["SUMMARY_SYSTEM_PROMPT"], "messages": [{"role": "user", "content": "x"}]}
     assert json.dumps(stub.answer(body)) == json.dumps(stub.answer(body))
+
+
+def test_a_hostile_prompt_line_cannot_stall_the_stub():
+    """CodeQL #872: a bullet followed by a long run of spaces must stay linear."""
+    import time
+    text = "Respond with a JSON object containing:\n- A:" + " " * 200_000 + "x\n" + "- b: string\n"
+    t = time.monotonic()
+    keys = stub.keys_from_prompt(text)
+    assert time.monotonic() - t < 1.0
+    assert keys == {"b": "stub"}            # the over-long line is skipped, the rest parsed
+    short = "Respond with a JSON object containing:\n- A:" + " " * 3000 + "x\n"
+    assert stub.keys_from_prompt(short) == {"A": "stub"}
+

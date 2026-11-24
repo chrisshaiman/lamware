@@ -89,7 +89,11 @@ def fill(schema: Any, depth: int = 0, defs: dict | None = None) -> Any:
 # -------------------------------------------------------------- prompt-derived reply
 
 _LIST_MARK = re.compile(r"(must contain|containing)\s*:\s*\Z", re.I)   # one line at a time
-_BULLET = re.compile(r"-\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)\Z")
+# No `\s*` before the value: `\s*(.*)` would match the same spaces two ways and
+# backtrack polynomially on a long run of them (CodeQL, #872). The value is
+# stripped in code instead.
+_BULLET = re.compile(r"-[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*:(.*)\Z")
+MAX_PROMPT_LINE = 4096
 _OBJ_KEYS = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:')
 _ENUM = re.compile(r'"([^"]+)"\s*\|')
 
@@ -119,6 +123,8 @@ def keys_from_prompt(system_text: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     listing = False
     for line in system_text.splitlines():
+        if len(line) > MAX_PROMPT_LINE:
+            continue
         if _LIST_MARK.search(line):
             listing, out = True, {}
             continue
@@ -126,7 +132,7 @@ def keys_from_prompt(system_text: str) -> dict[str, Any]:
             continue
         m = _BULLET.match(line.strip())
         if m:
-            out[m.group(1)] = value_for(m.group(2))
+            out[m.group(1)] = value_for(m.group(2).strip())
         elif out and line.strip() and not line.startswith((" ", "\t")):
             listing = False
     return out
