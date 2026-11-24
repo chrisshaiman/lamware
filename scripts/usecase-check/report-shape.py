@@ -16,6 +16,12 @@ PyInstaller, Java; otherwise native), so a report holds at most one. `path.*` ar
 paths a sample can exercise on top of its branch: a .NET payload CAPE extracted from
 a native sample, and PowerShell decoded from what the sample ran. A coverage corpus
 is one sample per branch, each also carrying some of the paths (docs: ADR-031).
+
+Two predicates depend on what the sample did IN THAT RUN, not only on permissions:
+artifact.cape_injections and artifact.vol_procdump need CAPE to have captured an
+injection. Losing only those is a reason to rerun the sample on CAPE alone
+(`make detonate SAMPLE=... RUNS=3`) before calling it a regression. 2026-11-24: one
+quasarrat run captured none (capemon failed in the guest), three reruns all did.
 """
 from __future__ import annotations
 
