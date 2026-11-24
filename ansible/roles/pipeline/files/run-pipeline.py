@@ -34,7 +34,7 @@ from pathlib import Path
 from db_ingest import ingest_to_db, mark_pdf_generated
 from ioc_extract import extract_iocs, map_iocs_to_techniques
 from lamware_pipeline.cape_guest import derive_machine, machine_of, verify_ran_on
-from lamware_pipeline.config import PipelineConfig
+from lamware_pipeline.config import LOCAL_PROFILE, PROFILE_FIELDS, PipelineConfig
 from lamware_pipeline.correlation import (
     build_mitre_mapping,
     calculate_severity,
@@ -173,6 +173,32 @@ INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
 FORCE_FINAL_GRACE = _PIPELINE_CONFIG.interpret_force_final_grace
 SYNTHESIS_RESERVE = _PIPELINE_CONFIG.interpret_synthesis_reserve
 INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
+# The LLM profile of this run (ADR-036). main() replaces INTERPRET_CONFIG with the
+# profile's before any stage runs; every stage reads INTERPRET_CONFIG at call time.
+LLM_PROFILE = LOCAL_PROFILE
+
+
+def apply_llm_profile(name: str) -> None:
+    """Point every LLM stage of this run at `name`'s models. Unknown names exit 2."""
+    global INTERPRET_CONFIG, LLM_PROFILE
+    try:
+        INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret_for(name).model_dump()
+    except ValueError as exc:
+        raise SystemExit(f"--llm-profile: {exc}") from None
+    LLM_PROFILE = name
+    if _PIPELINE_CONFIG.profile_is_cloud(name):
+        log.warning("LLM profile %r is a CLOUD profile: this run sends prompts (decompiled "
+                    "code, strings, behaviour) to %s", name,
+                    ", ".join(sorted({INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]})))
+    elif name != LOCAL_PROFILE:
+        log.info("LLM profile %r: %s", name,
+                 ", ".join(sorted({INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]})))
+
+
+def llm_profile_record() -> dict:
+    """What this run's report says about its LLM: the profile, cloud or not, and models."""
+    return {"name": LLM_PROFILE, "cloud": _PIPELINE_CONFIG.profile_is_cloud(LLM_PROFILE),
+            "models": {f: INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]}}
 # Behavioural evidence for the agentic RE agent (#674); false is the old behaviour.
 CORRELATED_EVIDENCE = _PIPELINE_CONFIG.interpret_correlated_evidence
 
@@ -426,6 +452,7 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         "sample_name": original_name or sample_path.name,
         "started_at": datetime.now(UTC).isoformat(),
         "bazaar_family": bazaar_family,
+        "llm_profile": llm_profile_record(),
     }
 
     output_dir = REPORTS_DIR / task_id
@@ -1744,6 +1771,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
     log.info("Replay] Loading %s", report_path)
     original_bytes = report_path.read_bytes()
     report = json.loads(original_bytes)
+    report["replay_llm_profile"] = llm_profile_record()
     replayed_at = datetime.now(UTC)
     replay_json_name, replay_pdf_name = replay_output_names(replayed_at)
 
@@ -1867,9 +1895,14 @@ def main():
                         help="MalwareBazaar signature/family name (passed from auto-feeder)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging")
+    parser.add_argument("--llm-profile", default=LOCAL_PROFILE,
+                        help="Which models the LLM stages use (ADR-036): "
+                             + ", ".join(_PIPELINE_CONFIG.profile_names())
+                             + f". Default {LOCAL_PROFILE}.")
     args = parser.parse_args()
 
     setup_logging(verbose=args.verbose)
+    apply_llm_profile(args.llm_profile)
 
     if not args.sample.exists():
         log.error("Error: file not found: %s", args.sample)
