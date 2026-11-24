@@ -8,15 +8,15 @@ rendered LiteLLM config that matches it must have a loopback api_base. Rendered 
 the role's defaults, as the other LiteLLM tests do.
 """
 import re
-import sys
 from pathlib import Path
 
 import jinja2
 import pytest
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline"))
+ROOT = Path(__file__).resolve().parents[2]
+# In pipeline/tests, not tests/: it imports the pipeline's config (pydantic), which
+# the top-level test job does not install.
 from lamware_pipeline.config import LOCAL_ALIAS_RE  # noqa: E402
 
 LITELLM = ROOT / "ansible/roles/litellm"
