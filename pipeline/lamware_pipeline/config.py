@@ -94,6 +94,10 @@ LOCAL_PROFILE = "local"
 # pattern to a loopback api_base in the rendered LiteLLM config, so the pattern
 # cannot drift from where the traffic really goes.
 LOCAL_ALIAS_RE = r"local-qwen-llamacpp[a-z0-9-]*|stub"
+# Cloud aliases a profile may name: the eval-only entries, which carry no
+# production key and which tests/test_frontier_arms_are_eval_only.py keeps out of
+# every production setting. A cloud profile cannot borrow the analyst's models.
+CLOUD_ALIAS_RE = r"eval-[a-z0-9-]+"
 
 
 class LlmProfile(BaseModel):
@@ -219,6 +223,21 @@ class PipelineConfig(BaseModel):
                 # off the host while its reports said it did not.
                 raise ValueError(f"llm profile {name!r} has cloud: false but names "
                                  f"{', '.join(sorted(set(remote)))}, which is not a local alias")
+            models = [getattr(prof, f) for f in PROFILE_FIELDS[:4]]
+            transports = (prof.re_backend, prof.single_shot_backend)
+            if prof.cloud:
+                bad = [m for m in models if not re.fullmatch(CLOUD_ALIAS_RE, m)]
+                if bad:
+                    raise ValueError(f"llm profile {name!r}: a cloud profile names only eval-* "
+                                     f"aliases (no production key); got {', '.join(sorted(set(bad)))}")
+                if transports != ("router", "router"):
+                    # #722: a cloud model on the local transports takes the local
+                    # synthesis paths, which some models reject and which bill nothing.
+                    raise ValueError(f"llm profile {name!r}: a cloud profile needs re_backend "
+                                     f"and single_shot_backend 'router', got {transports}")
+            elif transports != ("local", "local"):
+                raise ValueError(f"llm profile {name!r}: a local profile needs re_backend and "
+                                 f"single_shot_backend 'local', got {transports}")
         return self
 
     def profile_names(self) -> list[str]:

@@ -28,7 +28,8 @@ RUN_PIPELINE = ROOT / "ansible/roles/pipeline/files/run-pipeline.py"
 STUB = {"description": "test", "cloud": False, "model": "stub", "escalation_model": "stub",
         "summary_model": "stub", "plain_english_model": "stub"}
 HAIKU = {"cloud": True, "model": "eval-haiku55", "escalation_model": "eval-haiku55",
-         "summary_model": "eval-haiku55", "plain_english_model": "eval-haiku55"}
+         "summary_model": "eval-haiku55", "plain_english_model": "eval-haiku55",
+         "re_backend": "router", "single_shot_backend": "router"}
 
 
 def _cfg(**profiles) -> PipelineConfig:
@@ -74,7 +75,30 @@ def test_a_profile_that_names_a_remote_model_must_say_cloud(model):
     """A mislabelled profile would send malware off the host while reports said local."""
     with pytest.raises(ValidationError, match="has cloud: false but names"):
         _cfg(x={**STUB, "summary_model": model})
-    assert _cfg(x={**STUB, "summary_model": model, "cloud": True}).profile_is_cloud("x")
+
+
+def test_a_well_formed_cloud_profile_loads():
+    assert _cfg(haiku=HAIKU).profile_is_cloud("haiku")
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-4-6", "claude-haiku-4-5", "stub", "eval_haiku"])
+def test_a_cloud_profile_names_only_eval_aliases(model):
+    """The eval-* entries carry no production key; a cloud profile cannot borrow the analyst's."""
+    with pytest.raises(ValidationError, match="names only eval-"):
+        _cfg(x={**HAIKU, "summary_model": model})
+
+
+@pytest.mark.parametrize("transports", [("local", "local"), ("router", "local"), ("cloud", "router")])
+def test_a_cloud_profile_uses_the_router_transports(transports):
+    """#722: a cloud model on the local transports takes paths that bill nothing."""
+    with pytest.raises(ValidationError, match="needs re_backend"):
+        _cfg(x={**HAIKU, "re_backend": transports[0], "single_shot_backend": transports[1]})
+
+
+@pytest.mark.parametrize("transports", [("router", "router"), ("local", "cloud")])
+def test_a_local_profile_uses_the_local_transports(transports):
+    with pytest.raises(ValidationError, match="a local profile needs"):
+        _cfg(x={**STUB, "re_backend": transports[0], "single_shot_backend": transports[1]})
 
 
 def test_a_profile_must_declare_whether_it_is_cloud():
