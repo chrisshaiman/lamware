@@ -179,7 +179,8 @@ LLM_PROFILE = LOCAL_PROFILE
 
 
 def apply_llm_profile(name: str) -> None:
-    """Point every LLM stage of this run at `name`'s models. Unknown names exit 2."""
+    """Point every LLM stage of this run at `name`'s models. An unknown name stops
+    the run (exit 1) with the defined names, before the sample is touched."""
     global INTERPRET_CONFIG, LLM_PROFILE
     try:
         INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret_for(name).model_dump()
