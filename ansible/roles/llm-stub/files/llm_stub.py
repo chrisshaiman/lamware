@@ -88,12 +88,31 @@ def fill(schema: Any, depth: int = 0, defs: dict | None = None) -> Any:
 
 # -------------------------------------------------------------- prompt-derived reply
 
-_LIST_MARK = re.compile(r"(must contain|containing)\s*:\s*\Z", re.I)   # one line at a time
-# No `\s*` before the value: `\s*(.*)` would match the same spaces two ways and
-# backtrack polynomially on a long run of them (CodeQL, #872). The value is
-# stripped in code instead.
-_BULLET = re.compile(r"-[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*:(.*)\Z")
+# Prompt lines are parsed with string methods, not regular expressions: the prompt
+# is caller-supplied, and CodeQL flagged both regex versions of this parse as
+# polynomial on crafted input (#872). Key names are short and checked separately.
+_KEY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 MAX_PROMPT_LINE = 4096
+
+
+def _is_list_mark(line: str) -> bool:
+    """True for a line ending "... containing:" or "... must contain:"."""
+    text = line.rstrip()
+    if not text.endswith(":"):
+        return False
+    return text[:-1].rstrip().lower().endswith(("containing", "must contain"))
+
+
+def _bullet(line: str) -> tuple[str, str] | None:
+    """("key", "description") for a "- key: description" line, else None."""
+    text = line.strip()
+    if not text.startswith("-") or text[1:2] not in (" ", "\t"):
+        return None
+    key, sep, value = text[1:].lstrip(" \t").partition(":")
+    key = key.rstrip(" \t")
+    if not sep or not _KEY_NAME.fullmatch(key):
+        return None
+    return key, value.strip()
 _OBJ_KEYS = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"\s*:')
 _ENUM = re.compile(r'"([^"]+)"\s*\|')
 
@@ -125,14 +144,14 @@ def keys_from_prompt(system_text: str) -> dict[str, Any]:
     for line in system_text.splitlines():
         if len(line) > MAX_PROMPT_LINE:
             continue
-        if _LIST_MARK.search(line):
+        if _is_list_mark(line):
             listing, out = True, {}
             continue
         if not listing:
             continue
-        m = _BULLET.match(line.strip())
-        if m:
-            out[m.group(1)] = value_for(m.group(2).strip())
+        bullet = _bullet(line)
+        if bullet:
+            out[bullet[0]] = value_for(bullet[1])
         elif out and line.strip() and not line.startswith((" ", "\t")):
             listing = False
     return out
