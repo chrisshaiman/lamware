@@ -58,6 +58,7 @@ these describe an AWS data plane that no longer exists.
 | [034](#adr-034-the-old-loopback-forwarder-is-retired-its-eval-arms-use-the-workload-identity-federation-eval-route) | The old loopback forwarder is retired; its eval arms use the Workload Identity Federation eval route | Proposed |
 | [035](#adr-035-the-nightly-aide-run-absorbs-only-detonation-reboot-and-container-runtime-differences) | The nightly AIDE run absorbs only detonation, reboot and container-runtime differences | Proposed |
 | [036](#adr-036-a-run-chooses-its-llm-backend-by-explicit-profile-automated-runs-stay-local-by-default) | A run chooses its LLM backend by explicit profile; automated runs stay local by default | Proposed |
+| [037](#adr-037-litellms-per-call-cost-is-the-price-of-record-the-rate-tables-become-a-fallback) | LiteLLM's per-call cost is the price of record; the rate tables become a fallback | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -2186,4 +2187,62 @@ Changing the deployed defaults for one run would change them for every automated
 ### Rollback
 
 Revert. Runs then use the deployed models only. Reports written with `llm_profile` keep the field; nothing reads it.
+
+## ADR-037: LiteLLM's per-call cost is the price of record; the rate tables become a fallback
+
+**Status:** Proposed (2026-11-24).
+**Refs:** CLAUDE.md section 10, ADR-030 (scoped LiteLLM keys), ADR-036 (LLM profiles), #449, #718, #803
+
+### Context
+
+Two hand-kept rate tables price model calls:
+
+- **`db_ingest._LLM_PRICING`,** for `analyses.llm_cost_usd`;
+- **`lamware_eval.runner._RATES`,** for the eval scorecards.
+
+Both have drifted before:
+
+- free local inference priced at Sonnet rates (#449);
+- cache tokens billed at nothing (#718).
+
+Neither knows every alias a run can use now. An unpriced alias is billed at the default (Sonnet) rate with a warning. The `stub` profile had exactly that until it got its own row, and the eval-only aliases an LLM profile can name (ADR-036) still do in `db_ingest`.
+
+LiteLLM already prices every call it routes, and records the result in its spend log. **Measured 2026-11-24** from that log:
+
+- **one Haiku 5.5 call** (13 in, 4 out) cost $0.0000033;
+- **three other eval-route calls** (13 in, 5 out each) cost $0.000988 together;
+- **both match the published rates exactly,** and local and stub calls are $0.
+
+**What it exposes:**
+
+- every response carries `x-litellm-call-id` when its headers arrive, streamed or not;
+- non-streamed responses also carry `x-litellm-response-cost-*` headers;
+- streamed responses carry those headers too, but they read 0, because the cost is only known after the stream ends;
+- `GET /spend/logs?request_id=<call-id>` returns the call's row (`spend`, `prompt_tokens`, `completion_tokens`, `model_group`) for streamed and non-streamed calls alike.
+
+### Decision
+
+**The price of a run is the sum of LiteLLM's recorded cost for every call the run made.**
+
+- **The interpret container records every call ID.**
+  - An `httpx` response hook on every client it builds (the two Anthropic SDK clients and the synthesis client) collects `x-litellm-call-id` from each response. That covers all twelve call sites, streamed or not, without editing each one.
+  - Each container process serves one stage, so the IDs it collected are that stage's.
+  - They travel with the stage's result.
+- **The orchestrator resolves them after the last LLM stage.**
+  - It looks up each call in LiteLLM's spend log, retrying for a short while, because LiteLLM writes the log in batches.
+  - It writes `report["llm_cost"]`: `source: litellm`, the dollar total, the number of calls, and any IDs it could not resolve.
+  - The lookup uses a new scoped key with read-only spend access (ADR-030's one key per caller).
+- **`db_ingest` uses `llm_cost` when every call resolved.** Otherwise, and for every report written before this ADR, it uses the rate table as today, with a warning.
+- **The rate tables stay, as the fallback,** and are no longer extended for new aliases. A price for a new alias goes in LiteLLM's model list, where LiteLLM's spend tracking reads it too.
+- **The eval harness moves to the same source** in a follow-up.
+
+### Consequences
+
+- **One price source** for the pipeline, the eval harness and LiteLLM's own spend view; cache reads and writes are priced the way LiteLLM prices them.
+- **A run's cost depends on LiteLLM's spend log being written and kept.** A call the log doesn't have is listed in the report, and that run falls back to the table.
+- **Reports carry LiteLLM call IDs.** They're opaque identifiers, not secrets.
+
+### Rollback
+
+Revert. `db_ingest` prices from the table again; reports that already carry `llm_cost` keep it, and nothing reads it.
 

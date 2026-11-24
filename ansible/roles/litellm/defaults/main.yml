@@ -88,3 +88,8 @@ litellm_scoped_keys:
   - name: api-spend
     role: proxy_admin_viewer
     models: ["no-models"]
+  # The orchestrator reads LiteLLM's spend log for a run's cost (ADR-037). Read-only
+  # viewer, no models, its own key per ADR-030.
+  - name: pipeline-spend
+    role: proxy_admin_viewer
+    models: ["no-models"]

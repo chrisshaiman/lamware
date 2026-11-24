@@ -90,6 +90,7 @@ def _never(reason: str) -> Allowed:
 
 
 _PIPE = f"{_FILES}/run-pipeline.py"
+_LLM_COST = "pipeline/lamware_pipeline/llm_cost.py"
 _ROUTED = {  # routed analyser -> the stage module that runs it
     "office": f"{_FILES}/stages/office.py",
     "powershell": f"{_FILES}/stages/powershell.py",
@@ -123,6 +124,12 @@ ALLOWED: dict[str, Allowed] = {
         _RARE_TYPE, f"{_ROLES}/office-macro-analysis/templates/analyze-office.py.j2"),
     "java_analysis.analysis_success": _unobserved(_RARE_TYPE, f"{_FILES}/stages/java.py"),
     "office_analysis.analysis_success": _unobserved(_RARE_TYPE, f"{_FILES}/stages/office.py"),
+
+    # --- ADR-037: LiteLLM's recorded cost, new; no fixture report has it yet ---
+    "llm_cost": _unobserved("written by every run from ADR-037 on", _PIPE),
+    "llm_cost.error": _unobserved("written when the spend key is missing", _PIPE),
+    **{f"llm_cost.{leaf}": _unobserved("written by every run from ADR-037 on", _LLM_COST)
+       for leaf in ("source", "complete", "usd", "calls", "resolved", "stages_without_call_ids")},
 
     # --- one loop, several sections: each section writes one of the keys ----
     # db_ingest prices each LLM section by the first of model_used / model_final /

@@ -102,5 +102,6 @@
   "db_user": {{ (postgres_db_user | default('pipeline')) | to_json }},
   "relationship_max_ioc_frequency": {{ pipeline_relationship_max_ioc_frequency | default(20) }},
   "relationship_ssdeep_threshold": {{ pipeline_relationship_ssdeep_threshold | default(80) }},
-  "llm_profiles": {{ pipeline_llm_profiles | default({}) | to_json }}
+  "llm_profiles": {{ pipeline_llm_profiles | default({}) | to_json }},
+  "litellm_url": {{ ("http://127.0.0.1:" ~ (litellm_port | default(4000))) | to_json }}
 }

@@ -206,6 +206,9 @@ class PipelineConfig(BaseModel):
     # a run without the flag always gets the deployed defaults. Defaulted empty so
     # an older config.json still loads.
     llm_profiles: dict[str, LlmProfile] = Field(default_factory=dict)
+    # Where the orchestrator reads LiteLLM's spend log for a run's cost (ADR-037).
+    # Defaulted so an older config.json still loads.
+    litellm_url: str = "http://127.0.0.1:4000"
 
     @model_validator(mode="after")
     def _profile_names_are_safe(self) -> "PipelineConfig":

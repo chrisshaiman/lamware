@@ -666,6 +666,18 @@ def _calculate_llm_cost(report: dict, root: _Node | None = None) -> float:
     """
     if root is None:
         root = _read_report(report, [])
+    # LiteLLM's recorded cost of every call, when it accounts for all of them
+    # (ADR-037). Anything less, and every report from before it, takes the table below.
+    recorded = report.get("llm_cost") if isinstance(report, dict) else None
+    if (isinstance(recorded, dict) and recorded.get("source") == "litellm"
+            and recorded.get("complete") is True
+            and isinstance(recorded.get("usd"), (int, float)) and recorded["usd"] >= 0):
+        return float(recorded["usd"])
+    if isinstance(recorded, dict) and recorded.get("source") == "litellm":
+        print("  [!] llm_cost: LiteLLM's record is incomplete for this run "
+              f"({recorded.get('resolved', 0)}/{recorded.get('calls', 0)} calls resolved, "
+              f"stages without ids: {recorded.get('stages_without_call_ids') or recorded.get('error')}) "
+              "— pricing from the rate table")
     total_cost = 0.0
 
     # Each section stores usage at the top level of its result dict

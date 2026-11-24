@@ -167,3 +167,21 @@ def test_the_stub_is_priced_at_zero_not_the_default_rate():
     from db_ingest import _price_for_model
     assert _price_for_model("stub") == {"input": 0.00, "output": 0.00}
 
+
+
+def test_a_complete_litellm_record_is_the_price_of_record():
+    """ADR-037: LiteLLM's recorded cost wins when it accounts for every call."""
+    report = {"llm_interpretation": {"model_used": "eval-haiku55",
+                                     "usage": {"input_tokens": 1_000_000, "output_tokens": 0}},
+              "llm_cost": {"source": "litellm", "complete": True, "usd": 0.1, "calls": 3, "resolved": 3}}
+    assert db_ingest._calculate_llm_cost(report) == 0.1
+
+
+def test_an_incomplete_litellm_record_falls_back_to_the_table(capsys):
+    """An unresolved call means the record is short; price from the table instead."""
+    usage = {"input_tokens": 1_000_000, "output_tokens": 0}
+    report = {"llm_interpretation": {"model_used": "claude-sonnet-4-6", "usage": usage},
+              "llm_cost": {"source": "litellm", "complete": False, "usd": 0.0001, "calls": 2,
+                           "resolved": 1, "stages_without_call_ids": []}}
+    assert db_ingest._calculate_llm_cost(report) == 3.0          # Sonnet input $3/Mtok
+    assert "incomplete" in capsys.readouterr().out
