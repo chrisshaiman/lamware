@@ -1,0 +1,83 @@
+---
+# =============================================================================
+# roles/llm-stub/tasks/main.yml
+# Loopback stand-in model for the `stub` LLM profile (ADR-036). Stdlib only, its
+# own unprivileged user, loopback only. LiteLLM's `stub` alias points here.
+#
+# Author: Christopher Shaiman
+# License: Apache 2.0
+# =============================================================================
+
+- name: Create the llm-stub group
+  ansible.builtin.group:
+    name: "{{ llm_stub_user }}"
+    system: true
+
+- name: Create the llm-stub system user
+  ansible.builtin.user:
+    name: "{{ llm_stub_user }}"
+    group: "{{ llm_stub_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: Create the install directory (root-owned code, ADR-025)
+  ansible.builtin.file:
+    path: "{{ llm_stub_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy the stub
+  ansible.builtin.copy:
+    src: llm_stub.py
+    dest: "{{ llm_stub_install_dir }}/llm_stub.py"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart llm-stub
+
+- name: Deploy the llm-stub unit
+  ansible.builtin.template:
+    src: llm-stub.service.j2
+    dest: /etc/systemd/system/llm-stub.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart llm-stub
+
+- name: Enable and start llm-stub
+  ansible.builtin.systemd:
+    name: llm-stub
+    state: "{{ 'started' if llm_stub_enabled | bool else 'stopped' }}"
+    enabled: "{{ llm_stub_enabled | bool }}"
+    daemon_reload: true
+
+- name: Apply a pending restart now, so the probe below sees this code
+  ansible.builtin.meta: flush_handlers
+
+# Behavioural: a first turn with a tool must come back as a tool call, and a
+# summary prompt must come back as JSON carrying the keys it lists.
+- name: Probe the stub answers a tool turn with a tool call
+  ansible.builtin.uri:
+    url: "http://{{ llm_stub_listen_host }}:{{ llm_stub_port }}/v1/messages"
+    method: POST
+    body_format: json
+    body:
+      model: stub
+      max_tokens: 10
+      tools: [{name: probe_tool, input_schema: {type: object, properties: {name: {type: string}}}}]
+      messages: [{role: user, content: probe}]
+    return_content: true
+  register: llm_stub_probe
+  retries: 10
+  delay: 2
+  until: llm_stub_probe.status == 200
+  failed_when: >-
+    llm_stub_probe.status != 200
+    or llm_stub_probe.json.stop_reason != 'tool_use'
+    or llm_stub_probe.json.content[0].name != 'probe_tool'
+    or llm_stub_probe.json.usage.input_tokens | int < 1
+  when: llm_stub_enabled | bool

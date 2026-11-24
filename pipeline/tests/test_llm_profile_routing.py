@@ -28,7 +28,9 @@ PIPELINE = yaml.safe_load((ROOT / "ansible/roles/pipeline/defaults/main.yml").re
 # The OpenAI-shape base is not a role default; the template falls back to the same
 # /v1 address as litellm_llamacpp_api_base.
 LOCAL_BASES = {DEFAULTS["litellm_llamacpp_anthropic_base"], DEFAULTS["litellm_llamacpp_api_base"],
-               DEFAULTS.get("litellm_llamacpp_openai_base", DEFAULTS["litellm_llamacpp_api_base"])}
+               DEFAULTS.get("litellm_llamacpp_openai_base", DEFAULTS["litellm_llamacpp_api_base"]),
+               DEFAULTS["litellm_stub_base"]}
+STUB = yaml.safe_load((ROOT / "ansible/roles/llm-stub/defaults/main.yml").read_text())
 
 
 def _model_list(**extra):
@@ -62,9 +64,20 @@ def test_the_check_catches_a_local_looking_alias_on_a_cloud_route(base):
     assert _local_named([bad]) == [bad] and bad["litellm_params"]["api_base"] not in LOCAL_BASES
 
 
-def test_the_deployed_defaults_define_no_profile():
-    """Without local vars, a deploy has only "local": the interpret defaults."""
-    assert PIPELINE["pipeline_llm_profiles"] == {}
+def test_the_deployed_defaults_define_no_cloud_profile():
+    """Without local vars a deploy has "local" and the free, local "stub"; a cloud
+    profile is always the operator's own addition."""
+    profiles = PIPELINE["pipeline_llm_profiles"]
+    assert set(profiles) == {"stub"}
+    assert profiles["stub"]["cloud"] is False
+    assert {profiles["stub"][f] for f in ("model", "escalation_model", "summary_model",
+                                          "plain_english_model")} == {"stub"}
+
+
+def test_the_stub_alias_points_at_the_stub_service():
+    (entry,) = [m for m in _model_list() if m["model_name"] == "stub"]
+    assert entry["litellm_params"]["api_base"] == DEFAULTS["litellm_stub_base"]
+    assert DEFAULTS["litellm_stub_base"] == f"http://{STUB['llm_stub_listen_host']}:{STUB['llm_stub_port']}"
 
 
 def test_the_automated_defaults_are_local_aliases():

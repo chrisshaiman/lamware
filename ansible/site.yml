@@ -230,6 +230,12 @@
     - role: anthropic-wif
       tags: [anthropic-wif]
 
+    # 10a-3. llm-stub — loopback stand-in model behind LiteLLM's `stub` alias and
+    #        the `stub` LLM profile: valid, fixed replies for permission phases and
+    #        coverage runs (ADR-036). Before litellm, which routes to it.
+    - role: llm-stub
+      tags: [llm-stub]
+
     # 10b. LiteLLM proxy — routes all Claude API calls through local proxy
     - role: litellm
       tags: [litellm]

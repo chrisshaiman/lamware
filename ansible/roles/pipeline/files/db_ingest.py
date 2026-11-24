@@ -140,6 +140,9 @@ _LLM_PRICING = {
     # deployed set, which has drifted past this list before (see below).
     "local-qwen": {"input": 0.00, "output": 0.00},
     "local-qwen-strict": {"input": 0.00, "output": 0.00},
+    # The llm-stub (ADR-036): fixed replies from a loopback server, no model at all.
+    # Without this row it fell to "default" and a stub run was priced as Sonnet.
+    "stub": {"input": 0.00, "output": 0.00},
     "default": {"input": 3.00, "output": 15.00},
 }
 

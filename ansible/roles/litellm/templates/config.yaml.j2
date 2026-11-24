@@ -255,6 +255,16 @@ model_list:
       api_base: "{{ litellm_llamacpp_anthropic_base | default('http://127.0.0.1:11435') }}"
       api_key: "sk-none"
 {% endfor %}
+  # The stub (ADR-036): a loopback stand-in that answers every LLM stage with valid,
+  # fixed replies. Selected only by the `stub` LLM profile; no deployed default
+  # names it. `anthropic/` so LiteLLM translates the pipeline's OpenAI-wire calls
+  # (synthesis, single-shot) into the one API the stub speaks.
+  - model_name: "stub"
+    litellm_params:
+      model: "anthropic/stub"
+      api_base: "{{ litellm_stub_base }}"
+      api_key: "sk-stub"
+
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"

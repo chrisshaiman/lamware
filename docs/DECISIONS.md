@@ -2173,9 +2173,9 @@ Changing the deployed defaults for one run would change them for every automated
   - Every report carries `llm_profile`: its name, whether it is cloud, and the models.
   - A replay records `replay_llm_profile`.
   - A cloud profile logs a warning naming the models it sends to.
-- **The defaults define no profiles.** Operators add their own in their vars. Two are planned:
-  - **`stub`:** a loopback server that answers every LLM stage with valid, fixed replies. It's free and deterministic, for permission phases and coverage runs.
-  - **`haiku`:** a commented example on an eval-only alias.
+- **The defaults define one profile, `stub`,** and never a cloud one.
+  - **`stub`:** the `llm-stub` role, a loopback server that answers every LLM stage with valid, fixed replies, priced at zero. It's free and deterministic, for permission phases and coverage runs, and it changes nothing about what leaves the host.
+  - **Cloud profiles are the operator's own addition,** in their vars. A commented `haiku` example on an eval-only alias is in the pipeline role's defaults.
 
 ### Consequences
 

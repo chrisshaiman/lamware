@@ -160,3 +160,10 @@ def test_unknown_model_still_falls_back_to_default():
     # prefix rule must not swallow cloud models into $0.
     assert db_ingest._price_for_model("some-new-cloud-model") == \
         db_ingest._LLM_PRICING["default"]
+
+
+def test_the_stub_is_priced_at_zero_not_the_default_rate():
+    """ADR-036: an unpriced `stub` fell to the default row and a free run read as Sonnet."""
+    from db_ingest import _price_for_model
+    assert _price_for_model("stub") == {"input": 0.00, "output": 0.00}
+
