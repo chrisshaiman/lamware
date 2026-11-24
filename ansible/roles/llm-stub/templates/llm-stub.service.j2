@@ -1,0 +1,41 @@
+# Managed by Ansible (llm-stub role). ADR-036.
+[Unit]
+Description=Loopback stand-in model for the stub LLM profile (ADR-036)
+After=network.target
+
+[Service]
+Type=simple
+User={{ llm_stub_user }}
+Group={{ llm_stub_user }}
+ExecStart=/usr/bin/python3 -I {{ llm_stub_install_dir }}/llm_stub.py --host {{ llm_stub_listen_host }} --port {{ llm_stub_port }}
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+UMask=0077
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

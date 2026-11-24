@@ -1,0 +1,13 @@
+---
+# =============================================================================
+# roles/llm-stub/defaults/main.yml
+# The loopback stand-in model behind LiteLLM's `stub` alias and the `stub` LLM
+# profile (ADR-036). Valid, fixed replies to every LLM stage, for free: permission
+# phases and coverage runs. Not a model; it proves the plumbing only.
+# =============================================================================
+llm_stub_enabled: true
+llm_stub_user: llm-stub
+llm_stub_install_dir: /opt/llm-stub
+llm_stub_listen_host: "127.0.0.1"
+# Must equal litellm_stub_base's port (tests/test_llm_profile_routing.py).
+llm_stub_port: 11436

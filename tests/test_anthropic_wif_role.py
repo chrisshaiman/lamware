@@ -89,7 +89,8 @@ def _cloud_entries(**over):
     for m in yaml.safe_load(_litellm("config.yaml.j2", **over))["model_list"]:
         p = m["litellm_params"]
         if (p["model"].startswith("anthropic/")
-                and p.get("api_base") != LITELLM_DEFAULTS["litellm_llamacpp_anthropic_base"]):
+                and p.get("api_base") not in (LITELLM_DEFAULTS["litellm_llamacpp_anthropic_base"],
+                                              LITELLM_DEFAULTS["litellm_stub_base"])):
             out.append((m["model_name"], p))
     return out
 
