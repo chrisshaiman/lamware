@@ -9,6 +9,13 @@ comes back empty or skipped, and the report just gets thinner. So each predicate
 "this stage did its job", and a run passes when every predicate that held in the
 baseline still holds. Counts and contents are not compared: repeated runs of the same
 sample differ, and that is not what this check is for. Standard library only.
+
+The `branch.*` predicates say which tool branch the sample took. run-pipeline picks
+exactly one by the input's type (Office, PowerShell script, other script, .NET, Go,
+PyInstaller, Java; otherwise native), so a report holds at most one. `path.*` are the
+paths a sample can exercise on top of its branch: a .NET payload CAPE extracted from
+a native sample, and PowerShell decoded from what the sample ran. A coverage corpus
+is one sample per branch, each also carrying some of the paths (docs: ADR-031).
 """
 from __future__ import annotations
 
@@ -42,6 +49,22 @@ def predicates(report: dict, report_dir: str) -> dict[str, bool]:
         "iocs.extracted": _nonempty(r.get("extracted_iocs")),
         "mitre.mapped": _nonempty(r.get("mitre_mapping")),
     }
+    ps = r.get("powershell_analysis") or {}
+    dn = r.get("dotnet_analysis") or {}
+    ok = lambda key: g(key, "analysis_success") is True  # noqa: E731
+    p.update({
+        "branch.office": ok("office_analysis"),
+        # The same key holds PowerShell decoded from CAPE's logs (cape_extracted).
+        "branch.powershell_script": ps.get("analysis_success") is True and not ps.get("cape_extracted"),
+        "branch.script": ok("script_analysis"),
+        # The same key holds a .NET payload carved from CAPE's extractions.
+        "branch.dotnet": dn.get("analysis_success") is True and "extraction_source" not in dn,
+        "branch.go": ok("go_analysis"),
+        "branch.pyinstaller": ok("pyinstaller_analysis"),
+        "branch.java": ok("java_analysis"),
+        "path.dotnet_payload": dn.get("analysis_success") is True and "extraction_source" in dn,
+        "path.powershell_from_behaviour": ps.get("analysis_success") is True and ps.get("cape_extracted") is True,
+    })
     for name, kind in (("report.pdf", "file"), ("pcap_analysis", "dir"), ("vol_procdump", "dir"),
                        ("cape_injections", "dir"), ("llm_audit", "dir")):
         path = os.path.join(report_dir, name)

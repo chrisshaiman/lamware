@@ -41,8 +41,12 @@ def report_dir(tmp_path):
     return tmp_path
 
 
-def test_a_healthy_report_holds_every_predicate(report_dir):
-    p = NS["predicates"](_healthy(), str(report_dir))
+def _stage_preds(p: dict) -> dict:
+    return {k: v for k, v in p.items() if not k.startswith(("branch.", "path."))}
+
+
+def test_a_healthy_report_holds_every_stage_predicate(report_dir):
+    p = _stage_preds(NS["predicates"](_healthy(), str(report_dir)))
     assert all(p.values()), [k for k, v in p.items() if not v]
 
 
@@ -85,3 +89,74 @@ def test_the_cli_exits_1_and_names_the_lost_stage(report_dir, tmp_path_factory):
     r = subprocess.run([sys.executable, "-I", str(SCRIPT), str(good), "--baseline", str(base)],
                        capture_output=True, text=True)
     assert r.returncode == 1 and "ghidra.analyzed_files" in r.stdout
+
+
+# --- branches: which tool branch the sample took, and the ride-along paths ----------
+
+BRANCH_KEYS = {"branch.office": "office_analysis", "branch.script": "script_analysis",
+               "branch.go": "go_analysis", "branch.pyinstaller": "pyinstaller_analysis",
+               "branch.java": "java_analysis"}
+
+
+def _routes(r: dict, report_dir) -> set[str]:
+    p = NS["predicates"](r, str(report_dir))
+    return {k for k, v in p.items() if v and k.startswith(("branch.", "path."))}
+
+
+@pytest.mark.parametrize("pred, key", sorted(BRANCH_KEYS.items()))
+def test_each_branch_is_named_by_its_own_result(report_dir, pred, key):
+    r = _healthy()
+    r.pop("dotnet_analysis")
+    r[key] = {"analysis_success": True}
+    assert _routes(r, report_dir) == {pred}
+    r[key]["analysis_success"] = False          # ran but failed: not exercised
+    assert _routes(r, report_dir) == set()
+
+
+def test_dotnet_input_and_dotnet_payload_are_told_apart(report_dir):
+    assert _routes(_healthy(), report_dir) == {"branch.dotnet"}
+    r = _healthy()
+    r["dotnet_analysis"]["extraction_source"] = {"path": "/x/carve.bin"}
+    assert _routes(r, report_dir) == {"path.dotnet_payload"}
+
+
+def test_powershell_input_and_powershell_from_behaviour_are_told_apart(report_dir):
+    r = _healthy()
+    r.pop("dotnet_analysis")
+    r["powershell_analysis"] = {"analysis_success": True, "input_mode": "file"}
+    assert _routes(r, report_dir) == {"branch.powershell_script"}
+    r["powershell_analysis"]["cape_extracted"] = True
+    assert _routes(r, report_dir) == {"path.powershell_from_behaviour"}
+
+
+def test_a_baseline_recorded_before_the_branch_predicates_still_compares(report_dir, tmp_path):
+    """The recorded use-case baseline predates these keys; new truths are fine."""
+    old = {k: v for k, v in NS["predicates"](_healthy(), str(report_dir)).items()
+           if not k.startswith(("branch.", "path."))}
+    assert NS["compare"](NS["predicates"](_healthy(), str(report_dir)), old) == []
+
+
+# --- the coverage corpus manifest ------------------------------------------------------
+
+CORPUS = json.loads((ROOT / "scripts/usecase-check/coverage-corpus.json").read_text())["samples"]
+
+
+def test_every_branch_and_path_has_a_corpus_sample(report_dir):
+    """A branch added to report-shape.py without a sample to exercise it fails here."""
+    keys = {k for k in NS["predicates"](_healthy(), str(report_dir)) if k.startswith(("branch.", "path."))}
+    expected = {e for s in CORPUS for e in s["expect"]}
+    assert keys == expected, (keys ^ expected)
+
+
+def test_each_branch_is_claimed_once():
+    branches = [e for s in CORPUS for e in s["expect"] if e.startswith("branch.")]
+    assert len(branches) == len(set(branches)), branches
+
+
+@pytest.mark.parametrize("s", CORPUS, ids=lambda s: s["id"])
+def test_corpus_entries_are_complete(s):
+    assert s["status"] in ("have", "wanted", "optional")
+    if s["status"] == "have":
+        assert len(s["sha256"]) == 64 and int(s["sha256"], 16) >= 0
+    else:
+        assert "sha256" not in s and s["select"]
