@@ -52,7 +52,14 @@ case "$pause" in
   *) echo "ERROR: could not determine the PAUSE state: '$pause'" >&2; exit 1 ;;
 esac
 
-say "batch=$NAME samples=$N -> $B"
+# Which models the batch's LLM stages use (ADR-036): `make intake ... LLM_PROFILE=stub`.
+# run-pipeline refuses a name its config does not define; this only keeps the
+# value to one safe token on its way through the shell.
+LLM_PROFILE=${LLM_PROFILE:-local}
+case "$LLM_PROFILE" in
+  *[!a-z0-9-]*|"") echo "ERROR: LLM_PROFILE must be lowercase letters, digits and '-': '$LLM_PROFILE'" >&2; exit 2 ;;
+esac
+say "batch=$NAME samples=$N llm_profile=$LLM_PROFILE -> $B"
 say "THIS DETONATES LIVE MALWARE on $HOST."
 # The runner is root (it switches to auto-feeder and pipeline), so everything it
 # executes or appends to is root's: the code under $LIB, and the batch directory,
@@ -63,6 +70,7 @@ say "THIS DETONATES LIVE MALWARE on $HOST."
 LIB=/usr/local/lib/lamware/intake
 ssh "$HOST" "sudo install -d -o root -g root -m 0755 /usr/local/lib/lamware '$LIB' /opt/pipeline/intake '$B' && sudo install -d -o auto-feeder -g lamware -m 2750 '$B/dl'" || exit 1
 ssh "$HOST" "sudo install -o root -g root -m 0644 /dev/stdin '$B/manifest.json'" < "$MANIFEST" || exit 1
+printf '%s\n' "$LLM_PROFILE" | ssh "$HOST" "sudo install -o root -g root -m 0644 /dev/stdin '$B/llm_profile'" || exit 1
 ssh "$HOST" "sudo install -o root -g root -m 0755 /dev/stdin '$LIB/intake_download.py'" < "$(dirname "$0")/lib/intake_download.py" || exit 1
 ssh "$HOST" "sudo install -o root -g root -m 0755 /dev/stdin '$LIB/intake_run.sh'" < "$(dirname "$0")/lib/intake_run.sh" || exit 1
 ssh "$HOST" "sudo tee /etc/systemd/system/${UNIT}.service >/dev/null" <<UNITEOF

@@ -608,7 +608,7 @@ eval:
 # starts a one-shot unit and enables nothing, so nothing here can arm a
 # recurring or unattended detonation.
 intake:
-	@MANIFEST="$(MANIFEST)" SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/intake.sh
+	@MANIFEST="$(MANIFEST)" LLM_PROFILE="$(LLM_PROFILE)" SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/intake.sh
 
 detonate:
 	@SAMPLE="$(SAMPLE)" RUNS="$(RUNS)" MACHINE="$(MACHINE)" PACKAGE="$(PACKAGE)" \

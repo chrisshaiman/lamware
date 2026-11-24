@@ -10,6 +10,7 @@ fields (db_host/db_port/db_name/db_user) so db_ingest/pipeline_status can stop
 carrying their own Jinja for them. Secrets (cape_api_key, db_password) are
 intentionally NOT here — they stay in the no_log env path.
 """
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -81,6 +82,36 @@ class InterpretConfig(BaseModel):
     # passes whole config dicts through and an older one would fail validation, which
     # `extra="forbid"` makes a hard error rather than a warning.
     summary_timeout: int = 900
+
+
+# The InterpretConfig fields an LLM profile replaces: which models, and which
+# transport reaches them. Nothing else (limits, timeouts, modes) changes with a profile.
+PROFILE_FIELDS = ("model", "escalation_model", "summary_model", "plain_english_model",
+                  "re_backend", "single_shot_backend")
+LOCAL_PROFILE = "local"
+# LiteLLM aliases served on this host. A profile with cloud: false may name only
+# these; tests/test_llm_profile_routing.py holds every alias that matches this
+# pattern to a loopback api_base in the rendered LiteLLM config, so the pattern
+# cannot drift from where the traffic really goes.
+LOCAL_ALIAS_RE = r"local-qwen-llamacpp[a-z0-9-]*|stub"
+
+
+class LlmProfile(BaseModel):
+    """A named choice of models for one run (ADR-036), chosen with --llm-profile.
+
+    `cloud` declares that the profile sends prompts (decompiled code, strings,
+    behaviour) off the host. It is checked against the LiteLLM routes at deploy
+    and test time, and recorded in every report the profile produces.
+    """
+    model_config = ConfigDict(extra="forbid")
+    description: str = ""
+    cloud: bool
+    model: str
+    escalation_model: str
+    summary_model: str
+    plain_english_model: str
+    re_backend: str = "local"
+    single_shot_backend: str = "local"
 
 
 class PipelineConfig(BaseModel):
@@ -165,6 +196,46 @@ class PipelineConfig(BaseModel):
     # Campaign-graph relationship thresholds (2026-06-26)
     relationship_max_ioc_frequency: int
     relationship_ssdeep_threshold: int
+
+    # Named LLM profiles a run may choose with --llm-profile (ADR-036). The
+    # "local" profile is the `interpret` block itself and cannot be redefined, so
+    # a run without the flag always gets the deployed defaults. Defaulted empty so
+    # an older config.json still loads.
+    llm_profiles: dict[str, LlmProfile] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _profile_names_are_safe(self) -> "PipelineConfig":
+        for name in self.llm_profiles:
+            if name == LOCAL_PROFILE:
+                raise ValueError(f'llm_profiles may not define "{LOCAL_PROFILE}": it is the '
+                                 f"interpret block, so a run without --llm-profile is unchanged")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", name):
+                raise ValueError(f"llm profile name {name!r}: lowercase letters, digits, '-'")
+            prof = self.llm_profiles[name]
+            remote = [m for m in (getattr(prof, f) for f in PROFILE_FIELDS[:4])
+                      if not re.fullmatch(LOCAL_ALIAS_RE, m)]
+            if remote and not prof.cloud:
+                # Fail closed: a mislabelled profile would send decompiled malware
+                # off the host while its reports said it did not.
+                raise ValueError(f"llm profile {name!r} has cloud: false but names "
+                                 f"{', '.join(sorted(set(remote)))}, which is not a local alias")
+        return self
+
+    def profile_names(self) -> list[str]:
+        return [LOCAL_PROFILE, *sorted(self.llm_profiles)]
+
+    def interpret_for(self, profile: str) -> InterpretConfig:
+        """The interpret settings for a run under `profile`. Unknown names raise."""
+        if profile == LOCAL_PROFILE:
+            return self.interpret
+        if profile not in self.llm_profiles:
+            raise ValueError(f"unknown LLM profile {profile!r}; defined: "
+                             f"{', '.join(self.profile_names())}")
+        chosen = self.llm_profiles[profile]
+        return self.interpret.model_copy(update={f: getattr(chosen, f) for f in PROFILE_FIELDS})
+
+    def profile_is_cloud(self, profile: str) -> bool:
+        return profile != LOCAL_PROFILE and self.llm_profiles[profile].cloud
 
     @model_validator(mode="after")
     def _reserve_leaves_a_tool_loop(self) -> "PipelineConfig":

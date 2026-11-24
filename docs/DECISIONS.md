@@ -57,6 +57,7 @@ these describe an AWS data plane that no longer exists.
 | [033](#adr-033-litellm-reaches-the-claude-api-through-workload-identity-federation-no-api-key-on-the-host) | LiteLLM reaches the Claude API through Workload Identity Federation; no API key on the host | Proposed |
 | [034](#adr-034-the-old-loopback-forwarder-is-retired-its-eval-arms-use-the-workload-identity-federation-eval-route) | The old loopback forwarder is retired; its eval arms use the Workload Identity Federation eval route | Proposed |
 | [035](#adr-035-the-nightly-aide-run-absorbs-only-detonation-reboot-and-container-runtime-differences) | The nightly AIDE run absorbs only detonation, reboot and container-runtime differences | Proposed |
+| [036](#adr-036-a-run-chooses-its-llm-backend-by-explicit-profile-automated-runs-stay-local-by-default) | A run chooses its LLM backend by explicit profile; automated runs stay local by default | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -2139,4 +2140,50 @@ Replayed over the kept reports, the nightly checks behave as intended:
 ### Rollback
 
 Revert and redeploy `hardening`: `check` goes back to `aide --check`, alerting on every difference.
+
+## ADR-036: A run chooses its LLM backend by explicit profile; automated runs stay local by default
+
+**Status:** Proposed (2026-11-23).
+**Refs:** `tests/test_automated_runs_stay_local.py`, ADR-033 (the eval route), ADR-031 (permission phases), `scripts/usecase-check/coverage-corpus.json`
+
+### Context
+
+The pipeline's LLM stages use the models set at deploy time: the agentic RE stage, its escalation model, and the executive and plain-English summaries. All are local by policy, because the pipeline runs unattended on decompiled malware and nothing automated may send that to a cloud model on its own.
+
+Some runs don't need that model, or need a different one:
+
+- **Permission phases** (ADR-031) and the coverage corpus need every stage to *run*, not to analyse well. The local model's agent loop is most of a run's time on this host, and it produces nothing they use.
+- **Comparing models,** or exercising the real tool-calling loop quickly, needs a fast cloud model now and then.
+- **Other people running this suite** have different models: no cloud at all, an API key, or other access.
+
+Changing the deployed defaults for one run would change them for every automated run too.
+
+### Decision
+
+**A run chooses its models by naming a profile. Without one it is `local`, exactly as deployed.**
+
+- **A profile** is a named set of the four model choices and the two transports, defined in `pipeline_llm_profiles` and rendered into the pipeline's config. Nothing else changes with a profile: limits, timeouts and modes stay as deployed.
+- **`local`** is the `interpret` block itself. It cannot be redefined, and it is the default for every front door. API submissions and the feeder pass no profile.
+- **Choosing one:** `run-pipeline --llm-profile NAME`, and `make intake ... LLM_PROFILE=NAME`, which records the profile in the batch directory. An unknown name stops the run; it never falls back.
+- **Cloud is declared, and checked.**
+  - Each profile says `cloud: true|false`.
+  - A profile with `cloud: false` may name only local aliases (`LOCAL_ALIAS_RE`), and the pipeline refuses to start otherwise.
+  - A test holds every alias matching that pattern to the llama.cpp server's own address in the rendered LiteLLM config. Loopback alone isn't enough, because the federated eval route is loopback too.
+- **Recorded.**
+  - Every report carries `llm_profile`: its name, whether it is cloud, and the models.
+  - A replay records `replay_llm_profile`.
+  - A cloud profile logs a warning naming the models it sends to.
+- **The defaults define no profiles.** Operators add their own in their vars. Two are planned:
+  - **`stub`:** a loopback server that answers every LLM stage with valid, fixed replies. It's free and deterministic, for permission phases and coverage runs.
+  - **`haiku`:** a commented example on an eval-only alias.
+
+### Consequences
+
+- **`test_automated_runs_stay_local.py` still holds:** no deployed default names a cloud model. What changes is that a person can choose one for a run, and the report says so.
+- **A cloud profile sends decompiled code, strings and behaviour to that provider.** That's the operator's decision for that run, and it is visible in the run's log and report.
+- **A stub run proves the plumbing,** that every stage ran and parsed its reply, **not that a real model can still drive the tools.** After a permission phase, one run on a real model (a cloud profile, or `local`) covers that.
+
+### Rollback
+
+Revert. Runs then use the deployed models only. Reports written with `llm_profile` keep the field; nothing reads it.
 
