@@ -1,0 +1,42 @@
+[
+ {
+  "sha256": "277e2a14e0391a77efa3e327dd14d6fb2995642b5e69a8a67bd644c90ff6fd3f",
+  "signature": "XWorm",
+  "file_name": "key.license.exe",
+  "file_size": 1978368,
+  "first_seen": "2025-08-21 18:26:58",
+  "imphash": "fadc5a257419d2541a6b13dfb5e311e2"
+ },
+ {
+  "sha256": "ce496d2269838b0917b8e4889432db0e13d0a44682327c06ccdd223f4ca38718",
+  "signature": "",
+  "file_name": "template[1].doc",
+  "file_size": 17485,
+  "first_seen": "2022-09-28 08:58:57",
+  "imphash": ""
+ },
+ {
+  "sha256": "2a6d0a017c2e584f2c9272581b4f17ee71917cc215dbd042bd260ce26a39e10b",
+  "signature": "PhantomStealer",
+  "file_name": "Payment Advice...6321.js",
+  "file_size": 58792,
+  "first_seen": "2026-08-05 15:06:13",
+  "imphash": ""
+ },
+ {
+  "sha256": "5702cb05be590956494977224809031ff1f1516a19d68a807448e0142d31ac89",
+  "signature": "",
+  "file_name": "ForniteFix.exe",
+  "file_size": 12967960,
+  "first_seen": "2026-07-04 17:38:50",
+  "imphash": "cf72283be50852e418ce6bbb6b645835"
+ },
+ {
+  "sha256": "cd86d5ef77f0d244229562d96aafb5d26adf0e35137aca6aec76bf0f652a8180",
+  "signature": "STRRAT",
+  "file_name": "DSSeksWAIz.jar",
+  "file_size": 18035,
+  "first_seen": "2026-11-17 13:25:03",
+  "imphash": ""
+ }
+]

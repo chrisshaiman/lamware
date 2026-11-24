@@ -160,3 +160,15 @@ def test_corpus_entries_are_complete(s):
         assert len(s["sha256"]) == 64 and int(s["sha256"], 16) >= 0
     else:
         assert "sha256" not in s and s["select"]
+        for c in s.get("candidates", []):
+            assert c["role"] in ("pick", "backup") and len(c["sha256"]) == 64
+
+
+def test_every_pick_is_in_the_intake_manifest():
+    """A pick that is not in its intake manifest would never be detonated."""
+    for s in CORPUS:
+        picks = [c["sha256"] for c in s.get("candidates", []) if c["role"] == "pick"]
+        if not picks:
+            continue
+        manifest = json.loads((ROOT / s["intake"]).read_text())
+        assert picks[0] in {e["sha256"] for e in manifest}, s["id"]
