@@ -172,7 +172,7 @@ def test_the_parent_drops_to_cape_for_good_and_stays_visible(monkeypatch):
 
 
 def test_the_parent_keeps_the_callers_gid_when_it_is_one_of_capes_groups():
-    """hidepid compares gid as well as uid: CAPE runs with Group=lamware, and a
+    """hidepid compares gid as well as uid: CAPE ran with Group=lamware, and a
     helper with cape's primary gid was invisible to it (detonation 1320)."""
     import getpass
     import pwd
@@ -350,7 +350,7 @@ def test_sudoers_is_validated_after_every_sudoers_change():
 
 def test_check_23_has_a_control_and_probes_every_service_user():
     smoke = (ROOT / "ansible/roles/security-test/templates/security-smoke-test.sh.j2").read_text()
-    block = smoke[smoke.index('echo "[23/26]'):smoke.index("# Summary + ntfy alert on failure")]
+    block = smoke[smoke.index('echo "[23/27]'):smoke.index("# Summary + ntfy alert on failure")]
     assert 'timeout 3 /usr/bin/tcpdump -i lo -n -c 1 -w - >/dev/null 2>&1; CAP_CTRL=$?' in block
     assert 'fail "capture probe is blind' in block
     for u in ("pipeline", "lamware-api", "auto-feeder", "lamware-notify", "lamware-web-build"):

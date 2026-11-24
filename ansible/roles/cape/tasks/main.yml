@@ -714,9 +714,34 @@
   notify: Restart Cape services
 
 # -------------------------------------------------------------------------
-# CAPE service drop-in — set group to lamware and umask so new analysis
-# directories are group-readable by the pipeline user. Without this, CAPE
-# creates files as cape:cape 0750 which the pipeline can't read.
+# cape is in no group it doesn't write for (ADR-031 phase 1).
+#
+# The pipeline reads CAPE's output through the ACL on /opt/CAPEv2/storage
+# (group:lamware r-x, inherited by new analyses) and the setgid lamware on its
+# directories, which a file's creator gets whether or not it is a member. Phase 0
+# measured 3.8 days of access: nothing CAPE itself did needed lamware.
+#
+# Removed HERE, before the drop-ins below notify the restart: systemd gives a
+# service its user's groups when it starts, so CAPE must restart after this.
+# -------------------------------------------------------------------------
+- name: Read cape's groups
+  ansible.builtin.command: id -nG {{ cape_user }}
+  register: cape_groups_now
+  changed_when: false
+  check_mode: false
+
+- name: Remove cape from the lamware group
+  ansible.builtin.command: gpasswd -d {{ cape_user }} lamware
+  when: "'lamware' in cape_groups_now.stdout.split()"
+  changed_when: true
+  notify:
+    - Restart Cape services
+    - Restart cape's user manager
+
+# -------------------------------------------------------------------------
+# CAPE service drop-in — run as group cape with umask 0027. New analysis files
+# still get group lamware from the setgid storage tree, and the pipeline reads
+# them through the storage ACL; neither needs CAPE to run as lamware.
 # -------------------------------------------------------------------------
 
 - name: Create CAPE service drop-in directory
@@ -725,13 +750,13 @@
     state: directory
     mode: "0755"
 
-- name: Deploy CAPE service drop-in (lamware group + umask)
+- name: Deploy CAPE service drop-in (cape group + umask)
   ansible.builtin.copy:
     dest: /etc/systemd/system/cape.service.d/lamware-group.conf
     mode: "0644"
     content: |
       [Service]
-      Group=lamware
+      Group=cape
       UMask=0027
   notify: Restart Cape services
 
@@ -741,13 +766,13 @@
     state: directory
     mode: "0755"
 
-- name: Deploy CAPE processor drop-in (lamware group + umask)
+- name: Deploy CAPE processor drop-in (cape group + umask)
   ansible.builtin.copy:
     dest: /etc/systemd/system/cape-processor.service.d/lamware-group.conf
     mode: "0644"
     content: |
       [Service]
-      Group=lamware
+      Group=cape
       UMask=0027
   notify: Restart Cape services
 
@@ -765,6 +790,38 @@
       #!/bin/bash
       umask 0027
       exec /usr/bin/tcpdump "$@"
+
+# Restart CAPE NOW if its groups changed, not at the end of the play. Between the
+# membership removal and the restart, CAPE's running processes still carry
+# lamware while cape no longer belongs to it, so the capture helper (which uses
+# the caller's gid only if it is one of cape's groups) starts captures CAPE cannot
+# see to stop under hidepid. The probe below also reads the unit's Group from
+# systemd, which is stale until the reload. Measured on the first phase-1 deploy
+# (2026-11-22): the probe ran in that window and reported "nochild".
+# From the running processes, not from what this play changed: a deploy that
+# failed before the restart left the removal and the drop-ins applied and CAPE
+# still running with lamware, and the next deploy changes neither.
+- name: Find CAPE processes still carrying the lamware group
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      g=$(getent group lamware | cut -d: -f3) || exit 0
+      [ -n "$g" ] || exit 0
+      for p in $(ps -u {{ cape_user }} -o pid=); do
+        awk -v g="$g" '/^(Gid|Groups):/{for (i = 2; i <= NF; i++) if ($i == g) f = 1} END {exit !f}' \
+          "/proc/$p/status" 2>/dev/null && echo "$p"
+      done
+      exit 0
+    executable: /bin/bash
+  register: cape_stale_groups
+  changed_when: cape_stale_groups.stdout | length > 0
+  notify:
+    - Restart Cape services
+    - Restart cape's user manager
+  check_mode: false
+
+- name: Restart CAPE with its new groups before anything probes it
+  ansible.builtin.meta: flush_handlers
 
 # The capture rights CAPE's sniffer needs, without sudo (capture-privileges.yml).
 - name: Give CAPE's sniffer capture rights without sudo

@@ -1888,7 +1888,7 @@ Revert and redeploy `litellm` and `api`. Keys left in LiteLLM's database stay va
 
 ## ADR-031: The `lamware` group is narrowed in measured phases, starting with cape
 
-**Status:** Accepted (2026-11-17, owner). Phase 0 in progress.
+**Status:** Accepted (2026-11-17, owner). Phase 0 done (2026-11-20); phase 1 deployed 2026-11-22.
 **Refs:** ADR-025 (root-owned code), ADR-030 (one key per caller), #850, #854 (both exposures through this group)
 
 ### Context
@@ -1931,6 +1931,32 @@ A one-shot regrouping would change every one of those grants at once. When a rea
 
 - The measured access map (phase 0) replaces the grant inventory as the source of truth. It's attached to this ADR when the measurement ends.
 - Slower than one migration, by design. Earlier changes of this size took days of fixes after they merged.
+
+### Phase 0 result (2026-11-17 to 11-20)
+
+fatrace ran for 3.8 days (95 hourly snapshots), recording every non-root open, read and write under the group's trees. In that window:
+
+- **cape:** its own processes (CAPE's Python, tcpdump, its CLI) touched only cape's trees: `/opt/CAPEv2/storage` (all of its writes) and `/home/cape/.cache`. Every cape access that needed `lamware` was `find`, which is the security test's probe that cape cannot write code.
+- **pipeline:** writes its reports and harvest files. Reads CAPE's analyses (through the storage ACL), the tools' rules and symbols, and its own code and venv. Its containers (a subordinate uid) read the same.
+- **lamware-api:** read the auto-feeder's state. **lamware-notify:** read its own code.
+- **Limits:**
+  - 37% of kept events came from processes that exited before they could be attributed;
+  - the window held one detonation, and no feeder or intake runs.
+  - The use-case check and a detonation after each phase cover what the measurement could not see.
+
+### Phase 1 (2026-11-22): cape leaves `lamware`
+
+- **Nothing had to be granted first:** the measurement found no access cape needed through the group.
+- **The membership is removed by the cape role, before CAPE restarts.** systemd gives a service its user's groups when it starts, so a removal in a later role would leave CAPE running with them.
+- **CAPE's two units now run `Group=cape`.** They ran `Group=lamware`, which kept the group whatever the membership said.
+- **The pipeline's read path is unchanged:**
+  - the storage ACL (`group:lamware:r-x`, inherited by new analyses);
+  - the setgid `lamware` group on the analysis directories, which a file's creator gets whether or not it is a member.
+- **Security-test check 27:**
+  - cape isn't a member;
+  - no running cape process carries the group, primary or supplementary;
+  - the pipeline can still read the newest analysis (the control);
+  - at least one cape process exists (otherwise the probe is blind).
 
 ### Rollback
 

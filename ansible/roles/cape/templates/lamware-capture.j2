@@ -104,8 +104,8 @@ def caller_gid(user: str, env: dict) -> int:
     """The gid sudo was called with, if it is one of user's groups; else user's own.
 
     hidepid lets a process see another only if both its uid AND its gid match.
-    CAPE's units run as cape with Group=lamware, so this process must carry the
-    caller's gid, not cape's primary one, or CAPE cannot find it to stop it.
+    So this process carries the caller's gid, whatever group CAPE's units run with
+    (cape since ADR-031 phase 1; lamware before), or CAPE cannot find it to stop it.
     """
     pw = pwd.getpwnam(user)
     try:
