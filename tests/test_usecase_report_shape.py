@@ -35,7 +35,7 @@ def _healthy() -> dict:
 @pytest.fixture
 def report_dir(tmp_path):
     (tmp_path / "report.pdf").write_bytes(b"%PDF")
-    for d in ("pcap_analysis", "vol_procdump", "cape_injections", "llm_audit"):
+    for d in ("vol_procdump", "cape_injections", "llm_audit"):
         (tmp_path / d).mkdir()
         (tmp_path / d / "x").write_text("x")
     return tmp_path
