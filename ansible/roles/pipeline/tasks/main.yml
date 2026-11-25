@@ -688,6 +688,12 @@
     group: lamware
     mode: "0640"
 
+# The pipeline-spend key, for reading each run's cost from LiteLLM (ADR-037).
+- name: Read the scoped LiteLLM keys
+  ansible.builtin.import_role:
+    name: litellm
+    tasks_from: read-keys
+
 - name: Deploy pipeline secrets env file
   ansible.builtin.template:
     src: pipeline.env.j2
@@ -695,7 +701,9 @@
     owner: root
     group: pipeline
     mode: "0640"
-  no_log: true  # contains cape_api_key + db password
+  no_log: true  # contains cape_api_key, the db password and the spend key
+  # --diff would print the LiteLLM spend key (tests/test_litellm_master_key.py).
+  diff: false
 
 - name: Verify the pipeline venv imports every runtime dep (as the pipeline user)
   become: true

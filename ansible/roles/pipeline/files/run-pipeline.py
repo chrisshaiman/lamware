@@ -41,6 +41,7 @@ from lamware_pipeline.correlation import (
     cross_correlate,
     determine_family,
 )
+from lamware_pipeline.llm_cost import litellm_spend_fetcher, resolve_run_cost
 from lamware_pipeline.report_depth import bound_report_depth
 from lamware_pipeline.report_depth import describe as describe_depth_cut
 from lamware_shared import safe_write
@@ -194,6 +195,24 @@ def apply_llm_profile(name: str) -> None:
     elif name != LOCAL_PROFILE:
         log.info("LLM profile %r: %s", name,
                  ", ".join(sorted({INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]})))
+
+
+def resolve_llm_cost(report: dict) -> dict:
+    """LiteLLM's recorded cost of every model call this run made (ADR-037).
+
+    Never fails the run: without the spend key, or with calls the spend log does not
+    have, the record says so (`complete: false`) and db_ingest prices from its table.
+    """
+    key = os.environ.get("LAMWARE_LITELLM_SPEND_KEY", "")
+    if not key:
+        log.warning("  LLM cost: LAMWARE_LITELLM_SPEND_KEY is not set; priced from the rate table")
+        return {"source": "litellm", "complete": False, "error": "no spend key"}
+    cost = resolve_run_cost(report, litellm_spend_fetcher(_PIPELINE_CONFIG.litellm_socket, key))
+    log.info("  LLM cost (LiteLLM): $%.6f over %d call(s)%s", cost["usd"], cost["calls"],
+             "" if cost["complete"] else
+             f"; INCOMPLETE: {len(cost['unresolved_call_ids'])} unresolved, "
+             f"stages without ids {cost['stages_without_call_ids']}")
+    return cost
 
 
 def llm_profile_record() -> dict:
@@ -1693,6 +1712,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total")
     log.info("[Timing] Total: %.0fs | %s", total_elapsed, stage_breakdown)
 
+    # LiteLLM's cost record goes in the report FILE as well as the row (ADR-037), so
+    # it is resolved before the write; resolved after it, only the database had it.
+    report["llm_cost"] = resolve_llm_cost(report)
+
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(UTC).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
@@ -1840,6 +1863,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         "path": str(report_path),
         "sha256": hashlib.sha256(original_bytes).hexdigest(),
     }
+    report["llm_cost"] = resolve_llm_cost(report)   # before the write, as in run_pipeline
     new_report_path = write_report(task_id, report, REPORTS_DIR,
                                    name=replay_json_name)
     log.info("\n[Done] Replay report: %s (original left unchanged: %s)", new_report_path, report_path)

@@ -1156,8 +1156,37 @@ DOTNET_TOOLS: list[dict[str, Any]] = [
 _EMIT_LOCK = threading.Lock()
 
 
+# LiteLLM's id for every model call this process made (ADR-037). One container
+# process serves one stage, so these are that stage's calls. Collected by an httpx
+# response hook on every client below, so no call site can be missed; the
+# orchestrator looks each one up in LiteLLM's spend log for the run's cost.
+LITELLM_CALL_IDS: list[str] = []
+#: Events that describe ONE call or progress, not a stage's result. A stage's result
+#: is any other event carrying `usage`; it gets the stage's call ids.
+_PER_CALL_EVENTS = frozenset({"turn", "stream", "status", "request", "request_result"})
+
+
+def _record_litellm_call(response: httpx.Response) -> None:
+    """httpx response hook: keep the call id LiteLLM puts on every response."""
+    call_id = response.headers.get("x-litellm-call-id")
+    if call_id and call_id not in LITELLM_CALL_IDS:
+        LITELLM_CALL_IDS.append(call_id)
+
+
+def with_call_ids(obj: dict[str, Any]) -> dict[str, Any]:
+    """A stage result's usage, with the call ids this process collected (ADR-037)."""
+    usage = obj.get("usage")
+    # Only when there are ids: a run that reached no LiteLLM (tests, a direct API
+    # base) emits exactly what it did before, and the orchestrator prices a stage
+    # with tokens but no ids from the rate table.
+    if obj.get("type") in _PER_CALL_EVENTS or not isinstance(usage, dict) or not LITELLM_CALL_IDS:
+        return obj
+    return {**obj, "usage": {**usage, "litellm_call_ids": list(LITELLM_CALL_IDS)}}
+
+
 def emit(obj: dict[str, Any]) -> None:
     """Write a JSON line to stdout and flush immediately."""
+    obj = with_call_ids(obj)
     with _EMIT_LOCK:
         print(json.dumps(obj, default=str), flush=True)
 
@@ -1379,9 +1408,17 @@ def _uds_client(uds: str) -> httpx.Client:
     chunk. connect stays short: a Unix socket either exists or it does not, and a slow
     connect means the socket is wrong, which should fail fast rather than hang.
     """
+    return http_client(uds)
+
+
+def http_client(uds: str | None = None) -> httpx.Client:
+    """Every httpx client this container calls a model with (ADR-037): over the
+    LiteLLM socket when `uds` is given, with _uds_client's timeouts, and with the
+    hook that records each call's LiteLLM id."""
     return httpx.Client(
-        transport=httpx.HTTPTransport(uds=uds),
         timeout=httpx.Timeout(LLM_TIMEOUT_S, connect=30.0),
+        event_hooks={"response": [_record_litellm_call]},
+        transport=httpx.HTTPTransport(uds=uds) if uds else None,
     )
 
 
@@ -3474,10 +3511,10 @@ def _run() -> None:
     client_kwargs: dict[str, Any] = {"api_key": api_key, "timeout": LLM_TIMEOUT_S}
     if base_url:
         client_kwargs["base_url"] = base_url
-    if uds:
-        # Reach LiteLLM over a bind-mounted Unix socket so the container can run with
-        # --network=none. httpx routes over the socket regardless of base_url's host.
-        client_kwargs["http_client"] = _uds_client(uds)
+    # Reach LiteLLM over a bind-mounted Unix socket so the container can run with
+    # --network=none (httpx routes over the socket regardless of base_url's host).
+    # Our client on the other branch too, so the call-id hook sees every request.
+    client_kwargs["http_client"] = _uds_client(uds) if uds else http_client()
     client = anthropic.Anthropic(**client_kwargs)
 
     # TWO transports, and which one a request takes depends on the MODEL, not the stage:
@@ -3516,8 +3553,7 @@ def _run() -> None:
     summary_kwargs: dict[str, Any] = {"api_key": api_key}
     if router_base:
         summary_kwargs["base_url"] = router_base
-    if uds:
-        summary_kwargs["http_client"] = _uds_client(uds)
+    summary_kwargs["http_client"] = _uds_client(uds) if uds else http_client()
     summary_client = anthropic.Anthropic(**summary_kwargs) if router_base else client
 
     # Local RE final synthesis uses LiteLLM's OpenAI /chat/completions endpoint
@@ -3527,8 +3563,7 @@ def _run() -> None:
     synth_openai_base = os.environ.get("LITELLM_OPENAI_BASE_URL", "")
     # Same generous read budget as the agentic client — phase 2b runs on the largest
     # transcript of the run, so a bare client here fails for the same reason.
-    synth_http = (_uds_client(uds) if uds
-                  else httpx.Client(timeout=httpx.Timeout(LLM_TIMEOUT_S, connect=30.0)))
+    synth_http = _uds_client(uds) if uds else http_client()
 
     # ---- Wait for init or summarize message ----
     init_msg = read_message()
