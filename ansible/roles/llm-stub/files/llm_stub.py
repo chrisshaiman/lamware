@@ -27,12 +27,12 @@ because some stages treat an empty field as a failed analysis. Stdlib only.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import ipaddress
 import json
 import logging
 import re
 import sys
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -187,7 +187,11 @@ def answer(body: dict) -> dict:
     tools = [t for t in body.get("tools") or [] if isinstance(t, dict) and t.get("name")]
     choice = body.get("tool_choice") or {}
     forced = isinstance(choice, dict) and choice.get("type") in ("tool", "any")
-    seed = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    # The reply's CONTENT is a function of the request; its ids are not. LiteLLM keys
+    # its spend log on the response id (unique), so a repeated request with the same id
+    # had its spend row silently dropped (#877: measured, the second of two identical
+    # calls got no row). A real provider never repeats an id; neither does the stub.
+    seed = uuid.uuid4().hex[:24]
     if tools and (forced or not _has_tool_result(body.get("messages"))):
         tool = next((t for t in tools if t["name"] == choice.get("name")), tools[0]) \
             if isinstance(choice, dict) else tools[0]

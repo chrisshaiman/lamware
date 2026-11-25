@@ -181,9 +181,12 @@ def test_the_stub_refuses_a_non_loopback_address():
     assert stub.main(["--host", "0.0.0.0", "--port", "0"]) == 2
 
 
-def test_replies_are_deterministic():
+def test_replies_are_deterministic_apart_from_their_ids():
+    """Same request, same reply content. The ids differ by design (#877); see below."""
     body = {"model": "stub", "system": PROMPTS["SUMMARY_SYSTEM_PROMPT"], "messages": [{"role": "user", "content": "x"}]}
-    assert json.dumps(stub.answer(body)) == json.dumps(stub.answer(body))
+    a, b = stub.answer(body), stub.answer(body)
+    a.pop("id"), b.pop("id")
+    assert json.dumps(a) == json.dumps(b)
 
 
 def test_a_hostile_prompt_line_cannot_stall_the_stub():
@@ -197,3 +200,15 @@ def test_a_hostile_prompt_line_cannot_stall_the_stub():
     short = "Respond with a JSON object containing:\n- A:" + " " * 3000 + "x\n"
     assert stub.keys_from_prompt(short) == {"A": "stub"}
 
+
+
+def test_identical_requests_get_distinct_ids_and_identical_content():
+    """#877: LiteLLM's spend log has a unique key on the response id, and dropped the
+    row of a repeated stub reply. The content stays deterministic; the ids may not repeat."""
+    body = {"model": "stub", "max_tokens": 16, "messages": [{"role": "user", "content": "same"}],
+            "tools": [{"name": "t", "input_schema": {"type": "object", "properties": {}}}]}
+    a, b = stub.answer(body), stub.answer(body)
+    assert a["id"] != b["id"]
+    assert a["content"][0]["id"] != b["content"][0]["id"]
+    strip = lambda r: [{k: v for k, v in c.items() if k != "id"} for c in r["content"]]  # noqa: E731
+    assert strip(a) == strip(b) and a["usage"] == b["usage"]
