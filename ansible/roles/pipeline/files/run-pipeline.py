@@ -1668,14 +1668,19 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
             interpret_config=INTERPRET_CONFIG,
         )
         plain_text = plain_result.get("summary", "") if isinstance(plain_result, dict) else plain_result
+        report["plain_english_summary"] = plain_text or ""
+        if isinstance(plain_result, dict):
+            # Usage and model are kept even when the text is empty: the call was made
+            # and billed, and its LiteLLM call id is what prices it (ADR-037). An empty
+            # reply used to drop both, and the reason with them.
+            report["plain_english_usage"] = plain_result.get("usage", {})
+            report["plain_english_model"] = plain_result.get("model", "")
         if plain_text:
-            report["plain_english_summary"] = plain_text
-            report["plain_english_usage"] = plain_result.get("usage", {}) if isinstance(plain_result, dict) else {}
-            # Store the model so cost tracking prices it correctly (it may be local = $0).
-            report["plain_english_model"] = plain_result.get("model", "") if isinstance(plain_result, dict) else ""
             log.info("  %s...", plain_text[:100])
         else:
-            report["plain_english_summary"] = ""
+            reason = (plain_result.get("error") if isinstance(plain_result, dict) else "") or "no reply"
+            report["plain_english_error"] = reason
+            log.warning("  Plain English summary is empty: %s", reason)
     else:
         report["plain_english_summary"] = ""
 
