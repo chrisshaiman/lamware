@@ -240,3 +240,25 @@ def test_every_client_the_container_builds_has_the_hook():
                            and t.slice.value == "http_client" for t in n.targets)]
         assert len(assigns) == 1, target
         assert enclosing(assigns[0], (ast.If,)) is None, f"{target}['http_client'] is conditional"
+
+
+@pytest.mark.parametrize("func", ["run_pipeline", "run_replay"])
+def test_the_cost_record_is_resolved_before_the_report_file_is_written(func):
+    """Structural, because no test can run a detonation: found on the host, where the
+    first stub run's report.json had no llm_cost because the write came first."""
+    import ast
+    src = (Path(__file__).resolve().parents[2]
+           / "ansible/roles/pipeline/files/run-pipeline.py").read_text()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == func)
+
+    def lines(pred):
+        return sorted(n.lineno for n in ast.walk(fn) if pred(n))
+    resolved = lines(lambda n: isinstance(n, ast.Call)
+                     and getattr(n.func, "id", "") == "resolve_llm_cost")
+    writes = lines(lambda n: isinstance(n, ast.Call)
+                   and getattr(n.func, "id", "") == "write_report")
+    assert resolved and writes, f"{func}: expected resolve_llm_cost and write_report calls"
+    assert resolved[0] < writes[-1], f"{func}: the report is written before its cost is resolved"
+    ingests = lines(lambda n: isinstance(n, ast.Call) and getattr(n.func, "id", "") == "ingest_to_db")
+    assert all(resolved[0] < i for i in ingests), f"{func}: ingested before the cost is resolved"

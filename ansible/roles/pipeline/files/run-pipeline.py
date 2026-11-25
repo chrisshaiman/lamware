@@ -1712,6 +1712,10 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
         f"{k}: {v:.0f}s" for k, v in stage_timings.items() if k != "total")
     log.info("[Timing] Total: %.0fs | %s", total_elapsed, stage_breakdown)
 
+    # LiteLLM's cost record goes in the report FILE as well as the row (ADR-037), so
+    # it is resolved before the write; resolved after it, only the database had it.
+    report["llm_cost"] = resolve_llm_cost(report)
+
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(UTC).isoformat()
     report_path = write_report(task_id, report, REPORTS_DIR)
@@ -1719,7 +1723,6 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
 
     # Database ingestion — write structured data to PostgreSQL
     log.info("\n[DB Ingestion] Writing to database...")
-    report["llm_cost"] = resolve_llm_cost(report)
     analysis_id = ingest_to_db(report, existing_analysis_id=analysis_id_early)
 
     # Stage 6: PDF report generation (containerized)
@@ -1860,6 +1863,7 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
         "path": str(report_path),
         "sha256": hashlib.sha256(original_bytes).hexdigest(),
     }
+    report["llm_cost"] = resolve_llm_cost(report)   # before the write, as in run_pipeline
     new_report_path = write_report(task_id, report, REPORTS_DIR,
                                    name=replay_json_name)
     log.info("\n[Done] Replay report: %s (original left unchanged: %s)", new_report_path, report_path)
@@ -1867,7 +1871,6 @@ def run_replay(report_path: Path, stages: list[str] | None = None) -> dict:
     if "db" in run_stages:
         log.info("\n[DB Ingestion] Writing to database as a new analyses row...")
         # No existing_analysis_id: inserting is what keeps the original row.
-        report["llm_cost"] = resolve_llm_cost(report)
         ingest_to_db(report)
 
     if "pdf" in run_stages:
