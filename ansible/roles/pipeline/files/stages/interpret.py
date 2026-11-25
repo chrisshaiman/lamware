@@ -1338,6 +1338,7 @@ def run_plain_english(report: dict, interpret_cmd: str, interpret_enabled: bool,
                 "summary": result.get("summary", ""),
                 "usage": result.get("usage", {}),
                 "model": result.get("model_used", ""),
+                "error": result.get("error", ""),
             }
         except json.JSONDecodeError:
             continue
