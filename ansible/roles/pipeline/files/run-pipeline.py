@@ -207,7 +207,7 @@ def resolve_llm_cost(report: dict) -> dict:
     if not key:
         log.warning("  LLM cost: LAMWARE_LITELLM_SPEND_KEY is not set; priced from the rate table")
         return {"source": "litellm", "complete": False, "error": "no spend key"}
-    cost = resolve_run_cost(report, litellm_spend_fetcher(_PIPELINE_CONFIG.litellm_url, key))
+    cost = resolve_run_cost(report, litellm_spend_fetcher(_PIPELINE_CONFIG.litellm_socket, key))
     log.info("  LLM cost (LiteLLM): $%.6f over %d call(s)%s", cost["usd"], cost["calls"],
              "" if cost["complete"] else
              f"; INCOMPLETE: {len(cost['unresolved_call_ids'])} unresolved, "

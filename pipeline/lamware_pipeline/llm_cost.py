@@ -14,10 +14,11 @@ the run from its rate table as before.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import socket
 import time
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
 
 #: Report sections whose `usage` the LLM stages write (db_ingest prices the same ones).
@@ -88,26 +89,43 @@ def resolve_run_cost(report: dict, fetch: Callable[[str], float | None], *,
     }
 
 
-def litellm_spend_fetcher(base_url: str, api_key: str,
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTP over a Unix socket. The standard library has none, and the pipeline venv
+    carries no httpx."""
+
+    def __init__(self, socket_path: str, timeout: float):
+        super().__init__("litellm", timeout=timeout)
+        self._socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._socket_path)
+
+
+def litellm_spend_fetcher(socket_path: str, api_key: str,
                           timeout_s: float = 15.0) -> Callable[[str], float | None]:
     """fetch(call_id) over LiteLLM's spend log, for resolve_run_cost.
 
+    Over LiteLLM's Unix socket, the one the interpret container already uses: the
+    pipeline user's egress rules drop TCP to LiteLLM's port, by design, and this path
+    needs no change to them (measured 2026-11-25: TCP timed out, the socket answered).
     The log is keyed by LiteLLM's call id; a missing row (not written yet) or an
     unreachable proxy is None, so the caller retries and then records it unresolved.
-    Only http(s) URLs: urlopen would also accept file: and other schemes.
     """
-    if urllib.parse.urlsplit(base_url).scheme not in ("http", "https"):
-        raise ValueError(f"litellm_url must be http(s), got {base_url!r}")
-
     def fetch(call_id: str) -> float | None:
-        url = (base_url.rstrip("/") + "/spend/logs?"
-               + urllib.parse.urlencode({"request_id": call_id}))
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+        path = "/spend/logs?" + urllib.parse.urlencode({"request_id": call_id})
+        conn = _UnixHTTPConnection(socket_path, timeout_s)
         try:
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosec B310 - scheme checked above
-                rows = json.load(resp)
-        except (OSError, ValueError):
+            conn.request("GET", path, headers={"Authorization": f"Bearer {api_key}"})
+            resp = conn.getresponse()
+            if resp.status != 200:
+                return None
+            rows = json.loads(resp.read())
+        except (OSError, ValueError, http.client.HTTPException):
             return None
+        finally:
+            conn.close()
         rows = rows if isinstance(rows, list) else (rows or {}).get("data", [])
         matched = [r for r in rows if isinstance(r, dict)
                    and call_id in (r.get("request_id"), r.get("litellm_call_id"))]

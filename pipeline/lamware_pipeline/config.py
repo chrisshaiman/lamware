@@ -208,7 +208,9 @@ class PipelineConfig(BaseModel):
     llm_profiles: dict[str, LlmProfile] = Field(default_factory=dict)
     # Where the orchestrator reads LiteLLM's spend log for a run's cost (ADR-037).
     # Defaulted so an older config.json still loads.
-    litellm_url: str = "http://127.0.0.1:4000"
+    # LiteLLM's Unix socket (litellm-socket.service). The pipeline user reaches LiteLLM
+    # only this way; its egress rules drop TCP to LiteLLM's port.
+    litellm_socket: str = "/run/litellm/litellm.sock"
 
     @model_validator(mode="after")
     def _profile_names_are_safe(self) -> "PipelineConfig":

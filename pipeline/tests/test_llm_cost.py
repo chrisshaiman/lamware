@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import socketserver
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -107,29 +109,45 @@ class _Spend(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
 @pytest.fixture
-def spend_server():
+def spend_socket():
+    """A fake LiteLLM spend log on a Unix socket, as the host serves it."""
     _Spend.rows, _Spend.auth = {"call-1": 0.0042}, []
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Spend)
+    d = Path(tempfile.mkdtemp(prefix="spend"))     # short: AF_UNIX paths cap at 108 bytes
+    path = str(d / "litellm.sock")
+    srv = _UnixHTTPServer(path, _Spend)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    yield path
     srv.shutdown()
+    srv.server_close()
+    Path(path).unlink(missing_ok=True)
+    d.rmdir()
 
 
-def test_the_fetcher_reads_a_call_by_its_litellm_id(spend_server):
-    fetch = litellm_spend_fetcher(spend_server, "sk-spend")
+def test_the_fetcher_reads_a_call_by_its_litellm_id_over_the_socket(spend_socket):
+    fetch = litellm_spend_fetcher(spend_socket, "sk-spend")
     assert fetch("call-1") == 0.0042 and fetch("call-2") is None
     assert _Spend.auth[0] == "Bearer sk-spend"
 
 
-@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://127.0.0.1/", "127.0.0.1:4000"])
-def test_only_http_urls_are_accepted(url):
-    with pytest.raises(ValueError, match="http"):
-        litellm_spend_fetcher(url, "k")
+def test_a_missing_socket_is_none_not_an_error(tmp_path):
+    assert litellm_spend_fetcher(str(tmp_path / "absent.sock"), "k", timeout_s=1)("call-1") is None
 
 
-def test_an_unreachable_proxy_is_none_not_an_error():
-    assert litellm_spend_fetcher("http://127.0.0.1:9", "k", timeout_s=1)("call-1") is None
+def test_the_config_names_the_socket_litellm_serves():
+    """Structural, because no test can run systemd: the path in PipelineConfig is the
+    one litellm-socket.service listens on and the interpret wrapper mounts."""
+    from lamware_pipeline.config import PipelineConfig
+    path = PipelineConfig.model_fields["litellm_socket"].default
+    roles = Path(__file__).resolve().parents[2] / "ansible" / "roles"
+    unit = (roles / "litellm/templates/litellm-socket.service.j2").read_text()
+    wrapper = (roles / "interpret/templates/run-interpret-wrapper.sh.j2").read_text()
+    assert f"UNIX-LISTEN:{path}," in unit
+    assert f"SOCK={path}\n" in wrapper
 
 
 # --- the container side ------------------------------------------------------------------

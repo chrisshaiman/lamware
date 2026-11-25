@@ -2232,6 +2232,7 @@ LiteLLM already prices every call it routes, and records the result in its spend
   - It looks up each call in LiteLLM's spend log, retrying for a short while, because LiteLLM writes the log in batches.
   - It writes `report["llm_cost"]`: `source: litellm`, the dollar total, the number of calls, and any IDs it could not resolve.
   - The lookup uses a new scoped key with read-only spend access (ADR-030's one key per caller).
+  - It goes over LiteLLM's Unix socket (`/run/litellm/litellm.sock`, the one the interpret container already uses), not TCP. The pipeline user's egress rules drop TCP to LiteLLM's port by design; measured on the host, TCP timed out and the socket answered. So this adds no firewall opening.
 - **`db_ingest` uses `llm_cost` when every call resolved.** Otherwise, and for every report written before this ADR, it uses the rate table as today, with a warning.
 - **The rate tables stay, as the fallback,** and are no longer extended for new aliases. A price for a new alias goes in LiteLLM's model list, where LiteLLM's spend tracking reads it too.
 - **The eval harness moves to the same source** in a follow-up.
