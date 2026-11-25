@@ -69,6 +69,7 @@ def _render(**extra) -> str:
     env = jinja2.Environment(undefined=jinja2.ChainableUndefined, autoescape=False)
     env.filters["to_json"] = to_json
     env.filters["mandatory"] = lambda v: "placeholder" if isinstance(v, jinja2.Undefined) else v
+    env.filters["combine"] = lambda a, *bs: {k: v for d in (a, *bs) for k, v in d.items()}  # Ansible's, non-recursive
     return env.from_string(TEMPLATE.read_text(encoding="utf-8")).render(**ctx)
 
 
@@ -104,3 +105,28 @@ def test_a_key_the_model_does_not_know_is_rejected():
     data["interpret"]["zz_not_a_real_key"] = 1
     with pytest.raises(Exception):
         PipelineConfig.model_validate(data)
+
+
+_HAIKU = {"description": "d", "cloud": True, "model": "eval-haiku55", "escalation_model": "eval-haiku55",
+          "summary_model": "eval-haiku55", "plain_english_model": "eval-haiku55",
+          "re_backend": "router", "single_shot_backend": "router"}
+
+
+def test_without_operator_profiles_the_builtin_stub_is_deployed():
+    cfg = PipelineConfig.model_validate(json.loads(_render()))
+    assert set(cfg.llm_profiles) == {"stub"}
+
+
+def test_an_operator_profile_is_added_not_swapped_in():
+    """A vars file naming only `haiku` replaced the whole dict and dropped `stub`."""
+    cfg = PipelineConfig.model_validate(json.loads(_render(pipeline_llm_profiles={"haiku": _HAIKU})))
+    assert set(cfg.llm_profiles) == {"stub", "haiku"}
+    assert cfg.llm_profiles["haiku"].cloud is True
+
+
+def test_an_operator_profile_may_replace_a_builtin_by_name():
+    own = dict(_HAIKU, cloud=False, model="stub", escalation_model="stub", summary_model="stub",
+               plain_english_model="stub", re_backend="local", single_shot_backend="local",
+               description="mine")
+    cfg = PipelineConfig.model_validate(json.loads(_render(pipeline_llm_profiles={"stub": own})))
+    assert cfg.llm_profiles["stub"].description == "mine"

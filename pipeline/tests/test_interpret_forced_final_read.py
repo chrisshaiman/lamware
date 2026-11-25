@@ -256,6 +256,7 @@ def test_the_shipped_reserve_reaches_config_json_and_loads():
     env = jinja2.Environment(undefined=jinja2.ChainableUndefined, autoescape=False)
     env.filters["to_json"] = lambda v: json.dumps(_placeholder(v))
     env.filters["mandatory"] = _placeholder
+    env.filters["combine"] = lambda a, *bs: {k: v for d in (a, *bs) for k, v in d.items()}
     rendered = json.loads(env.from_string(
         (roles / "pipeline" / "templates" / "config.json.j2").read_text(encoding="utf-8")
     ).render(**ctx))

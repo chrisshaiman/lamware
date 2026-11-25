@@ -67,7 +67,8 @@ def test_the_check_catches_a_local_looking_alias_on_a_cloud_route(base):
 def test_the_deployed_defaults_define_no_cloud_profile():
     """Without local vars a deploy has "local" and the free, local "stub"; a cloud
     profile is always the operator's own addition."""
-    profiles = PIPELINE["pipeline_llm_profiles"]
+    assert PIPELINE["pipeline_llm_profiles"] == {}
+    profiles = PIPELINE["pipeline_llm_profiles_builtin"]
     assert set(profiles) == {"stub"}
     assert profiles["stub"]["cloud"] is False
     assert {profiles["stub"][f] for f in ("model", "escalation_model", "summary_model",
