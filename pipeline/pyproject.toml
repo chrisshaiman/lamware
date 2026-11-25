@@ -24,7 +24,11 @@ dependencies = ["lamware-shared", "pydantic>=2", "psycopg2-binary>=2.9", "reques
 # deploy; CI installs only this package, so without them the guard would be skipped — and a
 # guard that skips in CI is the vacuous-test problem this repo keeps re-learning.
 [project.optional-dependencies]
-test = ["anthropic>=0.40", "httpx>=0.27", "jinja2>=3.1", "pyyaml>=6.0"]
+# anthropic and httpx are the interpret container's own pins (ansible/roles/interpret/
+# files/requirements.lock): these tests drive the container's code, and a newer SDK
+# rejects its httpx.Client (anthropic moved to httpx2). tests/test_test_pins_match_the_
+# interpret_lock.py keeps the two in step.
+test = ["anthropic==0.52.0", "httpx==0.28.1", "jinja2>=3.1", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
