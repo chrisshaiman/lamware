@@ -1,0 +1,18 @@
+[
+ {
+  "sha256": "48ef09c312f5717339d90300b4a4b540c325ff7cbd4fc057bab778db07807e4a",
+  "signature": "VIPKeylogger",
+  "file_name": "Faldskrmssoldaternes.com",
+  "file_size": 927448,
+  "first_seen": "2025-06-03 09:44:49",
+  "imphash": "ced282d9b261d1462772017fe2f6972b"
+ },
+ {
+  "sha256": "9005f8bce3ca2681ccf267e105a9eb8fafa444334b0af5f5cecf9e8ef1c68210",
+  "signature": "",
+  "file_name": "assets.exe",
+  "file_size": 16368833,
+  "first_seen": "2026-06-26 00:57:15",
+  "imphash": "cf72283be50852e418ce6bbb6b645835"
+ }
+]

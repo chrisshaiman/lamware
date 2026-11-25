@@ -71,7 +71,10 @@ def predicates(report: dict, report_dir: str) -> dict[str, bool]:
         "path.dotnet_payload": dn.get("analysis_success") is True and "extraction_source" in dn,
         "path.powershell_from_behaviour": ps.get("analysis_success") is True and ps.get("cape_extracted") is True,
     })
-    for name, kind in (("report.pdf", "file"), ("pcap_analysis", "dir"), ("vol_procdump", "dir"),
+    # No pcap_analysis/ directory check: the pcap stage keeps its results in the report
+    # (pcap.*), and that directory was empty in every run, the baseline's included, so
+    # the predicate could never hold (measured 2026-11-24).
+    for name, kind in (("report.pdf", "file"), ("vol_procdump", "dir"),
                        ("cape_injections", "dir"), ("llm_audit", "dir")):
         path = os.path.join(report_dir, name)
         if kind == "file":

@@ -29,7 +29,7 @@
    "expect": [
     "path.powershell_from_behaviour"
    ],
-   "note": "Native PE (no branch); runs encoded PowerShell. Report 21ab9faaeeaf. Retire once native-dotnet-payload and script-powershell both exist: together they cover it."
+   "note": "Native PE (no branch); runs encoded PowerShell. Report 21ab9faaeeaf. Covers path.powershell_from_behaviour: the script sample did not run PowerShell in the guest."
   },
   {
    "id": "native-dotnet-payload",
@@ -37,115 +37,61 @@
    "expect": [
     "path.dotnet_payload"
    ],
-   "select": "A native (non-.NET) PE loader or dropper whose unpacked payload is .NET (e.g. a crypter-wrapped AgentTesla or a .NET RAT). The payload path runs only for native inputs, so an Office or script dropper does not exercise it.",
-   "candidates": [
+   "select": "A native (non-.NET) loader whose .NET payload CAPE actually extracts in THIS guest: check a candidate's past CAPE runs (CAPE/, procdump/, selfextracted/ holding a PE with a CLR header) before detonating. The payload path runs only for native inputs; its code is unit-tested with synthetic extractions (test_header_peeks_hostile, test_dotnet_carve_never_follows_links), so only a real sample is missing.",
+   "tried": [
     {
-     "role": "pick",
      "sha256": "277e2a14e0391a77efa3e327dd14d6fb2995642b5e69a8a67bd644c90ff6fd3f",
-     "family": "XWorm",
-     "file_name": "key.license.exe"
+     "family": "XWorm (AutoIt loader)",
+     "report": "b8a310f6d80d",
+     "result": "CAPE extracted no .NET file"
     },
     {
-     "role": "backup",
      "sha256": "48ef09c312f5717339d90300b4a4b540c325ff7cbd4fc057bab778db07807e4a",
-     "family": "VIPKeylogger",
-     "file_name": "Faldskrmssoldaternes.com"
+     "family": "VIPKeylogger (NSIS)",
+     "report": "6871df08051c",
+     "result": "CAPE extracted no .NET file"
     }
-   ],
-   "intake": "scripts/intake/coverage-2026-11.json"
+   ]
   },
   {
    "id": "office",
-   "status": "wanted",
+   "status": "have",
    "expect": [
     "branch.office"
    ],
-   "select": "A macro-enabled Office document (VBA) that still runs its macro without live C2.",
-   "candidates": [
-    {
-     "role": "pick",
-     "sha256": "ce496d2269838b0917b8e4889432db0e13d0a44682327c06ccdd223f4ca38718",
-     "family": "-",
-     "file_name": "template[1].doc"
-    },
-    {
-     "role": "backup",
-     "sha256": "c2e920944d994ba28bc9e159491a89d83e305e63fafc4a4e25433db63800d5fa",
-     "family": "-",
-     "file_name": "c2e920944d994ba28bc9e159491a89d83e305e63fafc4a4e25433db63800d5fa.xlsm"
-    }
-   ],
-   "intake": "scripts/intake/coverage-2026-11.json"
+   "family": "-",
+   "sha256": "ce496d2269838b0917b8e4889432db0e13d0a44682327c06ccdd223f4ca38718",
+   "note": "VBA Word template. Ran on the office guest; macros extracted. Report 19de1dd78328 (stub profile, 2026-11-24)."
   },
   {
-   "id": "script-powershell",
-   "status": "wanted",
+   "id": "script",
+   "status": "have",
    "expect": [
-    "branch.script",
-    "path.powershell_from_behaviour"
+    "branch.script"
    ],
-   "select": "A JS or VBS dropper (WSH) that launches encoded PowerShell.",
-   "candidates": [
-    {
-     "role": "pick",
-     "sha256": "2a6d0a017c2e584f2c9272581b4f17ee71917cc215dbd042bd260ce26a39e10b",
-     "family": "PhantomStealer",
-     "file_name": "Payment Advice...6321.js"
-    },
-    {
-     "role": "backup",
-     "sha256": "e5e5397c47989a79e8f633ad808816699500cf461addb819768b1a26ef02247f",
-     "family": "RemcosRAT",
-     "file_name": "Quotation request YN2024-10-07pdf.vbs"
-    }
-   ],
-   "intake": "scripts/intake/coverage-2026-11.json"
+   "family": "PhantomStealer",
+   "sha256": "2a6d0a017c2e584f2c9272581b4f17ee71917cc215dbd042bd260ce26a39e10b",
+   "note": "JS loader. Took the script branch, but ran no PowerShell in the guest, so path.powershell_from_behaviour stays with native-powershell. Report c7f2cb9b3f49."
   },
   {
    "id": "pyinstaller",
-   "status": "wanted",
+   "status": "have",
    "expect": [
     "branch.pyinstaller"
    ],
-   "select": "A PyInstaller-packed Windows stealer or RAT (the MEI magic is what selects the branch).",
-   "candidates": [
-    {
-     "role": "pick",
-     "sha256": "5702cb05be590956494977224809031ff1f1516a19d68a807448e0142d31ac89",
-     "family": "-",
-     "file_name": "ForniteFix.exe"
-    },
-    {
-     "role": "backup",
-     "sha256": "9005f8bce3ca2681ccf267e105a9eb8fafa444334b0af5f5cecf9e8ef1c68210",
-     "family": "-",
-     "file_name": "assets.exe"
-    }
-   ],
-   "intake": "scripts/intake/coverage-2026-11.json"
+   "family": "-",
+   "sha256": "9005f8bce3ca2681ccf267e105a9eb8fafa444334b0af5f5cecf9e8ef1c68210",
+   "note": "Python 3.13; extracted and decompiled. Report 41e6d8d91b15. The first pick (5702cb05..., Python 3.14) took the branch but pycdc rejected its bytecode (Bad MAGIC): a tool gap, not a sample problem."
   },
   {
    "id": "java",
-   "status": "wanted",
+   "status": "have",
    "expect": [
     "branch.java"
    ],
-   "select": "A JAR, e.g. STRRAT or Adwind.",
-   "candidates": [
-    {
-     "role": "pick",
-     "sha256": "cd86d5ef77f0d244229562d96aafb5d26adf0e35137aca6aec76bf0f652a8180",
-     "family": "STRRAT",
-     "file_name": "DSSeksWAIz.jar"
-    },
-    {
-     "role": "backup",
-     "sha256": "800ab654327bac38fe0c76ddc656b8c18993be24ef7db440001004e77efff9f6",
-     "family": "STRRAT",
-     "file_name": "mqAscJTnJS.jar"
-    }
-   ],
-   "intake": "scripts/intake/coverage-2026-11.json"
+   "family": "STRRAT",
+   "sha256": "cd86d5ef77f0d244229562d96aafb5d26adf0e35137aca6aec76bf0f652a8180",
+   "note": "Report 7c17472e4a97 (stub profile, 2026-11-24)."
   },
   {
    "id": "powershell-script",
