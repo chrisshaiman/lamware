@@ -2292,7 +2292,13 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
    - **Every path captures usage** (CLAUDE.md section 10). LiteLLM prices every call (ADR-037), whatever the provider.
    - **No caller bypasses LiteLLM's routing.** The digest moves from the `/anthropic` passthrough to the router, so a profile alias means the same thing to every caller.
 5. **The one opinion: a model's terms must allow the work.** This pipeline reverse-engineers malware for security research. Some model licences or usage policies forbid reverse engineering or security research, and some of those offer no exception path. The docs tell operators to check a model's terms before choosing it, and point them at models whose terms (or an exception or approval process the provider offers) permit this use. This is guidance, not a gate: the suite doesn't read licences or refuse a model, and the operator is responsible for the terms they accept. It doesn't rank models by quality either. Where the eval harness has measured a model, the docs can publish the results.
-6. **`eval-*` stays, as a credentials and billing namespace,** not a verdict on models. Those aliases run on the eval credentials and budget. They may appear in per-run profiles, but not in the automated default, the analyst settings or any other deployed default. `test_frontier_arms_are_eval_only.py` keeps checking that, and exempts only the `cloud: true` per-run profiles, which ADR-036 requires to name `eval-*`.
+6. **One model per run for the agent; no escalation.** The agentic stage uses the profile's one `model` from first turn to last. `escalation_model` and `escalation_threshold` are removed.
+   - **What escalation did:** it switched models after a fixed number of tool calls (5), unconditionally, so on any real analysis the first model did only the first five calls. On the automated path it was a no-op, since the escalation model was the same local model. Only the analyst path (Sonnet, then Opus) used it. 5 of 76 reports on the host ever escalated, and nothing measured whether escalating improved an analysis.
+   - **What a switch costs on current models:** the prompt cache is per model, so the new model reads the whole transcript again at full input price. The first model's thinking is dropped, because current models carry thinking over only to certain other models. And one run mixes two models, which makes runs harder to compare.
+   - **Instead:** an operator who wants a stronger model for hard samples picks a profile with that model for the run.
+   - **Reports keep `model_initial` and `model_final`;** they now always match.
+7. **Short single-shot prompts take their own, cheaper model.** The executive and plain-English summaries are separate calls on short prompts, not a switch mid-conversation, so a profile keeps `summary_model` and `plain_english_model` apart from `model`. The examples pair a strong agent model with a cheap summary model, such as Haiku or the local model. That's a suggestion: the operator can set all three to the same model.
+8. **`eval-*` stays, as a credentials and billing namespace,** not a verdict on models. Those aliases run on the eval credentials and budget. They may appear in per-run profiles, but not in the automated default, the analyst settings or any other deployed default. `test_frontier_arms_are_eval_only.py` keeps checking that, and exempts only the `cloud: true` per-run profiles, which ADR-036 requires to name `eval-*`.
 
 ### Consequences
 
@@ -2300,6 +2306,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 - **A fresh install runs on `local`,** as today. Choosing a cloud default is one variable and a redeploy, and the deploy, every run's log and every report say so. `docs/LLM_PROFILES.md` becomes the guide to the choice, including the terms check above.
 - **The web UI changes** to list profiles. Its current production-key models become a profile.
 - **Providers other than Anthropic and llama.cpp are unverified here.** Bedrock, Foundry and Vertex examples are marked unverified until someone runs one, including whether LiteLLM's price map covers their models.
+- **Escalation goes,** on the basis of cost, simplicity and comparability, not quality data. Whether Sonnet-then-Opus produced better analyses than either model alone was never measured. If that matters, the eval harness can run the same sample both ways (paid, and only with the operator's approval).
 - **Measured guidance, not gates.** Nothing refuses a model for being weaker, or for its terms; the docs inform the choice.
 
 ### Not decided here
@@ -2311,10 +2318,11 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 ### Implementation, if accepted (one PR each, each deployed and checked on the host)
 
 1. **Profiles merge with the role's built-ins,** and the eval-only guard exempts `cloud: true` per-run profiles (the parked `fix/llm-profiles-merge` branch).
-2. **The default profile setting,** shipped as `local`. Automated runs use it, a deploy naming an undefined profile stops, and the stay-local test changes as above.
-3. **The digest uses the router,** not the passthrough.
-4. **The web UI lists profiles.**
-5. **Docs:** provider examples (Anthropic key and WIF, Bedrock, Foundry, Vertex, llama.cpp), each marked verified or not, and the terms check.
+2. **Remove escalation.** Delete `escalation_model` and `escalation_threshold` from the interpret config, from `LlmProfile`, from the `interpret_*` and `interpret_analyst_*` defaults and from the agent loop, and check the reports' `model_initial` and `model_final` stay equal. Enumerate every reader first (eval harness, `db_ingest` pricing, the API, the web UI).
+3. **The default profile setting,** shipped as `local`. Automated runs use it, a deploy naming an undefined profile stops, and the stay-local test changes as above.
+4. **The digest uses the router,** not the passthrough.
+5. **The web UI lists profiles.**
+6. **Docs:** provider examples (Anthropic key and WIF, Bedrock, Foundry, Vertex, llama.cpp), each marked verified or not, and the terms check.
 
 ### Rollback
 
