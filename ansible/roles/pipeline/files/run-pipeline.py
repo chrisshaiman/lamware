@@ -174,26 +174,32 @@ INTERPRET_TIMEOUT = _PIPELINE_CONFIG.interpret_timeout
 FORCE_FINAL_GRACE = _PIPELINE_CONFIG.interpret_force_final_grace
 SYNTHESIS_RESERVE = _PIPELINE_CONFIG.interpret_synthesis_reserve
 INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret.model_dump()
-# The LLM profile of this run (ADR-036). main() replaces INTERPRET_CONFIG with the
-# profile's before any stage runs; every stage reads INTERPRET_CONFIG at call time.
-LLM_PROFILE = LOCAL_PROFILE
+# The LLM profile of this run (ADR-036, ADR-038). main() replaces INTERPRET_CONFIG with
+# the profile's before any stage runs; every stage reads INTERPRET_CONFIG at call time.
+LLM_PROFILE = _PIPELINE_CONFIG.default_llm_profile
+# How it was chosen: "default" (the deployment's default_llm_profile) or "flag".
+LLM_PROFILE_SOURCE = "default"
 
 
-def apply_llm_profile(name: str) -> None:
-    """Point every LLM stage of this run at `name`'s models. An unknown name stops
-    the run (exit 1) with the defined names, before the sample is touched."""
-    global INTERPRET_CONFIG, LLM_PROFILE
+def apply_llm_profile(name: str | None) -> None:
+    """Point every LLM stage of this run at `name`'s models, or at the deployment's
+    default profile when `name` is None. An unknown name stops the run (exit 1) with
+    the defined names, before the sample is touched."""
+    global INTERPRET_CONFIG, LLM_PROFILE, LLM_PROFILE_SOURCE
+    source = "flag" if name else "default"
+    name = name or _PIPELINE_CONFIG.default_llm_profile
     try:
         INTERPRET_CONFIG = _PIPELINE_CONFIG.interpret_for(name).model_dump()
     except ValueError as exc:
         raise SystemExit(f"--llm-profile: {exc}") from None
-    LLM_PROFILE = name
+    LLM_PROFILE, LLM_PROFILE_SOURCE = name, source
+    how = "the deployment's default" if source == "default" else "chosen for this run"
     if _PIPELINE_CONFIG.profile_is_cloud(name):
-        log.warning("LLM profile %r is a CLOUD profile: this run sends prompts (decompiled "
-                    "code, strings, behaviour) to %s", name,
+        log.warning("LLM profile %r (%s) is a CLOUD profile: this run sends prompts "
+                    "(decompiled code, strings, behaviour) to %s", name, how,
                     ", ".join(sorted({INTERPRET_CONFIG[f] for f in MODEL_FIELDS})))
     elif name != LOCAL_PROFILE:
-        log.info("LLM profile %r: %s", name,
+        log.info("LLM profile %r (%s): %s", name, how,
                  ", ".join(sorted({INTERPRET_CONFIG[f] for f in MODEL_FIELDS})))
 
 
@@ -218,6 +224,7 @@ def resolve_llm_cost(report: dict) -> dict:
 def llm_profile_record() -> dict:
     """What this run's report says about its LLM: the profile, cloud or not, and models."""
     return {"name": LLM_PROFILE, "cloud": _PIPELINE_CONFIG.profile_is_cloud(LLM_PROFILE),
+            "chosen_by": LLM_PROFILE_SOURCE,
             "models": {f: INTERPRET_CONFIG[f] for f in MODEL_FIELDS}}
 # Behavioural evidence for the agentic RE agent (#674); false is the old behaviour.
 CORRELATED_EVIDENCE = _PIPELINE_CONFIG.interpret_correlated_evidence
@@ -1925,10 +1932,10 @@ def main():
                         help="MalwareBazaar signature/family name (passed from auto-feeder)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Enable debug-level logging")
-    parser.add_argument("--llm-profile", default=LOCAL_PROFILE,
+    parser.add_argument("--llm-profile", default=None,
                         help="Which models the LLM stages use (ADR-036): "
                              + ", ".join(_PIPELINE_CONFIG.profile_names())
-                             + f". Default {LOCAL_PROFILE}.")
+                             + f". Default: the deployment's, {_PIPELINE_CONFIG.default_llm_profile}.")
     args = parser.parse_args()
 
     setup_logging(verbose=args.verbose)

@@ -12,7 +12,7 @@
 # License: Apache 2.0
 # =============================================================================
 
-.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate intake
+.PHONY: vault-session vault-session-clear vault-session-status provenance provenance-has merge-check all image collections-check build-preflight win11-base win11-guest win11-office win11-image autounattend-floppy infra-ovh configure validate clean packer-setup help deploy security-test smoke smoke-setup eval detonate intake llm-default
 
 # -----------------------------------------------------------------------------
 # Configuration — override via environment or .env file
@@ -96,6 +96,7 @@ help:
 	@echo "  make all                  Full pipeline: image + infra + configure"
 	@echo "  make validate             Validate Packer + Terraform configs"
 	@echo "  make deploy TAGS=api      Deploy specific roles + run security tests"
+	@echo "  make llm-default PROFILE=NAME  Set the default LLM profile (ADR-038) and deploy the pipeline"
 	@echo "  make security-test        Run post-deploy security smoke tests only"
 	@echo ""
 	@echo "  make vault-session        Hold the vault password in RAM for this boot"
@@ -609,6 +610,14 @@ eval:
 # recurring or unattended detonation.
 intake:
 	@MANIFEST="$(MANIFEST)" LLM_PROFILE="$(LLM_PROFILE)" SANDBOX_HOST="$(ANSIBLE_HOST_ALIAS)" ./scripts/intake.sh
+
+# The deployment's default LLM profile (ADR-038): every run without --llm-profile uses
+# it. Checks PROFILE is defined, sets pipeline_default_llm_profile in
+# ansible/vars/main.yml, then deploys the pipeline role (which announces a cloud default).
+llm-default:
+	@test -n "$(PROFILE)" || { echo "usage: make llm-default PROFILE=NAME" >&2; exit 2; }
+	@python3 scripts/set_llm_default.py "$(PROFILE)"
+	@$(MAKE) --no-print-directory deploy TAGS=pipeline
 
 detonate:
 	@SAMPLE="$(SAMPLE)" RUNS="$(RUNS)" MACHINE="$(MACHINE)" PACKAGE="$(PACKAGE)" \

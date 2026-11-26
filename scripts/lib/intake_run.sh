@@ -28,11 +28,14 @@ entries=$(python3 -c 'import json,sys
 for e in json.load(open(sys.argv[1])):
     print(e["sha256"], e["signature"], sep="\t")' "$B/manifest.json") || { say "bad manifest"; exit 2; }
 
-# The batch's LLM profile (ADR-036), written by intake.sh; absent means local.
-PROFILE=$(head -1 "$B/llm_profile" 2>/dev/null); PROFILE=${PROFILE:-local}
+# The batch's LLM profile (ADR-036), written by intake.sh. Empty or absent means the
+# deployment's default (ADR-038): no --llm-profile is passed, and run-pipeline uses it.
+PROFILE=$(head -1 "$B/llm_profile" 2>/dev/null)
 case "$PROFILE" in *[!a-z0-9-]*) say "bad llm_profile '$PROFILE'"; exit 2 ;; esac
+PROFILE_ARGS=()
+[ -n "$PROFILE" ] && PROFILE_ARGS=(--llm-profile "$PROFILE")
 
-say "batch start: $(printf '%s\n' "$entries" | wc -l) samples, llm_profile=$PROFILE"
+say "batch start: $(printf '%s\n' "$entries" | wc -l) samples, llm_profile=${PROFILE:-(deployment default)}"
 while IFS=$'\t' read -r sha sig; do
     [ -n "$sha" ] || continue
     case "$sha" in *[!0-9a-f]*) say "skip: not a sha256: $sha"; continue ;; esac
@@ -46,7 +49,7 @@ while IFS=$'\t' read -r sha sig; do
     say "pipeline start $sha ($sig) $name"
     before=$(ls -1t "$REPORTS" 2>/dev/null | head -1)
     sudo -u pipeline timeout 5400 "$RUN_PIPELINE" "$path" --filename "$name" --bazaar-family "$sig" \
-        --llm-profile "$PROFILE" >> "$LOG" 2>&1
+        "${PROFILE_ARGS[@]}" >> "$LOG" 2>&1
     rc=$?
     after=$(ls -1t "$REPORTS" 2>/dev/null | head -1)
     [ "$after" = "$before" ] && after="-"

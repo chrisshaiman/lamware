@@ -209,10 +209,14 @@ class PipelineConfig(BaseModel):
     relationship_ssdeep_threshold: int
 
     # Named LLM profiles a run may choose with --llm-profile (ADR-036). The
-    # "local" profile is the `interpret` block itself and cannot be redefined, so
-    # a run without the flag always gets the deployed defaults. Defaulted empty so
-    # an older config.json still loads.
+    # "local" profile is the `interpret` block itself and cannot be redefined. A run
+    # without the flag gets default_llm_profile. Defaulted empty so an older
+    # config.json still loads.
     llm_profiles: dict[str, LlmProfile] = Field(default_factory=dict)
+    # The profile every run without --llm-profile uses: API submissions, the feeder,
+    # intake without LLM_PROFILE (ADR-038). Ships as "local"; the operator changes it
+    # with pipeline_default_llm_profile (or `make llm-default PROFILE=...`).
+    default_llm_profile: str = LOCAL_PROFILE
     # Where the orchestrator reads LiteLLM's spend log for a run's cost (ADR-037).
     # Defaulted so an older config.json still loads.
     # LiteLLM's Unix socket (litellm-socket.service). The pipeline user reaches LiteLLM
@@ -250,6 +254,13 @@ class PipelineConfig(BaseModel):
             elif transports != ("local", "local"):
                 raise ValueError(f"llm profile {name!r}: a local profile needs re_backend and "
                                  f"single_shot_backend 'local', got {transports}")
+        return self
+
+    @model_validator(mode="after")
+    def _default_profile_is_defined(self) -> "PipelineConfig":
+        if self.default_llm_profile not in self.profile_names():
+            raise ValueError(f"default_llm_profile {self.default_llm_profile!r} is not a defined "
+                             f"profile; defined: {', '.join(self.profile_names())}")
         return self
 
     def profile_names(self) -> list[str]:

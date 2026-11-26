@@ -680,6 +680,33 @@
     state: mounted
   when: pipeline_volatility_ramdisk | default('') | length > 0
 
+# ADR-038: the default profile is the operator's to choose. Refuse an undefined name
+# before anything is written (PipelineConfig refuses it too, but only when a run
+# starts), and say so when automated runs will send prompts off the host.
+- name: Check the default LLM profile names a defined profile
+  vars:
+    _defined: "{{ ['local'] + ((pipeline_llm_profiles_builtin | combine(pipeline_llm_profiles | default({}))) | list) }}"
+  ansible.builtin.assert:
+    that: pipeline_default_llm_profile in _defined
+    fail_msg: >-
+      pipeline_default_llm_profile '{{ pipeline_default_llm_profile }}' is not a defined
+      profile; defined: {{ _defined | join(', ') }}
+    quiet: true
+
+- name: Announce a cloud default LLM profile
+  vars:
+    _profiles: "{{ pipeline_llm_profiles_builtin | combine(pipeline_llm_profiles | default({})) }}"
+  ansible.builtin.debug:
+    msg: >-
+      DEFAULT LLM PROFILE IS CLOUD: every run without --llm-profile (API submissions, the
+      feeder, intake) sends prompts (decompiled code, strings, behaviour) to
+      {{ [_profiles[pipeline_default_llm_profile].model, _profiles[pipeline_default_llm_profile].summary_model,
+          _profiles[pipeline_default_llm_profile].plain_english_model] | unique | join(', ') }}
+      (profile '{{ pipeline_default_llm_profile }}').
+  when:
+    - pipeline_default_llm_profile != 'local'
+    - _profiles[pipeline_default_llm_profile].cloud | default(false) | bool
+
 - name: Deploy pipeline config.json
   ansible.builtin.template:
     src: config.json.j2

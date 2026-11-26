@@ -130,3 +130,10 @@ def test_an_operator_profile_may_replace_a_builtin_by_name():
                description="mine")
     cfg = PipelineConfig.model_validate(json.loads(_render(pipeline_llm_profiles={"stub": own})))
     assert cfg.llm_profiles["stub"].description == "mine"
+
+
+def test_the_default_profile_renders_and_validates():
+    assert PipelineConfig.model_validate(json.loads(_render())).default_llm_profile == "local"
+    cfg = PipelineConfig.model_validate(json.loads(_render(
+        pipeline_llm_profiles={"haiku": _HAIKU}, pipeline_default_llm_profile="haiku")))
+    assert cfg.default_llm_profile == "haiku"

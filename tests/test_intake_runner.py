@@ -195,3 +195,26 @@ def test_the_batch_directory_migration_reaches_its_target_and_stays_there(tmp_pa
         assert oct(d.stat().st_mode & 0o7777) == "0o755", d
     second = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
     assert second.stdout.strip() == "normalised 0"
+
+
+def test_a_named_profile_is_passed_to_every_run(tmp_path):
+    b, env, pipe_log, _ = _setup(tmp_path)
+    (b / "llm_profile").write_text("stub\n")
+    _run(b, env)
+    calls = pipe_log.read_text().splitlines()
+    assert len(calls) == 2 and all(c.endswith("--llm-profile stub") for c in calls), calls
+
+
+def test_no_profile_means_no_flag_so_the_deployment_default_applies(tmp_path):
+    """ADR-038: an empty or absent llm_profile used to become `--llm-profile local`,
+    which would override an operator's changed default."""
+    for content in ("", None):
+        root = tmp_path / ("empty" if content == "" else "absent")
+        root.mkdir()
+        b, env, pipe_log, _ = _setup(root)
+        if content is not None:
+            (b / "llm_profile").write_text(content)
+        r = _run(b, env)
+        calls = pipe_log.read_text().splitlines()
+        assert len(calls) == 2, r.stderr
+        assert not [c for c in calls if "--llm-profile" in c], calls
