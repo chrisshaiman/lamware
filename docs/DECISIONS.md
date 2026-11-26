@@ -59,7 +59,7 @@ these describe an AWS data plane that no longer exists.
 | [035](#adr-035-the-nightly-aide-run-absorbs-only-detonation-reboot-and-container-runtime-differences) | The nightly AIDE run absorbs only detonation, reboot and container-runtime differences | Proposed |
 | [036](#adr-036-a-run-chooses-its-llm-backend-by-explicit-profile-automated-runs-stay-local-by-default) | A run chooses its LLM backend by explicit profile; automated runs stay local by default | Proposed |
 | [037](#adr-037-litellms-per-call-cost-is-the-price-of-record-the-rate-tables-become-a-fallback) | LiteLLM's per-call cost is the price of record; the rate tables become a fallback | Proposed |
-| [038](#adr-038-the-operator-chooses-the-models-the-suite-enables-providers-and-records-where-the-data-went) | The operator chooses the models; the suite enables providers and records where the data went | Proposed |
+| [038](#adr-038-the-operator-chooses-the-models-the-suite-enables-providers-and-records-where-the-data-went) | The operator chooses the models; the suite enables providers and records where the data went | Accepted |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -2145,7 +2145,7 @@ Revert and redeploy `hardening`: `check` goes back to `aide --check`, alerting o
 
 ## ADR-036: A run chooses its LLM backend by explicit profile; automated runs stay local by default
 
-**Status:** Proposed (2026-11-23). Extended by ADR-038 (proposed): `local` stays the default, and the operator may also change the automated default, not only choose a cloud model per run.
+**Status:** Proposed (2026-11-23). Extended by ADR-038 (accepted 2026-11-25): `local` stays the default, and the operator may also change the automated default, not only choose a cloud model per run.
 **Refs:** `tests/test_automated_runs_stay_local.py`, ADR-033 (the eval route), ADR-031 (permission phases), `scripts/usecase-check/coverage-corpus.json`
 
 ### Context
@@ -2253,7 +2253,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 
 ## ADR-038: The operator chooses the models; the suite enables providers and records where the data went
 
-**Status:** Proposed (2026-11-25). Extends ADR-036; it reverses nothing. Local stays the default, and profiles, the `cloud` declaration and the report record stand. ADR-036 let a person choose a cloud model only for one run. This adds a changeable automated default, and the design ADR-036 left open: providers, the web UI's models, escalation, model terms and the digest's routing.
+**Status:** Accepted (2026-11-25). Extends ADR-036; it reverses nothing. Local stays the default, and profiles, the `cloud` declaration and the report record stand. ADR-036 let a person choose a cloud model only for one run. This adds a changeable automated default, and the design ADR-036 left open: providers, the web UI's models, escalation, model terms and the digest's routing.
 **Refs:** ADR-030 (scoped LiteLLM keys), ADR-033 (Workload Identity Federation), ADR-036 (LLM profiles), ADR-037 (LiteLLM prices every call), `tests/test_automated_runs_stay_local.py`, `tests/test_frontier_arms_are_eval_only.py`
 
 ### Context
@@ -2288,7 +2288,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
    - **A profile declares `cloud: true|false`, and the declaration is checked against where its aliases actually route.** `cloud: false` requires every alias to resolve to a host-local server in the rendered LiteLLM config (ADR-036's test, kept).
    - **Every report records the profile and models** (ADR-036, kept).
    - **A cloud default is announced:** at deploy, in each automated run's log, and in the report.
-   - **No crossing mid-run.** Escalation and every stage stay within the run's profile. An unattended run never reaches a provider the operator didn't choose for it.
+   - **No crossing mid-run.** Every stage stays within the run's profile. An unattended run never reaches a provider the operator didn't choose for it.
    - **Every path captures usage** (CLAUDE.md section 10). LiteLLM prices every call (ADR-037), whatever the provider.
    - **No caller bypasses LiteLLM's routing.** The digest moves from the `/anthropic` passthrough to the router, so a profile alias means the same thing to every caller.
 5. **The one opinion: a model's terms must allow the work.** This pipeline reverse-engineers malware for security research. Some model licences or usage policies forbid reverse engineering or security research, and some of those offer no exception path. The docs tell operators to check a model's terms before choosing it, and point them at models whose terms (or an exception or approval process the provider offers) permit this use. This is guidance, not a gate: the suite doesn't read licences or refuse a model, and the operator is responsible for the terms they accept. It doesn't rank models by quality either. Where the eval harness has measured a model, the docs can publish the results.
