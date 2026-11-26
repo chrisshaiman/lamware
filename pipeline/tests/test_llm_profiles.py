@@ -128,14 +128,67 @@ def rp(tmp_path, monkeypatch):
 def test_without_the_flag_the_run_is_local_and_says_so(rp):
     assert rp.LLM_PROFILE == LOCAL_PROFILE
     rec = rp.llm_profile_record()
-    assert rec["name"] == "local" and rec["cloud"] is False
+    assert rec["name"] == "local" and rec["cloud"] is False and rec["chosen_by"] == "default"
     assert rec["models"]["model"] == rp._PIPELINE_CONFIG.interpret.model
+
+
+@pytest.fixture
+def rp_default_haiku(tmp_path, monkeypatch):
+    """run-pipeline on a deployment whose default profile is the cloud `haiku`."""
+    data = json.loads(FIXTURE.read_text())
+    data["llm_profiles"] = {"stub": STUB, "haiku": HAIKU}
+    data["default_llm_profile"] = "haiku"
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps(data))
+    monkeypatch.setenv("LAMWARE_PIPELINE_CONFIG", str(cfg))
+    sys.path.insert(0, str(RUN_PIPELINE.parent))
+    spec = importlib.util.spec_from_file_location("run_pipeline_default_haiku", RUN_PIPELINE)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(RUN_PIPELINE.parent))
+    return mod
+
+
+def test_without_the_flag_the_run_uses_the_deployments_default(rp_default_haiku, caplog):
+    """ADR-038: the API, the feeder and intake pass no flag; they get the default."""
+    rp = rp_default_haiku
+    with caplog.at_level("WARNING", logger="pipeline"):
+        rp.apply_llm_profile(None)
+    rec = rp.llm_profile_record()
+    assert rec["name"] == "haiku" and rec["cloud"] is True and rec["chosen_by"] == "default"
+    assert {rp.INTERPRET_CONFIG[f] for f in MODEL_FIELDS} == {"eval-haiku55"}
+    assert any("the deployment's default" in r.getMessage() and "CLOUD" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_the_flag_still_overrides_the_default(rp_default_haiku):
+    rp = rp_default_haiku
+    rp.apply_llm_profile("local")
+    rec = rp.llm_profile_record()
+    assert rec["name"] == "local" and rec["cloud"] is False and rec["chosen_by"] == "flag"
+
+
+def test_the_default_must_be_a_defined_profile():
+    data = json.loads(FIXTURE.read_text())
+    data["llm_profiles"] = {"stub": STUB}
+    for ok in ("local", "stub"):
+        assert PipelineConfig.model_validate(dict(data, default_llm_profile=ok)).default_llm_profile == ok
+    with pytest.raises(ValidationError, match="not a defined profile; defined: local, stub"):
+        PipelineConfig.model_validate(dict(data, default_llm_profile="haiku"))
+
+
+def test_an_older_config_defaults_to_local():
+    data = json.loads(FIXTURE.read_text())
+    data.pop("default_llm_profile", None)
+    assert PipelineConfig.model_validate(data).default_llm_profile == LOCAL_PROFILE
 
 
 def test_applying_a_profile_reaches_what_the_stages_read(rp):
     rp.apply_llm_profile("stub")
     assert {rp.INTERPRET_CONFIG[f] for f in MODEL_FIELDS} == {"stub"}
-    assert rp.llm_profile_record() == {"name": "stub", "cloud": False,
+    assert rp.llm_profile_record() == {"name": "stub", "cloud": False, "chosen_by": "flag",
                                        "models": {f: "stub" for f in MODEL_FIELDS}}
 
 
@@ -182,13 +235,9 @@ def test_the_report_and_a_replayed_report_record_the_profile():
     assert 'report["replay_llm_profile"] = llm_profile_record()' in src
 
 
-def test_intake_passes_the_profile_to_every_pipeline_run():
-    runner = (ROOT / "scripts/lib/intake_run.sh").read_text()
-    runs = [ln for ln in runner.splitlines() if '"$RUN_PIPELINE"' in ln and not ln.lstrip().startswith("#")]
-    assert runs, "no run-pipeline call found: the check would pass vacuously"
-    joined = runner.replace("\\\n", " ")
-    assert all('--llm-profile "$PROFILE"' in joined.split(r)[1].split("\n")[0]
-               for r in ['"$RUN_PIPELINE" "$path"']), joined
+def test_intake_hands_the_profile_to_the_batch():
+    """The runner's pass-through is executed in tests/test_intake_runner.py; this holds
+    the front door that writes it (intake.sh -> $B/llm_profile) and the make target."""
     front = (ROOT / "scripts/intake.sh").read_text()
     assert "'$B/llm_profile'" in front and "*[!a-z0-9-]*" in front
     assert 'LLM_PROFILE="$(LLM_PROFILE)"' in (ROOT / "Makefile").read_text()

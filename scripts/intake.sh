@@ -55,11 +55,12 @@ esac
 # Which models the batch's LLM stages use (ADR-036): `make intake ... LLM_PROFILE=stub`.
 # run-pipeline refuses a name its config does not define; this only keeps the
 # value to one safe token on its way through the shell.
-LLM_PROFILE=${LLM_PROFILE:-local}
+# Empty means the deployment's default profile (ADR-038), not "local".
+LLM_PROFILE=${LLM_PROFILE:-}
 case "$LLM_PROFILE" in
-  *[!a-z0-9-]*|"") echo "ERROR: LLM_PROFILE must be lowercase letters, digits and '-': '$LLM_PROFILE'" >&2; exit 2 ;;
+  *[!a-z0-9-]*) echo "ERROR: LLM_PROFILE must be lowercase letters, digits and '-': '$LLM_PROFILE'" >&2; exit 2 ;;
 esac
-say "batch=$NAME samples=$N llm_profile=$LLM_PROFILE -> $B"
+say "batch=$NAME samples=$N llm_profile=${LLM_PROFILE:-(deployment default)} -> $B"
 say "THIS DETONATES LIVE MALWARE on $HOST."
 # The runner is root (it switches to auto-feeder and pipeline), so everything it
 # executes or appends to is root's: the code under $LIB, and the batch directory,
