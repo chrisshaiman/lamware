@@ -59,6 +59,7 @@ these describe an AWS data plane that no longer exists.
 | [035](#adr-035-the-nightly-aide-run-absorbs-only-detonation-reboot-and-container-runtime-differences) | The nightly AIDE run absorbs only detonation, reboot and container-runtime differences | Proposed |
 | [036](#adr-036-a-run-chooses-its-llm-backend-by-explicit-profile-automated-runs-stay-local-by-default) | A run chooses its LLM backend by explicit profile; automated runs stay local by default | Proposed |
 | [037](#adr-037-litellms-per-call-cost-is-the-price-of-record-the-rate-tables-become-a-fallback) | LiteLLM's per-call cost is the price of record; the rate tables become a fallback | Proposed |
+| [038](#adr-038-the-operator-chooses-the-models-the-suite-enables-providers-and-records-where-the-data-went) | The operator chooses the models; the suite enables providers and records where the data went | Proposed |
 
 ### Historical — describe infrastructure that is no longer deployed
 
@@ -2144,7 +2145,7 @@ Revert and redeploy `hardening`: `check` goes back to `aide --check`, alerting o
 
 ## ADR-036: A run chooses its LLM backend by explicit profile; automated runs stay local by default
 
-**Status:** Proposed (2026-11-23).
+**Status:** Proposed (2026-11-23). Its "automated runs stay local by default" is superseded by ADR-038 if that is accepted; the operator chooses the default instead.
 **Refs:** `tests/test_automated_runs_stay_local.py`, ADR-033 (the eval route), ADR-031 (permission phases), `scripts/usecase-check/coverage-corpus.json`
 
 ### Context
@@ -2247,3 +2248,70 @@ LiteLLM already prices every call it routes, and records the result in its spend
 
 Revert. `db_ingest` prices from the table again; reports that already carry `llm_cost` keep it, and nothing reads it.
 
+
+---
+
+## ADR-038: The operator chooses the models; the suite enables providers and records where the data went
+
+**Status:** Proposed (2026-11-25). If accepted, supersedes ADR-036's "automated runs stay local by default"; the rest of ADR-036 (profiles, the `cloud` declaration, the report record) stands.
+**Refs:** ADR-030 (scoped LiteLLM keys), ADR-033 (Workload Identity Federation), ADR-036 (LLM profiles), ADR-037 (LiteLLM prices every call), `tests/test_automated_runs_stay_local.py`, `tests/test_frontier_arms_are_eval_only.py`
+
+### Context
+
+**Three mechanisms choose a model today, and they overlap:**
+
+- **The deployed defaults** (`interpret_model`, `interpret_summary_model`, the pipeline's summary models), used by every automated run. Policy and a test hold them to the local model.
+- **The analyst-facing models** (`interpret_analyst_model` and the other Claude entries in LiteLLM's model list), chosen in the web UI, on the production credentials.
+- **The `eval-*` aliases** on the eval credentials, used by the eval harness and, since ADR-036, by per-run profiles.
+
+**"Local only" holds two different rules,** and only one of them is a judgement about models:
+
+1. **Which model analyses a sample.** The suite has decided this for the operator: automated runs must use the local model. That suits this deployment. For most people running the suite it's backwards: the likeliest backend is a cloud provider (the Anthropic API, Amazon Bedrock, Microsoft Foundry, Google Vertex), and some will need a specific model for reasons the suite can't see. The local work stays valuable. On a powerful enough host a local model may be the best option, and for some operators the only acceptable one. But it is one option among several.
+2. **Where the sample's data goes, and who decided that.** Decompiled code, strings and behaviour leaving the host must always be a deliberate, recorded operator choice, never an accident. `test_automated_runs_stay_local.py` exists because of a real trap of that kind: a template once named a cloud entry after the local alias, so samples would have gone to the cloud while every config file said "local". This rule is about consent and visibility, not about which model is better.
+
+**The split already costs us.** The daily digest reuses `interpret_summary_model` but sends through LiteLLM's `/anthropic` passthrough, which forwards straight to Anthropic without LiteLLM's routing. When that variable became `local-qwen-llamacpp`, Anthropic answered "model not found" every morning (measured in LiteLLM's spend log: failures since at least 2026-11-16), and nothing said the digest had lost its summary.
+
+### Decision
+
+**The suite enables models; the operator chooses them. The suite never judges which model an analyst should use. It makes the operator's choice explicit, true and recorded.**
+
+1. **No default model choice ships.** A deployment must name its default profile (working name `pipeline_default_llm_profile`). Without one, the deploy stops before changing anything, with a message listing the options: a local model, a cloud provider, or `stub` to check the plumbing. A fresh install does nothing until the operator chooses.
+2. **Providers are the operator's to define.** They are LiteLLM model-list entries for whatever LiteLLM supports: the Anthropic API (key or Workload Identity Federation), Bedrock, Foundry, Vertex, llama.cpp or other local servers. The repo ships examples, not opinions. Each provider's credentials stay in the operator's vars or vault, as now.
+3. **One concept: the profile** (ADR-036's shape).
+   - The automated default is the operator's chosen profile, which may be local or cloud.
+   - `--llm-profile` and `LLM_PROFILE=` still choose another for one run.
+   - The web UI's model choices come from the same profiles, replacing the separate `interpret_analyst_model` path.
+4. **What stays strict.** These rules are about data handling, not about models:
+   - **A profile declares `cloud: true|false`, and the declaration is checked against where its aliases actually route.** `cloud: false` requires every alias to resolve to a host-local server in the rendered LiteLLM config (ADR-036's test, kept).
+   - **Every report records the profile and models** (ADR-036, kept).
+   - **A cloud default is announced:** at deploy, in each automated run's log, and in the report.
+   - **No crossing mid-run.** Escalation and every stage stay within the run's profile. An unattended run never reaches a provider the operator didn't choose for it.
+   - **Every path captures usage** (CLAUDE.md section 10). LiteLLM prices every call (ADR-037), whatever the provider.
+   - **No caller bypasses LiteLLM's routing.** The digest moves from the `/anthropic` passthrough to the router, so a profile alias means the same thing to every caller.
+5. **`eval-*` stays, as a credentials and billing namespace,** not a verdict on models. Those aliases run on the eval credentials and budget. They may appear in per-run profiles, but not in the automated default, the analyst settings or any other deployed default. `test_frontier_arms_are_eval_only.py` keeps checking that, and exempts only the `cloud: true` per-run profiles, which ADR-036 requires to name `eval-*`.
+
+### Consequences
+
+- **`test_automated_runs_stay_local.py` changes its claim.** It moves from "no deployed default names a cloud model" to "the deployed default is the profile the operator named, and its `cloud` declaration is true". It keeps the shadowing check that motivated it.
+- **A fresh install doesn't run until the operator chooses.** That's deliberate: choosing where malware-derived data goes is a decision nobody should inherit by accident. `docs/LLM_PROFILES.md` becomes the setup guide for the choice.
+- **This deployment** names `local` as its default, which keeps today's behaviour.
+- **The web UI changes** to list profiles. Its current production-key models become a profile.
+- **Providers other than Anthropic and llama.cpp are unverified here.** Bedrock, Foundry and Vertex examples are marked unverified until someone runs one, including whether LiteLLM's price map covers their models.
+- **Measured guidance, not gates.** Where the eval harness has results for a model, the docs can publish them. Nothing refuses a model for being weaker.
+
+### Not decided here
+
+- **Variable names, and how the web UI presents profiles** (all of them, or a marked subset).
+- **Whether a cloud default needs a second confirmation at deploy** beyond the announcement, for example an explicit `pipeline_default_llm_profile_is_cloud: true` that must match the profile.
+
+### Implementation, if accepted (one PR each, each deployed and checked on the host)
+
+1. **Profiles merge with the role's built-ins,** and the eval-only guard exempts `cloud: true` per-run profiles (the parked `fix/llm-profiles-merge` branch).
+2. **The required default profile.** The deploy refuses without it, automated runs use it, and the stay-local test changes as above.
+3. **The digest uses the router,** not the passthrough.
+4. **The web UI lists profiles.**
+5. **Docs:** provider examples (Anthropic key and WIF, Bedrock, Foundry, Vertex, llama.cpp), each marked verified or not.
+
+### Rollback
+
+Revert. Deployments go back to the `interpret_*` defaults and ADR-036's local-by-default rule. A deployment that named its default profile keeps a variable nothing reads.
