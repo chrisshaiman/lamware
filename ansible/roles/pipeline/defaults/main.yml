@@ -88,7 +88,8 @@ pipeline_plain_english_model: "local-qwen-llamacpp"
 # pipeline_*_model values above. "local" cannot be redefined here. Each profile
 # names its models (LiteLLM aliases) and declares `cloud: true` if any of them
 # leaves this host; that is checked against LiteLLM's routes and written into every
-# report the profile produces. Define your own in ansible/vars/main.yml, e.g.:
+# report the profile produces. Define your own in ansible/vars/main.yml; they are
+# MERGED with the built-in ones below (a same-named entry replaces a built-in), e.g.:
 #
 #   pipeline_llm_profiles:
 #     haiku:
@@ -105,9 +106,12 @@ pipeline_plain_english_model: "local-qwen-llamacpp"
 # router transports; a local profile uses the local ones. The config refuses
 # anything else. docs/LLM_PROFILES.md walks through adding one.
 #
-# `stub` is defined by default: it is local and free (the llm-stub role), so it
-# changes nothing about what leaves the host. Cloud profiles are never defaults.
-pipeline_llm_profiles:
+# `stub` is built in: it is local and free (the llm-stub role), so it changes
+# nothing about what leaves the host. Cloud profiles are never defaults.
+# Two variables, so an operator's `pipeline_llm_profiles` adds to the built-ins
+# instead of silently replacing them (a vars file naming only `haiku` dropped `stub`).
+pipeline_llm_profiles: {}
+pipeline_llm_profiles_builtin:
   stub:
     description: "llm-stub: valid fixed replies, no model; for permission phases and coverage runs"
     cloud: false

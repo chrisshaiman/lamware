@@ -50,11 +50,10 @@ A replayed report records `replay_llm_profile` as well.
 A cloud profile sends **decompiled code, extracted strings and behaviour of the sample** to that model's provider. It's your decision, run by run. The run logs a warning naming the models, and the report says `"cloud": true`.
 
 1. **Expose the model through LiteLLM under an `eval-*` alias.** The repo's eval aliases (for example `eval-haiku55`) are examples. `eval-*` entries are kept out of every production setting by tests, and carry no production key.
-2. **Define the profile** in your `ansible/vars/main.yml` (gitignored):
+2. **Define the profile** in your `ansible/vars/main.yml` (gitignored). Your profiles are added to the built-in ones (`stub`); a profile with a built-in's name replaces it.
 
    ```yaml
    pipeline_llm_profiles:
-     stub: {...}            # keep the default stub profile if you override the variable
      haiku:
        description: "fast cloud model for occasional coverage runs"
        cloud: true
