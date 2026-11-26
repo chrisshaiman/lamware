@@ -33,12 +33,12 @@ PIPELINE = yaml.safe_load(
 LITELLM = (ROOT / "ansible" / "roles" / "litellm" / "templates"
            / "config.yaml.j2").read_text(encoding="utf-8")
 
-AUTOMATED_VARS = ("interpret_model", "interpret_summary_model", "interpret_escalation_model")
+AUTOMATED_VARS = ("interpret_model", "interpret_summary_model")
 
 
 def test_no_automated_stage_names_a_cloud_model():
-    """Including escalation. Escalating unattended would put decompiled malware
-    in the cloud without an analyst ever choosing it."""
+    """There is no escalation to check (ADR-038: one model per run), and
+    test_no_escalation_variable_is_shipped keeps it from coming back."""
     for var in AUTOMATED_VARS:
         val = INTERPRET[var]
         assert not val.startswith("claude-"), f"{var} = {val!r} is a cloud model"
@@ -88,3 +88,11 @@ def test_the_cloud_models_are_still_deployed_for_analysts():
                 "interpret_analyst_escalation_model"):
         assert INTERPRET[var].startswith("claude-"), f"{var} is no longer a cloud model"
         assert f"{{{{ {var}" in LITELLM, f"{var} is not deployed to the litellm model_list"
+
+
+def test_no_escalation_variable_is_shipped():
+    """ADR-038, decision 6: escalation switched an unattended run to a second model.
+    The analyst-selectable `interpret_analyst_escalation_model` is a model choice,
+    not escalation, and stays until ADR-038's PR 5 folds it into profiles."""
+    shipped = [k for k in INTERPRET if k.startswith("interpret_escalation")]
+    assert not shipped, shipped

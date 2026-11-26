@@ -17,14 +17,14 @@ from stages.interpret import run_interpret
 
 def build_re_configs(base_config: dict, models: list[str]) -> list[dict]:
     """One interpret_config per arm. A model whose name starts with 'local'
-    routes through the LiteLLM router (re_backend=local) with escalation pinned
-    to itself (pure-local, no Claude fallback). Cloud models keep base config."""
+    routes through the LiteLLM router (re_backend=local). Every arm runs its one
+    model (ADR-038: no escalation); stale escalation_* keys are dropped."""
     configs: list[dict] = []
+    base = {k: v for k, v in base_config.items() if not k.startswith("escalation_")}
     for m in models:
-        cfg = {**base_config, "model": m}
+        cfg = {**base, "model": m}
         if m.startswith("local"):
             cfg["re_backend"] = "local"
-            cfg["escalation_model"] = m
             # Thinking-on models share the token budget between hidden reasoning and
             # the answer; the production 4096 starves the answer. Give the local arm room.
             cfg["max_output_tokens"] = max(cfg.get("max_output_tokens", 0), 8192)

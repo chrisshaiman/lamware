@@ -12,15 +12,15 @@ def test_cloud_arm_leaves_backend_unset():
     assert len(cfgs) == 1
     assert cfgs[0]["model"] == "claude-sonnet-4-6"
     assert "re_backend" not in cfgs[0]
-    assert cfgs[0]["escalation_model"] == "claude-opus-4-6"  # production escalation kept
+    assert "escalation_model" not in cfgs[0]       # ADR-038: one model per run
 
 
-def test_local_arm_routes_local_and_disables_escalation():
+def test_local_arm_routes_local_and_carries_no_escalation():
     cfgs = build_re_configs({"model": "x", "escalation_model": "claude-opus-4-6"},
                             ["local-qwen-re"])
     assert cfgs[0]["model"] == "local-qwen-re"
     assert cfgs[0]["re_backend"] == "local"
-    assert cfgs[0]["escalation_model"] == "local-qwen-re"  # no fallback to Claude
+    assert "escalation_model" not in cfgs[0]       # a stale key is dropped, never followed
 
 
 def test_one_config_per_model_preserving_order():

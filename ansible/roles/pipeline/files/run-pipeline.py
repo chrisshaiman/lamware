@@ -34,7 +34,7 @@ from pathlib import Path
 from db_ingest import ingest_to_db, mark_pdf_generated
 from ioc_extract import extract_iocs, map_iocs_to_techniques
 from lamware_pipeline.cape_guest import derive_machine, machine_of, verify_ran_on
-from lamware_pipeline.config import LOCAL_PROFILE, PROFILE_FIELDS, PipelineConfig
+from lamware_pipeline.config import LOCAL_PROFILE, MODEL_FIELDS, PipelineConfig
 from lamware_pipeline.correlation import (
     build_mitre_mapping,
     calculate_severity,
@@ -191,10 +191,10 @@ def apply_llm_profile(name: str) -> None:
     if _PIPELINE_CONFIG.profile_is_cloud(name):
         log.warning("LLM profile %r is a CLOUD profile: this run sends prompts (decompiled "
                     "code, strings, behaviour) to %s", name,
-                    ", ".join(sorted({INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]})))
+                    ", ".join(sorted({INTERPRET_CONFIG[f] for f in MODEL_FIELDS})))
     elif name != LOCAL_PROFILE:
         log.info("LLM profile %r: %s", name,
-                 ", ".join(sorted({INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]})))
+                 ", ".join(sorted({INTERPRET_CONFIG[f] for f in MODEL_FIELDS})))
 
 
 def resolve_llm_cost(report: dict) -> dict:
@@ -218,7 +218,7 @@ def resolve_llm_cost(report: dict) -> dict:
 def llm_profile_record() -> dict:
     """What this run's report says about its LLM: the profile, cloud or not, and models."""
     return {"name": LLM_PROFILE, "cloud": _PIPELINE_CONFIG.profile_is_cloud(LLM_PROFILE),
-            "models": {f: INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]}}
+            "models": {f: INTERPRET_CONFIG[f] for f in MODEL_FIELDS}}
 # Behavioural evidence for the agentic RE agent (#674); false is the old behaviour.
 CORRELATED_EVIDENCE = _PIPELINE_CONFIG.interpret_correlated_evidence
 

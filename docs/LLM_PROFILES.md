@@ -1,8 +1,8 @@
 # LLM profiles
 
-A run of the pipeline uses language models in four places:
+A run of the pipeline uses language models in three places:
 
-- the agentic reverse-engineering stage, and its escalation model;
+- the agentic reverse-engineering stage, which uses one model from first turn to last (ADR-038: no escalation);
 - the executive summary;
 - the plain-English summary.
 
@@ -23,7 +23,7 @@ Every report records what it ran with:
 
 ```json
 "llm_profile": {"name": "stub", "cloud": false,
-                "models": {"model": "stub", "escalation_model": "stub",
+                "models": {"model": "stub",
                            "summary_model": "stub", "plain_english_model": "stub"}}
 ```
 
@@ -58,7 +58,6 @@ A cloud profile sends **decompiled code, extracted strings and behaviour of the 
        description: "fast cloud model for occasional coverage runs"
        cloud: true
        model: eval-haiku55
-       escalation_model: eval-haiku55
        summary_model: eval-haiku55
        plain_english_model: eval-haiku55
        re_backend: router

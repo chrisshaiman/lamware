@@ -82,13 +82,8 @@ interpret_dotnet_tool_limits:
 # Model selection — executive summary (structured reformatting, no tools)
 interpret_summary_model: "local-qwen-llamacpp"
 
-# Escalation (interpret stage only).
-#
-# Local too. Escalating an automated run to a cloud model would put decompiled
-# malware there without an analyst ever choosing it, which is the decision this
-# block exists to take away from the machine.
-interpret_escalation_threshold: 5
-interpret_escalation_model: "local-qwen-llamacpp-re"
+# No escalation: a run uses one agent model, first turn to last (ADR-038, decision 6).
+# Pick a stronger model for a hard sample with a profile (--llm-profile).
 
 # The cloud models an analyst can select from the GUI. NOT used by any automated
 # path. These name the Anthropic entries in the litellm model_list, and they are
@@ -99,6 +94,8 @@ interpret_escalation_model: "local-qwen-llamacpp-re"
 # "local".
 interpret_analyst_model: "claude-sonnet-4-6"
 interpret_analyst_summary_model: "claude-haiku-4-5"
+# Named for the escalation it once fed; it is now only one more model an analyst can
+# select. ADR-038 (implementation PR 5) folds these into profiles.
 interpret_analyst_escalation_model: "claude-opus-4-6"
 
 # Token budgets

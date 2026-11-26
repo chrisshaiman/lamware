@@ -35,9 +35,7 @@ class InterpretConfig(BaseModel):
     """LLM-interpretation stage knobs. model_dump() reproduces the dict the
     orchestrator body passes as interpret_config= and indexes by key name."""
     model_config = ConfigDict(extra="forbid")
-    model: str
-    escalation_threshold: int
-    escalation_model: str
+    model: str          # the run's one agent model, first turn to last (ADR-038)
     max_output_tokens: int
     max_tool_calls: int
     max_imports: int
@@ -86,8 +84,9 @@ class InterpretConfig(BaseModel):
 
 # The InterpretConfig fields an LLM profile replaces: which models, and which
 # transport reaches them. Nothing else (limits, timeouts, modes) changes with a profile.
-PROFILE_FIELDS = ("model", "escalation_model", "summary_model", "plain_english_model",
-                  "re_backend", "single_shot_backend")
+# One agent model per run, plus the short single-shot prompts' own models (ADR-038).
+MODEL_FIELDS = ("model", "summary_model", "plain_english_model")
+PROFILE_FIELDS = MODEL_FIELDS + ("re_backend", "single_shot_backend")
 LOCAL_PROFILE = "local"
 # LiteLLM aliases served on this host. A profile with cloud: false may name only
 # these; tests/test_llm_profile_routing.py holds every alias that matches this
@@ -111,11 +110,19 @@ class LlmProfile(BaseModel):
     description: str = ""
     cloud: bool
     model: str
-    escalation_model: str
     summary_model: str
     plain_english_model: str
     re_backend: str = "local"
     single_shot_backend: str = "local"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_escalation(cls, data):
+        """ADR-038 removed escalation; say so, rather than pydantic's "extra field"."""
+        if isinstance(data, dict) and ("escalation_model" in data or "escalation_threshold" in data):
+            raise ValueError("escalation_model was removed (ADR-038: one model per run); "
+                             "delete it from the profile, and set `model` to the model you want")
+        return data
 
 
 class PipelineConfig(BaseModel):
@@ -221,14 +228,14 @@ class PipelineConfig(BaseModel):
             if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", name):
                 raise ValueError(f"llm profile name {name!r}: lowercase letters, digits, '-'")
             prof = self.llm_profiles[name]
-            remote = [m for m in (getattr(prof, f) for f in PROFILE_FIELDS[:4])
+            remote = [m for m in (getattr(prof, f) for f in MODEL_FIELDS)
                       if not re.fullmatch(LOCAL_ALIAS_RE, m)]
             if remote and not prof.cloud:
                 # Fail closed: a mislabelled profile would send decompiled malware
                 # off the host while its reports said it did not.
                 raise ValueError(f"llm profile {name!r} has cloud: false but names "
                                  f"{', '.join(sorted(set(remote)))}, which is not a local alias")
-            models = [getattr(prof, f) for f in PROFILE_FIELDS[:4]]
+            models = [getattr(prof, f) for f in MODEL_FIELDS]
             transports = (prof.re_backend, prof.single_shot_backend)
             if prof.cloud:
                 bad = [m for m in models if not re.fullmatch(CLOUD_ALIAS_RE, m)]

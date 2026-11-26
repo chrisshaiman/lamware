@@ -57,11 +57,5 @@ def test_a_local_model_implies_the_local_transport():
             f"interpret_model={model} is a cloud model but the transport is local")
 
 
-def test_the_escalation_model_shares_the_transport():
-    """Escalation runs on the same client. A cloud escalation model with a local
-    transport, or the reverse, fails the same way."""
-    esc = INTERPRET["interpret_escalation_model"]
-    backend = INTERPRET["interpret_re_backend"]
-    assert esc.startswith("local-") == (backend == "local"), (
-        f"interpret_escalation_model={esc} does not match "
-        f"interpret_re_backend={backend}")
+# The escalation model's transport check went with escalation (ADR-038, decision 6):
+# a run has one agent model, checked above.
