@@ -2145,7 +2145,7 @@ Revert and redeploy `hardening`: `check` goes back to `aide --check`, alerting o
 
 ## ADR-036: A run chooses its LLM backend by explicit profile; automated runs stay local by default
 
-**Status:** Proposed (2026-11-23). Its "automated runs stay local by default" is superseded by ADR-038 if that is accepted: `local` stays the shipped default, and the operator can change it.
+**Status:** Proposed (2026-11-23). Extended by ADR-038 (proposed): `local` stays the default, and the operator may also change the automated default, not only choose a cloud model per run.
 **Refs:** `tests/test_automated_runs_stay_local.py`, ADR-033 (the eval route), ADR-031 (permission phases), `scripts/usecase-check/coverage-corpus.json`
 
 ### Context
@@ -2253,7 +2253,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 
 ## ADR-038: The operator chooses the models; the suite enables providers and records where the data went
 
-**Status:** Proposed (2026-11-25). If accepted, supersedes ADR-036's "automated runs stay local by default"; the rest of ADR-036 (profiles, the `cloud` declaration, the report record) stands.
+**Status:** Proposed (2026-11-25). Extends ADR-036; it reverses nothing. Local stays the default, and profiles, the `cloud` declaration and the report record stand. ADR-036 let a person choose a cloud model only for one run. This adds a changeable automated default, and the design ADR-036 left open: providers, the web UI's models, escalation, model terms and the digest's routing.
 **Refs:** ADR-030 (scoped LiteLLM keys), ADR-033 (Workload Identity Federation), ADR-036 (LLM profiles), ADR-037 (LiteLLM prices every call), `tests/test_automated_runs_stay_local.py`, `tests/test_frontier_arms_are_eval_only.py`
 
 ### Context
@@ -2266,7 +2266,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 
 **"Local only" holds two different rules,** and only one of them is a judgement about models:
 
-1. **Which model analyses a sample.** The suite has decided this for the operator: automated runs must use the local model. That suits this deployment. For most people running the suite it's backwards: the likeliest backend is a cloud provider (the Anthropic API, Amazon Bedrock, Microsoft Foundry, Google Vertex), and some will need a specific model for reasons the suite can't see. The local work stays valuable. On a powerful enough host a local model may be the best option, and for some operators the only acceptable one. But it is one option among several.
+1. **Which model analyses a sample.** Local is a good default, and the suite should keep it. But today the automated runs can *only* be local: an operator can choose a cloud model for one run, never as the default. That suits this deployment; for many people running the suite it won't. The likeliest backend for most is a cloud provider (the Anthropic API, Amazon Bedrock, Microsoft Foundry, Google Vertex), and some will need a specific model for reasons the suite can't see. The local work stays valuable. On a powerful enough host a local model may be the best option, and for some operators the only acceptable one. But it is one option among several.
 2. **Where the sample's data goes, and who decided that.** Decompiled code, strings and behaviour leaving the host must always be a deliberate, recorded operator choice, never an accident. `test_automated_runs_stay_local.py` exists because of a real trap of that kind: a template once named a cloud entry after the local alias, so samples would have gone to the cloud while every config file said "local". This rule is about consent and visibility, not about which model is better.
 
 **The split already costs us.** The daily digest reuses `interpret_summary_model` but sends through LiteLLM's `/anthropic` passthrough, which forwards straight to Anthropic without LiteLLM's routing. When that variable became `local-qwen-llamacpp`, Anthropic answered "model not found" every morning (measured in LiteLLM's spend log: failures since at least 2026-11-16), and nothing said the digest had lost its summary.
