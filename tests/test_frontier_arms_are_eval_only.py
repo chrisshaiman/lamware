@@ -14,7 +14,8 @@ test_requested_models_exist.py does) and asserts on the parsed config:
   - no production setting (interpret, pipeline, vars, their config templates, or
     a literal in the code that sends requests) names an eval alias or its model,
     so the automated RE stage cannot drift onto one through a default or
-    escalation;
+    escalation. The one exemption is a `cloud: true` per-run LLM profile, which
+    must name eval-* aliases (ADR-036) and is never a default (ADR-038, decision 8);
   - each eval arm routes to its alias and has a rate (CLAUDE.md section 10).
 
 Structural (rendered templates and parsed source), because the property is about
@@ -126,9 +127,43 @@ def test_no_production_setting_names_an_eval_model():
              ROOT / "ansible/vars/main.yml.example"]
     files += [f for f in [ROOT / "ansible/vars/main.yml"] if f.exists()]
     for f in files:
-        data = yaml.safe_load(f.read_text()) or {}
+        data = _without_cloud_profiles(yaml.safe_load(f.read_text()) or {})
         hits = [v for v in _all_values(data) if isinstance(v, str) and v in forbidden]
         assert not hits, f"{f.relative_to(ROOT)} names {hits}"
+
+
+def _without_cloud_profiles(data: dict) -> dict:
+    """Drop only the per-run `cloud: true` LLM profiles (ADR-038, decision 8).
+
+    Such a profile is the operator choosing a cloud model for a run, and ADR-036
+    REQUIRES it to name eval-* aliases (PipelineConfig refuses any other). It is not
+    a production default. Every other value is still scanned, a `cloud: false`
+    profile included, and so is a profile that leaves `cloud` unset.
+    """
+    profiles = data.get("pipeline_llm_profiles")
+    if not isinstance(profiles, dict):
+        return data
+    kept = {k: p for k, p in profiles.items() if not (isinstance(p, dict) and p.get("cloud") is True)}
+    return dict(data, pipeline_llm_profiles=kept)
+
+
+@pytest.mark.parametrize("profile, exempt", [
+    ({"cloud": True, "model": "eval-haiku55"}, True),
+    ({"cloud": False, "model": "eval-haiku55"}, False),
+    ({"model": "eval-haiku55"}, False),
+    ({"cloud": "true", "model": "eval-haiku55"}, False),     # a string is not a declaration
+])
+def test_only_a_cloud_true_profile_is_exempt(profile, exempt):
+    data = {"interpret_model": "local-qwen-llamacpp-re", "pipeline_llm_profiles": {"p": profile}}
+    hits = [v for v in _all_values(_without_cloud_profiles(data)) if v == "eval-haiku55"]
+    assert (hits == []) is exempt
+
+
+def test_the_exemption_does_not_reach_other_settings():
+    data = {"interpret_model": "eval-haiku55",
+            "pipeline_llm_profiles": {"p": {"cloud": True, "model": "eval-haiku55"}}}
+    hits = [v for v in _all_values(_without_cloud_profiles(data)) if v == "eval-haiku55"]
+    assert hits == ["eval-haiku55"]
 
 
 def test_no_production_template_names_an_eval_model():
