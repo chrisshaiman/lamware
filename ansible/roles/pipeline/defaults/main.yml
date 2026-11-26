@@ -96,7 +96,6 @@ pipeline_plain_english_model: "local-qwen-llamacpp"
 #       description: "fast cloud model for coverage runs"
 #       cloud: true
 #       model: eval-haiku55
-#       escalation_model: eval-haiku55
 #       summary_model: eval-haiku55
 #       plain_english_model: eval-haiku55
 #       re_backend: router
@@ -116,7 +115,6 @@ pipeline_llm_profiles_builtin:
     description: "llm-stub: valid fixed replies, no model; for permission phases and coverage runs"
     cloud: false
     model: stub
-    escalation_model: stub
     summary_model: stub
     plain_english_model: stub
     re_backend: local

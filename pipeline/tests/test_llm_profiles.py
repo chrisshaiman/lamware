@@ -19,15 +19,15 @@ import sys
 from pathlib import Path
 
 import pytest
-from lamware_pipeline.config import LOCAL_PROFILE, PROFILE_FIELDS, PipelineConfig
+from lamware_pipeline.config import LOCAL_PROFILE, MODEL_FIELDS, PROFILE_FIELDS, PipelineConfig
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "config.json"
 RUN_PIPELINE = ROOT / "ansible/roles/pipeline/files/run-pipeline.py"
-STUB = {"description": "test", "cloud": False, "model": "stub", "escalation_model": "stub",
+STUB = {"description": "test", "cloud": False, "model": "stub",
         "summary_model": "stub", "plain_english_model": "stub"}
-HAIKU = {"cloud": True, "model": "eval-haiku55", "escalation_model": "eval-haiku55",
+HAIKU = {"cloud": True, "model": "eval-haiku55",
          "summary_model": "eval-haiku55", "plain_english_model": "eval-haiku55",
          "re_backend": "router", "single_shot_backend": "router"}
 
@@ -66,7 +66,7 @@ def test_a_profile_replaces_only_models_and_transport():
     cfg = _cfg(stub=STUB)
     base, got = cfg.interpret.model_dump(), cfg.interpret_for("stub").model_dump()
     changed = {k for k in base if base[k] != got[k]}
-    assert changed <= set(PROFILE_FIELDS) and {got[f] for f in PROFILE_FIELDS[:4]} == {"stub"}
+    assert changed <= set(PROFILE_FIELDS) and {got[f] for f in MODEL_FIELDS} == {"stub"}
     assert got["max_tool_calls"] == base["max_tool_calls"] and got["dotnet_mode"] == base["dotnet_mode"]
 
 
@@ -134,9 +134,9 @@ def test_without_the_flag_the_run_is_local_and_says_so(rp):
 
 def test_applying_a_profile_reaches_what_the_stages_read(rp):
     rp.apply_llm_profile("stub")
-    assert {rp.INTERPRET_CONFIG[f] for f in PROFILE_FIELDS[:4]} == {"stub"}
+    assert {rp.INTERPRET_CONFIG[f] for f in MODEL_FIELDS} == {"stub"}
     assert rp.llm_profile_record() == {"name": "stub", "cloud": False,
-                                       "models": {f: "stub" for f in PROFILE_FIELDS[:4]}}
+                                       "models": {f: "stub" for f in MODEL_FIELDS}}
 
 
 def test_a_cloud_profile_is_recorded_as_cloud_and_warned(rp, caplog):
@@ -192,3 +192,10 @@ def test_intake_passes_the_profile_to_every_pipeline_run():
     front = (ROOT / "scripts/intake.sh").read_text()
     assert "'$B/llm_profile'" in front and "*[!a-z0-9-]*" in front
     assert 'LLM_PROFILE="$(LLM_PROFILE)"' in (ROOT / "Makefile").read_text()
+
+
+@pytest.mark.parametrize("key", ["escalation_model", "escalation_threshold"])
+def test_a_profile_naming_escalation_is_refused_with_the_reason(key):
+    """ADR-038 removed escalation; an operator's old profile gets told why, by name."""
+    with pytest.raises(ValueError, match="ADR-038"):
+        _cfg(old=dict(STUB, **{key: "stub" if key == "escalation_model" else 5}))

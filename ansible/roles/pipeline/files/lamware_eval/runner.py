@@ -766,13 +766,12 @@ def replay_variant(init: dict, modality: str, source_head: str, read: dict,
 def arm_config(arm: Arm, base_cfg: dict, dotnet_mode: str) -> dict:
     """The interpret config one cell runs under: the deployed config, overridden
     by the arm."""
-    # Pin escalation to the arm's OWN model for EVERY arm, not just local ones.
-    # Otherwise the interpret stage escalates into base_cfg's escalation_model
-    # and the arm silently measures a different model: on 2026-07-25 all 7
-    # claude-sonnet-5 cells finished on claude-opus-4-6 (escalated=True), so the
-    # run produced no clean sonnet-5 data at all.
-    cfg = {**base_cfg, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
-           "escalation_model": arm.model,
+    # An arm measures its OWN model, first turn to last. Escalation once switched
+    # arms into base_cfg's escalation_model (on 2026-07-25 all 7 claude-sonnet-5 cells
+    # finished on claude-opus-4-6); ADR-038 removed it, and any escalation_* key a
+    # stale base config still carries is dropped here, not passed on.
+    base = {k: v for k, v in base_cfg.items() if not k.startswith("escalation_")}
+    cfg = {**base, "model": arm.model, "max_tool_calls": arm.max_tool_calls,
            "max_output_tokens": max(base_cfg.get("max_output_tokens", 0), 16384),
            "dotnet_mode": dotnet_mode}
     if arm.re_backend == "local":

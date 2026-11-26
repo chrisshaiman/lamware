@@ -204,7 +204,7 @@ flowchart TB
     end
 
     subgraph "Stage 4.5 — AI Investigation"
-        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET: agentic with 6 C# tools<br/>Go/Python/Java/VBA/PS: single-shot<br/>Model escalation: Sonnet → Opus<br/>🟣 via LiteLLM proxy (localhost:4000)"]
+        LLM["Language-aware LLM analysis<br/>Native PE: agentic with 6 Ghidra tools<br/>.NET: agentic with 6 C# tools<br/>Go/Python/Java/VBA/PS: single-shot<br/>One model per run, chosen by profile<br/>🟣 via LiteLLM proxy (localhost:4000)"]
     end
 
     subgraph "Stage 4.7 — Evasion Hunter"
@@ -347,8 +347,9 @@ OVH Bare Metal
 Moved out of the README: true, but not what a reader needs in order to decide whether
 the project is worth their time.
 
-**Model routing.** The interpret stage starts on Sonnet and escalates to Opus after 5
-tool calls on complex samples; executive summaries run on Haiku. All calls route through
+**Model routing.** A run uses one agent model from first turn to last, chosen by its LLM
+profile (local by default; ADR-036, ADR-038), and the short summary prompts take their
+own, usually cheaper, model. All calls route through
 the self-hosted LiteLLM proxy, which is the only process holding the Anthropic key and
 the only one with outbound HTTPS.
 

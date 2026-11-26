@@ -48,8 +48,6 @@ _VALID = {
     # Phase 2b-2 — collections
     "interpret": {
         "model": "claude-sonnet-4-6",
-        "escalation_threshold": 5,
-        "escalation_model": "claude-opus-4-6",
         "max_output_tokens": 4096,
         "max_tool_calls": 10,
         "max_imports": 200,

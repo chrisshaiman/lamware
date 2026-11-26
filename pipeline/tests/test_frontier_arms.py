@@ -215,7 +215,6 @@ def _drive(mod, monkeypatch, model, orchestrator, *, re_backend="cloud",
                             "strings": [], "imports": []},
             "config": config or {
                 "re_backend": re_backend, "model": model_name,
-                "escalation_model": model_name,
                 "max_tool_calls": max_tool_calls, "max_tool_calls_per_turn": 3}}
     monkeypatch.setattr(mod.sys, "stdin", io.StringIO(
         "".join(json.dumps(m) + "\n" for m in [init, *orchestrator])))
@@ -378,7 +377,7 @@ def test_an_arm_without_a_backend_is_refused():
     ("claude-sonnet-5", "claude-sonnet-5"), ("claude-opus-5", "claude-opus-5")])
 def test_cloud_arms_run_their_own_model_on_the_router(arm_name, alias):
     cfg = runner.arm_config(resolve_arm(arm_name), HOST_CFG, "agentic")
-    assert cfg["model"] == cfg["escalation_model"] == alias
+    assert cfg["model"] == alias and "escalation_model" not in cfg
     # The name declares the depth (`@25`); a name without one is the default 10.
     depth = int(arm_name.split("@", 1)[1].split("+")[0]) if "@" in arm_name else 10
     assert cfg["max_tool_calls"] == depth

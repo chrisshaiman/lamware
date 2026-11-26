@@ -71,7 +71,7 @@ def test_the_deployed_defaults_define_no_cloud_profile():
     profiles = PIPELINE["pipeline_llm_profiles_builtin"]
     assert set(profiles) == {"stub"}
     assert profiles["stub"]["cloud"] is False
-    assert {profiles["stub"][f] for f in ("model", "escalation_model", "summary_model",
+    assert {profiles["stub"][f] for f in ("model", "summary_model",
                                           "plain_english_model")} == {"stub"}
 
 
@@ -82,7 +82,7 @@ def test_the_stub_alias_points_at_the_stub_service():
 
 
 def test_the_automated_defaults_are_local_aliases():
-    for var in ("interpret_model", "interpret_summary_model", "interpret_escalation_model"):
+    for var in ("interpret_model", "interpret_summary_model"):
         assert re.fullmatch(LOCAL_ALIAS_RE, INTERPRET[var]), var
     for var in ("pipeline_summary_model", "pipeline_plain_english_model"):
         assert re.fullmatch(LOCAL_ALIAS_RE, PIPELINE[var]), var

@@ -119,8 +119,6 @@ def test_builtin_fallbacks_do_not_drift_from_the_role_defaults():
     mod = _load_module("/nonexistent/interpret-config.json")
     for key, var in [
         ("model", "interpret_model"),
-        ("escalation_threshold", "interpret_escalation_threshold"),
-        ("escalation_model", "interpret_escalation_model"),
         ("max_output_tokens", "interpret_max_output_tokens"),
         ("max_tool_calls", "interpret_max_tool_calls"),
         ("max_tool_calls_per_turn", "interpret_max_tool_calls_per_turn"),
@@ -135,10 +133,9 @@ def test_builtin_fallbacks_do_not_drift_from_the_role_defaults():
 
 
 def test_every_scalar_the_template_used_is_still_shipped():
-    """The config template must carry all nine, or a value silently reverts to a fallback."""
+    """The config template must carry all seven, or a value silently reverts to a fallback."""
     tmpl = CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    for var in ("interpret_model", "interpret_escalation_threshold", "interpret_escalation_model",
-                "interpret_max_output_tokens", "interpret_max_tool_calls",
+    for var in ("interpret_model", "interpret_max_output_tokens", "interpret_max_tool_calls",
                 "interpret_max_tool_calls_per_turn", "interpret_max_imports",
                 "interpret_max_strings", "interpret_max_string_length"):
         assert var in tmpl, f"{var} is no longer shipped to the container"

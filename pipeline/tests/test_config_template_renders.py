@@ -107,7 +107,7 @@ def test_a_key_the_model_does_not_know_is_rejected():
         PipelineConfig.model_validate(data)
 
 
-_HAIKU = {"description": "d", "cloud": True, "model": "eval-haiku55", "escalation_model": "eval-haiku55",
+_HAIKU = {"description": "d", "cloud": True, "model": "eval-haiku55",
           "summary_model": "eval-haiku55", "plain_english_model": "eval-haiku55",
           "re_backend": "router", "single_shot_backend": "router"}
 
@@ -125,7 +125,7 @@ def test_an_operator_profile_is_added_not_swapped_in():
 
 
 def test_an_operator_profile_may_replace_a_builtin_by_name():
-    own = dict(_HAIKU, cloud=False, model="stub", escalation_model="stub", summary_model="stub",
+    own = dict(_HAIKU, cloud=False, model="stub", summary_model="stub",
                plain_english_model="stub", re_backend="local", single_shot_backend="local",
                description="mine")
     cfg = PipelineConfig.model_validate(json.loads(_render(pipeline_llm_profiles={"stub": own})))
