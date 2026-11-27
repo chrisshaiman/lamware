@@ -225,10 +225,12 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      # NOT run here yet: `npm run lint` reports 5 pre-existing errors in components
-      # unrelated to this change (setState-in-effect, impure-during-render,
-      # fast-refresh export). Adding it now would land CI red. Tracked separately —
-      # see the follow-up issue rather than a silently-omitted acceptance criterion.
+      # Lint fails the job (#233). It was left out when this job was added (#172)
+      # because 5 errors already sat in the frontend (#233, 2026-07-28); they stayed
+      # with nothing to make them fail. Fixed, and now enforced.
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
 
   # ---------------------------------------------------------------------------
   # Security: gitleaks, bandit, ruff via pre-commit + pip-audit + semgrep

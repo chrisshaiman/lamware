@@ -22,10 +22,13 @@ export function SearchInput({
 }: SearchInputProps) {
   const [local, setLocal] = useState(value);
 
-  // Sync external value changes
-  useEffect(() => {
+  // Sync external value changes during render, not in an effect: the effect rendered
+  // once with the stale value first (react-hooks/set-state-in-effect).
+  const [seenValue, setSeenValue] = useState(value);
+  if (seenValue !== value) {
+    setSeenValue(value);
     setLocal(value);
-  }, [value]);
+  }
 
   // Debounce
   useEffect(() => {

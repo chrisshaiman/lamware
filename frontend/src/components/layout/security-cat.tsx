@@ -70,6 +70,9 @@ function useCatMood(): CatMood {
 
 function useCatFact(): string {
   const { data: stats } = useStats();
+  // Chosen once per mount: Math.random() in the render body picked a different fact
+  // on every re-render (react-hooks/purity).
+  const [pick] = useState(() => Math.random());
 
   if (stats) {
     const facts = [
@@ -79,10 +82,10 @@ function useCatFact(): string {
       `${stats.families_detected} malware families identified.`,
       `${stats.analyses_today} analyses today, ${stats.analyses_week} this week.`,
     ];
-    return facts[Math.floor(Math.random() * facts.length)];
+    return facts[Math.floor(pick * facts.length)];
   }
 
-  return SECURITY_TIPS[Math.floor(Math.random() * SECURITY_TIPS.length)];
+  return SECURITY_TIPS[Math.floor(pick * SECURITY_TIPS.length)];
 }
 
 // Konami code: up up down down left right left right b a

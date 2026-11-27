@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useAuth } from "#contexts/auth-context";
+import { useAuth } from "#contexts/auth";
 import { AppShell } from "#components/layout/app-shell";
 import { WebSocketProvider } from "./providers/ws-provider";
 import { LoginPage } from "#pages/login";
