@@ -203,7 +203,7 @@ export function AnalysesPage() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between text-sm text-[var(--color-text-secondary)]">
               <span>
-                Showing {offset + 1}\u2013{Math.min(offset + PAGE_SIZE, data.total)} of{" "}
+                Showing {offset + 1}{"\u2013"}{Math.min(offset + PAGE_SIZE, data.total)} of{" "}
                 {data.total}
               </span>
               <div className="flex items-center gap-1">
@@ -234,7 +234,7 @@ export function AnalysesPage() {
 }
 
 function StatusPill({ status }: { status: string | null }) {
-  if (!status) return <span className="text-[var(--color-text-muted)]">\u2014</span>;
+  if (!status) return <span className="text-[var(--color-text-muted)]">{"\u2014"}</span>;
 
   const colors: Record<string, string> = {
     completed: "bg-green-900/50 text-green-400",

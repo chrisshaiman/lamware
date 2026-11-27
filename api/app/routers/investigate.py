@@ -193,6 +193,19 @@ def _build_report_markdown(session_dict: dict, messages: list[dict], pins: list[
 # ---------------------------------------------------------------------------
 
 
+def join_segment(stored: str, token: str, after_tool: bool) -> str:
+    """Append one streamed token to the stored assistant text.
+
+    The model writes text between tool calls; the live panel shows each stretch as
+    its own block, but the stored message joined them with nothing in between, so a
+    reloaded session read "in parallel.Excellent" (seen 2026-11-27). The first token
+    after a tool call starts a new paragraph instead.
+    """
+    if after_tool and stored and token and not stored.endswith("\n\n"):
+        return stored.rstrip(" ") + "\n\n" + token.lstrip(" ")
+    return stored + token
+
+
 @router.get("/models")
 def list_models(auth: AuthContext = Depends(require_role("analyst"))) -> dict:
     """The investigation panel's models (ADR-038): the operator's list, priced ones only."""
@@ -431,6 +444,7 @@ async def send_message(
 
     async def event_stream():
         assistant_content = ""
+        after_tool = False     # the next token starts a new segment (see join_segment)
 
         try:
             async for event in run_conversation_turn(messages, system_prompt, model, db, report, analysis_id):
@@ -439,9 +453,11 @@ async def send_message(
 
                 if etype == "token":
                     # Accumulate assistant text; do NOT write to DB per-token
-                    assistant_content += edata.get("content", "")
+                    assistant_content = join_segment(assistant_content, edata.get("content", ""), after_tool)
+                    after_tool = False
 
                 elif etype == "tool_call":
+                    after_tool = True
                     tool_msg = InvestigationMessage(
                         session_id=session_id,
                         role="tool_call",
