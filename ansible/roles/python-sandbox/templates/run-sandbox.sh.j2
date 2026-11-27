@@ -2,7 +2,7 @@
 # =============================================================================
 # run-sandbox — execute a Python script in an isolated container
 #
-# Usage: echo '<script>' | run-sandbox [--data <payload_dir>]
+# Usage: echo '<script>' | run-sandbox [--data-as NAME=<payload_dir>]...
 #
 # stdin:  Python script to execute (streamed directly into the container;
 #         max {{ python_sandbox_max_script_size }} bytes via head -c)
@@ -40,22 +40,12 @@ VOLUME_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --data)
-            DATA_DIR="$(realpath "$2")"
-            if [ ! -d "$DATA_DIR" ]; then
-                echo "Error: data directory not found: $DATA_DIR" >&2
-                exit 1
-            fi
-            # Allowlist: only Cape analysis dirs may be mounted — prevents a
-            # compromised caller from exposing arbitrary host paths ro.
-            case "$DATA_DIR" in
-                {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}/*)  ;;
-                *)
-                    echo "Error: --data must be under {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}" >&2
-                    exit 1
-                    ;;
-            esac
-            VOLUME_ARGS+=(-v "$DATA_DIR:/data:ro")
-            shift 2
+            # Removed. It mounted a whole Cape task directory (pcaps, memory dumps,
+            # the full report) where LLM-authored code runs; the API stopped using
+            # it in #392, and with keep-groups below it would make all of that
+            # readable. Refuse rather than ignore, so a caller finds out.
+            echo "Error: --data was removed; use --data-as NAME=<task>/<payload dir>" >&2
+            exit 1
             ;;
         --data-as)
             # NAME=PATH, mounted read-only at /data/NAME. Exists because --data
@@ -84,13 +74,19 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: data directory not found: $AS_PATH" >&2
                 exit 1
             fi
-            case "$AS_PATH" in
-                {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}/*)  ;;
-                *)
-                    echo "Error: --data-as must be under {{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}" >&2
-                    exit 1
-                    ;;
-            esac
+            # Exactly <storage>/<task id>/<payload dir>, named after that dir:
+            # the four directories payload_dirs() returns (shared/lamware_shared/
+            # cape_payloads.py PAYLOAD_SUBDIRS). keep-groups below gives the
+            # container lamware's read access to whatever is mounted, and that
+            # group can read ~68k paths under the storage root, so "anything
+            # under storage" is no longer a safe allowlist: a task directory
+            # would expose its pcaps and memory dumps.
+            ALLOW_ROOT="{{ python_sandbox_data_allowlist | default('/opt/CAPEv2/storage/analyses') }}"
+            if [[ ! "$AS_PATH" =~ ^${ALLOW_ROOT}/[0-9]+/(CAPE|files|procdump|dropped)$ ]] \
+                    || [ "${BASH_REMATCH[1]}" != "$AS_NAME" ]; then
+                echo "Error: --data-as must be NAME=${ALLOW_ROOT}/<task id>/NAME with NAME one of CAPE files procdump dropped" >&2
+                exit 1
+            fi
             VOLUME_ARGS+=(-v "$AS_PATH:/data/$AS_NAME:ro")
             shift 2
             ;;
@@ -107,8 +103,17 @@ fi
 
 # Stream stdin directly into the container — no shell variable, no quoting concerns.
 # USER directive in Containerfile enforces non-root; no --user override needed.
+#
+# --group-add keep-groups: Cape writes payloads as cape:lamware (0640, with an
+# ACL), and `pipeline` reads them through the lamware group. Rootless podman drops
+# supplementary groups unless told to keep them, so every payload the API mounted
+# was "Permission denied" inside the container (measured 2026-11-27: /data/CAPE
+# EACCES, groups [999]) while the agent's prompt said the payloads were there.
+# Same flag and reason as run-volatility-wrapper.sh.j2. It is safe only because
+# --data-as above admits nothing but a task's payload directories.
 head -c {{ python_sandbox_max_script_size }} | {{ image_store_lib_dir | default('/usr/local/lib/lamware') }}/lamware-podman run --rm -i \
     --network=none \
+    --group-add keep-groups \
     --read-only \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
