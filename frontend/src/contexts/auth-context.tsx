@@ -2,51 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Keycloak auth provider — wraps the app, handles init, token refresh,
-// and exposes user/role info via useAuth() hook.
+// and supplies user/role info, which components read with useAuth() from ./auth.
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import keycloak from "#lib/keycloak";
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  username: string;
-}
-
-interface AuthContextValue {
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  user: User | null;
-  roles: string[];
-  token: string | null;
-  login: () => void;
-  logout: () => void;
-  hasRole: (role: string) => boolean;
-}
-
-const AuthContext = createContext<AuthContextValue>({
-  isAuthenticated: false,
-  isLoading: true,
-  user: null,
-  roles: [],
-  token: null,
-  login: () => {},
-  logout: () => {},
-  hasRole: () => false,
-});
-
-export function useAuth(): AuthContextValue {
-  return useContext(AuthContext);
-}
+import { AuthContext, type User } from "./auth";
 
 function extractUser(): User | null {
   if (!keycloak.tokenParsed) return null;

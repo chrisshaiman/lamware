@@ -4,7 +4,7 @@
 import { useLocation } from "react-router-dom";
 import { LogOut, Menu } from "lucide-react";
 import { useAlerts } from "#hooks/use-alerts";
-import { useAuth } from "#contexts/auth-context";
+import { useAuth } from "#contexts/auth";
 
 const PAGE_TITLES: Record<string, string> = {
   "/analyses": "Analyses",

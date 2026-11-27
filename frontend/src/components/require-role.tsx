@@ -5,7 +5,7 @@
 // UX polish only — the backend enforces the real security boundary.
 
 import type { ReactNode } from "react";
-import { useAuth } from "#contexts/auth-context";
+import { useAuth } from "#contexts/auth";
 
 interface RequireRoleProps {
   role: string;

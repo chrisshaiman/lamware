@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "#lib/utils";
-import { useAuth } from "#contexts/auth-context";
+import { useAuth } from "#contexts/auth";
 import { SecurityCat } from "./security-cat";
 
 const NAV_ITEMS = [

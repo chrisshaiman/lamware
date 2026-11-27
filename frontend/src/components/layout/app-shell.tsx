@@ -1,7 +1,7 @@
 // Copyright 2026 Christopher Shaiman
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
@@ -13,10 +13,14 @@ export function AppShell() {
   const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
-  // Close sidebar on navigation (mobile UX)
-  useEffect(() => {
+  // Close the sidebar on navigation (mobile UX). Adjusted during render when the path
+  // changes, React's pattern for state derived from a prop; an effect would render
+  // once with the old state and again with the new (react-hooks/set-state-in-effect).
+  const [shownPath, setShownPath] = useState(location.pathname);
+  if (shownPath !== location.pathname) {
+    setShownPath(location.pathname);
     setSidebarOpen(false);
-  }, [location.pathname]);
+  }
 
   return (
     <div className="flex min-h-screen w-full">

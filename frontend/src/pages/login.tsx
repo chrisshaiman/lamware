@@ -4,7 +4,7 @@
 // Branded login page — shown when the user is not authenticated.
 // Single "Sign in" button triggers the Keycloak PKCE flow.
 
-import { useAuth } from "#contexts/auth-context";
+import { useAuth } from "#contexts/auth";
 
 export function LoginPage() {
   const { login } = useAuth();
