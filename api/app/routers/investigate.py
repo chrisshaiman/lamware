@@ -27,19 +27,28 @@ from ..models.investigation import InvestigationMessage, InvestigationPin, Inves
 
 log = logging.getLogger(__name__)
 
-# Allowlist of models the investigation agent may use.
+# The models the investigation agent may use: the operator's investigate_models
+# (ADR-038), in order, MINUS any model MODEL_COSTS cannot price.
 #
-# DERIVED from MODEL_COSTS rather than restated. These were two hand-maintained
-# lists in two modules that happened to agree, with nothing enforcing it — and a
-# model present here but absent there costs $0.00 per token, because
-# `MODEL_COSTS.get(model, {"input": 0.0, "output": 0.0})` has no way to tell an
-# unpriced model from a free one. `investigation_cost_alert_usd` is an alert
-# threshold, not a cap, so the spend it would not have alerted on is unbounded.
-#
-# Drift was likely rather than hypothetical: the LiteLLM proxy already serves
-# claude-sonnet-5 and claude-opus-5, and adding one to this list is the obvious
-# way to enable it.
-VALID_MODELS = sorted(MODEL_COSTS)
+# The filter keeps the guarantee the old derivation gave: a model absent from
+# MODEL_COSTS costs $0.00 per token, because `MODEL_COSTS.get(model, {"input": 0.0,
+# "output": 0.0})` cannot tell an unpriced model from a free one, and
+# `investigation_cost_alert_usd` is an alert threshold, not a cap, so that spend is
+# unbounded. A listed but unpriced model is left out and logged by name, until
+# ADR-038's pricing PR moves this agent to LiteLLM's prices (ADR-037).
+def investigate_models() -> list[dict]:
+    """The panel's models, as the UI shows them: [{"name", "label"}], first = default."""
+    offered, unpriced = [], []
+    for m in settings.investigate_models:
+        (offered if m.name in MODEL_COSTS else unpriced).append(m)
+    if unpriced:
+        log.warning("investigate_models: %s have no MODEL_COSTS price and are not offered",
+                    ", ".join(m.name for m in unpriced))
+    return [{"name": m.name, "label": m.label} for m in offered]
+
+
+def valid_models() -> list[str]:
+    return [m["name"] for m in investigate_models()]
 
 AUTH_RESPONSES = {
     401: {"description": "Authentication required"},
@@ -184,6 +193,12 @@ def _build_report_markdown(session_dict: dict, messages: list[dict], pins: list[
 # ---------------------------------------------------------------------------
 
 
+@router.get("/models")
+def list_models(auth: AuthContext = Depends(require_role("analyst"))) -> dict:
+    """The investigation panel's models (ADR-038): the operator's list, priced ones only."""
+    return {"models": investigate_models()}
+
+
 @router.post("/{analysis_id}/sessions", status_code=201)
 def create_session(
     analysis_id: int,
@@ -196,8 +211,12 @@ def create_session(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
 
+    offered = valid_models()
+    if not offered:
+        raise HTTPException(status_code=503, detail="No investigation model is configured and priced")
     session = InvestigationSession(
         analysis_id=analysis_id,
+        model=offered[0],
         user_sub=auth.user_id,
         max_turns=settings.investigation_max_turns,
     )
@@ -642,14 +661,15 @@ def update_model(
     auth: AuthContext = Depends(require_role("analyst")),
     db: Session = Depends(get_session),
 ) -> dict:
-    """Switch the LLM model for a session. Must be one of VALID_MODELS."""
+    """Switch the LLM model for a session. Must be one of valid_models()."""
     session = _get_owned_session(session_id, auth, db)
 
     model = body.get("model")
-    if model not in VALID_MODELS:
+    allowed = valid_models()
+    if model not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid model {model!r}. Must be one of: {VALID_MODELS}",
+            detail=f"Invalid model {model!r}. Must be one of: {allowed}",
         )
 
     session.model = model

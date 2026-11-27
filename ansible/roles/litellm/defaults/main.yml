@@ -76,15 +76,22 @@ litellm_eval_fable52_model: "claude-fable-5-2"
 # keeps them in litellm_keys_file, root 0600. Other roles read them with
 # `import_role: name=litellm tasks_from=read-keys` (import, so the tasks carry the importing role's tags).
 litellm_keys_file: /etc/lamware-litellm/keys.json
+# Only used when the api role's investigate_models is not in the play; the same
+# three it ships.
+litellm_investigate_models_fallback:
+  - {name: claude-sonnet-4-6}
+  - {name: claude-opus-4-6}
+  - {name: claude-haiku-4-5}
+
 litellm_scoped_keys:
   - name: interpret
     models: []
   - name: digest
     models: ["{{ interpret_summary_model | default('local-qwen-llamacpp') }}"]
-  # The API's investigation agent: exactly api/app/investigate/orchestrator.py's
-  # MODEL_COSTS, which is also its allowlist (a test keeps the two equal).
+  # The API's investigation agent: exactly the operator's investigate_models (the api
+  # role), which is also the API's allow-list (ADR-038). The default is the same three.
   - name: investigate
-    models: ["claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6"]
+    models: "{{ investigate_models | default(litellm_investigate_models_fallback) | map(attribute='name') | list }}"
   - name: api-spend
     role: proxy_admin_viewer
     models: ["no-models"]

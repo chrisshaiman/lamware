@@ -16,3 +16,14 @@ api_spool_failed_dir: /opt/pipeline/spool-failed
 # ["http://localhost:3000"]. Empty in production (#730): the dev origin used to
 # ship in every deploy.
 api_cors_dev_origins: []
+
+# The investigation panel's models (ADR-038, as amended): the operator's list, not
+# the pipeline's profiles. Each `name` is a LiteLLM model alias that LiteLLM serves
+# (tests/test_investigate_models.py renders the model list to check), and the panel
+# shows `label`. The first is a new session's model. The API's allow-list and the
+# scoped `investigate` LiteLLM key are both this list. Labels: no single quotes
+# (the env file single-quotes the list).
+investigate_models:
+  - {name: claude-sonnet-4-6, label: Sonnet}
+  - {name: claude-opus-4-6, label: Opus}
+  - {name: claude-haiku-4-5, label: Haiku}

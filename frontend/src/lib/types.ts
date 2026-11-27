@@ -446,10 +446,14 @@ export interface SubmitResponse {
 // Investigation agent
 // ---------------------------------------------------------------------------
 
-export type InvestigationModel =
-  | "claude-sonnet-4-6"
-  | "claude-opus-4-6"
-  | "claude-haiku-4-5";
+// A LiteLLM model alias. The panel's choices are the operator's investigate_models,
+// served by GET /api/investigate/models (ADR-038), not a list compiled in here.
+export type InvestigationModel = string;
+
+export interface InvestigationModelOption {
+  name: InvestigationModel;
+  label: string;
+}
 
 export interface InvestigationSession {
   id: number;

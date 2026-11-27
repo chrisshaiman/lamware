@@ -2283,7 +2283,8 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 3. **One concept: the profile** (ADR-036's shape).
    - The automated default is the operator's chosen profile, which may be local or cloud.
    - `--llm-profile` and `LLM_PROFILE=` still choose another for one run.
-   - The web UI's model choices come from the same profiles, replacing the separate `interpret_analyst_model` path.
+   - **Amended 2026-11-27: the investigation panel has its own list, not the profiles.** The panel is an interactive chat agent, not a pipeline run, and a cloud profile names `eval-*` aliases, which decision 8 keeps out of analyst settings. So the panel offers the operator's `investigate_models`: LiteLLM aliases with labels, any provider, production credentials. That list is the panel's dropdown, the API's allow-list and the scoped `investigate` key, with nothing hard-coded in the frontend or the API.
+   - Sample upload in the web UI offers no profile choice yet. Uploads use the deployment's default; a per-upload choice, and who may pick a cloud profile, is a later decision.
 4. **What stays strict.** These rules are about data handling, not about models:
    - **A profile declares `cloud: true|false`, and the declaration is checked against where its aliases actually route.** `cloud: false` requires every alias to resolve to a host-local server in the rendered LiteLLM config (ADR-036's test, kept).
    - **Every report records the profile and models** (ADR-036, kept).
@@ -2304,7 +2305,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 
 - **`test_automated_runs_stay_local.py` changes its claim.** It moves from "no deployed default names a cloud model" to "the deployed default is the profile the operator named, and its `cloud` declaration is true". It keeps the shadowing check that motivated it.
 - **A fresh install runs on `local`,** as today. Choosing a cloud default is one variable and a redeploy, and the deploy, every run's log and every report say so. `docs/LLM_PROFILES.md` becomes the guide to the choice, including the terms check above.
-- **The web UI changes** to list profiles. Its current production-key models become a profile.
+- **The investigation panel** offers the operator's `investigate_models` (amended above). Its rates move from the hand-kept `MODEL_COSTS` to LiteLLM's prices (ADR-037) in a follow-up; until then a listed model with no `MODEL_COSTS` price is not offered, and is logged by name.
 - **Providers other than Anthropic and llama.cpp are unverified here.** Bedrock, Foundry and Vertex examples are marked unverified until someone runs one, including whether LiteLLM's price map covers their models.
 - **Escalation goes,** on the basis of cost, simplicity and comparability, not quality data. Whether Sonnet-then-Opus produced better analyses than either model alone was never measured. If that matters, the eval harness can run the same sample both ways (paid, and only with the operator's approval).
 - **Measured guidance, not gates.** Nothing refuses a model for being weaker, or for its terms; the docs inform the choice.
@@ -2321,7 +2322,7 @@ Revert. `db_ingest` prices from the table again; reports that already carry `llm
 2. **Remove escalation.** Delete `escalation_model` and `escalation_threshold` from the interpret config, from `LlmProfile`, from the `interpret_*` and `interpret_analyst_*` defaults and from the agent loop, and check the reports' `model_initial` and `model_final` stay equal. Enumerate every reader first (eval harness, `db_ingest` pricing, the API, the web UI).
 3. **The default profile setting,** shipped as `local`. Automated runs use it, a deploy naming an undefined profile stops, and the stay-local test changes as above.
 4. **The digest uses the router,** not the passthrough.
-5. **The web UI lists profiles.**
+5. **The investigation panel's models become the operator's `investigate_models`** (amended): the dropdown, the API's allow-list and the scoped key. Then **its pricing moves to LiteLLM's prices,** retiring `MODEL_COSTS`.
 6. **Docs:** provider examples (Anthropic key and WIF, Bedrock, Foundry, Vertex, llama.cpp), each marked verified or not, and the terms check.
 
 ### Rollback

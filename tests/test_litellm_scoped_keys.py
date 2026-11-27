@@ -290,16 +290,8 @@ def test_a_non_http_litellm_url_is_refused(tmp_path):
     assert r.returncode != 0 and "must be http(s)" in r.stderr
 
 
-def test_the_investigate_key_allows_exactly_the_agents_allowlist():
-    """VALID_MODELS = sorted(MODEL_COSTS). A model added there and not here would be
-    refused by LiteLLM; one here and not there is spend the agent can't account for."""
-    import ast
-    tree = ast.parse((ROOT / "api/app/investigate/orchestrator.py").read_text())
-    costs = next(n.value for n in ast.walk(tree)
-                 if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "MODEL_COSTS")
-    allowed = sorted(k.value for k in costs.keys)
-    spec = next(s for s in DEFAULTS["litellm_scoped_keys"] if s["name"] == "investigate")
-    assert sorted(spec["models"]) == allowed
+# The investigate key's models are the operator's investigate_models (ADR-038):
+# tests/test_investigate_models.py renders and checks them.
 
 
 def test_every_settings_key_the_api_sends_has_its_own_scoped_key():
