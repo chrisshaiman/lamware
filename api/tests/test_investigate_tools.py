@@ -919,3 +919,27 @@ def test_a_payload_under_the_preview_size_is_not_marked_truncated(cape_storage):
     assert result["truncated"] is False
     assert result["size"] == 2000
     assert len(bytes.fromhex(result["hex_preview"])) == 2000
+
+
+def test_every_listed_payload_is_at_the_path_the_prompt_states(cape_storage):
+    """The prompt and tool descriptions say /data/<source_dir>/<filename>. They used
+    to say /data/<filename>, where nothing is: the API mounts each payload directory
+    at /data/<its name>. Check the stated path against the real mount for every
+    payload get_cape_payloads lists."""
+    _write_payload(cape_storage / "77" / "CAPE", "a" * 64)
+    _write_payload(cape_storage / "77" / "procdump", "b" * 64)
+    _write_payload(cape_storage / "77" / "files", "c" * 64)
+    cmd = _run_python_cmd(cape_storage)
+    mounts = dict(cmd[i + 1].split("=", 1) for i, a in enumerate(cmd) if a == "--data-as")
+    for p in _get_cape_payloads({}, REPORT)["payloads"]:
+        container_path = f"/data/{p['source_dir']}/{p['filename']}"
+        mount_name = container_path.split("/")[2]
+        assert mount_name in mounts, (container_path, mounts)
+        assert (Path(mounts[mount_name]) / p["filename"]).is_file(), container_path
+
+
+def test_no_tool_description_points_at_bare_data():
+    for tool in TOOL_DEFINITIONS:
+        text = tool["description"]
+        if "/data" in text:
+            assert "/data/<source_dir>/<filename>" in text, (tool["name"], text)

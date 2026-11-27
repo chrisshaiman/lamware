@@ -437,3 +437,15 @@ def test_ioc_header_shows_true_total_when_exceeds_display_limit():
     # Only first 20 IPs should appear in the rendered block
     assert "10.0.0.19" in result   # 20th entry (0-indexed)
     assert "10.0.0.20" not in result  # 21st entry must be omitted
+
+
+def test_base_prompt_describes_the_sandbox_and_its_rules():
+    """Anthropic's Siren evaluation (2026-11) found that describing the sandbox and
+    its rules, including what to do when something is missing, cut models reaching
+    outside a sandbox by 68-96%. The rule must say what is there, that the rest is
+    absent on purpose, what to do instead, and to report a weakness, not use it."""
+    rule = _BASE_PROMPT[_BASE_PROMPT.index("7. run_python"):]
+    for phrase in ("no network", "read-only filesystem", "/data/<source_dir>/<filename>",
+                   "absent on purpose", "do not look for a way around it",
+                   "do not use it", "tell the analyst", "pin_finding"):
+        assert phrase in rule, phrase
