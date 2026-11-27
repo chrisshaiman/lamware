@@ -60,11 +60,36 @@ A replayed report records `replay_llm_profile` as well.
 
 **What `stub` doesn't prove.** That a real model can still drive the tools. After a change that could affect that, run one sample on `local` or a cloud profile too.
 
+## Choosing a model
+
+The suite enables models; you choose them (ADR-038). It holds minimal opinions:
+
+- **Check the model's terms first.** This pipeline reverse-engineers malware for security research. Some model licences and usage policies forbid reverse engineering or security research, and some of those offer no exception path. Choose a model whose terms allow this work, or whose provider offers an exception or approval process that covers it. The suite doesn't read licences or refuse a model; the terms you accept are yours.
+- **Quality isn't ranked here.** Where the eval harness (`make eval`) has measured a model on this corpus, use those results. Nothing refuses a model for being weaker.
+- **The sandbox is the control, not the model.** Models differ in how readily they cross a boundary when something outside looks useful. The containers the agents run in (no network, read-only, capabilities dropped) are what keep a run contained, whichever model you pick.
+- **One agent model per run.** There is no escalation to a second model mid-run. For a hard sample, pick a profile with a stronger model for that run. The summaries can use their own, cheaper model (`summary_model`, `plain_english_model`).
+
+## Providers
+
+What a profile can name today, and how far each is verified on this host:
+
+| Provider | How it is reached | Status |
+|---|---|---|
+| **Local llama.cpp** (`local-qwen-llamacpp*`) | LiteLLM's router to the llama.cpp server on this host | verified: the `local` default |
+| **`llm-stub`** (`stub`) | LiteLLM's router to the loopback stub | verified: coverage and permission runs |
+| **Anthropic API, eval credentials** (`eval-*`) | LiteLLM, then the Workload Identity Federation forwarder (ADR-033) or a workspace key | verified: `eval-haiku55` runs, priced by LiteLLM |
+| **Anthropic API, production credentials** | LiteLLM with the production key | used by the investigation panel only; not available to profiles |
+| **Amazon Bedrock, Microsoft Foundry, Google Vertex, other local servers** (Ollama, vLLM) | LiteLLM supports them | **not yet:** see below |
+
+**The gap.** Adding your own provider today means editing `ansible/roles/litellm/templates/config.yaml.j2`, and the local/cloud check recognises local models only by the built-in names. A variable for your own LiteLLM model entries, with the same checks (no entry may shadow an existing alias, and a local alias must route to this host), and a way to declare which of your aliases are local, is planned. Provider examples will be added here with it, each marked verified or not.
+
+The investigation panel has its own list, `api_investigate_models` in the api role: LiteLLM aliases with labels. It isn't a profile.
+
 ## Adding a cloud profile
 
-A cloud profile sends **decompiled code, extracted strings and behaviour of the sample** to that model's provider. It's your decision, run by run. The run logs a warning naming the models, and the report says `"cloud": true`.
+A cloud profile sends **decompiled code, extracted strings and behaviour of the sample** to that model's provider. It's your decision: run by run, or as the default (above). The run logs a warning naming the models, and the report says `"cloud": true`.
 
-1. **Expose the model through LiteLLM under an `eval-*` alias.** The repo's eval aliases (for example `eval-haiku55`) are examples. `eval-*` entries are kept out of every production setting by tests, and carry no production key.
+1. **Expose the model through LiteLLM under an `eval-*` alias.** Today these are the repo's eval aliases (for example `eval-haiku55`); see "The gap" above. `eval-*` entries are kept out of every production setting by tests, and carry no production key.
 2. **Define the profile** in your `ansible/vars/main.yml` (gitignored). Your profiles are added to the built-in ones (`stub`); a profile with a built-in's name replaces it.
 
    ```yaml
@@ -91,9 +116,10 @@ The config refuses a profile that breaks any of these rules, so the pipeline won
 
 Usage is recorded for every call, whatever the profile.
 
-- **Local and `stub` runs** are priced at zero.
-- **Cloud models** are priced by the pipeline's own rate table. An alias missing from it is billed at the default rate, with a warning in the ingest log.
-- **LiteLLM** already computes an accurate per-call cost for these models. Making it the single price source is planned, and would replace the rate tables.
+- **LiteLLM's recorded cost is the price of record** (ADR-037). Every call carries a LiteLLM call ID. After the last LLM stage, the pipeline looks each one up in LiteLLM's spend log and writes `report["llm_cost"]`: dollars, calls, resolved, and `complete`.
+- **When the record is incomplete,** for example a call the spend log doesn't have, the report lists the unresolved IDs, and the database row is priced from the pipeline's rate table instead. The tables remain only as that fallback.
+- **Local and `stub` runs** cost zero.
+- **The investigation panel** still prices from its own table (`MODEL_COSTS`). A listed model with no price there isn't offered, until the panel moves to LiteLLM's prices.
 
 ## For permission phases (ADR-031)
 
