@@ -1,6 +1,6 @@
 """The investigation panel's models are one operator list (ADR-038, PR 5).
 
-`investigate_models` (the api role) is the panel's dropdown, the API's allow-list
+`api_investigate_models` (the api role) is the panel's dropdown, the API's allow-list
 and the scoped `investigate` LiteLLM key. These render the REAL templates with every
 role's defaults and assert on parsed values:
   - every listed name is a model LiteLLM serves, or the panel would offer a model
@@ -52,18 +52,18 @@ def _key_models(ctx) -> list[str]:
 
 def test_every_listed_model_is_served_by_litellm():
     ctx = _ctx()
-    names = [m["name"] for m in ctx["investigate_models"]]
+    names = [m["name"] for m in ctx["api_investigate_models"]]
     assert names, "the shipped list is empty: the panel would offer nothing"
     assert set(names) <= _served(ctx), set(names) - _served(ctx)
 
 
 def test_the_investigate_key_allows_exactly_the_listed_models():
     ctx = _ctx()
-    assert _key_models(ctx) == [m["name"] for m in ctx["investigate_models"]]
+    assert _key_models(ctx) == [m["name"] for m in ctx["api_investigate_models"]]
 
 
 def test_an_operator_list_reaches_the_key():
-    ctx = _ctx(investigate_models=[{"name": "local-qwen-llamacpp", "label": "Local"}])
+    ctx = _ctx(api_investigate_models=[{"name": "local-qwen-llamacpp", "label": "Local"}])
     assert _key_models(ctx) == ["local-qwen-llamacpp"]
     assert "local-qwen-llamacpp" in _served(ctx)
 
@@ -77,9 +77,9 @@ def test_the_env_file_carries_the_list_as_single_quoted_json():
     line = _env().from_string(tmpl).render(**ctx)
     value = line.split("=", 1)[1]
     assert value.startswith("'") and value.endswith("'") and "'" not in value[1:-1]
-    assert json.loads(value[1:-1]) == ctx["investigate_models"]
+    assert json.loads(value[1:-1]) == ctx["api_investigate_models"]
 
 
 def test_every_shipped_label_is_safe_inside_single_quotes():
-    for m in _defaults("api")["investigate_models"]:
+    for m in _defaults("api")["api_investigate_models"]:
         assert set(m) == {"name", "label"} and "'" not in m["label"] + m["name"], m

@@ -290,7 +290,7 @@ def test_a_non_http_litellm_url_is_refused(tmp_path):
     assert r.returncode != 0 and "must be http(s)" in r.stderr
 
 
-# The investigate key's models are the operator's investigate_models (ADR-038):
+# The investigate key's models are the operator's api_investigate_models (ADR-038):
 # tests/test_investigate_models.py renders and checks them.
 
 

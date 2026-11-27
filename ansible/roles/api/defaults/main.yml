@@ -23,7 +23,7 @@ api_cors_dev_origins: []
 # shows `label`. The first is a new session's model. The API's allow-list and the
 # scoped `investigate` LiteLLM key are both this list. Labels: no single quotes
 # (the env file single-quotes the list).
-investigate_models:
+api_investigate_models:
   - {name: claude-sonnet-4-6, label: Sonnet}
   - {name: claude-opus-4-6, label: Opus}
   - {name: claude-haiku-4-5, label: Haiku}
