@@ -121,6 +121,12 @@ _settings.litellm_url = "http://127.0.0.1:4000"
 _settings.litellm_key = "sk-test"
 _settings.litellm_investigate_key = "sk-test"
 _settings.investigation_max_tool_calls_per_turn = 10
+# A real list, not a MagicMock attribute: valid_models() iterates it.
+_settings.investigate_models = [
+    types.SimpleNamespace(name="claude-sonnet-4-6", label="Sonnet"),
+    types.SimpleNamespace(name="claude-opus-4-6", label="Opus"),
+    types.SimpleNamespace(name="claude-haiku-4-5", label="Haiku"),
+]
 _app_config.settings = _settings  # type: ignore[attr-defined]
 sys.modules["app.config"] = _app_config
 
@@ -150,9 +156,8 @@ sys.modules.setdefault("app.investigate", _inv_pkg)
 
 _inv_orch = types.ModuleType("app.investigate.orchestrator")
 _inv_orch.run_conversation_turn = MagicMock()  # type: ignore[attr-defined]
-# MODEL_COSTS is a real dict, not a MagicMock: the router derives VALID_MODELS
-# from it (`sorted(MODEL_COSTS)`), so a mock would make the allowlist whatever
-# sorted() does to a MagicMock rather than the model IDs the tests below assert.
+# MODEL_COSTS is a real dict, not a MagicMock: valid_models() filters the operator
+# list by it, so a mock would answer `in` with whatever a MagicMock does.
 # Mirrors the real table's KEYS; the prices are not read here.
 _inv_orch.MODEL_COSTS = {  # type: ignore[attr-defined]
     "claude-sonnet-4-6": {"input": 3e-6, "output": 15e-6},
@@ -213,7 +218,7 @@ _ns: dict = {}
 exec(_source_patched, _ns)  # noqa: S102
 
 # Pull out the symbols under test
-VALID_MODELS = _ns["VALID_MODELS"]
+VALID_MODELS = _ns["valid_models"]()
 _validate_pin_body = _ns["_validate_pin_body"]
 _build_report_markdown = _ns["_build_report_markdown"]
 _get_owned_session = _ns["_get_owned_session"]
@@ -228,11 +233,10 @@ restore(_SAVED_MODULES)
 # ---------------------------------------------------------------------------
 
 
-# NOTE: VALID_MODELS is now derived from MODEL_COSTS, and the MODEL_COSTS these
-# assertions see is the STUB above — so what they pin is the router's derivation,
-# not the real model list. The real one is checked against the real modules in
-# test_model_cost_coverage.py, which is also where the allowlist-vs-price
-# contract lives.
+# NOTE: valid_models() is the operator's investigate_models filtered by MODEL_COSTS,
+# and both are the STUBS above, so these pin the router's derivation, not the real
+# list. The real one is checked against the real modules in test_model_cost_coverage.py,
+# which is also where the allowlist-vs-price contract lives.
 
 
 def test_valid_models_contains_expected():

@@ -21,6 +21,7 @@ import {
   useCompleteSession,
   useConfirmPin,
   useCreateSession,
+  useInvestigationModels,
   useInvestigationSession,
   useInvestigationSessions,
   useInvestigationStream,
@@ -30,7 +31,6 @@ import {
 import { cn, formatCost, formatRelativeTime } from "#lib/utils";
 import type {
   InvestigationMessage as InvestigationMessageRow,
-  InvestigationModel,
   InvestigationSSEEvent,
   PinProposal,
 } from "#lib/types";
@@ -136,13 +136,10 @@ function buildHistory(messages: InvestigationMessageRow[]): HistoryItem[] {
 // Model selector (header control)
 // ---------------------------------------------------------------------------
 
-const MODEL_OPTIONS: Array<{ value: InvestigationModel; label: string }> = [
-  { value: "claude-sonnet-4-6", label: "Sonnet" },
-  { value: "claude-opus-4-6", label: "Opus" },
-  { value: "claude-haiku-4-5", label: "Haiku" },
-];
-
-function ModelSelect({
+// The choices come from the API (the operator's investigate_models, ADR-038). A
+// session on a model no longer listed still shows that model, so the control never
+// misreports what the session runs on.
+export function ModelSelect({
   value,
   onChange,
   disabled,
@@ -151,7 +148,8 @@ function ModelSelect({
   onChange: (model: string) => void;
   disabled?: boolean;
 }) {
-  const known = MODEL_OPTIONS.some((o) => o.value === value);
+  const { data: options = [] } = useInvestigationModels();
+  const known = options.some((o) => o.name === value);
   return (
     <select
       value={value}
@@ -161,8 +159,8 @@ function ModelSelect({
       className="rounded-md border border-[var(--color-border)] bg-[var(--color-background)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
     >
       {!known && <option value={value}>{value}</option>}
-      {MODEL_OPTIONS.map((o) => (
-        <option key={o.value} value={o.value}>
+      {options.map((o) => (
+        <option key={o.name} value={o.name}>
           {o.label}
         </option>
       ))}

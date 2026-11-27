@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every model the agent may select has to have a price.
 
-`VALID_MODELS` (routers/investigate) and `MODEL_COSTS` (investigate/orchestrator)
-were two hand-maintained lists in two modules. They agreed, and nothing made them.
+The allow-list is the operator's investigate_models (ADR-038), filtered by
+MODEL_COSTS. Before that, `VALID_MODELS` (routers/investigate) and `MODEL_COSTS`
+(investigate/orchestrator) were two hand-maintained lists in two modules. They agreed, and nothing made them.
 A model in the allowlist but not the cost table bills at $0.00 per token, because
 the lookup fell back to `{"input": 0.0, "output": 0.0}` — which is also what a
 genuinely free local model costs, so the two are indistinguishable in the
@@ -14,55 +15,46 @@ Drift was the likely path, not an exotic one: the proxy already serves
 claude-sonnet-5 and claude-opus-5, and adding a name to the allowlist is how you
 would turn one on.
 """
-import ast
 import logging
-from pathlib import Path
+from types import SimpleNamespace
 
-import app.routers.investigate
 import pytest
+from app.config import DEFAULT_INVESTIGATE_MODELS, settings
 from app.investigate.orchestrator import MODEL_COSTS
-from app.routers.investigate import VALID_MODELS
+from app.routers import investigate as router
 
 
 def test_every_selectable_model_has_a_price():
-    """THE contract. Fails the moment someone adds a model to one list only."""
-    unpriced = sorted(set(VALID_MODELS) - set(MODEL_COSTS))
-    assert not unpriced, (
-        f"{unpriced} can be selected but has no MODEL_COSTS entry, so its "
-        f"tokens would be billed at $0.00 and recorded as though free")
+    """THE contract. Holds by construction: valid_models() drops what MODEL_COSTS
+    cannot price, so an operator-listed model never bills at $0.00 per token."""
+    unpriced = sorted(set(router.valid_models()) - set(MODEL_COSTS))
+    assert not unpriced, unpriced
 
 
-def test_the_allowlist_is_derived_rather_than_restated():
-    """Deriving is what makes the test above unfailable by construction, so the
-    derivation itself is the thing to pin — set equality cannot do it, because a
-    hardcoded list that still happens to agree satisfies set equality exactly as
-    well as a derived one. That is the state this bug started in.
-
-    Checked against the parsed AST rather than the source text: a comment
-    mentioning MODEL_COSTS, or the name appearing anywhere else in the module,
-    would satisfy a grep. Only the assignment's own expression counts.
-    """
-    tree = ast.parse(Path(app.routers.investigate.__file__).read_text(encoding="utf-8"))
-    assigns = [
-        node for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "VALID_MODELS" for t in node.targets)
-    ]
-    assert len(assigns) == 1, f"expected one VALID_MODELS assignment, found {len(assigns)}"
-    value = assigns[0].value
-    assert not isinstance(value, (ast.List, ast.Tuple, ast.Set)), (
-        "VALID_MODELS is a literal collection again — it must be derived from "
-        "MODEL_COSTS, or the two lists can drift apart the way they did before")
-    referenced = {n.id for n in ast.walk(value) if isinstance(n, ast.Name)}
-    assert "MODEL_COSTS" in referenced, (
-        f"VALID_MODELS is computed from {sorted(referenced)}, not MODEL_COSTS")
+def test_an_unpriced_listed_model_is_left_out_and_named(monkeypatch, caplog):
+    """ADR-038: the operator's list, minus what has no price, logged by name."""
+    monkeypatch.setattr(settings, "investigate_models", [
+        SimpleNamespace(name="claude-sonnet-4-6", label="Sonnet"),
+        SimpleNamespace(name="claude-sonnet-9", label="Future")])
+    with caplog.at_level(logging.WARNING, logger=router.log.name):
+        assert router.valid_models() == ["claude-sonnet-4-6"]
+    assert any("claude-sonnet-9" in r.getMessage() for r in caplog.records)
 
 
-def test_the_expected_models_are_still_present():
-    """Guards the other direction: deriving from an accidentally-emptied table
-    would satisfy every assertion above with an allowlist of nothing."""
-    for model in ("claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"):
-        assert model in VALID_MODELS
+def test_the_operator_list_sets_the_order_and_the_labels(monkeypatch):
+    monkeypatch.setattr(settings, "investigate_models", [
+        SimpleNamespace(name="claude-haiku-4-5", label="Fast"),
+        SimpleNamespace(name="claude-opus-4-6", label="Deep")])
+    assert router.investigate_models() == [{"name": "claude-haiku-4-5", "label": "Fast"},
+                                           {"name": "claude-opus-4-6", "label": "Deep"}]
+
+
+def test_the_shipped_default_is_offered_whole():
+    """Guards the other direction: a default that filters to nothing would satisfy
+    the contract above with an allowlist of nothing."""
+    assert [m.name for m in DEFAULT_INVESTIGATE_MODELS] == [
+        "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"]
+    assert set(m.name for m in DEFAULT_INVESTIGATE_MODELS) <= set(MODEL_COSTS)
 
 
 def test_every_price_is_a_positive_number():
@@ -71,10 +63,6 @@ def test_every_price_is_a_positive_number():
         assert set(price) == {"input", "output"}, model
         for leg, value in price.items():
             assert isinstance(value, (int, float)) and value > 0, f"{model}.{leg} = {value}"
-
-
-def test_valid_models_are_strings():
-    assert VALID_MODELS and all(isinstance(m, str) for m in VALID_MODELS)
 
 
 # --- compute_cost: the fallback still exists, and now says so ------------
@@ -118,7 +106,9 @@ def test_zero_tokens_cost_zero_without_a_warning():
 
 
 @pytest.mark.parametrize("model", ["claude-sonnet-5", "claude-opus-5", "gpt-4o"])
-def test_models_the_proxy_serves_but_we_do_not_price_are_not_selectable(model):
-    """The concrete drift scenario: LiteLLM serves these today. Until they are
-    priced, they must not be selectable."""
-    assert model not in VALID_MODELS
+def test_models_the_proxy_serves_but_we_do_not_price_are_not_selectable(model, monkeypatch):
+    """The concrete drift scenario: LiteLLM serves these today. Even when the operator
+    lists one, it is not selectable until it is priced."""
+    monkeypatch.setattr(settings, "investigate_models", [
+        SimpleNamespace(name="claude-sonnet-4-6", label="Sonnet"), SimpleNamespace(name=model, label="X")])
+    assert model not in router.valid_models()

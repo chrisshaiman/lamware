@@ -5,7 +5,22 @@
 # All variables are prefixed with LAMWARE_ (e.g. LAMWARE_DB_PASSWORD).
 # Ansible writes the env file at deploy time; in dev, export vars directly.
 
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings
+
+
+class InvestigateModel(BaseModel):
+    """One model the investigation panel offers (ADR-038): a LiteLLM alias and its label."""
+    name: str
+    label: str
+
+
+# The default investigate_models (the api role ships the same three).
+DEFAULT_INVESTIGATE_MODELS = [
+    InvestigateModel(name="claude-sonnet-4-6", label="Sonnet"),
+    InvestigateModel(name="claude-opus-4-6", label="Opus"),
+    InvestigateModel(name="claude-haiku-4-5", label="Haiku"),
+]
 
 
 class Settings(BaseSettings):
@@ -57,9 +72,12 @@ class Settings(BaseSettings):
     # for empty explicitly so the failure reads as "unconfigured", not "unreachable".
     litellm_key: str = ""
     # The investigation agent's own scoped key (V1): it calls the models in
-    # investigate.orchestrator.MODEL_COSTS and nothing else. litellm_key above is the
+    # investigate_models and nothing else. litellm_key above is the
     # spend router's read-only key, which can call no model. Empty fails closed.
     litellm_investigate_key: str = ""
+    # The investigation panel's models, in order; the first is a new session's (ADR-038).
+    # From LAMWARE_INVESTIGATE_MODELS, a JSON list of {"name", "label"}.
+    investigate_models: list[InvestigateModel] = DEFAULT_INVESTIGATE_MODELS
     investigation_max_turns: int = 100
     investigation_cost_alert_usd: float = 2.0
     investigation_max_tool_calls_per_turn: int = 20

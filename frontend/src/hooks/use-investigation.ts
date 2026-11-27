@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import apiClient from "#lib/api-client";
 import keycloak from "#lib/keycloak";
 import type {
+  InvestigationModelOption,
   InvestigationSession,
   InvestigationSessionDetail,
   InvestigationSSEEvent,
@@ -23,6 +24,23 @@ const investigationKeys = {
   sessions: (analysisId: number) => ["investigation", "sessions", analysisId] as const,
   session: (sessionId: number) => ["investigation", "session", sessionId] as const,
 };
+
+// ---------------------------------------------------------------------------
+// Model choices — GET /api/investigate/models (the operator's list, ADR-038)
+// ---------------------------------------------------------------------------
+
+export function useInvestigationModels() {
+  return useQuery({
+    queryKey: ["investigation", "models"] as const,
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ models: InvestigationModelOption[] }>(
+        "/api/investigate/models",
+      );
+      return data.models;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Session list — GET /api/investigate/{analysisId}/sessions
