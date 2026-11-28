@@ -76,3 +76,9 @@ cape_root_cron_retired:
 # root 0600. Read it with `sudo cat`. The `cape` superuser stays unusable (API token).
 cape_web_admin_user: lamware-admin
 cape_web_admin_password_file: /etc/lamware-cape/web-admin-password
+
+# The only supplementary groups cape may hold (ADR-031). The cape role removes
+# any other on every deploy (CAPE's installer adds systemd-journal), and
+# security-test check 27 fails on any other, in /etc/group or on a running
+# process. libvirt: the polkit rule (ADR-027) grants libvirt access through it.
+cape_supplementary_groups: [libvirt]

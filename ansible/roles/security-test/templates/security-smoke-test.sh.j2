@@ -979,44 +979,53 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# cape is in no group it doesn't write for (ADR-031 phase 1)
+# cape holds only its allowlisted groups (ADR-031)
 # -------------------------------------------------------------------------
-echo "[27/29] CONTAINMENT: cape is not in the lamware group, and no cape process carries it..."
-# Phase 0 measured that nothing CAPE does needs lamware; the pipeline reads CAPE's
-# output through the storage ACL. Checked on the running processes as well as the
-# group file: a process keeps the groups it started with, so a membership removed
-# without a restart (or a unit that sets Group=lamware) would still hold it.
-# The control: the pipeline can still read the newest analysis, so a broken probe
-# cannot pass by seeing nothing; and at least one cape process must exist.
-L_GID=$(getent group lamware | cut -d: -f3)
-L_MEMBERS=$(getent group lamware | cut -d: -f4)
+echo "[27/29] CONTAINMENT: cape and its processes hold no group outside its allowlist..."
+# An allowlist, not "not lamware": CAPE's installer adds groups of its own
+# (systemd-journal: every service's journal), and a denylist only catches the
+# ones already noticed. Checked on the running processes as well as the group
+# file: a process keeps the groups it started with, so a membership removed
+# without a restart (or a unit with another Group=) would still hold it.
+# The controls: every allowlisted group must resolve (or the probe compares
+# against nothing), at least one cape process must exist, and the pipeline can
+# still read the newest analysis through the storage ACL.
 C_USER="{{ cape_user | default('cape') }}"
+C_ALLOW="{{ cape_supplementary_groups | default(['libvirt']) | join(' ') }}"
 C_STORE="{{ cape_storage_analyses | default('/opt/CAPEv2/storage/analyses') }}"
+C_OK=" "; C_UNRESOLVED=""
+for n in "$C_USER" $C_ALLOW; do
+    g=$(getent group "$n" | cut -d: -f3)
+    if [ -n "$g" ]; then C_OK="$C_OK$g "; else C_UNRESOLVED="$C_UNRESOLVED $n"; fi
+done
+C_EXTRA=""
+for n in $(id -nG "$C_USER" 2>/dev/null); do
+    case " $C_USER $C_ALLOW " in *" $n "*) ;; *) C_EXTRA="$C_EXTRA $n" ;; esac
+done
 C_BAD=""; C_SEEN=0
 for pid in $(ps -u "$C_USER" -o pid= 2>/dev/null); do
     st="/proc/$pid/status"
     [ -r "$st" ] || continue
     C_SEEN=$((C_SEEN + 1))
-    gids=$(awk '/^Gid:/{print $2, $3, $4, $5} /^Groups:/{for (i = 2; i <= NF; i++) print $i}' "$st" | tr ' ' '\n')
-    if printf '%s\n' "$gids" | grep -qx "$L_GID"; then
-        C_BAD="$C_BAD $pid($(cat /proc/$pid/comm 2>/dev/null))"
-    fi
+    for g in $(awk '/^Gid:/{print $2, $3, $4, $5} /^Groups:/{for (i = 2; i <= NF; i++) print $i}' "$st"); do
+        case "$C_OK" in *" $g "*) ;; *) C_BAD="$C_BAD $pid($(cat /proc/$pid/comm 2>/dev/null):$g)"; break ;; esac
+    done
 done
 C_NEWEST=$(ls -td "$C_STORE"/[0-9]* 2>/dev/null | head -1)
 C_READ=no
 [ -n "$C_NEWEST" ] && (cd / && sudo -u pipeline test -r "$C_NEWEST" -a -x "$C_NEWEST") && C_READ=yes
-if [ -z "$L_GID" ]; then
-    fail "cape group probe is blind: no lamware group"
+if [ -n "$C_UNRESOLVED" ]; then
+    fail "cape group probe is blind: allowlisted groups do not resolve:$C_UNRESOLVED"
 elif [ "$C_SEEN" -eq 0 ]; then
     fail "cape group probe is blind: no running $C_USER process (is CAPE up?)"
-elif printf '%s\n' "$L_MEMBERS" | tr ',' '\n' | grep -qx "$C_USER"; then
-    fail "$C_USER is a member of lamware (ADR-031 phase 1 reverted?)"
+elif [ -n "$C_EXTRA" ]; then
+    fail "$C_USER is a member of groups outside its allowlist ($C_ALLOW):$C_EXTRA"
 elif [ -n "$C_BAD" ]; then
-    fail "$C_USER processes carry the lamware group:$C_BAD"
+    fail "$C_USER processes carry a group outside its allowlist:$C_BAD"
 elif [ "$C_READ" != yes ]; then
     fail "the pipeline cannot read the newest CAPE analysis (${C_NEWEST:-none found}): the storage ACL, not cape's group, is its read path"
 else
-    pass "$C_USER: not in lamware, $C_SEEN processes without it; the pipeline reads $(basename "$C_NEWEST")"
+    pass "$C_USER: only $C_USER + $C_ALLOW, on $C_SEEN processes too; the pipeline reads $(basename "$C_NEWEST")"
 fi
 
 # -------------------------------------------------------------------------
