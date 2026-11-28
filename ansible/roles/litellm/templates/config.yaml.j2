@@ -265,10 +265,16 @@ model_list:
       api_base: "{{ litellm_stub_base }}"
       api_key: "sk-stub"
 
+{# Only with the explicit switch (litellm_local_cloud_fallback, off by default): a
+   local summary failure fails, rather than quietly reaching a cloud model. Tested as a
+   string, not with Ansible's `bool` filter, so the template also renders in plain
+   Jinja (the tests), and "false" passed with -e stays false. #}
+{% if (litellm_local_cloud_fallback | default(false) | string | lower) in ['true', 'yes', '1'] %}
   - model_name: "haiku-fallback"
     litellm_params:
       model: "anthropic/{{ litellm_fallback_backend }}"
 {{ anthropic_auth('production') }}
+{% endif %}
 
 {# The operator's own entries (ADR-038), checked by tasks/operator-models.yml.
    Rendered as JSON, which is valid YAML, so a value cannot break the structure.
@@ -282,10 +288,11 @@ model_list:
 litellm_settings:
   drop_params: true
   set_verbose: false
-  # local-qwen-llamacpp -> Haiku on any local failure. See PipelineConfig.summary_model for
-  # the per-stage knob.
+  # No cloud fallback unless litellm_local_cloud_fallback is set (ADR-038): a failing
+  # local model fails loudly. The switch adds local-qwen-llamacpp -> haiku-fallback, the
+  # summary alias only. A cloud summary model on purpose is a profile's summary_model.
   #
-  # DELIBERATELY ABSENT, do not "fix" by adding one:
+  # NEVER, switch or not:
   #   local-qwen-llamacpp-strict — strict = offline.
   #   local-qwen-llamacpp-re — the AGENTIC RE model. Its context holds decompiled
   #     malware bodies, extracted strings and C2 indicators. A cloud fallback would
@@ -294,7 +301,7 @@ litellm_settings:
   #     and defeating the air-gap that is the whole reason RE runs locally.
   #     RE must fail loudly and stay offline. Guarded by
   #     pipeline/tests/test_litellm_fallbacks.py.
-  fallbacks: [{"local-qwen-llamacpp": ["haiku-fallback"]}]
+  fallbacks: {{ ([{"local-qwen-llamacpp": ["haiku-fallback"]}] if ((litellm_local_cloud_fallback | default(false) | string | lower) in ['true', 'yes', '1']) else []) | tojson }}
 
 general_settings:
   master_key: "{{ litellm_master_key | mandatory }}"

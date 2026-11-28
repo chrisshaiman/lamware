@@ -32,6 +32,14 @@
     fail_msg: "LiteLLM model names used twice: {{ _twice }}"
     quiet: true
 
+- name: Announce the local-to-cloud fallback switch
+  ansible.builtin.debug:
+    msg: >-
+      LOCAL-TO-CLOUD FALLBACK IS ON (litellm_local_cloud_fallback): when the local summary
+      model fails, LiteLLM retries on {{ litellm_fallback_backend }} with the production
+      credentials, sending the summary prompt (sample-derived text) off the host.
+  when: litellm_local_cloud_fallback | default(false) | bool
+
 - name: Deploy LiteLLM config
   ansible.builtin.template:
     src: config.yaml.j2

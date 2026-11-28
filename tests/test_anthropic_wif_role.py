@@ -106,7 +106,10 @@ def test_the_litellm_bases_are_the_routes_ports():
 def test_switched_on_every_cloud_entry_reaches_a_route_that_allows_its_model():
     r = _routes()
     port_to_route = {f"http://127.0.0.1:{x['listen_port']}": x for x in r.values()}
-    entries = _cloud_entries(litellm_anthropic_wif_routes=["production", "eval"])
+    # With the local-to-cloud fallback switched on (off by default, ADR-038), so the
+    # haiku-fallback entry exists and is checked too.
+    entries = _cloud_entries(litellm_anthropic_wif_routes=["production", "eval"],
+                             litellm_local_cloud_fallback=True)
     # 5 production, 5 keyed eval arms, 3 forwarder-only eval arms, haiku-fallback
     assert len(entries) == 14, [n for n, _ in entries]
     for name, p in entries:
@@ -123,9 +126,10 @@ def test_switched_on_no_entry_names_an_env_key():
 
 
 def test_switched_off_entries_use_the_workspace_keys_as_before():
-    entries = [(n, p) for n, p in _cloud_entries(litellm_anthropic_wif_routes=[])
+    entries = [(n, p) for n, p in _cloud_entries(litellm_anthropic_wif_routes=[],
+                                                  litellm_local_cloud_fallback=True)
                if n not in FORWARDER_ONLY]
-    assert len(entries) == 11
+    assert len(entries) == 11   # with haiku-fallback (the switch on)
     for name, p in entries:
         want = "ANTHROPIC_RESEARCH_API_KEY" if name.startswith("eval-") else "ANTHROPIC_API_KEY"
         assert p == {"model": p["model"], "api_key": f"os.environ/{want}"}, name
@@ -218,3 +222,10 @@ def test_the_role_runs_before_litellm_in_site_yml():
     roles = [r["role"] if isinstance(r, dict) else r
              for p in play for r in (p.get("roles") or [])]
     assert roles.index("anthropic-wif") < roles.index("litellm")
+
+
+def test_by_default_there_is_no_local_to_cloud_fallback_entry():
+    """ADR-038 (decided 2026-11-28): a failing local model fails unless the operator
+    sets litellm_local_cloud_fallback; without it, no haiku-fallback entry exists."""
+    names = [n for n, _ in _cloud_entries(litellm_anthropic_wif_routes=["production", "eval"])]
+    assert "haiku-fallback" not in names and len(names) == 13, names
