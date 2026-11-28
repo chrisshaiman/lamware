@@ -13,7 +13,9 @@ import {
   Search,
 } from "lucide-react";
 import {
+  useEvasionEvidence,
   useEvasions,
+  useMoreRecommendations,
   type EvasionCategory,
   type EvasionTechnique,
   type MitigationStatus,
@@ -210,16 +212,99 @@ function CategorySection({
                   }}
                 />
               </div>
-              {t.evidence && (
+              {t.name_variants > 1 && (
                 <div className="text-[10px] text-[var(--color-text-muted)]">
-                  Evidence: {t.evidence}
+                  Named {t.name_variants} ways by the analysis
                 </div>
               )}
+              {t.evidence && (
+                <div className="text-[10px] text-[var(--color-text-muted)]">
+                  Example: {t.evidence}
+                </div>
+              )}
+              <EvidenceList group={t.group} count={t.sample_count} />
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// The evidence behind one technique, loaded only when asked for, 20 at a time. The
+// dashboard used to send every sample's evidence up front (~718k characters).
+function EvidenceList({ group, count }: { group: string; count: number }) {
+  const [open, setOpen] = useState(false);
+  const q = useEvasionEvidence(group, open);
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  return (
+    <div className="text-[10px]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-[var(--color-accent)] hover:underline"
+      >
+        {open ? "Hide evidence" : `Show evidence (${count} sample${count !== 1 ? "s" : ""})`}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1 border-l border-[var(--color-border)] pl-2">
+          {q.isLoading && <div className="text-[var(--color-text-muted)]">Loading…</div>}
+          {q.isError && <div className="text-red-400">Failed to load evidence.</div>}
+          {items.map((it, i) => (
+            <div key={i} className="text-[var(--color-text-muted)]">
+              <a href={`/analyses/${it.analysis_id}`} className="text-[var(--color-accent)] hover:underline">
+                #{it.analysis_id}
+              </a>{" "}
+              {it.technique}
+              {it.evidence ? `: ${it.evidence}` : ""}
+            </div>
+          ))}
+          {q.hasNextPage && (
+            <button
+              type="button"
+              onClick={() => q.fetchNextPage()}
+              disabled={q.isFetchingNextPage}
+              className="text-[var(--color-accent)] hover:underline disabled:opacity-50"
+            >
+              {q.isFetchingNextPage ? "Loading…" : "Load more"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Recommendations after the first page, on request.
+function MoreRecommendations({ start, total }: { start: number; total: number }) {
+  const [open, setOpen] = useState(false);
+  const q = useMoreRecommendations(start, open);
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  if (total <= start) return null;
+  return (
+    <>
+      {items.map((rec, i) => (
+        <div
+          key={`more-${i}`}
+          className="flex items-start gap-3 rounded border border-[var(--color-border-light)] bg-[var(--color-background)] p-3"
+        >
+          <span className="shrink-0 rounded bg-orange-900/50 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-orange-400">
+            {rec.frequency}x
+          </span>
+          <span className="text-xs text-[var(--color-text-secondary)]">{rec.recommendation}</span>
+        </div>
+      ))}
+      {(!open || q.hasNextPage) && (
+        <button
+          type="button"
+          onClick={() => (open ? q.fetchNextPage() : setOpen(true))}
+          disabled={q.isFetching}
+          className="text-xs text-[var(--color-accent)] hover:underline disabled:opacity-50"
+        >
+          {q.isFetching ? "Loading…" : `Load more (${total - start - items.length} more)`}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -418,6 +503,10 @@ export function EvasionsPage() {
                     </span>
                   </div>
                 ))}
+                <MoreRecommendations
+                  start={data.recommendations.length}
+                  total={data.recommendations_total}
+                />
               </div>
             </div>
           )}

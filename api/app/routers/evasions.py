@@ -16,6 +16,7 @@
 #   detection    — can't fix in sandbox; write detection rules instead
 
 import re
+from collections import Counter
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -234,66 +235,30 @@ async def list_evasions(
     session: Session = Depends(get_session),
 ) -> dict:
     """
-    Aggregate evasion hunter findings across all analyses.
+    Evasion hunter findings across all analyses, one row per MITRE technique.
 
-    Returns techniques ranked by frequency with MITRE IDs, evidence,
-    fix-type category, and mitigation status for each technique.
+    Each row carries the most common name, how many name variants the LLM used, the
+    number of distinct samples, one short example of evidence, the fix-type category
+    and the mitigation status. The full evidence is paged by GET /evidence.
 
     Query params:
         status: filter by mitigation status (mitigated, partial, open, na)
         category: filter by fix-type category
         sort: sort field — sample_count (default), status, category
     """
-    # Extract all evasion techniques from report_json JSONB
-    sql = text("""
-        SELECT
-            t->>'technique' AS technique,
-            t->>'mitre_id' AS mitre_id,
-            t->>'evidence' AS evidence,
-            COUNT(*) AS sample_count
-        FROM analyses,
-             jsonb_array_elements(
-                 report_json->'evasion_analysis'->'analysis'->'evasion_techniques'
-             ) AS t
-        WHERE report_json->'evasion_analysis'->>'enabled' = 'true'
-          AND report_json->'evasion_analysis'->'analysis'->'evasion_techniques' IS NOT NULL
-        GROUP BY t->>'technique', t->>'mitre_id', t->>'evidence'
-        ORDER BY sample_count DESC
-    """)
+    techniques = aggregate(_entries(session))
 
-    try:
-        rows = session.exec(sql).all()  # type: ignore[call-overload]
-    except Exception:
-        rows = []
-
-    techniques = []
-    for row in rows:
-        cat = _categorize(row[0] or "")
-        mit = _mitigation_status(row[0] or "", cat)
-        techniques.append({
-            "technique": row[0],
-            "mitre_id": row[1],
-            "evidence": row[2],
-            "sample_count": row[3],
-            "category": cat,
-            "status": mit,
-        })
-
-    # Filter
     if status:
         techniques = [t for t in techniques if t["status"] == status]
     if category:
         techniques = [t for t in techniques if t["category"] == category]
 
-    # Sort
     _STATUS_ORDER = {"open": 0, "partial": 1, "mitigated": 2, "na": 3}
     if sort == "status":
         techniques.sort(key=lambda t: (_STATUS_ORDER.get(t["status"], 9), -t["sample_count"]))
     elif sort == "category":
         techniques.sort(key=lambda t: (t["category"], -t["sample_count"]))
-    # default: already sorted by sample_count DESC from SQL
 
-    # Get total analyses with evasion data
     total_sql = text("""
         SELECT COUNT(*)
         FROM analyses
@@ -304,31 +269,140 @@ async def list_evasions(
     except Exception:
         total = 0
 
-    # Get recommendations aggregated
-    rec_sql = text("""
-        SELECT r, COUNT(*) AS freq
-        FROM analyses,
-             jsonb_array_elements_text(
-                 report_json->'evasion_analysis'->'analysis'->'sandbox_recommendations'
-             ) AS r
-        WHERE report_json->'evasion_analysis'->>'enabled' = 'true'
-          AND report_json->'evasion_analysis'->'analysis'->'sandbox_recommendations' IS NOT NULL
-        GROUP BY r
-        ORDER BY freq DESC
-    """)
-
-    try:
-        rec_rows = session.exec(rec_sql).all()  # type: ignore[call-overload]
-    except Exception:
-        rec_rows = []
-
-    recommendations = [
-        {"recommendation": row[0], "frequency": row[1]}
-        for row in rec_rows
-    ]
-
+    recs = _recommendations(session)
     return {
         "total_analyses_with_evasion": int(total),
         "techniques": techniques,
-        "recommendations": recommendations,
+        # Free-text advice does not group (3,130 distinct texts in 3,176, measured
+        # 2026-11-28); the most frequent come first, the rest by GET /recommendations.
+        "recommendations": recs[:TOP_RECOMMENDATIONS],
+        "recommendations_total": len(recs),
     }
+
+
+# MITRE technique IDs as the pipeline's validators accept them.
+_MITRE_RE = re.compile(r"\AT\d{4}(\.\d{3})?\Z")
+EXAMPLE_CHARS = 240
+TOP_RECOMMENDATIONS = 25
+MAX_PAGE = 50
+
+_ENTRIES_SQL = text("""
+    SELECT a.id, t->>'technique', t->>'mitre_id', t->>'evidence'
+    FROM analyses a,
+         jsonb_array_elements(
+             a.report_json->'evasion_analysis'->'analysis'->'evasion_techniques'
+         ) AS t
+    WHERE a.report_json->'evasion_analysis'->>'enabled' = 'true'
+      AND a.report_json->'evasion_analysis'->'analysis'->'evasion_techniques' IS NOT NULL
+    ORDER BY a.id DESC
+""")
+
+_RECOMMENDATIONS_SQL = text("""
+    SELECT r, COUNT(*) AS freq
+    FROM analyses,
+         jsonb_array_elements_text(
+             report_json->'evasion_analysis'->'analysis'->'sandbox_recommendations'
+         ) AS r
+    WHERE report_json->'evasion_analysis'->>'enabled' = 'true'
+      AND report_json->'evasion_analysis'->'analysis'->'sandbox_recommendations' IS NOT NULL
+    GROUP BY r
+    ORDER BY freq DESC, r
+""")
+
+
+def _group_key(technique: str, mitre_id: str | None) -> str:
+    """One group per MITRE technique ID; entries without a valid ID group by category.
+
+    The page grouped by (technique, mitre_id, evidence). Evidence is per-sample text,
+    so 1,436 of 1,447 rows had a count of 1 (measured 2026-11-28), and the LLM names
+    one technique many ways (961 names), so names do not group either. 1,467 of 1,473
+    entries carry a valid MITRE ID, which collapses them into 73 groups.
+    """
+    mid = (mitre_id or "").strip().upper()
+    return mid if _MITRE_RE.match(mid) else f"unmapped:{_categorize(technique or '')}"
+
+
+def _entries(session: Session) -> list[tuple[int, str, str | None, str | None]]:
+    try:
+        return [tuple(r) for r in session.exec(_ENTRIES_SQL).all()]  # type: ignore[call-overload]
+    except Exception:
+        return []
+
+
+def aggregate(entries: list[tuple[int, str, str | None, str | None]]) -> list[dict]:
+    """Group (analysis_id, technique, mitre_id, evidence) rows into one row per group."""
+    groups: dict[str, dict] = {}
+    for aid, technique, mitre_id, evidence in entries:
+        key = _group_key(technique or "", mitre_id)
+        g = groups.setdefault(key, {"names": Counter(), "samples": set(), "example": None,
+                                    "categories": Counter()})
+        g["names"][technique or ""] += 1
+        g["samples"].add(aid)
+        g["categories"][_categorize(technique or "")] += 1
+        if g["example"] is None and evidence:
+            g["example"] = evidence
+    out = []
+    for key, g in groups.items():
+        name = g["names"].most_common(1)[0][0]
+        if key.startswith("unmapped:"):
+            category = key.split(":", 1)[1]
+            mitre = None
+            name = f"No MITRE ID ({len(g['names'])} name{'s' if len(g['names']) != 1 else ''})"
+        else:
+            category = g["categories"].most_common(1)[0][0]
+            mitre = key
+        example = g["example"]
+        if example and len(example) > EXAMPLE_CHARS:
+            example = example[:EXAMPLE_CHARS].rstrip() + "…"
+        out.append({
+            "group": key,
+            "technique": name,
+            "mitre_id": mitre,
+            "name_variants": len(g["names"]),
+            "evidence": example,
+            "sample_count": len(g["samples"]),
+            "category": category,
+            "status": _mitigation_status(g["names"].most_common(1)[0][0], category),
+        })
+    out.sort(key=lambda t: -t["sample_count"])
+    return out
+
+
+def _recommendations(session: Session) -> list[dict]:
+    try:
+        rows = session.exec(_RECOMMENDATIONS_SQL).all()  # type: ignore[call-overload]
+    except Exception:
+        rows = []
+    return [{"recommendation": r[0], "frequency": r[1]} for r in rows]
+
+
+def _page(offset: int, limit: int) -> tuple[int, int]:
+    return max(offset, 0), min(max(limit, 1), MAX_PAGE)
+
+
+@router.get("/evidence")
+async def list_evidence(
+    group: str,
+    offset: int = 0,
+    limit: int = 20,
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> dict:
+    """The evidence behind one group from GET /api/evasions, newest analysis first."""
+    offset, limit = _page(offset, limit)
+    rows = [{"analysis_id": aid, "technique": tech, "evidence": ev}
+            for aid, tech, mid, ev in _entries(session) if _group_key(tech or "", mid) == group]
+    return {"group": group, "total": len(rows), "offset": offset, "items": rows[offset:offset + limit]}
+
+
+@router.get("/recommendations")
+async def list_recommendations(
+    offset: int = 0,
+    limit: int = 25,
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Sandbox recommendations, most frequent first, a page at a time."""
+    offset, limit = _page(offset, limit)
+    recs = _recommendations(session)
+    return {"total": len(recs), "offset": offset, "items": recs[offset:offset + limit]}
