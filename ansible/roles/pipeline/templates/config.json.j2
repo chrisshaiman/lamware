@@ -101,5 +101,6 @@
   "relationship_max_ioc_frequency": {{ pipeline_relationship_max_ioc_frequency | default(20) }},
   "relationship_ssdeep_threshold": {{ pipeline_relationship_ssdeep_threshold | default(80) }},
   "llm_profiles": {{ (pipeline_llm_profiles_builtin | combine(pipeline_llm_profiles | default({}))) | to_json }},
-  "default_llm_profile": {{ pipeline_default_llm_profile | default('local') | to_json }}
+  "default_llm_profile": {{ pipeline_default_llm_profile | default('local') | to_json }},
+  "local_aliases": {{ (litellm_operator_models | default([])) | selectattr('local', 'defined') | selectattr('local') | map(attribute='model_name') | list | to_json }}
 }

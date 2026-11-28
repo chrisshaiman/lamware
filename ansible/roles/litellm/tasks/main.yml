@@ -17,6 +17,21 @@
     group: root
     mode: "0700"
 
+- name: Check the operator's LiteLLM models
+  ansible.builtin.import_tasks: operator-models.yml
+
+# No model_name twice in the RENDERED config: an operator entry that reused a
+# built-in alias would shadow it, the trap tests/test_automated_runs_stay_local.py
+# describes (a "local" name routed to the cloud). Rendered in memory, not written.
+- name: Check no model name appears twice in LiteLLM's config
+  vars:
+    _names: "{{ (lookup('ansible.builtin.template', 'config.yaml.j2') | from_yaml).model_list | map(attribute='model_name') | list }}"
+    _twice: "{{ _names | community.general.counter | dict2items | selectattr('value', 'gt', 1) | map(attribute='key') | list }}"
+  ansible.builtin.assert:
+    that: _names | length == _names | unique | length
+    fail_msg: "LiteLLM model names used twice: {{ _twice }}"
+    quiet: true
+
 - name: Deploy LiteLLM config
   ansible.builtin.template:
     src: config.yaml.j2

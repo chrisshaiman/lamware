@@ -1,0 +1,50 @@
+---
+# Checks on the operator's own LiteLLM models (ADR-038 decision 2). Imported by the
+# litellm role before it writes config.yaml, and by the pipeline role before it writes
+# config.json, whose local_aliases come from the `local: true` entries: the pipeline
+# lets a profile with cloud: false name those, so `local` must be true where it says.
+
+- name: Check each operator model's shape, name and declared location
+  vars:
+    _m: "{{ item }}"
+    _params: "{{ item.litellm_params | default({}) }}"
+    _base: "{{ _params.api_base | default('') }}"
+    # Parameter names that carry a secret. Their values must be os.environ/ references,
+    # so the config file (and anything that prints it) never holds a credential.
+    _secretish: "{{ _params | dict2items | selectattr('key', 'search', '(key|secret|token|password|credential)') | list }}"
+  ansible.builtin.assert:
+    that:
+      - _m.model_name is string and _m.model_name is match('^[a-z0-9][a-z0-9._-]*$')
+      - _m.local is boolean
+      - _params is mapping and (_params.model | default('')) is string and (_params.model | default('')) | length > 0
+      - (not _m.local) or (_base is match('^https?://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]+)?(/|$)'))
+      - (not _m.local) or (_m.model_name is not match('^eval-'))
+      - _m.local or (_m.model_name is not match('^(local-qwen-llamacpp[a-z0-9-]*|stub)$'))
+      - _secretish | rejectattr('value', 'match', '^os\.environ/[A-Z][A-Z0-9_]*$') | list | length == 0
+    fail_msg: >-
+      litellm_operator_models entry {{ _m.model_name | default('(no model_name)') }}:
+      needs model_name (lowercase, digits, . _ -), local: true|false, and litellm_params.model;
+      a local entry routes to this host (api_base on 127.0.0.1, localhost or ::1) and is not
+      named eval-*; a cloud entry is not named like a built-in local alias; and every
+      key/secret/token/password/credential parameter is an os.environ/NAME reference.
+    quiet: true
+  loop: "{{ litellm_operator_models | default([]) }}"
+  loop_control:
+    label: "{{ item.model_name | default('(no model_name)') }}"
+
+- name: Check the operator's LiteLLM environment variables
+  vars:
+    _env: "{{ litellm_operator_env | default({}) }}"
+    # Names only: nothing here puts a value in a message.
+    _bad_names: "{{ _env.keys() | reject('match', '^[A-Z][A-Z0-9_]*$') | list
+                    + (_env.keys() | select('in', ['ANTHROPIC_API_KEY', 'ANTHROPIC_RESEARCH_API_KEY', 'DATABASE_URL']) | list) }}"
+    _multiline: "{{ _env | dict2items | selectattr('value', 'search', '[\\r\\n]') | map(attribute='key') | list }}"
+  ansible.builtin.assert:
+    that:
+      - _bad_names | length == 0
+      - _multiline | length == 0
+    fail_msg: >-
+      litellm_operator_env: names must be UPPER_CASE and may not replace ANTHROPIC_API_KEY,
+      ANTHROPIC_RESEARCH_API_KEY or DATABASE_URL (refused: {{ _bad_names }}); values must be
+      one line (refused: {{ _multiline }}).
+    quiet: true

@@ -270,6 +270,15 @@ model_list:
       model: "anthropic/{{ litellm_fallback_backend }}"
 {{ anthropic_auth('production') }}
 
+{# The operator's own entries (ADR-038), checked by tasks/operator-models.yml.
+   Rendered as JSON, which is valid YAML, so a value cannot break the structure.
+   Jinja's built-in tojson, not Ansible's to_json: tests render this template in
+   plain Jinja, which rejects an unknown filter even inside an empty loop. #}
+{% for m in litellm_operator_models | default([]) %}
+  - model_name: {{ m.model_name | tojson }}
+    litellm_params: {{ m.litellm_params | tojson }}
+{% endfor %}
+
 litellm_settings:
   drop_params: true
   set_verbose: false
