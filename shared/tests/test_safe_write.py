@@ -78,3 +78,42 @@ def test_a_path_outside_the_root_is_refused(report, tmp_path):
         safe_write.write_text(tmp_path / "outside.json", "x", root=root)
     with pytest.raises(ValueError):
         safe_write.write_text(root / ".." / "escape.json", "x", root=root)
+
+
+# --- under systemd's RestrictSUIDSGID= (pipeline-spool.service) ---------------------
+
+def _restrict_suid_sgid(monkeypatch):
+    """Emulate the seccomp filter: a mkdir asking for S_ISUID/S_ISGID is EPERM,
+    whether or not the directory exists (measured on the host, 2026-11-28)."""
+    import stat as _stat
+    real = os.mkdir
+
+    def mkdir(path, mode=0o777, *a, **kw):
+        if mode & (_stat.S_ISUID | _stat.S_ISGID):
+            raise PermissionError(1, "Operation not permitted", path)
+        return real(path, mode, *a, **kw)
+    monkeypatch.setattr(os, "mkdir", mkdir)
+
+
+def test_writes_work_under_restrict_suid_sgid_into_an_existing_dir(tmp_path, monkeypatch):
+    # The failing case: interpret makes llm_audit itself, then writes into it.
+    (tmp_path / "llm_audit").mkdir()
+    _restrict_suid_sgid(monkeypatch)
+    safe_write.write_text(tmp_path / "llm_audit" / "a.json", "{}", root=tmp_path)
+    safe_write.append_text(tmp_path / "llm_audit" / "a.trail.jsonl", "x\n", root=tmp_path)
+    assert (tmp_path / "llm_audit" / "a.json").read_text() == "{}"
+
+
+def test_writes_work_under_restrict_suid_sgid_creating_dirs(tmp_path, monkeypatch):
+    _restrict_suid_sgid(monkeypatch)
+    safe_write.write_text(tmp_path / "x" / "y" / "z.json", "{}", root=tmp_path)
+    assert (tmp_path / "x" / "y" / "z.json").exists()
+
+
+def test_new_dirs_still_inherit_setgid_from_a_setgid_root(tmp_path):
+    import stat as _stat
+    tmp_path.chmod(0o2770)
+    if not tmp_path.stat().st_mode & _stat.S_ISGID:
+        pytest.skip("this filesystem does not keep setgid on directories")
+    safe_write.write_text(tmp_path / "llm_audit" / "a.json", "{}", root=tmp_path)
+    assert (tmp_path / "llm_audit").stat().st_mode & _stat.S_ISGID
