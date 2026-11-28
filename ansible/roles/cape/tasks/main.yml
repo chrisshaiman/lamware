@@ -714,7 +714,13 @@
   notify: Restart Cape services
 
 # -------------------------------------------------------------------------
-# cape is in no group it doesn't write for (ADR-031 phase 1).
+# cape is in no group outside cape_supplementary_groups (ADR-031).
+#
+# An allowlist, not a list of groups to remove: CAPE's installer adds groups
+# of its own (cape2.sh: `usermod -a -G systemd-journal`, which let every cape
+# process read every service's journal), and a removal list only catches the
+# ones someone already noticed. Phase 1 removed lamware; this removes anything
+# else not listed, on every deploy.
 #
 # The pipeline reads CAPE's output through the ACL on /opt/CAPEv2/storage
 # (group:lamware r-x, inherited by new analyses) and the setgid lamware on its
@@ -730,9 +736,9 @@
   changed_when: false
   check_mode: false
 
-- name: Remove cape from the lamware group
-  ansible.builtin.command: gpasswd -d {{ cape_user }} lamware
-  when: "'lamware' in cape_groups_now.stdout.split()"
+- name: Remove cape from every group outside its allowlist
+  ansible.builtin.command: gpasswd -d {{ cape_user }} {{ item }}
+  loop: "{{ cape_groups_now.stdout.split() | difference([cape_user] + cape_supplementary_groups) }}"
   changed_when: true
   notify:
     - Restart Cape services
@@ -801,14 +807,16 @@
 # From the running processes, not from what this play changed: a deploy that
 # failed before the restart left the removal and the drop-ins applied and CAPE
 # still running with lamware, and the next deploy changes neither.
-- name: Find CAPE processes still carrying the lamware group
+- name: Find CAPE processes carrying a group outside its allowlist
   ansible.builtin.shell:
     cmd: |
       set -o pipefail
-      g=$(getent group lamware | cut -d: -f3) || exit 0
-      [ -n "$g" ] || exit 0
+      allowed=" "
+      for n in {{ ([cape_user] + cape_supplementary_groups) | join(' ') }}; do
+        g=$(getent group "$n" | cut -d: -f3) && [ -n "$g" ] && allowed="$allowed$g "
+      done
       for p in $(ps -u {{ cape_user }} -o pid=); do
-        awk -v g="$g" '/^(Gid|Groups):/{for (i = 2; i <= NF; i++) if ($i == g) f = 1} END {exit !f}' \
+        awk -v ok="$allowed" '/^(Gid|Groups):/{for (i = 2; i <= NF; i++) if (index(ok, " " $i " ") == 0) f = 1} END {exit !f}' \
           "/proc/$p/status" 2>/dev/null && echo "$p"
       done
       exit 0

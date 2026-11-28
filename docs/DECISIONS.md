@@ -1961,6 +1961,14 @@ fatrace ran for 3.8 days (95 hourly snapshots), recording every non-root open, r
   - the pipeline can still read the newest analysis (the control);
   - at least one cape process exists (otherwise the probe is blind).
 
+### Phase 1 follow-up (2026-11-28): cape's groups are an allowlist
+
+- **Phase 1 removed one named group.** CAPE's installer adds others: `cape2.sh` runs `usermod -a -G systemd-journal`, which let every cape process read every service's journal. Nothing in CAPE reads the host journal: its one `journalctl` parser reads a file from the guest.
+- **The cape role now removes cape from every group outside `cape_supplementary_groups`** (`[libvirt]`: the libvirt socket is `root:libvirt 660`, and ADR-027's polkit rule decides what cape may do through it). It does this on every deploy, before CAPE restarts, and restarts any cape process still carrying another group.
+- **Check 27 is an allowlist too:**
+  - `/etc/group` and every running cape process may hold only cape's own group and the allowlist;
+  - the probe fails as blind if an allowlisted group doesn't resolve or no cape process exists.
+
 ### Phase 2 (2026-11-28): one group per shared data flow
 
 **The flows, from the code, the units and phase 0** (phase 0 attributed only the API's reads of the feeder state; the rest were exited processes):
