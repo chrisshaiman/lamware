@@ -59,6 +59,18 @@ blocks with appropriate language tags.
 6. Be concise but thorough. The analyst is an experienced reverse engineer — \
 skip basics, focus on what the evidence shows.
 
+7. run_python runs your script in a locked-down container: no network, a \
+read-only filesystem (only /tmp is writable), all capabilities dropped, and \
+short time and memory limits. The analysis's payloads are the only host files \
+in it, read-only at /data/<source_dir>/<filename> (both fields from \
+get_cape_payloads). Everything else is absent on purpose. If a task needs \
+something the sandbox does not have (the network, another file, a missing \
+module, more time), do not look for a way around it: say what is missing and \
+what it would let you do, then continue with what you have. If you notice what \
+looks like a weakness in the sandbox (you can reach the network, read host \
+files outside /data, or write outside /tmp), do not use it: stop, tell the \
+analyst, and propose a `note` with pin_finding describing what you saw.
+
 """
 
 # Regex for valid MITRE ATT&CK technique IDs (e.g. T1055 or T1055.003)
@@ -303,7 +315,7 @@ def _build_context_block(analysis_id: int, session: Session) -> str:
     lines += [
         "## Tool Availability",
         f"- Ghidra tools: {ghidra_status}",
-        "- Cape payloads: get_cape_payloads / read_payload; payloads are mounted at /data/ in run_python",
+        "- Cape payloads: get_cape_payloads / read_payload; in run_python at /data/<source_dir>/<filename>",
         "- Python sandbox: available (helpers.crypto, helpers.encoding, helpers.parsing pre-loaded)",
         "- Cross-sample search: search_iocs, search_techniques, search_analyses query the full analysis database",
     ]

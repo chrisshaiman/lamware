@@ -269,7 +269,7 @@ TOOL_DEFINITIONS = [
         "description": (
             "Read a hex preview (first 4KB) of a specific Cape-extracted payload. "
             "For full payload analysis, use run_python — payloads are mounted at "
-            "/data/ in the sandbox."
+            "/data/<source_dir>/<filename> in the sandbox."
         ),
         "input_schema": {
             "type": "object",
@@ -326,8 +326,9 @@ TOOL_DEFINITIONS = [
             "bytes_to_hex, rot13`; "
             "`from helpers.parsing import read_dword_le, read_dword_be, read_qword_le, "
             "extract_strings, pe_overlay_offset, struct_unpack_at`. "
-            "Cape payload files for the current analysis are mounted read-only at /data/ "
-            "(filenames from get_cape_payloads)."
+            "Cape payload files for the current analysis are mounted read-only at "
+            "/data/<source_dir>/<filename> (both from get_cape_payloads). Nothing else "
+            "from the host is in the sandbox; see rule 7 of your instructions."
         ),
         "input_schema": {
             "type": "object",
