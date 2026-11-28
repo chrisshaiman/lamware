@@ -179,7 +179,7 @@ Usage is recorded for every call, whatever the profile.
 - **LiteLLM's recorded cost is the price of record** (ADR-037). Every call carries a LiteLLM call ID. After the last LLM stage, the pipeline looks each one up in LiteLLM's spend log and writes `report["llm_cost"]`: dollars, calls, resolved, and `complete`.
 - **When the record is incomplete,** for example a call the spend log doesn't have, the report lists the unresolved IDs, and the database row is priced from the pipeline's rate table instead. The tables remain only as that fallback.
 - **Local and `stub` runs** cost zero.
-- **The investigation panel** still prices from its own table (`MODEL_COSTS`). A listed model with no price there isn't offered, until the panel moves to LiteLLM's prices.
+- **The investigation panel** prices each turn at LiteLLM's per-model prices (`/v1/model/info`), and offers only models LiteLLM states a price for, so nothing is silently recorded as free. A local model is free by declaration: give its entry `input_cost_per_token: 0` and `output_cost_per_token: 0` in `litellm_params`.
 
 ## For permission phases (ADR-031)
 

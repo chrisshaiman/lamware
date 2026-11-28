@@ -30,6 +30,7 @@ import httpx
 from lamware_shared.untrusted import wrap_untrusted
 
 from ..config import settings
+from . import pricing
 from .tools import TOOL_DEFINITIONS, execute_tool
 
 log = logging.getLogger(__name__)
@@ -38,38 +39,24 @@ log = logging.getLogger(__name__)
 # Cost table — USD per token (input / output)
 # ---------------------------------------------------------------------------
 
-MODEL_COSTS: dict[str, dict[str, float]] = {
-    "claude-sonnet-4-6": {"input": 3e-6, "output": 15e-6},
-    "claude-opus-4-6": {"input": 5e-6, "output": 25e-6},
-    "claude-haiku-4-5": {"input": 1e-6, "output": 5e-6},
-}
-
-# ---------------------------------------------------------------------------
-# Pure helpers — unit-testable without httpx or asyncio
-# ---------------------------------------------------------------------------
-
-
 def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """USD for one turn. Warns rather than silently pricing an unknown model at zero.
+    """USD for one turn, at LiteLLM's prices (pricing.py). Warns rather than silently
+    pricing a model with no stated price at zero.
 
-    The lookup used to fall back to `{"input": 0.0, "output": 0.0}` inline, which
-    made an unpriced model indistinguishable from a genuinely free one in the
-    recorded figure — and `investigation_cost_alert_usd` is an alert threshold,
-    not a cap, so nothing downstream bounded what it failed to notice.
-
-    The router's allowlist now derives from MODEL_COSTS, so this branch is
-    unreachable through the API. It is kept, and made loud, for anything that
-    reaches the orchestrator another way.
+    The panel offers only models LiteLLM prices (routers/investigate.valid_models), so
+    this branch is unreachable through the API. It is kept, and made loud, for anything
+    that reaches the orchestrator another way.
     """
-    costs = MODEL_COSTS.get(model)
-    if costs is None:
+    price = pricing.prices().get(model)
+    if price is None:
         log.warning(
-            "No cost entry for model %r — %d input and %d output tokens are "
-            "being recorded as $0.00. Add it to MODEL_COSTS.",
+            "No LiteLLM price for model %r — %d input and %d output tokens are "
+            "being recorded as $0.00. Give its LiteLLM entry input_cost_per_token and "
+            "output_cost_per_token.",
             model, input_tokens, output_tokens,
         )
         return 0.0
-    return input_tokens * costs["input"] + output_tokens * costs["output"]
+    return input_tokens * price.input + output_tokens * price.output
 
 
 def parse_stream_line(line: str) -> dict | None:
@@ -424,7 +411,8 @@ async def run_conversation_turn(
 
             # Loop back to call the LLM again with tool results
 
-    cost = compute_cost(model, total_input_tokens, total_output_tokens)
+    # In a thread: a stale price cache means a blocking HTTP call to LiteLLM.
+    cost = await asyncio.to_thread(compute_cost, model, total_input_tokens, total_output_tokens)
 
     yield {
         "event": "done",

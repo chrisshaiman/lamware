@@ -45,6 +45,11 @@ def _client(roles=("analyst",), db=None) -> TestClient:
 @pytest.fixture(autouse=True)
 def _clear_overrides(monkeypatch):
     monkeypatch.setattr("app.routers.investigate.log_audit", lambda *a, **k: None)
+    # LiteLLM's prices (pricing.py); there is no LiteLLM in this job. Patched on the
+    # `pricing` the router holds, which import order across test files decides.
+    from app.routers import investigate as router
+    monkeypatch.setattr(router.pricing, "prices", lambda: {
+        m: (1e-6, 5e-6) for m in ("claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5")})
     yield
     app.dependency_overrides.clear()
 
