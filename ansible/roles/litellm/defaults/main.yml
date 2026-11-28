@@ -100,3 +100,29 @@ litellm_scoped_keys:
   - name: pipeline-spend
     role: proxy_admin_viewer
     models: ["no-models"]
+
+# Your own LiteLLM model entries (ADR-038 decision 2): any provider LiteLLM supports
+# (Bedrock, Foundry, Vertex, Ollama, vLLM, ...). Each is a LiteLLM model_list entry
+# plus `local`, which declares where it runs. docs/LLM_PROFILES.md has examples.
+#
+#   - model_name: eval-bedrock-sonnet      # cloud aliases a profile may use: eval-*
+#     local: false
+#     litellm_params:
+#       model: bedrock/anthropic.claude-sonnet-...
+#       aws_region_name: us-east-1
+#       aws_access_key_id: os.environ/AWS_ACCESS_KEY_ID          # never a literal
+#       aws_secret_access_key: os.environ/AWS_SECRET_ACCESS_KEY
+#
+# The deploy refuses (tasks/operator-models.yml):
+#   - a model_name another entry already uses (no shadowing a built-in alias);
+#   - `local: true` whose api_base is not on this host (127.0.0.1, localhost, ::1);
+#   - `local: false` named like a built-in local alias, or `local: true` named eval-*;
+#   - a credential-looking parameter that is not an os.environ/ reference.
+# Local entries are what the pipeline may use in a profile with cloud: false.
+litellm_operator_models: []
+
+# Environment variables for those entries' os.environ/ references, written to
+# LiteLLM's env file (0600). Put the values in the vault, not here:
+#   litellm_operator_env:
+#     AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key_id }}"
+litellm_operator_env: {}

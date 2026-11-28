@@ -79,9 +79,69 @@ What a profile can name today, and how far each is verified on this host:
 | **`llm-stub`** (`stub`) | LiteLLM's router to the loopback stub | verified: coverage and permission runs |
 | **Anthropic API, eval credentials** (`eval-*`) | LiteLLM, then the Workload Identity Federation forwarder (ADR-033) or a workspace key | verified: `eval-haiku55` runs, priced by LiteLLM |
 | **Anthropic API, production credentials** | LiteLLM with the production key | used by the investigation panel only; not available to profiles |
-| **Amazon Bedrock, Microsoft Foundry, Google Vertex, other local servers** (Ollama, vLLM) | LiteLLM supports them | **not yet:** see below |
+| **Your own providers:** Amazon Bedrock, Microsoft Foundry, Google Vertex, other local servers (Ollama, vLLM) | `litellm_operator_models` (below) | supported by the deploy; **none of the examples below is verified on this host** |
 
-**The gap.** Adding your own provider today means editing `ansible/roles/litellm/templates/config.yaml.j2`, and the local/cloud check recognises local models only by the built-in names. A variable for your own LiteLLM model entries, with the same checks (no entry may shadow an existing alias, and a local alias must route to this host), and a way to declare which of your aliases are local, is planned. Provider examples will be added here with it, each marked verified or not.
+### Adding your own provider
+
+Put LiteLLM model entries in `litellm_operator_models` and their credentials in `litellm_operator_env`, in your `ansible/vars/main.yml`, with the secret values from your vault. Then deploy `litellm` and `pipeline`. Each entry is a LiteLLM `model_list` entry plus `local`, which declares where the model runs.
+
+**The deploy refuses:**
+- an entry whose `model_name` is already used, so nothing can shadow a built-in alias;
+- `local: true` whose `api_base` isn't on this host (`127.0.0.1`, `localhost` or `[::1]`);
+- `local: true` named `eval-*`, or `local: false` named like a built-in local alias;
+- a parameter whose name contains key, secret, token, password or credential, unless its value is an `os.environ/NAME` reference. Secrets stay in the env file, never in the config;
+- an env variable that would replace `ANTHROPIC_API_KEY`, `ANTHROPIC_RESEARCH_API_KEY` or `DATABASE_URL`.
+
+**What each kind can be used for:**
+- **`local: true` entries** may appear in a profile with `cloud: false`. The pipeline reads them from the deploy, so declaring an entry local is a claim the deploy has checked.
+- **Cloud entries named `eval-*`** may appear in a cloud profile. Any entry, local or cloud, may be listed for the investigation panel (`api_investigate_models`).
+
+The parameter names follow LiteLLM's provider documentation; check it for your provider. These are starting points, **not verified here**:
+
+```yaml
+litellm_operator_models:
+  # Amazon Bedrock (cloud). LiteLLM's model string is bedrock/<Bedrock model id>.
+  - model_name: eval-bedrock-sonnet
+    local: false
+    litellm_params:
+      model: bedrock/anthropic.claude-sonnet-5-5
+      aws_region_name: us-east-1
+      aws_access_key_id: os.environ/AWS_ACCESS_KEY_ID
+      aws_secret_access_key: os.environ/AWS_SECRET_ACCESS_KEY
+
+  # Microsoft Foundry (cloud): LiteLLM's azure_ai provider, with your endpoint.
+  - model_name: eval-foundry-sonnet
+    local: false
+    litellm_params:
+      model: azure_ai/claude-sonnet-5-5
+      api_base: https://<your-resource>.services.ai.azure.com
+      api_key: os.environ/AZURE_AI_API_KEY
+
+  # Ollama on this host (local).
+  - model_name: local-ollama-qwen
+    local: true
+    litellm_params:
+      model: ollama/qwen3
+      api_base: http://127.0.0.1:11434
+
+  # vLLM's OpenAI-compatible server on this host (local).
+  - model_name: local-vllm
+    local: true
+    litellm_params:
+      model: openai/<served-model-name>
+      api_base: http://127.0.0.1:8000/v1
+      api_key: os.environ/VLLM_API_KEY
+
+litellm_operator_env:
+  AWS_ACCESS_KEY_ID: "{{ vault_aws_access_key_id }}"
+  AWS_SECRET_ACCESS_KEY: "{{ vault_aws_secret_access_key }}"
+  AZURE_AI_API_KEY: "{{ vault_azure_ai_api_key }}"
+  VLLM_API_KEY: "{{ vault_vllm_api_key }}"
+```
+
+**Not covered yet:**
+- **Google Vertex** usually authenticates with a service-account file. LiteLLM runs in a container, and the deploy doesn't mount files into it, so Vertex needs an environment-based credential, or that support adding later.
+- **A local model other than the built-in llama.cpp one** takes the same pipeline paths as llama.cpp's, but those paths were tuned for it (for example how thinking is turned off). Run the `stub` and a real sample on it before relying on it.
 
 The investigation panel has its own list, `api_investigate_models` in the api role: LiteLLM aliases with labels. It isn't a profile.
 

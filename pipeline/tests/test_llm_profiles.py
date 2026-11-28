@@ -248,3 +248,27 @@ def test_a_profile_naming_escalation_is_refused_with_the_reason(key):
     """ADR-038 removed escalation; an operator's old profile gets told why, by name."""
     with pytest.raises(ValueError, match="ADR-038"):
         _cfg(old=dict(STUB, **{key: "stub" if key == "escalation_model" else 5}))
+
+
+OLLAMA = {"cloud": False, "model": "local-ollama-qwen", "summary_model": "local-ollama-qwen",
+          "plain_english_model": "local-ollama-qwen", "re_backend": "local", "single_shot_backend": "local"}
+
+
+def test_a_declared_local_alias_may_be_used_in_a_local_profile():
+    """ADR-038: the operator's `local: true` LiteLLM entries are local to the pipeline."""
+    data = json.loads(FIXTURE.read_text())
+    cfg = PipelineConfig.model_validate(dict(data, llm_profiles={"ollama": OLLAMA},
+                                             local_aliases=["local-ollama-qwen"]))
+    assert cfg.profile_is_cloud("ollama") is False
+
+
+def test_an_undeclared_alias_is_still_refused_in_a_local_profile():
+    data = json.loads(FIXTURE.read_text())
+    with pytest.raises(ValidationError, match="not a local alias"):
+        PipelineConfig.model_validate(dict(data, llm_profiles={"ollama": OLLAMA}))
+
+
+def test_an_eval_name_cannot_be_declared_local():
+    data = json.loads(FIXTURE.read_text())
+    with pytest.raises(ValidationError, match="reserved for cloud"):
+        PipelineConfig.model_validate(dict(data, local_aliases=["eval-sneaky"]))

@@ -680,6 +680,14 @@
     state: mounted
   when: pipeline_volatility_ramdisk | default('') | length > 0
 
+# The local_aliases written into config.json come from litellm_operator_models'
+# `local: true` entries; check them here too, since a pipeline-only deploy does not
+# run the litellm role (ADR-038).
+- name: Check the operator's LiteLLM models
+  ansible.builtin.import_role:
+    name: litellm
+    tasks_from: operator-models.yml
+
 # ADR-038: the default profile is the operator's to choose. Refuse an undefined name
 # before anything is written (PipelineConfig refuses it too, but only when a run
 # starts), and say so when automated runs will send prompts off the host.

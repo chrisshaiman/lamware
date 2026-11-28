@@ -217,6 +217,11 @@ class PipelineConfig(BaseModel):
     # intake without LLM_PROFILE (ADR-038). Ships as "local"; the operator changes it
     # with pipeline_default_llm_profile (or `make llm-default PROFILE=...`).
     default_llm_profile: str = LOCAL_PROFILE
+    # The operator's own LiteLLM aliases declared `local: true` (litellm_operator_models,
+    # ADR-038 decision 2). The litellm role's deploy checks refuse one whose api_base is
+    # not on this host, so a profile with cloud: false may name these as well as the
+    # built-in local aliases (LOCAL_ALIAS_RE).
+    local_aliases: list[str] = Field(default_factory=list)
     # Where the orchestrator reads LiteLLM's spend log for a run's cost (ADR-037).
     # Defaulted so an older config.json still loads.
     # LiteLLM's Unix socket (litellm-socket.service). The pipeline user reaches LiteLLM
@@ -233,7 +238,7 @@ class PipelineConfig(BaseModel):
                 raise ValueError(f"llm profile name {name!r}: lowercase letters, digits, '-'")
             prof = self.llm_profiles[name]
             remote = [m for m in (getattr(prof, f) for f in MODEL_FIELDS)
-                      if not re.fullmatch(LOCAL_ALIAS_RE, m)]
+                      if not self.is_local_alias(m)]
             if remote and not prof.cloud:
                 # Fail closed: a mislabelled profile would send decompiled malware
                 # off the host while its reports said it did not.
@@ -254,6 +259,16 @@ class PipelineConfig(BaseModel):
             elif transports != ("local", "local"):
                 raise ValueError(f"llm profile {name!r}: a local profile needs re_backend and "
                                  f"single_shot_backend 'local', got {transports}")
+        return self
+
+    def is_local_alias(self, alias: str) -> bool:
+        return bool(re.fullmatch(LOCAL_ALIAS_RE, alias)) or alias in self.local_aliases
+
+    @model_validator(mode="after")
+    def _local_aliases_are_not_cloud_names(self) -> "PipelineConfig":
+        bad = [a for a in self.local_aliases if re.fullmatch(CLOUD_ALIAS_RE, a)]
+        if bad:
+            raise ValueError(f"local_aliases {bad} use the eval-* names reserved for cloud aliases")
         return self
 
     @model_validator(mode="after")
