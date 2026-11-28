@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every model the agent may select has to have a price.
 
-The allow-list is the operator's investigate_models (ADR-038), filtered by
-MODEL_COSTS. Before that, `VALID_MODELS` (routers/investigate) and `MODEL_COSTS`
+The allow-list is the operator's investigate_models (ADR-038), filtered by the
+models LiteLLM states a price for (pricing.py). MODEL_COSTS, the hand-kept table
+that once did this, is gone. Before the operator list, `VALID_MODELS` (routers/investigate) and `MODEL_COSTS`
 (investigate/orchestrator) were two hand-maintained lists in two modules. They agreed, and nothing made them.
 A model in the allowlist but not the cost table bills at $0.00 per token, because
 the lookup fell back to `{"input": 0.0, "output": 0.0}` — which is also what a
@@ -19,20 +20,34 @@ import logging
 from types import SimpleNamespace
 
 import pytest
-from app.config import DEFAULT_INVESTIGATE_MODELS, settings
-from app.investigate.orchestrator import MODEL_COSTS
+from app.config import settings
+from app.investigate.pricing import Price
 from app.routers import investigate as router
+
+LITELLM_PRICES = {"claude-sonnet-4-6": Price(3e-6, 15e-6), "claude-opus-4-6": Price(5e-6, 25e-6),
+                  "claude-haiku-4-5": Price(1e-6, 5e-6)}
+
+
+@pytest.fixture(autouse=True)
+def _litellm_prices(monkeypatch):
+    """LiteLLM's prices as /v1/model/info would give them; no LiteLLM in this job.
+
+    Patched on the `pricing` each module under test HOLDS: other test files exec these
+    modules against stubs, so the import order decides which object that is."""
+    from app.investigate import orchestrator
+    for holder in (router, orchestrator):
+        monkeypatch.setattr(holder.pricing, "prices", lambda: dict(LITELLM_PRICES))
 
 
 def test_every_selectable_model_has_a_price():
-    """THE contract. Holds by construction: valid_models() drops what MODEL_COSTS
-    cannot price, so an operator-listed model never bills at $0.00 per token."""
-    unpriced = sorted(set(router.valid_models()) - set(MODEL_COSTS))
+    """THE contract. Holds by construction: valid_models() drops what LiteLLM does not
+    price, so an operator-listed model never bills at $0.00 per token."""
+    unpriced = sorted(set(router.valid_models()) - set(LITELLM_PRICES))
     assert not unpriced, unpriced
 
 
 def test_an_unpriced_listed_model_is_left_out_and_named(monkeypatch, caplog):
-    """ADR-038: the operator's list, minus what has no price, logged by name."""
+    """ADR-038: the operator's list, minus what LiteLLM has no price for, logged by name."""
     monkeypatch.setattr(settings, "investigate_models", [
         SimpleNamespace(name="claude-sonnet-4-6", label="Sonnet"),
         SimpleNamespace(name="claude-sonnet-9", label="Future")])
@@ -49,29 +64,20 @@ def test_the_operator_list_sets_the_order_and_the_labels(monkeypatch):
                                            {"name": "claude-opus-4-6", "label": "Deep"}]
 
 
-def test_the_shipped_default_is_offered_whole():
-    """Guards the other direction: a default that filters to nothing would satisfy
-    the contract above with an allowlist of nothing."""
-    assert [m.name for m in DEFAULT_INVESTIGATE_MODELS] == [
-        "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"]
-    assert set(m.name for m in DEFAULT_INVESTIGATE_MODELS) <= set(MODEL_COSTS)
-
-
-def test_every_price_is_a_positive_number():
-    """A model priced at zero is the same silent-$0 bug with extra steps."""
-    for model, price in MODEL_COSTS.items():
-        assert set(price) == {"input", "output"}, model
-        for leg, value in price.items():
-            assert isinstance(value, (int, float)) and value > 0, f"{model}.{leg} = {value}"
+def test_with_litellm_unreadable_nothing_is_offered(monkeypatch):
+    """pricing.prices() is empty when LiteLLM cannot be read and nothing was read
+    before: fail closed, rather than offer models nobody can price."""
+    monkeypatch.setattr(router.pricing, "prices", lambda: {})
+    assert router.valid_models() == []
 
 
 # --- compute_cost: the fallback still exists, and now says so ------------
 
-def test_a_priced_model_costs_what_the_table_says():
-    from app.investigate.orchestrator import MODEL_COSTS, compute_cost
-    price = MODEL_COSTS["claude-sonnet-4-6"]
+def test_a_priced_model_costs_what_litellm_says():
+    from app.investigate.orchestrator import compute_cost
+    price = LITELLM_PRICES["claude-sonnet-4-6"]
     assert compute_cost("claude-sonnet-4-6", 1000, 500) == pytest.approx(
-        1000 * price["input"] + 500 * price["output"])
+        1000 * price.input + 500 * price.output)
 
 
 def test_an_unpriced_model_logs_a_warning_naming_the_model_and_the_tokens(caplog):
@@ -106,9 +112,9 @@ def test_zero_tokens_cost_zero_without_a_warning():
 
 
 @pytest.mark.parametrize("model", ["claude-sonnet-5", "claude-opus-5", "gpt-4o"])
-def test_models_the_proxy_serves_but_we_do_not_price_are_not_selectable(model, monkeypatch):
-    """The concrete drift scenario: LiteLLM serves these today. Even when the operator
-    lists one, it is not selectable until it is priced."""
+def test_models_litellm_does_not_price_are_not_selectable(model, monkeypatch):
+    """Even when the operator lists one, a model is not selectable until LiteLLM
+    states a price for it."""
     monkeypatch.setattr(settings, "investigate_models", [
         SimpleNamespace(name="claude-sonnet-4-6", label="Sonnet"), SimpleNamespace(name=model, label="X")])
     assert model not in router.valid_models()

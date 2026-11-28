@@ -10,7 +10,7 @@ orchestrator.py, following the same pattern as test_investigate_tools.py.
 Tests focus on the pure-Python parts:
   - parse_stream_line
   - ToolCallAccumulator
-  - MODEL_COSTS / cost math
+  - compute_cost at LiteLLM's prices (pricing.py, stubbed)
   - _build_openai_tools (input_schema → parameters conversion)
 
 An optional async-generator integration test with a fake httpx stream is
@@ -34,7 +34,7 @@ from tests._module_stubs import restore, snapshot
 # test module pytest collects afterwards. See _module_stubs.py.
 _STUBBED_NAMES = (
     "sqlalchemy", "sqlmodel", "httpx", "app", "app.config", "app.database",
-    "app.investigate", "app.investigate.tools",
+    "app.investigate", "app.investigate.tools", "app.investigate.pricing",
 )
 _SAVED_MODULES = snapshot(_STUBBED_NAMES)
 
@@ -117,6 +117,13 @@ _tools_mod.execute_tool = _mock_execute_tool  # type: ignore[attr-defined]
 sys.modules.setdefault("app.investigate", _inv_pkg)
 sys.modules["app.investigate.tools"] = _tools_mod
 
+# LiteLLM's prices (pricing.py): fixed here so cost math is deterministic.
+_pricing_mod = types.ModuleType("app.investigate.pricing")
+PRICES = {"claude-sonnet-4-6": types.SimpleNamespace(input=3e-6, output=15e-6),
+          "claude-opus-4-6": types.SimpleNamespace(input=5e-6, output=25e-6)}
+_pricing_mod.prices = lambda: PRICES  # type: ignore[attr-defined]
+sys.modules["app.investigate.pricing"] = _pricing_mod
+
 # httpx stub — force-assigned so orchestrator.py's exec always captures the
 # right HTTPStatusError / RequestError classes for its except clauses.
 _httpx_mod = types.ModuleType("httpx")
@@ -141,6 +148,12 @@ _source_patched = (
         "from .tools import TOOL_DEFINITIONS, execute_tool",
         "from app.investigate.tools import TOOL_DEFINITIONS, execute_tool",
     )
+    .replace(
+        "from . import pricing",
+        # sys.modules, not `import app.investigate.pricing`: once the real package is
+        # imported by another test, that form resolves the REAL module's attribute.
+        "pricing = __import__('sys').modules['app.investigate.pricing']",
+    )
     .replace("from ..database import engine", "from app.database import engine")
 )
 
@@ -150,7 +163,7 @@ exec(_source_patched, _ns)  # noqa: S102
 # Pull out the symbols under test
 parse_stream_line = _ns["parse_stream_line"]
 ToolCallAccumulator = _ns["ToolCallAccumulator"]
-MODEL_COSTS = _ns["MODEL_COSTS"]
+compute_cost = _ns["compute_cost"]
 _build_openai_tools = _ns["_build_openai_tools"]
 run_conversation_turn = _ns["run_conversation_turn"]
 
@@ -296,44 +309,28 @@ def test_accumulator_multiple_fragments_many_chunks():
 
 
 # ---------------------------------------------------------------------------
-# MODEL_COSTS and cost math tests
+# Cost math, at LiteLLM's prices (pricing.py, stubbed above)
 # ---------------------------------------------------------------------------
 
 
-def test_model_costs_keys_present():
-    assert "claude-sonnet-4-6" in MODEL_COSTS
-    assert "claude-opus-4-6" in MODEL_COSTS
-    assert "claude-haiku-4-5" in MODEL_COSTS
-
-
-def test_model_costs_shape():
-    for model, costs in MODEL_COSTS.items():
-        assert "input" in costs, f"{model} missing 'input' cost"
-        assert "output" in costs, f"{model} missing 'output' cost"
-        assert costs["input"] > 0
-        assert costs["output"] > 0
-
-
 def test_cost_math_sonnet():
-    """1000 input + 500 output tokens at Sonnet pricing."""
-    costs = MODEL_COSTS["claude-sonnet-4-6"]
-    expected = round(1000 * costs["input"] + 500 * costs["output"], 6)
-    # 1000 * 3e-6 + 500 * 15e-6 = 0.003 + 0.0075 = 0.0105
-    assert expected == round(0.0105, 6)
-
-
-def test_cost_math_haiku_zero_tokens():
-    costs = MODEL_COSTS["claude-haiku-4-5"]
-    cost = round(0 * costs["input"] + 0 * costs["output"], 6)
-    assert cost == 0.0
+    """1000 input + 500 output tokens: 1000 * 3e-6 + 500 * 15e-6 = 0.0105."""
+    assert round(compute_cost("claude-sonnet-4-6", 1000, 500), 6) == 0.0105
 
 
 def test_cost_math_opus():
-    costs = MODEL_COSTS["claude-opus-4-6"]
-    # 2000 input + 1000 output
-    cost = round(2000 * costs["input"] + 1000 * costs["output"], 6)
-    # 2000 * 5e-6 + 1000 * 25e-6 = 0.01 + 0.025 = 0.035
-    assert cost == round(0.035, 6)
+    """2000 * 5e-6 + 1000 * 25e-6 = 0.035."""
+    assert round(compute_cost("claude-opus-4-6", 2000, 1000), 6) == 0.035
+
+
+def test_cost_math_zero_tokens():
+    assert compute_cost("claude-sonnet-4-6", 0, 0) == 0.0
+
+
+def test_a_model_litellm_does_not_price_costs_zero_and_says_so(caplog):
+    with caplog.at_level("WARNING"):
+        assert compute_cost("claude-unpriced", 10, 10) == 0.0
+    assert any("No LiteLLM price" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

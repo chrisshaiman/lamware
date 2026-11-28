@@ -65,7 +65,7 @@ from tests._module_stubs import restore, snapshot
 _STUBBED_NAMES = (
     "sqlalchemy", "sqlmodel", "fastapi", "fastapi.responses",
     "app", "app.config", "app.auth", "app.audit", "app.database",
-    "app.investigate", "app.investigate.orchestrator",
+    "app.investigate", "app.investigate.orchestrator", "app.investigate.pricing",
     "app.investigate.system_prompt",
     "app.models", "app.models.investigation", "app.routers",
 )
@@ -156,15 +156,16 @@ sys.modules.setdefault("app.investigate", _inv_pkg)
 
 _inv_orch = types.ModuleType("app.investigate.orchestrator")
 _inv_orch.run_conversation_turn = MagicMock()  # type: ignore[attr-defined]
-# MODEL_COSTS is a real dict, not a MagicMock: valid_models() filters the operator
-# list by it, so a mock would answer `in` with whatever a MagicMock does.
-# Mirrors the real table's KEYS; the prices are not read here.
-_inv_orch.MODEL_COSTS = {  # type: ignore[attr-defined]
-    "claude-sonnet-4-6": {"input": 3e-6, "output": 15e-6},
-    "claude-opus-4-6": {"input": 5e-6, "output": 25e-6},
-    "claude-haiku-4-5": {"input": 1e-6, "output": 5e-6},
-}
 sys.modules["app.investigate.orchestrator"] = _inv_orch
+
+# LiteLLM's prices (pricing.py), as a real dict: valid_models() filters the operator
+# list by it, so a mock would answer `in` with whatever a MagicMock does.
+_inv_pricing = types.ModuleType("app.investigate.pricing")
+_inv_pricing.prices = lambda: {  # type: ignore[attr-defined]
+    "claude-sonnet-4-6": (3e-6, 15e-6), "claude-opus-4-6": (5e-6, 25e-6),
+    "claude-haiku-4-5": (1e-6, 5e-6)}
+sys.modules["app.investigate.pricing"] = _inv_pricing
+_inv_pkg.pricing = _inv_pricing  # type: ignore[attr-defined]
 
 _inv_sp = types.ModuleType("app.investigate.system_prompt")
 _inv_sp.build_system_prompt = MagicMock()  # type: ignore[attr-defined]
@@ -209,6 +210,9 @@ _source_patched = (
     .replace("from ..audit import", "from app.audit import")
     .replace("from ..config import", "from app.config import")
     .replace("from ..database import", "from app.database import")
+    # sys.modules, not `import app.investigate.pricing`: once the real package is
+    # imported by another test, that form resolves the REAL module's attribute.
+    .replace("from ..investigate import pricing", "pricing = __import__('sys').modules['app.investigate.pricing']")
     .replace("from ..investigate.orchestrator import", "from app.investigate.orchestrator import")
     .replace("from ..investigate.system_prompt import", "from app.investigate.system_prompt import")
     .replace("from ..models.investigation import", "from app.models.investigation import")
@@ -233,7 +237,7 @@ restore(_SAVED_MODULES)
 # ---------------------------------------------------------------------------
 
 
-# NOTE: valid_models() is the operator's investigate_models filtered by MODEL_COSTS,
+# NOTE: valid_models() is the operator's investigate_models filtered by LiteLLM's prices,
 # and both are the STUBS above, so these pin the router's derivation, not the real
 # list. The real one is checked against the real modules in test_model_cost_coverage.py,
 # which is also where the allowlist-vs-price contract lives.

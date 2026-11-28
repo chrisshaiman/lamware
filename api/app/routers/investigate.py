@@ -21,28 +21,28 @@ from ..audit import log_audit
 from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
-from ..investigate.orchestrator import MODEL_COSTS, run_conversation_turn
+from ..investigate import pricing
+from ..investigate.orchestrator import run_conversation_turn
 from ..investigate.system_prompt import build_system_prompt
 from ..models.investigation import InvestigationMessage, InvestigationPin, InvestigationSession
 
 log = logging.getLogger(__name__)
 
 # The models the investigation agent may use: the operator's investigate_models
-# (ADR-038), in order, MINUS any model MODEL_COSTS cannot price.
+# (ADR-038), in order, MINUS any model LiteLLM states no price for (pricing.py).
 #
-# The filter keeps the guarantee the old derivation gave: a model absent from
-# MODEL_COSTS costs $0.00 per token, because `MODEL_COSTS.get(model, {"input": 0.0,
-# "output": 0.0})` cannot tell an unpriced model from a free one, and
-# `investigation_cost_alert_usd` is an alert threshold, not a cap, so that spend is
-# unbounded. A listed but unpriced model is left out and logged by name, until
-# ADR-038's pricing PR moves this agent to LiteLLM's prices (ADR-037).
+# The filter keeps the guarantee the old MODEL_COSTS derivation gave: a model with
+# no price would be recorded at $0.00 per token, indistinguishable from a free one,
+# and `investigation_cost_alert_usd` is an alert threshold, not a cap, so that spend
+# would be unbounded. A listed but unpriced model is left out and logged by name.
 def investigate_models() -> list[dict]:
     """The panel's models, as the UI shows them: [{"name", "label"}], first = default."""
+    priced = pricing.prices()
     offered, unpriced = [], []
     for m in settings.investigate_models:
-        (offered if m.name in MODEL_COSTS else unpriced).append(m)
+        (offered if m.name in priced else unpriced).append(m)
     if unpriced:
-        log.warning("investigate_models: %s have no MODEL_COSTS price and are not offered",
+        log.warning("investigate_models: %s have no LiteLLM price and are not offered",
                     ", ".join(m.name for m in unpriced))
     return [{"name": m.name, "label": m.label} for m in offered]
 
