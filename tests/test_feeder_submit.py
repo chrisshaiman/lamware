@@ -55,7 +55,7 @@ def test_a_sample_runs_from_a_private_copy_that_is_removed_afterwards(tmp_path):
     (call,) = _calls(log)
     path = call["argv"][0]
     assert call["argv"][1:] == ["--filename", "evil.exe", "--bazaar-family", "AgentTesla"]
-    assert call["data"] == "MZ sample" and call["mode"] == "0o640"
+    assert call["data"] == "MZ sample" and call["mode"] == "0o600"
     assert re.search(r"/lamware-feeder-[^/]+/evil\.exe$", path)
     assert not Path(path).parent.exists(), "the private copy was left behind"
 
