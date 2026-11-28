@@ -15,12 +15,15 @@
 # sample_feeder_user and the auto-feeder (another user) reads the same config
 # and seen-hash file, so neither may be able to change what the other runs or
 # where the other writes.
+- name: Flow groups and memberships (ADR-031 phase 2)
+  ansible.builtin.import_tasks: ../../pipeline/tasks/flow-groups.yml
+
 - name: Create sample-feeder install directory (root-owned; ADR-025)
   ansible.builtin.file:
     path: "{{ sample_feeder_dir }}"
     state: directory
     owner: root
-    group: lamware
+    group: lamware-seen   # ADR-031 phase 2: the two feeders
     mode: "0750"
 
 - name: Install pyzipper for AES-encrypted MalwareBazaar zips
@@ -78,14 +81,14 @@
     dest: "{{ sample_feeder_state_file }}"
     force: false
     owner: root
-    group: lamware
+    group: lamware-seen
     mode: "0660"
 
 - name: Keep the shared seen-hash file root-owned and group-writable
   ansible.builtin.file:
     path: "{{ sample_feeder_state_file }}"
     owner: root
-    group: lamware
+    group: lamware-seen
     mode: "0660"
 
 - name: Create convenience symlink

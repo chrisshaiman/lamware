@@ -30,6 +30,7 @@ from ..audit import log_audit
 from ..auth import AuthContext, require_auth, require_role
 from ..config import settings
 from ..database import get_session
+from ..shared_state import read_json_nofollow
 
 log = logging.getLogger(__name__)
 
@@ -180,10 +181,10 @@ def _touch_nofollow(path: str) -> None:
 
 
 def _read_state() -> dict | None:
-    """Read state.json. Returns None if missing or malformed."""
+    """Read state.json. Returns None if missing, malformed, a symlink or not a
+    regular file (ADR-031: shared state is read without following links)."""
     try:
-        with open(settings.auto_feeder_state) as f:
-            return json.load(f)
+        return read_json_nofollow(settings.auto_feeder_state)
     except Exception:
         return None
 
@@ -207,21 +208,20 @@ def _update_state(updates: dict) -> bool:
 
     try:
         try:
-            with open(state_path) as f:
-                state = json.load(f)
+            state = read_json_nofollow(state_path)
         except Exception:
             state = {}
 
         # Preserve the existing file's mode across the atomic swap. state.json is
-        # owned by the feeder with group `lamware` at 0664; the API only shares
+        # owned by the feeder with group `lamware-feeder` at 0660; the API only shares
         # access via that group bit. os.replace swaps in the tmp file, created
         # with the API process umask (often 0644, group read-only) — which would
-        # silently lock the feeder out of its own state. Default to 0664 when the
+        # silently lock the feeder out of its own state. Default to 0660 when the
         # file doesn't exist yet (feeder not yet started).
         try:
             orig_mode = stat.S_IMODE(os.stat(state_path).st_mode)
         except OSError:
-            orig_mode = 0o664
+            orig_mode = 0o660   # the feeder role's mode for it (ADR-031 phase 2)
 
         state.update(updates)
 

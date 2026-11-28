@@ -29,6 +29,7 @@ from sqlmodel import Session
 from ..auth import AuthContext, require_auth
 from ..config import settings
 from ..database import get_session
+from ..shared_state import read_json_nofollow
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -70,10 +71,10 @@ def _read_network_monitor() -> dict | None:
 
 
 def _read_auto_feeder() -> dict | None:
-    """Read the auto-feeder's state.json (settings.auto_feeder_state)."""
+    """Read the auto-feeder's state.json (settings.auto_feeder_state), without
+    following a link (ADR-031)."""
     try:
-        with open(settings.auto_feeder_state) as f:
-            return json.load(f)
+        return read_json_nofollow(settings.auto_feeder_state)
     except Exception:
         return None
 

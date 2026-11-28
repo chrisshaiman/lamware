@@ -20,6 +20,9 @@
     name: lamware
     system: true
 
+- name: Flow groups and memberships (ADR-031 phase 2)
+  ansible.builtin.import_tasks: flow-groups.yml
+
 - name: Create pipeline primary group
   ansible.builtin.group:
     name: pipeline
@@ -35,7 +38,7 @@
     name: pipeline
     system: true
     group: pipeline
-    groups: lamware
+    groups: [lamware, lamware-spool, lamware-seen]
     append: true
     shell: /bin/bash
     home: /home/pipeline
@@ -300,7 +303,7 @@
     name: lamware-api
     system: true
     group: lamware-api
-    groups: lamware
+    groups: [lamware, lamware-spool, lamware-feeder]
     append: true
     shell: /usr/sbin/nologin
     home: /opt/lamware-api

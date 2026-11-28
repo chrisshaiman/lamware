@@ -7,6 +7,9 @@
 # Author: Christopher Shaiman
 # License: Apache 2.0
 
+- name: Flow groups and memberships (ADR-031 phase 2)
+  ansible.builtin.import_tasks: ../../pipeline/tasks/flow-groups.yml
+
 - name: Create auto-feeder system user
   ansible.builtin.user:
     name: "{{ auto_feeder_user }}"
@@ -14,7 +17,7 @@
     shell: /usr/sbin/nologin
     home: "/home/{{ auto_feeder_user }}"
     create_home: true
-    groups: lamware
+    groups: [lamware, lamware-feeder, lamware-seen]
     append: true
 
 - name: Allow auto-feeder to run pipeline as pipeline user
@@ -40,7 +43,7 @@
     path: "{{ auto_feeder_install_dir }}"
     state: directory
     owner: root
-    group: lamware
+    group: lamware-feeder   # the feeder runs from it, the API reads state under it
     mode: "0750"
 
 - name: Remove the bytecode cache from the code directory
@@ -53,7 +56,7 @@
     path: "{{ item.path }}"
     state: directory
     owner: "{{ auto_feeder_user }}"
-    group: lamware
+    group: lamware-feeder   # ADR-031 phase 2: the feeder and the API, nobody else
     mode: "{{ item.mode }}"
   loop:
     - {path: "{{ auto_feeder_run_dir }}", mode: "2750"}
@@ -79,10 +82,10 @@
   ansible.builtin.file:
     path: "{{ item.path }}"
     owner: "{{ auto_feeder_user }}"
-    group: lamware
+    group: lamware-feeder
     mode: "{{ item.mode }}"
   loop:
-    - {path: "{{ auto_feeder_state_dir }}/state.json", mode: "0664"}
+    - {path: "{{ auto_feeder_state_dir }}/state.json", mode: "0660"}
     - {path: "{{ auto_feeder_run_dir }}/auto-feeder.log", mode: "0640"}
   failed_when: false   # absent on a fresh host; the feeder creates them
 - name: Deploy auto-feeder script

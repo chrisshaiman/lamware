@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -164,14 +165,47 @@ def save_state(state: dict) -> None:
         raise
 
 
+# --- Shared files, opened without following a link (ADR-031 phase 2) ---------------
+# PAUSE (in the control directory) and the seen-hash file are shared with another
+# service account. A planted symlink would redirect the write, and a planted FIFO
+# would block, so they are opened with O_NOFOLLOW | O_NONBLOCK, and only a regular
+# file is used: checked before anything is truncated.
+def _open_shared(path, flags, mode=0o640):
+    fd = os.open(str(path), flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, mode)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(22, "not a regular file", str(path))
+    return fd
+
+
+def read_json_shared(path):
+    with os.fdopen(_open_shared(path, os.O_RDONLY)) as f:
+        return json.load(f)
+
+
+def write_json_shared(path, data):
+    fd = _open_shared(path, os.O_WRONLY | os.O_CREAT, 0o660)
+    os.ftruncate(fd, 0)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+
+
+def touch_shared(path):
+    fd = _open_shared(path, os.O_WRONLY | os.O_CREAT)
+    try:
+        os.utime(fd)
+    finally:
+        os.close(fd)
+
+
 def load_seen_hashes() -> set:
     """Load seen hashes from shared sample-feeder state file."""
     cfg = load_shared_config()
     state_file = cfg.get("state_file", "{{ sample_feeder_state_file }}")
-    if Path(state_file).exists():
-        with open(state_file) as f:
-            return set(json.load(f))
-    return set()
+    try:
+        return set(read_json_shared(state_file))
+    except FileNotFoundError:
+        return set()
 
 
 def save_seen_hash(sha256: str) -> None:
@@ -180,9 +214,7 @@ def save_seen_hash(sha256: str) -> None:
     state_file = cfg.get("state_file", "{{ sample_feeder_state_file }}")
     seen = load_seen_hashes()
     seen.add(sha256)
-    trimmed = sorted(seen)[-10000:]
-    with open(state_file, "w") as f:
-        json.dump(trimmed, f)
+    write_json_shared(state_file, sorted(seen)[-10000:])
 
 # ---------------------------------------------------------------------------
 # Guardrails
@@ -198,7 +230,7 @@ def check_guardrails(state: dict) -> str | None:
     usage = shutil.disk_usage("/opt/pipeline")
     percent = (usage.used / usage.total) * 100
     if percent >= DISK_THRESHOLD:
-        PAUSE_FILE.touch()
+        touch_shared(PAUSE_FILE)
         if ntfy_alert:
             ntfy_alert("Disk Full", f"Disk usage {percent:.1f}% — auto-feeder paused",
                        priority="high", tags="warning")
@@ -223,7 +255,7 @@ def check_guardrails(state: dict) -> str | None:
 
     # 4. Consecutive failures
     if state["consecutive_failures"] >= MAX_FAILURES:
-        PAUSE_FILE.touch()
+        touch_shared(PAUSE_FILE)
         if ntfy_alert:
             ntfy_alert("Pipeline Failures",
                        f"{MAX_FAILURES} consecutive failures — auto-feeder paused\nLast error: {state.get('last_failure_reason', '?')}",
