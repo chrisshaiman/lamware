@@ -77,7 +77,10 @@ NOT_A_REQUEST = {
 
 def test_the_probe_sees_the_template_and_the_code():
     models = _registered_models()
-    assert "local-qwen-llamacpp-re" in models and "haiku-fallback" in models, models
+    # Two entries from opposite ends of the template: the probe rendered all of it.
+    # (haiku-fallback used to be the second; it is rendered only with
+    # litellm_local_cloud_fallback, ADR-038.)
+    assert "local-qwen-llamacpp-re" in models and "stub" in models, models
     assert len(_requested_literals()) >= 3, "the scan found almost nothing: the probe is broken"
 
 

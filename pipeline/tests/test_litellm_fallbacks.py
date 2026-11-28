@@ -1,6 +1,9 @@
 # Copyright 2026 Christopher Shaiman
 # SPDX-License-Identifier: Apache-2.0
-"""The agentic RE model must never fall back to a cloud provider.
+"""No local model falls back to a cloud provider unless the operator switches it on.
+
+The agentic RE model never does, switch or not. The summary alias does only with
+litellm_local_cloud_fallback (off by default, ADR-038, decided 2026-11-28).
 
 Its context holds decompiled malware bodies, extracted strings and C2 indicators. A
 cloud fallback would ship all of that to a third party at the exact moment the local
@@ -18,6 +21,10 @@ The absence is correct. This test makes it explicit so nobody helpfully closes t
 import re
 from pathlib import Path
 
+import jinja2
+import pytest
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 CFG = (ROOT / "ansible" / "roles" / "litellm" / "templates"
        / "config.yaml.j2").read_text()
@@ -26,16 +33,29 @@ CFG = (ROOT / "ansible" / "roles" / "litellm" / "templates"
 NO_CLOUD_FALLBACK = ("local-qwen-llamacpp-re", "local-qwen-llamacpp-strict")
 
 
-def _fallbacks_line() -> str:
-    match = re.search(r"^\s*fallbacks:\s*(\[.*\])\s*$", CFG, re.MULTILINE)
-    assert match, "could not find the fallbacks: line in the LiteLLM config"
-    return match.group(1)
+def _render(**over) -> dict:
+    """The REAL template with the roles' defaults; `over` sets e.g. the switch."""
+    ctx = {}
+    for role in ("interpret", "pipeline", "api", "litellm"):
+        ctx.update(yaml.safe_load((ROOT / "ansible/roles" / role / "defaults/main.yml").read_text()) or {})
+    env = jinja2.Environment(undefined=jinja2.ChainableUndefined)  # noqa: S701 - YAML, not HTML
+    env.filters["mandatory"] = lambda v: v
+    return yaml.safe_load(env.from_string(CFG).render(**{**ctx, "litellm_master_key": "k", **over}))
 
 
-def test_re_model_has_no_fallback_configured():
-    line = _fallbacks_line()
+def _fallbacks(cfg: dict) -> list:
+    return cfg["litellm_settings"]["fallbacks"]
+
+
+def _targets(cfg: dict) -> dict[str, list[str]]:
+    return {k: v for entry in _fallbacks(cfg) for k, v in entry.items()}
+
+
+@pytest.mark.parametrize("switch", [False, True, "true", "false"])
+def test_re_and_strict_never_fall_back_whatever_the_switch(switch):
+    targets = _targets(_render(litellm_local_cloud_fallback=switch))
     for model in NO_CLOUD_FALLBACK:
-        assert model not in line, (
+        assert model not in targets, (
             f"{model} must NOT have a fallback: its context carries malware-derived "
             f"decompilation, so falling back to a cloud provider is data egress, not "
             f"resilience. Let it fail loudly instead.")
@@ -43,8 +63,8 @@ def test_re_model_has_no_fallback_configured():
 
 def test_the_deliberate_absence_is_documented():
     """A bare omission is indistinguishable from an oversight — say why in the config."""
-    assert "DELIBERATELY ABSENT" in CFG
-    assert "local-qwen-llamacpp-re" in CFG.split("DELIBERATELY ABSENT")[1][:900]
+    assert "NEVER, switch or not" in CFG
+    assert "local-qwen-llamacpp-re" in CFG.split("NEVER, switch or not")[1][:900]
 
 
 def _production_summary_models() -> set[str]:
@@ -58,18 +78,28 @@ def _production_summary_models() -> set[str]:
     return set(found)
 
 
-def test_summary_model_fallback_is_still_intact():
-    """The summary path is a different risk profile and SHOULD stay resilient.
+@pytest.mark.parametrize("switch", [None, False, "false"])
+def test_by_default_a_failing_local_summary_model_fails_rather_than_reaching_the_cloud(switch):
+    """ADR-038: no provider the operator did not choose. The summaries used to fall
+    back to Haiku on the production key, silently, on any local failure. The owner's
+    decision (2026-11-28): fail loudly unless a specific switch is set."""
+    over = {} if switch is None else {"litellm_local_cloud_fallback": switch}
+    cfg = _render(**over)
+    assert _fallbacks(cfg) == []
+    assert "haiku-fallback" not in {m["model_name"] for m in cfg["model_list"]}
 
-    Asserted against whatever the pipeline ACTUALLY requests. This test used to
-    name "local-qwen", the Ollama alias. When the summary stages moved to
-    llama.cpp it kept passing while checking a fallback nothing used, and it only
-    noticed anything when that alias was deleted.
-    """
-    line = _fallbacks_line()
+
+@pytest.mark.parametrize("switch", [True, "true", "yes"])
+def test_the_switch_restores_the_summary_fallback_and_only_that(switch):
+    """Asserted against whatever the pipeline ACTUALLY requests. This test used to
+    name "local-qwen", the Ollama alias; when the summary stages moved to llama.cpp
+    it kept passing while checking a fallback nothing used."""
+    cfg = _render(litellm_local_cloud_fallback=switch)
+    targets = _targets(cfg)
     for model in _production_summary_models():
-        assert f'"{model}": ["haiku-fallback"]' in line, (
-            f"{model} is what the summary stages request, and has no fallback")
+        assert targets.get(model) == ["haiku-fallback"], (model, targets)
+    assert set(targets) == _production_summary_models()
+    assert "haiku-fallback" in {m["model_name"] for m in cfg["model_list"]}
 
 
 def test_re_model_is_still_registered_as_a_model():
@@ -121,7 +151,7 @@ def test_the_offline_summary_mode_still_exists():
     Removing the Ollama aliases must not quietly remove the capability, so it moved
     to llama.cpp — registered, and deliberately absent from `fallbacks`."""
     assert 'model_name: "local-qwen-llamacpp-strict"' in CFG
-    assert "local-qwen-llamacpp-strict" not in _fallbacks_line()
+    assert "local-qwen-llamacpp-strict" not in _targets(_render(litellm_local_cloud_fallback=True))
 
 
 def test_no_model_routes_to_ollama():

@@ -26,7 +26,14 @@ litellm_db_name: "litellm"
 # and shipped a shared credential published in a public repo (#238). It comes
 # from vars/secrets.yml (vault) only — see vars/secrets.yml.example.
 
-# Cloud fallback for the local summary aliases.
+# A failing local summary model fails, loudly; it does not quietly become a cloud one
+# (ADR-038: no provider the operator did not choose). This switch is the explicit way
+# to choose otherwise: when true, a local-qwen-llamacpp failure retries on
+# litellm_fallback_backend (production credentials), and the deploy announces it.
+# The agentic RE alias (-re) never falls back, switch or not. To use a cloud model for
+# summaries on purpose, name it in a profile's summary_model / plain_english_model
+# (docs/LLM_PROFILES.md); that is chosen and recorded per run.
+litellm_local_cloud_fallback: false
 litellm_fallback_backend: "claude-haiku-4-5"
 
 # llama.cpp (agentic RE) routing.
