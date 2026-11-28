@@ -226,6 +226,60 @@ def _mitigation_status(technique: str, category: str) -> str:
     return "open"
 
 
+@router.get("")
+async def list_evasions(
+    status: str | None = None,
+    category: str | None = None,
+    sort: str = "sample_count",
+    auth: AuthContext = Depends(require_auth),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Evasion hunter findings across all analyses, one row per MITRE technique.
+
+    Each row carries the most common name, how many name variants the LLM used, the
+    number of distinct samples, one short example of evidence, the fix-type category
+    and the mitigation status. The full evidence is paged by GET /evidence.
+
+    Query params:
+        status: filter by mitigation status (mitigated, partial, open, na)
+        category: filter by fix-type category
+        sort: sort field — sample_count (default), status, category
+    """
+    techniques = aggregate(_entries(session))
+
+    if status:
+        techniques = [t for t in techniques if t["status"] == status]
+    if category:
+        techniques = [t for t in techniques if t["category"] == category]
+
+    _STATUS_ORDER = {"open": 0, "partial": 1, "mitigated": 2, "na": 3}
+    if sort == "status":
+        techniques.sort(key=lambda t: (_STATUS_ORDER.get(t["status"], 9), -t["sample_count"]))
+    elif sort == "category":
+        techniques.sort(key=lambda t: (t["category"], -t["sample_count"]))
+
+    total_sql = text("""
+        SELECT COUNT(*)
+        FROM analyses
+        WHERE report_json->'evasion_analysis'->>'enabled' = 'true'
+    """)
+    try:
+        total = session.exec(total_sql).scalar() or 0  # type: ignore[call-overload]
+    except Exception:
+        total = 0
+
+    recs = _recommendations(session)
+    return {
+        "total_analyses_with_evasion": int(total),
+        "techniques": techniques,
+        # Free-text advice does not group (3,130 distinct texts in 3,176, measured
+        # 2026-11-28); the most frequent come first, the rest by GET /recommendations.
+        "recommendations": recs[:TOP_RECOMMENDATIONS],
+        "recommendations_total": len(recs),
+    }
+
+
 # MITRE technique IDs as the pipeline's validators accept them.
 _MITRE_RE = re.compile(r"\AT\d{4}(\.\d{3})?\Z")
 EXAMPLE_CHARS = 240
@@ -312,60 +366,6 @@ def aggregate(entries: list[tuple[int, str, str | None, str | None]]) -> list[di
         })
     out.sort(key=lambda t: -t["sample_count"])
     return out
-
-
-@router.get("")
-async def list_evasions(
-    status: str | None = None,
-    category: str | None = None,
-    sort: str = "sample_count",
-    auth: AuthContext = Depends(require_auth),
-    session: Session = Depends(get_session),
-) -> dict:
-    """
-    Evasion hunter findings across all analyses, one row per MITRE technique.
-
-    Each row carries the most common name, how many name variants the LLM used, the
-    number of distinct samples, one short example of evidence, the fix-type category
-    and the mitigation status. The full evidence is paged by GET /evidence.
-
-    Query params:
-        status: filter by mitigation status (mitigated, partial, open, na)
-        category: filter by fix-type category
-        sort: sort field — sample_count (default), status, category
-    """
-    techniques = aggregate(_entries(session))
-
-    if status:
-        techniques = [t for t in techniques if t["status"] == status]
-    if category:
-        techniques = [t for t in techniques if t["category"] == category]
-
-    _STATUS_ORDER = {"open": 0, "partial": 1, "mitigated": 2, "na": 3}
-    if sort == "status":
-        techniques.sort(key=lambda t: (_STATUS_ORDER.get(t["status"], 9), -t["sample_count"]))
-    elif sort == "category":
-        techniques.sort(key=lambda t: (t["category"], -t["sample_count"]))
-
-    total_sql = text("""
-        SELECT COUNT(*)
-        FROM analyses
-        WHERE report_json->'evasion_analysis'->>'enabled' = 'true'
-    """)
-    try:
-        total = session.exec(total_sql).scalar() or 0  # type: ignore[call-overload]
-    except Exception:
-        total = 0
-
-    recs = _recommendations(session)
-    return {
-        "total_analyses_with_evasion": int(total),
-        "techniques": techniques,
-        # Free-text advice does not group (3,130 distinct texts in 3,176, measured
-        # 2026-11-28); the most frequent come first, the rest by GET /recommendations.
-        "recommendations": recs[:TOP_RECOMMENDATIONS],
-        "recommendations_total": len(recs),
-    }
 
 
 def _recommendations(session: Session) -> list[dict]:
