@@ -69,6 +69,9 @@ class Spool:
         self.failed = tmp / "spool-failed"
         if create_failed:
             self.failed.mkdir(mode=0o750)
+        # Where the runner claims each entry before checking it (ADR-031 phase 2).
+        self.claim = tmp / "spool-claim"
+        self.claim.mkdir(mode=0o700)
         self.calls = tmp / "calls.log"
         self.calls.write_text("")
         self.started = tmp / "started"
@@ -87,6 +90,7 @@ class Spool:
         self.script.write_text(jinja2.Template(RUNNER_T).render(
             api_spool_dir=str(self.spool),
             api_spool_failed_dir=str(self.failed),
+            api_spool_claim_dir=str(self.claim),
             pipeline_cmd=str(fake),
             ntfy_install_dir=str(ntfy)))
 
@@ -272,7 +276,8 @@ def test_stopping_the_unit_leaves_the_sample_in_the_spool(sp):
     assert sp.quarantined() == []
     assert sp.alerts() == []
     assert sp.called() == ["a-slow"], "kept working after being told to stop"
-    assert "stopping: left sample=a-slow" in err
+    assert "stopping: returned sample=a-slow" in err
+    assert list(sp.claim.iterdir()) == [], "the interrupted claim was not returned"
 
 
 def test_arrival_order_not_name_order(sp):
@@ -422,3 +427,31 @@ def test_the_runners_real_processes_are_allowlisted(sp):
     for cmd in mapped:
         assert any(fnmatchcase(cmd, pat) for pat in pats), (
             f"network-monitor would alert on the spool runner: {cmd!r}")
+
+
+
+# --- the claim step (ADR-031 phase 2) ----------------------------------------------
+
+
+def test_the_pipeline_runs_the_claimed_copy_not_the_shared_spool_entry(sp):
+    """What is checked is what runs: the entry is renamed into the pipeline-only
+    claim directory first, so the API can no longer swap it under the run."""
+    sp.add("one", "ok")
+    sp.run()
+    calls = sp.calls.read_text().splitlines()
+    assert calls and all(str(sp.claim) in c for c in calls), calls
+    assert list(sp.spool.iterdir()) == [] and list(sp.claim.iterdir()) == []
+
+
+def test_a_claim_left_by_an_interrupted_run_is_requeued_and_analysed(sp):
+    (sp.claim / "left-over").write_text("ok")
+    sp.run()
+    assert sp.called() == ["left-over"]
+    assert list(sp.claim.iterdir()) == [] and list(sp.spool.iterdir()) == []
+
+
+def test_without_the_claim_directory_nothing_runs(sp):
+    sp.claim.rmdir()
+    sp.add("one", "ok")
+    sp.run()
+    assert sp.called() == [] and (sp.spool / "one").exists()

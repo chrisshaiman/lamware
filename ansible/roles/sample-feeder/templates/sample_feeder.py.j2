@@ -22,6 +22,7 @@ import io
 import json
 import logging
 import os
+import stat
 import re
 import subprocess
 import sys
@@ -75,19 +76,33 @@ log = logging.getLogger("sample-feeder")
 # State management
 # ---------------------------------------------------------------------------
 
+# --- The seen-hash file, opened without following a link (ADR-031 phase 2) ---------
+# It is shared with the auto-feeder (group lamware-seen). A planted symlink would
+# redirect the write and a FIFO would block, so only a regular file is used, and
+# it is checked before anything is truncated.
+def _open_shared(path, flags, mode=0o660):
+    fd = os.open(str(path), flags | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, mode)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(22, "not a regular file", str(path))
+    return fd
+
+
 def load_seen_hashes(state_file: str) -> set:
     """Load previously submitted SHA256 hashes from the state file."""
-    if not Path(state_file).exists():
+    try:
+        with os.fdopen(_open_shared(state_file, os.O_RDONLY)) as f:
+            return set(json.load(f))
+    except FileNotFoundError:
         return set()
-    with open(state_file) as f:
-        return set(json.load(f))
 
 
 def save_seen_hashes(hashes: set, state_file: str) -> None:
     """Persist submitted hashes. Keep only the most recent 10000."""
-    trimmed = sorted(hashes)[-10000:]
-    with open(state_file, "w") as f:
-        json.dump(trimmed, f)
+    fd = _open_shared(state_file, os.O_WRONLY | os.O_CREAT)
+    os.ftruncate(fd, 0)
+    with os.fdopen(fd, "w") as f:
+        json.dump(sorted(hashes)[-10000:], f)
 
 # ---------------------------------------------------------------------------
 # MalwareBazaar API

@@ -1891,7 +1891,7 @@ Revert and redeploy `litellm` and `api`. Keys left in LiteLLM's database stay va
 
 ## ADR-031: The `lamware` group is narrowed in measured phases, starting with cape
 
-**Status:** Accepted (2026-11-17, owner). Phase 0 done (2026-11-20); phase 1 deployed 2026-11-22.
+**Status:** Accepted (2026-11-17, owner). Phase 0 done (2026-11-20); phase 1 deployed 2026-11-22; phase 2 deployed 2026-11-28.
 **Refs:** ADR-025 (root-owned code), ADR-030 (one key per caller), #850, #854 (both exposures through this group)
 
 ### Context
@@ -1961,9 +1961,34 @@ fatrace ran for 3.8 days (95 hourly snapshots), recording every non-root open, r
   - the pipeline can still read the newest analysis (the control);
   - at least one cape process exists (otherwise the probe is blind).
 
+### Phase 2 (2026-11-28): one group per shared data flow
+
+**The flows, from the code, the units and phase 0** (phase 0 attributed only the API's reads of the feeder state; the rest were exited processes):
+
+| Path | Writer | Reader | Group |
+|---|---|---|---|
+| `/opt/pipeline/spool` | lamware-api (uploads) | pipeline (`pipeline-spool`) | `lamware-spool` |
+| `/opt/pipeline/control` (PAUSE) | lamware-api, auto-feeder (disk full, repeated failures) | auto-feeder, the API | `lamware-feeder` |
+| `/opt/auto-feeder` (`state/`, `run/`) | auto-feeder; the API resets the failure count | the API | `lamware-feeder` |
+| `/opt/sample-feeder/seen_hashes.json` | auto-feeder, `sample_feeder` (as pipeline) | both | `lamware-seen` |
+
+- **Nothing writes PAUSE as the pipeline.** The control directory's old comment said "API + pipeline both write"; neither the pipeline nor its stages do. Intake reads PAUSE as root.
+- **Add before remove:**
+  - the groups and memberships are created first, by one task file every role that regroups a path imports (`pipeline/tasks/flow-groups.yml`);
+  - the API is the one long-running member, and a process keeps the groups it started with, so the task file restarts it when `/proc` shows it lacks a group, before any path moves;
+  - membership of `lamware` is unchanged: phase 3 decides it.
+- **The readers no longer follow links:**
+  - the API's three reads of the feeder state, the auto-feeder's PAUSE touches and its seen-hash read and write, and `sample_feeder`'s, all open with `O_NOFOLLOW | O_NONBLOCK` and use only a regular file;
+  - a write checks before it truncates.
+- **The spool runner claims each entry before it checks it.** It renames the entry into `/opt/pipeline/spool-claim` (`pipeline`, 0700), so the API, which shares the spool, can't swap the file between the check and the run. A claim left by an interrupted run is put back in the spool when the runner next starts.
+- **Security-test check 28:**
+  - each flow path is open to its members and refused to the other service accounts and cape;
+  - the members passing is the probe's control;
+  - the running API holds both of its groups.
+
 ### Rollback
 
-Each phase reverts by redeploying the previous commit. No phase removes the `lamware` group itself.
+Each phase reverts by redeploying the previous commit. No phase removes the `lamware` group itself. Phase 2's groups stay behind on a revert. They are harmless, because the revert regroups the paths to `lamware`.
 
 ---
 

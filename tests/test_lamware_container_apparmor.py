@@ -127,7 +127,7 @@ def _check26() -> str:
     env = jinja2.Environment()  # noqa: S701 - shell, not HTML
     env.filters["bool"] = bool
     out = env.from_string(SMOKE).render()
-    return out[out.index('echo "[26/27]'):out.index('echo "[27/27]')]
+    return out[out.index('echo "[26/28]'):out.index('echo "[27/28]')]
 
 
 def _run26(tmp: Path, *, loaded=True, labels=("lamware-container//&unconfined (enforce)",) * 3,

@@ -22,12 +22,15 @@
     path: /etc/systemd/system/dashboard.service
     state: absent
 
+- name: Flow groups and memberships (ADR-031 phase 2)
+  ansible.builtin.import_tasks: ../../pipeline/tasks/flow-groups.yml
+
 - name: Create sample upload spool directory
   ansible.builtin.file:
     path: /opt/pipeline/spool
     state: directory
     owner: "{{ api_user }}"
-    group: lamware
+    group: lamware-spool   # ADR-031 phase 2: the API writes, the pipeline consumes
     mode: "2770"
 
 - name: Create spool quarantine directory (failed samples, live malware)
@@ -41,12 +44,23 @@
     group: pipeline
     mode: "0750"
 
-- name: Create pipeline control directory (PAUSE file, API + pipeline both write)
+# The spool runner claims each entry by renaming it in here before it checks or runs
+# it, so nothing in the shared spool can be swapped between the check and the run.
+# Same filesystem as the spool (a rename), and the pipeline's alone.
+- name: Create the spool claim directory (the pipeline's alone)
+  ansible.builtin.file:
+    path: "{{ api_spool_claim_dir }}"
+    state: directory
+    owner: pipeline
+    group: pipeline
+    mode: "0700"
+
+- name: Create pipeline control directory (PAUSE file; the API and the feeder write it)
   ansible.builtin.file:
     path: /opt/pipeline/control
     state: directory
     owner: "{{ api_user }}"
-    group: lamware
+    group: lamware-feeder   # ADR-031 phase 2: the API and the feeder, nobody else
     mode: "2770"
 
 - name: Create lamware-api install directory

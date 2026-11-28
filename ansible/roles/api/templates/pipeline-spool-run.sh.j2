@@ -29,6 +29,10 @@ set -uo pipefail
 # setting it in inventory alone would split the two.
 SPOOL="{{ api_spool_dir | default('/opt/pipeline/spool') }}"
 FAILED="{{ api_spool_failed_dir | default('/opt/pipeline/spool-failed') }}"
+# Each entry is claimed (renamed) in here before it is checked or run: the spool
+# is shared with the API (group lamware-spool), this directory is the pipeline's
+# alone, so what is checked is what runs (ADR-031 phase 2).
+CLAIM="{{ api_spool_claim_dir | default('/opt/pipeline/spool-claim') }}"
 PIPELINE_CMD="{{ pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
 # Queued, not sent: this runs as pipeline, which has no DNS or egress, so a
 # direct ntfy call could never succeed (#729). The relay delivers it.
@@ -98,7 +102,9 @@ quarantine() {
         sig="SIG$(kill -l $((rc - 128)) 2>/dev/null || echo "?")"
     fi
     if ! mv -- "$f" "$dest" || [ -e "$f" ] || [ -L "$f" ]; then
-        log "ERROR could not quarantine sample=$name — it is still in the spool and will be retried"
+        # Back to the spool (from the claim directory), so it is retried.
+        mv -T -- "$f" "$SPOOL/$name" 2>/dev/null || :
+        log "ERROR could not quarantine sample=$name — it is back in the spool and will be retried"
         alert "Spool quarantine FAILED" \
             "Sample ($(alert_id "$name")) failed (exit ${rc:-n/a}) and could not be moved to $FAILED. It is still in $SPOOL; the spool will retry it until this is fixed. Full name in: journalctl -u pipeline-spool" \
             urgent
@@ -114,7 +120,7 @@ quarantine() {
         printf 'exit_code=%s\n' "${rc:-n/a}"
         printf 'signal=%s\n' "$sig"
         printf 'reason=%s\n' "$reason"
-        printf 'original_path=%s\n' "$f"
+        printf 'original_path=%s\n' "$SPOOL/$name"
         printf 'requeue=sudo mv -- %q %q/\n' "$dest" "$SPOOL"
         printf -- '--- last %s lines of output ---\n' "$TAIL_LINES"
         if [ -s "$RUNLOG" ]; then tail -n "$TAIL_LINES" -- "$RUNLOG"; fi
@@ -132,6 +138,21 @@ if [ ! -d "$FAILED" ] && ! mkdir -m 0700 -p -- "$FAILED"; then
     log "ERROR quarantine directory $FAILED does not exist and cannot be created"
 fi
 
+# A run that died mid-sample (host down, OOM) leaves its claim behind: put those
+# back in the spool first, so they are analysed rather than forgotten.
+if [ -d "$CLAIM" ]; then
+    while IFS= read -r -d '' stale; do
+        if mv -T -- "$stale" "$SPOOL/${stale##*/}"; then
+            log "re-queued sample=${stale##*/} left in $CLAIM by an interrupted run"
+        else
+            log "ERROR could not re-queue ${stale##*/} from $CLAIM"
+        fi
+    done < <(find "$CLAIM" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+else
+    log "ERROR claim directory $CLAIM does not exist; deploy the api role"
+    exit 1
+fi
+
 # Oldest first, so a burst of uploads is analysed in arrival order rather than
 # by the random submission-id prefix the API puts in front of each name.
 # NUL-delimited because the uploaded filename is user-supplied. Includes
@@ -142,11 +163,20 @@ mapfile -d '' -t queue < <(
         | sort -z -n | cut -z -f2-)
 
 stuck=0
-for f in "${queue[@]}"; do
+for entry in "${queue[@]}"; do
     [ "$stopping" = 1 ] && break
     # Consumed since the listing (a manual run, or an operator removed it).
-    [ -e "$f" ] || [ -L "$f" ] || continue
-    name=${f##*/}
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name=${entry##*/}
+
+    # Claim it: a rename moves the entry itself (a symlink stays a symlink), and
+    # from here on the API cannot touch it, so the checks below hold for the run.
+    f="$CLAIM/$name"
+    if ! mv -T -- "$entry" "$f"; then
+        log "ERROR could not claim sample=$name into $CLAIM — left in the spool"
+        stuck=1
+        continue
+    fi
 
     # Not a regular file: never hand it to the pipeline (a symlink could point
     # anywhere the pipeline user can read), but do move it out of the way.
@@ -171,7 +201,11 @@ for f in "${queue[@]}"; do
     done
 
     if [ "$stopping" = 1 ]; then
-        log "stopping: left sample=$name in the spool (run interrupted, exit=$rc)"
+        if mv -T -- "$f" "$SPOOL/$name"; then
+            log "stopping: returned sample=$name to the spool (run interrupted, exit=$rc)"
+        else
+            log "ERROR stopping: sample=$name is still in $CLAIM; the next run re-queues it"
+        fi
         break
     fi
 

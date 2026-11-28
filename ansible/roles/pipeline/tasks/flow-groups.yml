@@ -1,0 +1,64 @@
+---
+# ADR-031 phase 2: one two-member group per data flow, replacing the shared
+# `lamware` group on the paths each one covers:
+#   lamware-spool  = lamware-api (uploads) + pipeline (consumes)
+#   lamware-feeder = lamware-api + auto-feeder (control/PAUSE, feeder state, its log)
+#   lamware-seen   = auto-feeder + pipeline (the shared seen-hash file)
+# Included by every role that regroups one of those paths (pipeline, api,
+# auto-feeder, sample-feeder), before it does, so a single-role deploy never
+# regroups a path ahead of its members. Add-before-remove: membership of
+# `lamware` is not touched here (phase 3 decides it).
+# License: Apache 2.0
+
+- name: Create the flow groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    system: true
+  loop: [lamware-spool, lamware-feeder, lamware-seen]
+
+- name: Look up which service accounts exist yet
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Add the existing service accounts to their flow groups
+  # Only accounts that exist: user creation stays in each account's own role
+  # (which also lists these groups), and `user` would otherwise create one here.
+  ansible.builtin.user:
+    name: "{{ item.key }}"
+    groups: "{{ item.value }}"
+    append: true
+  loop: "{{ pipeline_flow_group_members | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: item.key in ansible_facts.getent_passwd
+  vars:
+    pipeline_flow_group_members:
+      lamware-api: [lamware-spool, lamware-feeder]
+      pipeline: [lamware-spool, lamware-seen]
+      auto-feeder: [lamware-feeder, lamware-seen]
+
+# The API is the one long-running member: a process keeps the groups it started
+# with, so it must restart before a path moves to a group it lacks. Measured
+# from /proc, not inferred from whether the task above changed anything (an
+# earlier run may have added the membership without restarting).
+- name: Check the running API holds its flow groups
+  ansible.builtin.shell: |
+    set -o pipefail
+    pid=$(systemctl show -p MainPID --value lamware-api.service)
+    if [ -z "$pid" ] || [ "$pid" = 0 ]; then echo not-running; exit 0; fi
+    have=" $(awk '/^Groups:/{for(i=2;i<=NF;i++) printf "%s ", $i}' /proc/"$pid"/status)"
+    for g in lamware-spool lamware-feeder; do
+      gid=$(getent group "$g" | cut -d: -f3)
+      case "$have" in *" $gid "*) ;; *) echo missing; exit 0 ;; esac
+    done
+    echo ok
+  args:
+    executable: /bin/bash
+  register: pipeline_flow_groups_api
+  changed_when: false
+
+- name: Restart the API so it holds its flow groups
+  ansible.builtin.systemd:
+    name: lamware-api.service
+    state: restarted
+  when: pipeline_flow_groups_api.stdout == "missing"

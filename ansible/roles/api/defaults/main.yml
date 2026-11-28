@@ -11,6 +11,8 @@ api_user: lamware-api
 # outside the spool (DirectoryNotEmpty= would count it and re-trigger forever)
 # and outside anything nginx or the API serves.
 api_spool_failed_dir: /opt/pipeline/spool-failed
+# Where the spool runner claims an entry before checking it (same filesystem as the spool).
+api_spool_claim_dir: /opt/pipeline/spool-claim
 
 # Extra CORS origins for local frontend development against this API, e.g.
 # ["http://localhost:3000"]. Empty in production (#730): the dev origin used to
