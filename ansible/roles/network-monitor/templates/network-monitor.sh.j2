@@ -534,6 +534,8 @@ pipeline_patterns=(
     # listed: a process here naming the alert script is indistinguishable from
     # an alert site bypassing the dedup queue (test_alert_dedup).
     '/bin/bash /usr/local/bin/pipeline-spool-run'
+    # The auto-feeder's submit wrapper, as the pipeline (#357).
+    '/usr/bin/python3 -I {{ auto_feeder_submit_cmd | default('/usr/local/sbin/lamware-feeder-submit') }} --filename *'
     'tee -- {{ api_spool_failed_dir | default('/opt/pipeline/spool-failed') }}/.run.log'
     # Container file operations (scoped to pipeline paths)
     'cp /tmp/*'
@@ -554,7 +556,8 @@ autofeeder_patterns=(
     # Auto-feeder script + pipeline delegation
     'python3 /opt/auto-feeder/auto-feeder.py*'
     '*/python3 /opt/auto-feeder/auto-feeder.py*'
-    'sudo -u pipeline /usr/local/bin/run-pipeline*'
+    # The feeder's only sudo command (#357); it no longer runs run-pipeline itself.
+    'sudo -n -u pipeline {{ auto_feeder_submit_cmd | default('/usr/local/sbin/lamware-feeder-submit') }} --filename *'
     # Systemd user session.
     # Trailing glob is load-bearing: after a `systemctl daemon-reexec` (or a
     # systemd package upgrade) the manager re-execs as

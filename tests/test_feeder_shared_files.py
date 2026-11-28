@@ -111,7 +111,7 @@ def _check28() -> str:
     env = jinja2.Environment()  # noqa: S701 - shell, not HTML
     env.filters["bool"] = bool
     out = env.from_string(SMOKE).render()
-    return out[out.index('echo "[28/28]'):out.index("# Summary + ntfy alert on failure")]
+    return out[out.index('echo "[28/29]'):out.index('echo "[29/29]')]
 
 
 def _run28(tmp, allowed=GOOD, live_groups="1000 2001 2002", sudo_works=True):

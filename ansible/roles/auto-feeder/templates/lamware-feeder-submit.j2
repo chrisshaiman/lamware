@@ -1,0 +1,95 @@
+#!/usr/bin/python3 -I
+# Copyright 2026 Christopher Shaiman
+# SPDX-License-Identifier: Apache-2.0
+# {{ ansible_managed }}
+"""lamware-feeder-submit: the auto-feeder's only way to run the pipeline.
+
+    sudo -n -u pipeline lamware-feeder-submit --filename NAME [--bazaar-family FAMILY] < sample
+
+The sudoers rule names this file and nothing else. It used to be
+`run-pipeline *`, which let the feeder hand run-pipeline any argument vector,
+and the only thing keeping that vector to a sample path and two values was code
+in the feeder itself (#357). Here the boundary is the receiving side:
+
+- exactly `--filename NAME`, optionally followed by `--bazaar-family FAMILY`,
+  each checked against a narrow pattern (no leading `-`, so neither can become
+  an option);
+- the sample arrives on stdin, never as a path: the feeder can't point the
+  pipeline at a file of its choosing, or swap one between a check and the run;
+- the bytes are written to a fresh directory only the pipeline can read, the
+  pipeline runs on that copy, and the copy is removed afterwards.
+
+Runs as the pipeline user (sudo's target). Exit codes: run-pipeline's own, or 2
+for a refused request.
+"""
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+RUN_PIPELINE = "{{ sample_feeder_pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
+MAX_BYTES = {{ auto_feeder_max_sample_size_bytes }}
+NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,199}", re.ASCII)
+FAMILY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\- ]{0,63}", re.ASCII)
+
+
+def refuse(msg: str) -> "None":
+    print(f"lamware-feeder-submit: refused: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def parse(argv: list[str]) -> tuple[str, str | None]:
+    if len(argv) not in (2, 4) or argv[0] != "--filename":
+        refuse("usage: --filename NAME [--bazaar-family FAMILY] < sample")
+    name = argv[1]
+    if not NAME_RE.fullmatch(name):
+        refuse("filename must be 1-200 of [A-Za-z0-9_.-], not starting with . or -")
+    family = None
+    if len(argv) == 4:
+        if argv[2] != "--bazaar-family":
+            refuse("the only optional argument is --bazaar-family")
+        family = argv[3]
+        if not FAMILY_RE.fullmatch(family):
+            refuse("family must be 1-64 of [A-Za-z0-9_.- ], starting with a letter or digit")
+    return name, family
+
+
+def read_sample() -> bytes:
+    data = sys.stdin.buffer.read(MAX_BYTES + 1)
+    if not data:
+        refuse("no sample on stdin")
+    if len(data) > MAX_BYTES:
+        refuse(f"sample exceeds {MAX_BYTES} bytes")
+    return data
+
+
+def main(argv: list[str]) -> int:
+    name, family = parse(argv)
+    data = read_sample()
+    workdir = tempfile.mkdtemp(prefix="lamware-feeder-")      # 0700, the pipeline's
+    child = None
+
+    def forward(signum, _frame):
+        if child and child.poll() is None:
+            child.send_signal(signum)
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, forward)
+    try:
+        path = os.path.join(workdir, name)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        cmd = [RUN_PIPELINE, path, "--filename", name]
+        if family:
+            cmd += ["--bazaar-family", family]
+        child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+        return child.wait()
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -20,13 +20,24 @@
     groups: [lamware, lamware-feeder, lamware-seen]
     append: true
 
-- name: Allow auto-feeder to run pipeline as pipeline user
+# Installed before the sudoers rule that names it, so the rule never points at a
+# missing (or someone else's) file.
+- name: Deploy the feeder's submit wrapper (root's; the feeder's only sudo command)
+  ansible.builtin.template:
+    src: lamware-feeder-submit.j2
+    dest: "{{ auto_feeder_submit_cmd }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Allow auto-feeder to submit a sample to the pipeline, and nothing else
   ansible.builtin.copy:
     dest: /etc/sudoers.d/auto-feeder
     content: |
-      # Allow auto-feeder to invoke the pipeline as the pipeline user.
-      # No password, restricted to the run-pipeline command only.
-      {{ auto_feeder_user }} ALL=(pipeline) NOPASSWD: /usr/local/bin/run-pipeline *
+      # The feeder may run exactly one command as the pipeline user: the submit
+      # wrapper, which takes the sample on stdin and checks its two arguments.
+      # This was `run-pipeline *`: any argument vector at all (#357).
+      {{ auto_feeder_user }} ALL=(pipeline) NOPASSWD: {{ auto_feeder_submit_cmd }}
     owner: root
     group: root
     mode: "0440"

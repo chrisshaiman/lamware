@@ -128,7 +128,7 @@ def test_the_role_runs_it_after_the_superuser_exists():
 
 # --- check 25, run for real -----------------------------------------------------------
 
-CHECK25 = SMOKE[SMOKE.index('echo "[25/28]'):SMOKE.index("# Summary + ntfy alert on failure")]
+CHECK25 = SMOKE[SMOKE.index('echo "[25/29]'):SMOKE.index("# Summary + ntfy alert on failure")]
 
 
 def _check25(tmp_path, responses: dict[str, str]) -> str:

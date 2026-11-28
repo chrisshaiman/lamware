@@ -91,7 +91,10 @@ RECENT_COUNT = {{ auto_feeder_recent_count }}
 FAMILY_ALLOWLIST = {{ auto_feeder_family_allowlist | to_json }}
 TAG_ALLOWLIST = {{ auto_feeder_tag_allowlist | to_json }}
 
-PIPELINE_CMD = "{{ sample_feeder_pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
+# The one command the feeder may run as the pipeline (sudoers names only this).
+# It takes the sample on stdin and checks its two arguments (#357).
+SUBMIT_CMD = "{{ auto_feeder_submit_cmd }}"
+FAMILY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\- ]{0,63}", re.ASCII)
 ZIP_PASSWORD = b"infected"
 
 # ---------------------------------------------------------------------------
@@ -320,8 +323,28 @@ def extract_sample(zip_bytes: bytes) -> tuple[str, bytes]:
         if info.file_size > MAX_SAMPLE_SIZE:
             raise ValueError(f"Sample {info.file_size} bytes exceeds limit {MAX_SAMPLE_SIZE}")
         content = zf.read(names[0], pwd=ZIP_PASSWORD)
-    safe_name = re.sub(r"[^\w.\-]", "_", Path(names[0]).name) or "sample.bin"
-    return safe_name, content
+    return safe_name(names[0]), content
+
+
+def safe_name(name: str) -> str:
+    """The zip member's name as the submit wrapper accepts it: ASCII
+    [A-Za-z0-9_.-], at most 200, not starting with . or - (an option, or hidden)."""
+    s = re.sub(r"[^A-Za-z0-9_.\-]", "_", Path(name).name).lstrip(".-")[:200]
+    return s or "sample.bin"
+
+
+def submit_argv(name: str, signature: str | None) -> list[str]:
+    """sudo argv for one sample (its bytes go on stdin). A MalwareBazaar signature
+    that the wrapper would refuse is dropped, not sent: it is a label, and losing
+    it must not cost the analysis (#357)."""
+    argv = ["sudo", "-n", "-u", "pipeline", SUBMIT_CMD, "--filename", name]
+    sig = (signature or "").strip()
+    if sig and sig.lower() not in ("unknown", "n/a", "none"):
+        if FAMILY_RE.fullmatch(sig):
+            argv += ["--bazaar-family", sig]
+        else:
+            log.warning("MalwareBazaar signature not passed on (outside the allowed pattern)")
+    return argv
 
 # ---------------------------------------------------------------------------
 # Sample selection
@@ -457,7 +480,6 @@ def run_cycle() -> None:
              f"tags={','.join(sample['tags'][:3])}")
 
     # Download
-    tmp_path = None
     try:
         zip_bytes = download_sample(api_url, sample["sha256"], headers)
         extracted_name, content = extract_sample(zip_bytes)
@@ -467,14 +489,6 @@ def run_cycle() -> None:
         if actual_hash != sample["sha256"]:
             raise ValueError(f"SHA256 mismatch: expected {sample['sha256']}, got {actual_hash}")
 
-        with tempfile.NamedTemporaryFile(
-            prefix="autofeeder_", suffix=f"_{extracted_name}", delete=False
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-
-        # Make readable by pipeline user (runs via sudo -u pipeline)
-        tmp_path.chmod(0o644)
         log.info(f"Downloaded and extracted: {extracted_name} ({len(content)} bytes)")
 
     except Exception as e:
@@ -489,12 +503,11 @@ def run_cycle() -> None:
     # Run pipeline
     try:
         log.info(f"Starting pipeline for {extracted_name}...")
-        pipeline_args = ["sudo", "-u", "pipeline", PIPELINE_CMD, str(tmp_path), "--filename", extracted_name]
-        bazaar_sig = sample.get("signature", "")
-        if bazaar_sig and bazaar_sig.lower() not in ("", "unknown", "n/a", "none"):
-            pipeline_args.extend(["--bazaar-family", bazaar_sig])
+        # The sample goes on stdin: it is never written where another account
+        # could read or swap it (it used to be a 0644 file in the shared /tmp).
         pipe_result = subprocess.run(
-            pipeline_args,
+            submit_argv(extracted_name, sample.get("signature")),
+            input=content,
             capture_output=False,
             timeout=3600,
             cwd="/tmp",
@@ -539,8 +552,6 @@ def run_cycle() -> None:
         state["last_failure_reason"] = str(e)
 
     finally:
-        if tmp_path and tmp_path.exists():
-            tmp_path.unlink()
         save_state(state)
 
 
