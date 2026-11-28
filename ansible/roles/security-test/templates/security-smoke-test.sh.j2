@@ -50,7 +50,7 @@ fail() {
 # -------------------------------------------------------------------------
 # Test 1: API health endpoint
 # -------------------------------------------------------------------------
-echo "[1/28] API health check..."
+echo "[1/29] API health check..."
 # $WG_URL, not $API_URL: #604 removed the public TLS listener, so the domain
 # resolves to an address nothing serves. Probing it measured DNS, not the API.
 HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/health")
@@ -63,7 +63,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 2: Keycloak health
 # -------------------------------------------------------------------------
-echo "[2/28] Keycloak health check..."
+echo "[2/29] Keycloak health check..."
 KC_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:9000/auth/health/ready")
 if [ "$KC_CODE" = "200" ]; then
     pass "Keycloak health endpoint returns 200"
@@ -74,7 +74,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 3: Unauthenticated API access blocked
 # -------------------------------------------------------------------------
-echo "[3/28] Auth enforcement..."
+echo "[3/29] Auth enforcement..."
 UNAUTH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$WG_URL/api/analyses")
 if [ "$UNAUTH_CODE" = "401" ] || [ "$UNAUTH_CODE" = "403" ]; then
     pass "Unauthenticated /api/analyses returns $UNAUTH_CODE"
@@ -85,7 +85,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 4: Docs endpoint gated
 # -------------------------------------------------------------------------
-echo "[4/28] Docs endpoint gated..."
+echo "[4/29] Docs endpoint gated..."
 # There are TWO gates since #529, and this checks both. Previously it checked
 # only the application one and asserted 404, so adding the network layer made a
 # correctly-hardened host fail:
@@ -120,7 +120,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 5: TLS certificate valid
 # -------------------------------------------------------------------------
-echo "[5/28] TLS certificate check..."
+echo "[5/29] TLS certificate check..."
 # WireGuard address: TLS is no longer served publicly (#604). -servername keeps
 # the SNI as the real domain, which is what the certificate is issued for.
 CERT_EXPIRY=$(echo | openssl s_client -servername "$DOMAIN" -connect {{ security_test_wg_address }}:443 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
@@ -140,7 +140,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 6: HTTP redirects to HTTPS
 # -------------------------------------------------------------------------
-echo "[6/28] HTTP redirect check..."
+echo "[6/29] HTTP redirect check..."
 REDIRECT_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://{{ public_ip | default('127.0.0.1') }}/" -H "Host: $DOMAIN")
 if [ "$REDIRECT_CODE" = "301" ]; then
     pass "HTTP redirects to HTTPS (301)"
@@ -159,7 +159,7 @@ fi
 # Port 80 MUST stay public: certbot renews by webroot/HTTP-01, so Let's Encrypt
 # has to reach the challenge. Both halves are checked; removing the port-80
 # listener breaks renewal and would not show up for ~90 days.
-echo "[7/28] Public listener surface..."
+echo "[7/29] Public listener surface..."
 # NO `|| echo 000` here. curl's -w already prints 000 when the connection is
 # refused AND exits non-zero, so the fallback CONCATENATES: the first live run
 # of this check reported "000000", which matches neither branch and reported a
@@ -181,7 +181,7 @@ fi
 # -------------------------------------------------------------------------
 # Test 8: Nuclei quick scan
 # -------------------------------------------------------------------------
-echo "[8/28] Nuclei misconfig scan..."
+echo "[8/29] Nuclei misconfig scan..."
 if [ -x "$NUCLEI" ]; then
     NUCLEI_OUT="$RESULTS_DIR/nuclei-$(date +%Y%m%d-%H%M%S).txt"
     # $WG_URL, not $API_URL. After #604 the public address serves no TLS, and a
@@ -221,7 +221,7 @@ fi
 # the firewall PATH is checked rather than a live connection, and the live
 # connection is attempted only when a guest happens to be up.
 # =============================================================================
-echo "[9/28] PREREQUISITE: sandbox can reach its own guests..."
+echo "[9/29] PREREQUISITE: sandbox can reach its own guests..."
 DET_SUBNET="{{ security_test_detonation_subnet | default('192.168.100.0/24') }}"
 DET_BRIDGE="{{ security_test_detonation_bridge | default('virbr-det') }}"
 AGENT_PORT="{{ security_test_guest_agent_port | default('8000') }}"
@@ -268,7 +268,7 @@ fi
 # A negative assertion has to be made by ATTEMPTING the thing. A rule that
 # exists satisfied every structural check for the whole day it did nothing.
 # =============================================================================
-echo "[10/28] CONTAINMENT: pipeline user cannot reach the internet..."
+echo "[10/29] CONTAINMENT: pipeline user cannot reach the internet..."
 PIPE_USER="{{ security_test_pipeline_user | default('pipeline') }}"
 if ! id -u "$PIPE_USER" >/dev/null 2>&1; then
     fail "user $PIPE_USER does not exist — the egress allowlist cannot be verified"
@@ -311,7 +311,7 @@ for h, p in (("1.1.1.1", 443), ("8.8.8.8", 53), ("9.9.9.9", 443)):
     fi
 fi
 
-echo "[11/28] CONTAINMENT: pipeline user is held to its localhost allowlist..."
+echo "[11/29] CONTAINMENT: pipeline user is held to its localhost allowlist..."
 if id -u "$PIPE_USER" >/dev/null 2>&1; then
     LOCAL_LEAK=""
     # Ports the role explicitly revokes. Reaching either means the allowlist is
@@ -335,7 +335,7 @@ if id -u "$PIPE_USER" >/dev/null 2>&1; then
     fi
 fi
 
-echo "[12/28] CONTAINMENT: detonation network cannot leave the box..."
+echo "[12/29] CONTAINMENT: detonation network cannot leave the box..."
 # Guests are shut off between analyses and a host cannot originate a FORWARDed
 # packet, so this asserts the RULES and their ORDER rather than a live probe.
 # That is a weaker claim and is stated as one. network-monitor does the
@@ -371,7 +371,7 @@ if [ -n "$AIRGAP_FAIL" ]; then
 else
     pass "air gap: first matching FORWARD rule for virbr-det is DROP, both families, both paths"
 fi
-echo "[13/28] RESOLVER: the host can resolve, and the root zone validates..."
+echo "[13/29] RESOLVER: the host can resolve, and the root zone validates..."
 # 2026-10-11 11:44: the root switched its KSK and every lookup on this host
 # failed with "DNSSEC validation failed: missing-key" (#769). Nothing alerted;
 # it surfaced as an unrelated build failure. Asked of the daemon, not the file.
@@ -382,7 +382,7 @@ else
     fail "resolver: root zone does not validate: $(echo "$ROOT_Q" | tail -1)"
 fi
 
-echo "[14/28] CONTAINMENT: the pipeline and cape users cannot rewrite the pipeline's or the analysis tools' code..."
+echo "[14/29] CONTAINMENT: the pipeline and cape users cannot rewrite the pipeline's or the analysis tools' code..."
 # ADR-025: code the pipeline runs is root-owned; pipeline owns data only. A
 # writable code path is persistence: one write as pipeline (or cape, which left
 # bytecode caches in /opt/pipeline) runs again in every later analysis. Asked of
@@ -432,7 +432,7 @@ else
     pass "pipeline and analysis-tool code: not writable by $PIPE_USER or cape (its data dirs are)"
 fi
 
-echo "[15/28] CONTAINMENT: CAPE's rooter (a root daemon that takes cape's commands) is not running..."
+echo "[15/29] CONTAINMENT: CAPE's rooter (a root daemon that takes cape's commands) is not running..."
 # ADR-028: it was unreachable from CAPE from 2026-05-15 anyway, and switching it back
 # on would cut the guests off from INetSim. Masked, so an upgrade that re-enables it
 # fails. Checked on the unit, the process table and the socket; the control is a
@@ -456,7 +456,7 @@ fi
 # -------------------------------------------------------------------------
 # Subordinate id ranges: no two users may share one
 # -------------------------------------------------------------------------
-echo "[16/28] CONTAINMENT: no two users share a subordinate uid or gid range..."
+echo "[16/29] CONTAINMENT: no two users share a subordinate uid or gid range..."
 # A rootless container maps its uids onto its owner's /etc/subuid range. Two
 # users whose ranges overlap map onto the same host uids, so a file one user's
 # container writes is owned, on the host, by the other's too. Read from the live
@@ -484,7 +484,7 @@ fi
 # -------------------------------------------------------------------------
 # System directories: nothing owned by a lamware service user
 # -------------------------------------------------------------------------
-echo "[17/28] CONTAINMENT: no lamware service user owns anything in the system directories..."
+echo "[17/29] CONTAINMENT: no lamware service user owns anything in the system directories..."
 # Catches the effect whatever the cause: a root task that followed a link out of
 # a service user's tree, a package step run as the wrong user, or a hand edit.
 # Owners checked with -user, so a missing account is skipped.
@@ -513,7 +513,7 @@ fi
 # -------------------------------------------------------------------------
 # The pipeline user's images: present, and not writable by that user
 # -------------------------------------------------------------------------
-echo "[18/28] CONTAINMENT: the pipeline user cannot modify the images it runs..."
+echo "[18/29] CONTAINMENT: the pipeline user cannot modify the images it runs..."
 # ADR-025 phase 3. The writes are attempted through `podman unshare`, because a
 # plain write was refused while one through unshare succeeded (2026-11-13). A
 # control write to the user's own temp dir through the same path must succeed,
@@ -551,7 +551,7 @@ fi
 # -------------------------------------------------------------------------
 # libvirt: cape may drive its own guests and nothing else (ADR-027)
 # -------------------------------------------------------------------------
-echo "[19/28] CONTAINMENT: cape reaches libvirt only for its own guests, and not /dev/kvm..."
+echo "[19/29] CONTAINMENT: cape reaches libvirt only for its own guests, and not /dev/kvm..."
 # The cape user is in `libvirt` only to reach the socket; the access rule decides
 # what it may do. Probed as cape: an allowed call must succeed (the control, or a
 # refusal proves nothing) and a call outside the rule must be refused. A rule that
@@ -595,7 +595,7 @@ fi
 # -------------------------------------------------------------------------
 # Root's scheduled jobs run only what root owns
 # -------------------------------------------------------------------------
-echo "[20/28] CONTAINMENT: root's cron jobs run and name only paths that root owns..."
+echo "[20/29] CONTAINMENT: root's cron jobs run and name only paths that root owns..."
 # A root job that runs a script a service account can write, or a script in a
 # directory it can write, makes that account root on the next run. That was V7:
 # cape2.sh's `@reboot cd /opt/CAPEv2/utils/ && ./smtp_sinkhole.sh`. For every
@@ -768,7 +768,7 @@ fi
 # -------------------------------------------------------------------------
 # Root's systemd units run only what root owns
 # -------------------------------------------------------------------------
-echo "[21/28] CONTAINMENT: root's systemd units run and name only paths that root owns..."
+echo "[21/29] CONTAINMENT: root's systemd units run and name only paths that root owns..."
 # The unit-side twin of check 20. That was V8: `make intake` wrote a unit with no
 # User= that ran /opt/pipeline/intake/<batch>/intake_run.sh, from a
 # lamware-group-writable directory. For every installed service unit running as
@@ -789,7 +789,7 @@ fi
 # -------------------------------------------------------------------------
 # What nginx serves is root's, all the way up and all the way down
 # -------------------------------------------------------------------------
-echo "[22/28] CONTAINMENT: every directory nginx serves from is root's, with everything in it and above it..."
+echo "[22/29] CONTAINMENT: every directory nginx serves from is root's, with everything in it and above it..."
 # V10: the site was served from a root-owned directory inside a tree a service
 # account owned, and built as that account. Whoever can replace what nginx serves
 # runs JavaScript in every signed-in browser. For every root and alias in the
@@ -811,7 +811,7 @@ fi
 # -------------------------------------------------------------------------
 # Only root captures packets; cape's helper captures only the detonation bridge
 # -------------------------------------------------------------------------
-echo "[23/28] CONTAINMENT: no service user can capture packets, and cape's capture helper takes only the detonation bridge..."
+echo "[23/29] CONTAINMENT: no service user can capture packets, and cape's capture helper takes only the detonation bridge..."
 # V9 / ADR-029: tcpdump carried capture capabilities for a group cape was in, so cape
 # could capture on any interface. Loopback carries nginx's upstream traffic and every
 # LLM call in clear text. Probed, not read from file modes: each service user tries to
@@ -871,7 +871,7 @@ fi
 # -------------------------------------------------------------------------
 # The LiteLLM master key is in LiteLLM's own files only
 # -------------------------------------------------------------------------
-echo "[24/28] CONTAINMENT: the LiteLLM master key is in LiteLLM's own files only..."
+echo "[24/29] CONTAINMENT: the LiteLLM master key is in LiteLLM's own files only..."
 # V1: the master key administers LiteLLM (creates keys, reads all spend, could re-route
 # models). It was rendered into the interpret wrappers (group lamware), the digest and
 # the API's environment; each caller now has a scoped key. Every file holding it must
@@ -904,7 +904,7 @@ fi
 # -------------------------------------------------------------------------
 # CAPE's web UI needs a login
 # -------------------------------------------------------------------------
-echo "[25/28] AUTH: CAPE's web UI sends an unauthenticated request to its login page..."
+echo "[25/29] AUTH: CAPE's web UI sends an unauthenticated request to its login page..."
 # V13: CAPE's UI listened on the WireGuard address with no login; any VPN peer or
 # local account could browse analyses, download samples, submit and delete. Probed
 # as nobody, which is no CAPE user: each page must answer with a redirect to a
@@ -939,7 +939,7 @@ fi
 # -------------------------------------------------------------------------
 # Root containers run under lamware-container, and their processes can signal each other
 # -------------------------------------------------------------------------
-echo "[26/28] CONTAINMENT: root containers run under lamware-container, and a container's processes can signal each other..."
+echo "[26/29] CONTAINMENT: root containers run under lamware-container, and a container's processes can signal each other..."
 # ADR-032 (#842): on kernels that stack container profiles with unconfined, podman
 # 4.9.3's built-in profile stops a container's processes signalling each other, and
 # LiteLLM's startup hangs. lamware-container is that profile plus upstream's fix.
@@ -981,7 +981,7 @@ fi
 # -------------------------------------------------------------------------
 # cape is in no group it doesn't write for (ADR-031 phase 1)
 # -------------------------------------------------------------------------
-echo "[27/28] CONTAINMENT: cape is not in the lamware group, and no cape process carries it..."
+echo "[27/29] CONTAINMENT: cape is not in the lamware group, and no cape process carries it..."
 # Phase 0 measured that nothing CAPE does needs lamware; the pipeline reads CAPE's
 # output through the storage ACL. Checked on the running processes as well as the
 # group file: a process keeps the groups it started with, so a membership removed
@@ -1022,7 +1022,7 @@ fi
 # -------------------------------------------------------------------------
 # Each shared data flow is open to its two members only (ADR-031 phase 2)
 # -------------------------------------------------------------------------
-echo "[28/28] CONTAINMENT: the spool, the feeder state and the seen-hash file are open to their members only..."
+echo "[28/29] CONTAINMENT: the spool, the feeder state and the seen-hash file are open to their members only..."
 # path|test|member,member: every listed account must pass `test`, every other service
 # account must fail it. The members passing is the control: a probe that is
 # broken (sudo refused, wrong path) fails on them instead of passing by seeing
@@ -1065,6 +1065,40 @@ elif [ -n "$F_LIVE" ]; then
     fail "the running API lacks its flow groups:$F_LIVE (restart lamware-api)"
 else
     pass "flow paths: $F_N account/path probes as expected; the running API holds lamware-spool and lamware-feeder"
+fi
+
+# -------------------------------------------------------------------------
+# The feeder runs the pipeline only through its submit wrapper (#357)
+# -------------------------------------------------------------------------
+echo "[29/29] CONTAINMENT: the auto-feeder's sudo is the submit wrapper, and nothing else..."
+# Probed as the feeder, through sudo itself, not by reading the rule:
+# - run-pipeline directly must be refused by sudo;
+# - the wrapper with a bad argument must reach the wrapper (sudo allows it) and be
+#   refused BY it (exit 2): the control, so a probe that cannot run sudo at all
+#   fails here instead of passing on the first test;
+# - the wrapper is root's and nobody else can write it;
+# - `sudo -l` lists exactly one command for the pipeline.
+S_USER="{{ auto_feeder_user | default('auto-feeder') }}"
+S_CMD="{{ auto_feeder_submit_cmd | default('/usr/local/sbin/lamware-feeder-submit') }}"
+S_RUN="{{ sample_feeder_pipeline_cmd | default('/usr/local/bin/run-pipeline') }}"
+S_BAD=""
+if ! id -u "$S_USER" >/dev/null 2>&1; then
+    S_BAD="no $S_USER user"
+else
+    (cd / && runuser -u "$S_USER" -- sudo -n -u pipeline "$S_RUN" --help </dev/null >/dev/null 2>&1) \
+        && S_BAD="$S_BAD sudo-allows-run-pipeline"
+    (cd / && echo x | runuser -u "$S_USER" -- sudo -n -u pipeline "$S_CMD" --filename -x >/dev/null 2>&1)
+    rc=$?
+    [ "$rc" = 2 ] || S_BAD="$S_BAD wrapper-probe-exit=$rc(want 2)"
+    [ "$(stat -c '%U %a' "$S_CMD" 2>/dev/null)" = "root 755" ] || S_BAD="$S_BAD wrapper-not-root-755"
+    n=$(sudo -l -U "$S_USER" 2>/dev/null | grep -cE '^\s*\(pipeline\)')
+    sudo -l -U "$S_USER" 2>/dev/null | grep -E '^\s*\(pipeline\)' | grep -qE "NOPASSWD: $S_CMD\$" || S_BAD="$S_BAD rule-not-the-wrapper"
+    [ "$n" = 1 ] || S_BAD="$S_BAD pipeline-rules=$n"
+fi
+if [ -n "$S_BAD" ]; then
+    fail "auto-feeder sudo:$S_BAD"
+else
+    pass "auto-feeder: sudo refuses run-pipeline, allows only $S_CMD, which refuses a bad argument"
 fi
 
 # -------------------------------------------------------------------------

@@ -113,7 +113,7 @@ def _check27() -> str:
     env = jinja2.Environment()  # noqa: S701 - shell, not HTML
     env.filters["bool"] = bool
     out = env.from_string(SMOKE).render()
-    return out[out.index('echo "[27/28]'):out.index('echo "[28/28]')]
+    return out[out.index('echo "[27/29]'):out.index('echo "[28/29]')]
 
 
 def _run27(tmp, *, members="pipeline,lamware-api,auto-feeder", procs=(("1002", "1002 1003"),),

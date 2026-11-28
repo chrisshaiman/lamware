@@ -30,6 +30,9 @@ auto_feeder_disk_threshold: 80
 auto_feeder_daily_budget_usd: 10.0
 auto_feeder_pause_file: /opt/pipeline/control/PAUSE
 auto_feeder_max_sample_size_bytes: 268435456  # 256 MB
+# The only command the feeder may run as the pipeline (sudoers, #357): root's,
+# takes the sample on stdin and exactly --filename NAME [--bazaar-family FAMILY].
+auto_feeder_submit_cmd: /usr/local/sbin/lamware-feeder-submit
 
 # Separate user — not subject to pipeline iptables lockdown.
 # Downloads from MalwareBazaar need outbound HTTPS.
