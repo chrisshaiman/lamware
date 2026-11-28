@@ -221,6 +221,51 @@ def resolve_llm_cost(report: dict) -> dict:
     return cost
 
 
+# The LLM stages, as report keys. A failure is the stage's own "error"; the agentic
+# stage can also report one inside its analysis (#821).
+LLM_STAGES = ("llm_interpretation", "evasion_analysis", "visual_analysis", "executive_summary")
+
+
+def llm_failures(report: dict) -> list[str]:
+    """The LLM stages that failed in this run, by name. Without the cloud fallback
+    (ADR-038, amended 2026-11-28) a failing local model fails, and this is how that
+    failure gets seen rather than only logged."""
+    failed = []
+    for key in LLM_STAGES:
+        section = report.get(key)
+        if not isinstance(section, dict):
+            continue
+        analysis = section.get("analysis")
+        if section.get("error") or (isinstance(analysis, dict) and analysis.get("error")):
+            failed.append(key)
+    if report.get("plain_english_error"):
+        failed.append("plain_english")
+    return failed
+
+
+def alert_llm_failures(report: dict, task_id: str, failed: list[str]) -> bool:
+    """Queue one ntfy alert naming the failed stages. It carries the report id, the
+    stage names, the profile and the models: never the error text or anything else
+    sample-derived (the topic may be public; same rule as pipeline-spool-run).
+    Returns whether the alert was queued; never fails the run."""
+    if not failed:
+        return False
+    models = ", ".join(sorted({INTERPRET_CONFIG[f] for f in MODEL_FIELDS}))
+    message = (f"Report {task_id}: {', '.join(failed)} failed (profile {LLM_PROFILE}, "
+               f"models {models}). The report records each error; no stage fell back to "
+               f"another model.")
+    try:
+        r = subprocess.run(["python3", _PIPELINE_CONFIG.ntfy_enqueue, "lamware: LLM stage failed",
+                            message, "--priority", "high", "--tags", "warning"],
+                           capture_output=True, timeout=30)
+        if r.returncode == 0:
+            return True
+        log.warning("LLM failure alert not queued (exit %s)", r.returncode)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning("LLM failure alert not queued (%s)", type(exc).__name__)
+    return False
+
+
 def llm_profile_record() -> dict:
     """What this run's report says about its LLM: the profile, cloud or not, and models."""
     return {"name": LLM_PROFILE, "cloud": _PIPELINE_CONFIG.profile_is_cloud(LLM_PROFILE),
@@ -1727,6 +1772,12 @@ def run_pipeline(sample_path: Path, task_id: str, original_name: str = "",
     # LiteLLM's cost record goes in the report FILE as well as the row (ADR-037), so
     # it is resolved before the write; resolved after it, only the database had it.
     report["llm_cost"] = resolve_llm_cost(report)
+
+    # A failed LLM stage is alerted, not only logged (ADR-038: fail loudly).
+    report["llm_failures"] = llm_failures(report)
+    if report["llm_failures"]:
+        log.warning("LLM stage(s) failed: %s", ", ".join(report["llm_failures"]))
+        report["llm_failures_alerted"] = alert_llm_failures(report, task_id, report["llm_failures"])
 
     # Write merged report (includes executive summary)
     report["completed_at"] = datetime.now(UTC).isoformat()

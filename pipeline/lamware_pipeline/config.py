@@ -227,6 +227,9 @@ class PipelineConfig(BaseModel):
     # LiteLLM's Unix socket (litellm-socket.service). The pipeline user reaches LiteLLM
     # only this way; its egress rules drop TCP to LiteLLM's port.
     litellm_socket: str = "/run/litellm/litellm.sock"
+    # Queues an ntfy alert for the lamware-notify relay; the pipeline user has no
+    # egress, so it cannot send one itself (#729). Used when an LLM stage fails.
+    ntfy_enqueue: str = "/opt/ntfy-alerts/ntfy_enqueue.py"
 
     @model_validator(mode="after")
     def _profile_names_are_safe(self) -> "PipelineConfig":
