@@ -33,8 +33,15 @@ def _open_dir(root: Path, rel_parts: tuple[str, ...], *, create: bool) -> int:
             if part in ("", ".", ".."):
                 raise ValueError(f"refusing path component {part!r}")
             if create:
+                # 0o770, not 0o2770: the report trees are setgid, so a new
+                # directory inherits the bit (and the group) from its parent
+                # anyway. Asking for it explicitly is what systemd's
+                # RestrictSUIDSGID= refuses, and it refuses with EPERM before the
+                # kernel looks, even when the directory already exists. That
+                # broke every agentic stage run from pipeline-spool.service
+                # (web uploads) at `llm_audit` from 2026-10-08.
                 try:
-                    os.mkdir(part, 0o2770, dir_fd=fd)
+                    os.mkdir(part, 0o770, dir_fd=fd)
                 except FileExistsError:
                     pass
             nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
